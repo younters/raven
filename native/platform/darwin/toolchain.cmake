@@ -5,6 +5,7 @@
 # raven_darwin_compat.h is included into every host translation unit for the declarations that have no header of their own.
 
 set(RAVEN_DARWIN_DIR ${CMAKE_CURRENT_LIST_DIR})
+set(RAVEN_VULKAN_TEST_ICD /usr/local/share/vulkan/icd.d/MoltenVK_icd.json CACHE FILEPATH "Vulkan ICD for native tests")
 
 if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
     message(FATAL_ERROR "The macOS runtime targets Apple silicon; guest x86 code runs through Rosetta 2")

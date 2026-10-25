@@ -5,7 +5,7 @@
 __declspec(dllexport) uint64_t target_window;
 __declspec(dllexport) volatile uint32_t control;
 static VkPhysicalDevice physical[16];
-static VkSurfaceFormatKHR formats[32];
+static VkSurfaceFormatKHR formats[256];
 static VkQueueFamilyProperties families[32];
 
 unsigned int raven_entry(void)
@@ -32,7 +32,7 @@ unsigned int raven_entry(void)
 	VkSurfaceCapabilitiesKHR caps;
 	if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical[0],surface,&caps)!=VK_SUCCESS ||
 		caps.currentExtent.width!=64 || caps.currentExtent.height!=48) return 5;
-	count=32;
+	count=256;
 	if (vkGetPhysicalDeviceSurfaceFormatsKHR(physical[0],surface,&count,formats)!=VK_SUCCESS) return 6;
 	uint32_t format=0;
 	for (;format<count;++format)

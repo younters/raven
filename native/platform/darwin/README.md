@@ -77,13 +77,14 @@ These compile, but do not yet behave as on Linux.
 - `MSG_CMSG_CLOEXEC` is a flag `recvmsg` takes out, then marks the descriptors received close-on-exec.
 
 ### Memory, events and waits
-- `SharedPixels` maps on the host at section offsets aligned to 4 KiB. The host's pages are 16 KiB.
+- `SharedPixels` accepts Windows' 4 KiB section offsets through a host-page-aligned macOS mapping.
 - `eventfd` is a FIFO: it wakes like an eventfd, but reading does not return the counter.
 - File seals are accepted and not enforced.
 - `ppoll` waits in milliseconds.
 
 ### Graphics, audio and system integration
-- **Desktop:** there is no desktop backend yet. A Cocoa `DesktopPresentation` and `VK_EXT_metal_surface` through MoltenVK are needed.
+- **Desktop / Vulkan:** `--desktop=macos` uses Cocoa windows and Metal child views. The Vulkan bridge presents through MoltenVK;
+  see [VULKAN.md](VULKAN.md) for verified tests, the desktop integration test, and Direct3D backend limitations.
 - **OpenGL:** the bridge uses EGL.
 - **Audio:** uses PulseAudio.
 - **Shell open:** uses `xdg-open`.

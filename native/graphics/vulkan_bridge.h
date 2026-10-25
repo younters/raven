@@ -38,7 +38,7 @@ public:
 		// The client area of the window: what a Windows surface reports as its extent.
 		std::function<std::optional<std::pair<uint32_t, uint32_t>>(uint64_t window)> size;
 		// The window system whose surface extension serves the Windows one.
-		HostPlatform platform = HostPlatform::wayland;
+		HostPlatform platform = default_host_platform;
 	};
 	void set_surface_source(SurfaceSource value) { surface_source = std::move(value); }
 

@@ -8,6 +8,10 @@
 #include <stdexcept>
 #include <sys/mman.h>
 
+#ifdef __APPLE__
+#include "platform/darwin/vulkan_test.h"
+#endif
+
 static void check(bool condition, const char *message)
 {
 	if (!condition)

@@ -10,12 +10,17 @@
 #include <unistd.h>
 #include <vulkan/vulkan.h>
 
+#ifdef __APPLE__
+#include "platform/darwin/vulkan_test.h"
+#endif
+
 static void check(bool condition, const char *message)
 {
 	if (!condition)
 		throw std::runtime_error(message);
 }
 
+#ifndef __APPLE__
 static void shared_file_mapping(raven::NativeProcess &process)
 {
 	const int file = memfd_create("gpu mapping fixture", MFD_CLOEXEC);
@@ -44,6 +49,7 @@ static void shared_file_mapping(raven::NativeProcess &process)
 	close(decoy);
 	munmap(reserve, 12288);
 }
+#endif
 
 int main(int argc, char **argv)
 {
@@ -98,7 +104,9 @@ int main(int argc, char **argv)
 		for (const auto mode : {raven::NativeMode::x64, raven::NativeMode::x86}) {
 			const std::array<raven::LoadedImage *, 0> images{};
 			raven::NativeProcess process(images, argv[1], std::chrono::seconds(2), mode);
-			shared_file_mapping(process);
+#ifndef __APPLE__
+			shared_file_mapping(process); // Linux /proc file-backing discovery; Darwin uses the shadow fallback.
+#endif
 			void *anonymous = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 			check(anonymous != MAP_FAILED && !raven::map_gpu_memory(process, anonymous, 4096), "unbacked memory did not retain the fallback path");
 			munmap(anonymous, 4096);

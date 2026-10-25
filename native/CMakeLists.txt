@@ -2372,7 +2372,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                             -o ${CMAKE_CURRENT_BINARY_DIR}/x86-vulkan-client.exe ${LOADER_SOURCES}/x86_vulkan_client.c -lkernel32
                         DEPENDS ${LOADER_SOURCES}/x86_vulkan_client.c VERBATIM)
                     add_custom_target(x86_vulkan_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/x86-vulkan-client.exe)
-                    add_test(NAME native_x86_vulkan_compute COMMAND ${CMAKE_COMMAND} -E env VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json
+                    set(RAVEN_VULKAN_TEST_ICD /usr/share/vulkan/icd.d/lvp_icd.json CACHE FILEPATH "Vulkan ICD for native tests")
+                    add_test(NAME native_x86_vulkan_compute COMMAND ${CMAKE_COMMAND} -E env VK_DRIVER_FILES=${RAVEN_VULKAN_TEST_ICD}
                         $<TARGET_FILE:raven> --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/x86-vulkan-client.exe)
                     set_tests_properties(native_x86_vulkan_compute PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                 endif()

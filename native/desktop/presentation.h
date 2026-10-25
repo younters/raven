@@ -32,12 +32,18 @@ struct DesktopEvent {
 // The window system the presentation talks to, which decides the surface type a graphics driver is given.
 enum class HostPlatform { wayland, xcb, metal };
 
+#ifdef __APPLE__
+inline constexpr HostPlatform default_host_platform = HostPlatform::metal;
+#else
+inline constexpr HostPlatform default_host_platform = HostPlatform::wayland;
+#endif
+
 // A host surface a graphics driver can present into, over a window's client area: on Wayland the display connection and a surface, on X11
 // the XCB connection and a child window with its visual, on macOS a CAMetalLayer as the surface.
 struct HostSurface {
 	void *display = nullptr;
 	void *surface = nullptr;
-	HostPlatform platform = HostPlatform::wayland;
+	HostPlatform platform = default_host_platform;
 	uint32_t window = 0, visual = 0;
 };
 
@@ -81,7 +87,7 @@ struct DesktopPresentation {
 	// Minimizes a window to the host's own place for it instead of removing it; the host reports the window's restoration as
 	// WM_SYSCOMMAND SC_RESTORE.
 	std::function<void(uint64_t handle)> minimize;
-	HostPlatform platform = HostPlatform::wayland;
+	HostPlatform platform = default_host_platform;
 };
 
 }
