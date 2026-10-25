@@ -25,7 +25,13 @@ command -v brew >/dev/null || { echo "setup.sh: Homebrew is required (https://br
 /usr/bin/pgrep -q oahd || softwareupdate --install-rosetta --agree-to-license
 
 step "Homebrew packages"
-brew install cmake ninja python mingw-w64 lld llvm openssl@3 libpng freetype pixman libxkbcommon bison zstd
+# Only what is missing: installing a formula Homebrew already has would upgrade it and everything that depends on it.
+missing=
+for formula in cmake ninja python mingw-w64 lld llvm openssl@3 libpng freetype pixman libxkbcommon bison zstd; do
+	brew list --formula "$formula" >/dev/null 2>&1 || missing="$missing $formula"
+done
+# shellcheck disable=SC2086
+[ -z "$missing" ] || HOMEBREW_NO_INSTALL_UPGRADE=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew install $missing
 export PATH="$COMPONENTS/tools/bin:$(brew --prefix bison)/bin:$PATH"
 mkdir -p "$COMPONENTS/downloads" "$COMPONENTS/tools/bin"
 
