@@ -32,6 +32,8 @@ which no x86_64 program starts until `sudo launchctl kickstart -k system/com.app
 | `compat/compat_test.cpp` | `darwin_compat_contract`: the interprocess behaviour of the two above |
 | `native_process.cpp` | `NativeProcess` for macOS, built instead of `cpu/native_cpu.cpp` |
 | `guest/` | The x86_64 guest agent and the zero-fill segment that keeps the low 4 GiB free for Windows images |
+| `parallel_test.cpp` | x64/x86 pthread progress, contended atomics, stop wakes, channel reuse, and stream framing contracts |
+| `parallel_benchmark.c` | A fixed amount of independent integer work on four Windows threads |
 | `bin/raven-clang` | clang for Windows targets, with Homebrew's MinGW-w64 sysroot |
 
 Upstream files changed for macOS: `CMakeLists.txt` and `native/CMakeLists.txt` (the platform gates and the two includes),
@@ -44,8 +46,60 @@ asks `raven_darwin_unix_name_bound` where Linux reads `/proc/net/unix`, and `nt/
 ## Status
 
 - Phase 1, done: everything builds, and the tests that need no guest process pass.
-- Phase 2, next: the guest controller. The agent catches its own traps and faults with signal handlers and trades register contexts
-  with the host through shared memory; the host maps and reads guest memory through the agent's task port.
+- The guest controller catches traps and faults with signal handlers and trades register contexts with the host through shared memory;
+  the host maps and reads guest memory through the agent's task port.
+- The default scheduler swaps Windows contexts on the agent's main thread. `RAVEN_PARALLEL=1` gives each Windows thread its own Rosetta
+  pthread, for both x64 and x86 programs.
+
+## Parallel execution
+
+The version 2 control block has 256 thread channels and a separate service channel. A channel retains its registers, XSAVE state and stop
+reason until the host resumes that pthread; switching host coroutines selects a different channel without copying a running thread's
+state. `save_thread(false)` leaves register ownership in the channel, while an explicit stopped snapshot includes the extended state.
+Task identities increase even when a channel is reused, so an old scheduler snapshot cannot select a newer pthread.
+
+Each pthread has its own 256 KiB alternate signal stack, TSD base and guest GS base. The signal entry stub derives its channel index from
+its position in the array of signal stacks and restores that pthread's TSD before calling C. x86 pthreads keep distinct LDT TEB selectors.
+The service thread creates pthreads, targets interrupts with `pthread_kill`, and joins terminated threads before their channels are reused.
+An interrupt racing a natural trap leaves that trap's context and reason available to its waiting host frame.
+
+Stops publish their channel with release ordering and write a byte to a nonblocking pipe. `execution_descriptor()` exposes the read end
+to the scheduler; draining the pipe consumes notifications, while each channel remains the source of truth about its pending stop.
+Address waits still handle individual resume/service handshakes. Host scheduler frames capture their own channel when waiting, so a
+different Windows thread can run while a frame is parked.
+
+The existing Linux served-call and queue protocol is used unchanged: each TEB points at its own shared block at offset `0x1ff0`, with
+host-recorded ownership for TLS selection and queued graphics calls. The service thread handles memory operations while pthreads run,
+and performs locked x86 compare-and-exchange in the translated process so host atomics participate in the guest's memory ordering.
+Inherited process handle channels use length-prefixed streams on macOS, preserving frames and `SCM_RIGHTS` across partial reads and exec.
+The existing limit of 256 live Windows threads remains. Guest computation can run concurrently; service commands and host API handlers
+still run serially. x86 TEB descriptors retain the existing monotonic LDT allocation policy, which can exhaust the table after about 8,000
+thread creations in one process even when pthread channels have been reused.
+
+Run the contracts serially:
+
+```sh
+build/native/native_cpu_test build/native/raven-bootstrap
+ctest --test-dir build -j1 --timeout 120 -R 'parallel|queued' --output-on-failure
+```
+
+The manual compute benchmark is built with the other Windows fixtures. Compare the same binary in each scheduler mode, after warming
+both modes once; keep tests and benchmarks serial:
+
+```sh
+env -u RAVEN_PARALLEL build/native/raven --run-process --execution=native --timeout-ms=30000 build/native/darwin-parallel-benchmark.exe
+RAVEN_PARALLEL=1 build/native/raven --run-process --execution=native --timeout-ms=30000 build/native/darwin-parallel-benchmark.exe
+```
+
+Measured on an M4 Pro with macOS 27.2 on 2026-10-25, with one warmup and five serial runs per mode: the four-thread compute fixture's median
+wall time was 2.005 s by default and 0.523 s in parallel (3.83 times faster). The kernel-thread fixture was 0.867 s versus 0.846 s, and heap
+stress was 0.401 s versus 0.400 s. Both latter fixtures gained little from parallelism. Times include runtime startup.
+
+On the same configuration, the complete `ctest -j1 --timeout 120` run changed from 194 passed, 58 failed and one skipped (253 tests) to
+214 passed, 39 failed and one skipped (254 tests, including the new Darwin contract). All 28 tests matching `parallel|queued` passed;
+none of the previously passing tests regressed. The remaining failures were present in the baseline.
+
+Never run the guest, runtime or tests under lldb/debugserver: debugging translated processes has wedged Rosetta's `oahd` on this machine.
 
 ## Rosetta 2 facts the design relies on
 

@@ -2,8 +2,8 @@
 //
 // The main thread is the guest thread. It stops once at startup and from then on only runs the contexts the host gives it: every way
 // Windows code can stop (a breakpoint, a fault, a system call, the host's interrupt) is a signal, whose handler publishes the registers,
-// waits for the host and returns into the registers it finds. A second thread serves the host's memory operations, and a third ends the
-// guest when the host goes away.
+// waits for the host and returns into the registers it finds. In parallel mode more pthreads do the same, each with its own channel
+// and signal stack. A service thread handles memory and pthread operations, and a watcher ends the guest when the host goes away.
 
 #include "protocol.h"
 
@@ -32,12 +32,14 @@ static struct raven_control *control;
 static uint8_t *data_area;
 
 // The guest thread's pthread thread-specific data, which GS addresses in macOS code; Windows x64 code runs with GS at its TEB instead.
-uint64_t raven_agent_tsd;
+uint64_t raven_agent_tsds[RAVEN_GUEST_MAX_THREADS];
 // The GS base the guest runs with now: its TEB for 64-bit code, the agent's own for 32-bit code, which does not use GS.
-static uint64_t guest_gs_base;
+static uint64_t guest_gs_bases[RAVEN_GUEST_MAX_THREADS];
+static pthread_t guest_threads[RAVEN_GUEST_MAX_THREADS];
 // The guest thread's signal stack: Windows code owns its stack, and the handler must run where Windows code cannot reach.
 #define ALTSTACK_SIZE (256 * 1024)
-char raven_agent_altstack[ALTSTACK_SIZE] __attribute__((aligned(64)));
+// Equal-sized stacks let the entry stub find its TSD without calling libc with a Windows GS base.
+char raven_agent_altstacks[RAVEN_GUEST_MAX_THREADS][ALTSTACK_SIZE] __attribute__((aligned(64)));
 
 // The base of every LDT data descriptor the host made, for reporting FS bases.
 #define LDT_ENTRIES 8192
@@ -378,6 +380,39 @@ static int write_guest(uint64_t address, uint64_t size, int protection)
 	return copied;
 }
 
+static void *guest_start(void *raw);
+
+static void interrupt_thread(uint32_t index)
+{
+	if (load(&control->threads[index].state) == RAVEN_THREAD_STOPPED)
+		return;
+	const int error = pthread_kill(guest_threads[index], SIGUSR1);
+	if (error) {
+		errno = error;
+		fail("cannot interrupt guest thread");
+	}
+}
+
+// Unlike a host read followed by a write, these locked x86 operations are atomic with translated Windows code too.
+static uint64_t compare_exchange(uint64_t address, uint64_t expected, uint64_t desired, uint64_t size)
+{
+	if (sigsetjmp(service_recovery, 1)) {
+		service_guarded = 0;
+		errno = EFAULT;
+		return 0;
+	}
+	service_guarded = 1;
+	if (size == 4) {
+		uint32_t previous = (uint32_t)expected;
+		__atomic_compare_exchange_n((uint32_t *)address, &previous, (uint32_t)desired, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+		expected = previous;
+	} else {
+		__atomic_compare_exchange_n((uint64_t *)address, &expected, desired, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+	}
+	service_guarded = 0;
+	return expected;
+}
+
 static void serve(struct raven_service_channel *service)
 {
 	const uint64_t *a = service->arguments;
@@ -422,6 +457,51 @@ static void serve(struct raven_service_channel *service)
 		ok = mprotect((void *)first, last - first, PROT_READ | PROT_WRITE) == 0 && mprotect((void *)first, last - first, (int)a[2]) == 0;
 		break;
 	}
+	case RAVEN_SERVICE_THREAD_CREATE:
+		if (a[0] == 0 || a[0] >= RAVEN_GUEST_MAX_THREADS) {
+			errno = EINVAL;
+			ok = 0;
+			break;
+		}
+		errno = pthread_create(&guest_threads[a[0]], NULL, guest_start, (void *)(uintptr_t)a[0]);
+		ok = errno == 0;
+		if (ok)
+			while (load(&control->threads[a[0]].state) != RAVEN_THREAD_STOPPED)
+				wait_change(&control->threads[a[0]].state, RAVEN_THREAD_RUNNING);
+		break;
+	case RAVEN_SERVICE_THREAD_INTERRUPT:
+		if (a[0] >= RAVEN_GUEST_MAX_THREADS) {
+			errno = EINVAL;
+			ok = 0;
+		} else {
+			interrupt_thread((uint32_t)a[0]);
+		}
+		break;
+	case RAVEN_SERVICE_THREAD_JOIN:
+		if (a[0] == 0 || a[0] >= RAVEN_GUEST_MAX_THREADS) {
+			errno = EINVAL;
+			ok = 0;
+			break;
+		}
+		interrupt_thread((uint32_t)a[0]);
+		while (load(&control->threads[a[0]].state) != RAVEN_THREAD_STOPPED) {
+			const uint32_t state = load(&control->threads[a[0]].state);
+			if (state != RAVEN_THREAD_STOPPED)
+				wait_change(&control->threads[a[0]].state, state);
+		}
+		store(&control->threads[a[0]].state, RAVEN_THREAD_EXIT);
+		errno = pthread_join(guest_threads[a[0]], NULL);
+		ok = errno == 0;
+		break;
+	case RAVEN_SERVICE_COMPARE_EXCHANGE:
+		if ((a[3] != 4 && a[3] != 8) || a[0] % a[3]) {
+			errno = EINVAL;
+			ok = 0;
+			break;
+		}
+		result = compare_exchange(a[0], a[1], a[2], a[3]);
+		ok = errno == 0;
+		break;
 	case RAVEN_SERVICE_EXIT:
 		_exit(0);
 	default:
@@ -436,7 +516,8 @@ static void *service_loop(void *unused)
 {
 	(void)unused;
 	struct raven_service_channel *service = &control->service;
-	uint32_t seen = load(&service->request);
+	// The host can post its first request before this pthread gets the processor. The initial sequence belongs to the zeroed block.
+	uint32_t seen = 0;
 	for (;;) {
 		const uint32_t request = wait_change(&service->request, seen);
 		serve(service);
@@ -529,7 +610,7 @@ static struct context_layout layout_of(ucontext_t *context)
 	_exit(123);
 }
 
-static void save_context(ucontext_t *context, struct raven_thread_channel *thread, int signal)
+static void save_context(ucontext_t *context, struct raven_thread_channel *thread, uint32_t index, int signal)
 {
 	const struct context_layout layout = layout_of(context);
 	const _STRUCT_X86_THREAD_STATE64 *s = layout.thread;
@@ -548,7 +629,7 @@ static void save_context(ucontext_t *context, struct raven_thread_channel *threa
 	const uint64_t fs_index = s->__fs >> 3;
 	r->fs_base = compat && fs_index < LDT_ENTRIES ? ldt_bases[fs_index] : 0;
 	r->gs = 0;
-	r->gs_base = compat ? 0 : guest_gs_base;
+	r->gs_base = compat ? 0 : guest_gs_bases[index];
 	r->orig_rax = signal == SIGSYS ? s->__rax : (uint64_t)-1;
 	memcpy(thread->xstate, layout.legacy, 512);
 	memset(thread->xstate + RAVEN_XSTATE_HEADER, 0, 64);
@@ -562,7 +643,7 @@ static void save_context(ucontext_t *context, struct raven_thread_channel *threa
 	memcpy(thread->xstate + RAVEN_XSTATE_HEADER, &components, sizeof components);
 }
 
-static void load_context(ucontext_t *context, const struct raven_thread_channel *thread)
+static void load_context(ucontext_t *context, const struct raven_thread_channel *thread, uint32_t index)
 {
 	const struct context_layout layout = layout_of(context);
 	_STRUCT_X86_THREAD_STATE64 *s = layout.thread;
@@ -577,10 +658,10 @@ static void load_context(ucontext_t *context, const struct raven_thread_channel 
 	const int compat = r->cs == 0x23;
 	s->__fs = compat ? mac_fs(r->fs) : 0;
 	s->__gs = 0;
-	guest_gs_base = compat ? raven_agent_tsd : r->gs_base;
+	guest_gs_bases[index] = compat ? raven_agent_tsds[index] : r->gs_base;
 	// Returning from the handler restores the GS base of a full context: it must be the guest's, not the one it stopped with.
 	if (layout.gs_base)
-		*layout.gs_base = guest_gs_base;
+		*layout.gs_base = guest_gs_bases[index];
 	// MXCSR_MASK is the processor's, not the program's.
 	uint32_t mask;
 	memcpy(&mask, layout.legacy + 28, 4);
@@ -596,59 +677,88 @@ static void load_context(ucontext_t *context, const struct raven_thread_channel 
 	}
 }
 
-void raven_agent_stop(int signal, siginfo_t *info, void *raw)
+void raven_agent_stop(int signal, siginfo_t *info, void *raw, uint32_t index)
 {
-	if (pthread_equal(pthread_self(), service_thread)) {
+	if (index >= RAVEN_GUEST_MAX_THREADS) {
 		// A fault of a guarded copy the service makes, not of the guest.
-		if (service_guarded)
+		if (pthread_equal(pthread_self(), service_thread) && service_guarded)
 			siglongjmp(service_recovery, 1);
 		fprintf(stderr, "raven-bootstrap: service fault %d at %p\n", signal, info->si_addr);
 		_exit(124);
 	}
 	ucontext_t *context = raw;
-	struct raven_thread_channel *thread = &control->thread;
+	struct raven_thread_channel *thread = &control->threads[index];
 	const uint32_t requested = load(&thread->interrupts_requested);
 	if (signal == SIGUSR1 && load(&thread->interrupts_answered) == requested) {
 		// An interrupt asked for while the guest was already stopping: that stop answered it.
-		set_gs_base(guest_gs_base);
+		set_gs_base(guest_gs_bases[index]);
 		return;
 	}
-	save_context(context, thread, signal);
+	save_context(context, thread, index, signal);
 	thread->signal = signal == SIGUSR1 ? RAVEN_STOP_INTERRUPT : signal;
 	thread->code = info->si_code;
 	thread->fault_address = (uint64_t)info->si_addr;
 	thread->interrupts_answered = requested;
 	store(&thread->state, RAVEN_THREAD_STOPPED);
+	// The state is authoritative. A full nonblocking pipe already guarantees a scheduler wake.
+	if (load(&control->parallel)) {
+		const char byte = 1;
+		(void)write(RAVEN_GUEST_WAKE_FD, &byte, 1);
+	}
 	const uint32_t next = wait_change(&thread->state, RAVEN_THREAD_STOPPED);
 	if (next == RAVEN_THREAD_EXIT)
-		_exit(0);
-	load_context(context, thread);
+		pthread_exit(NULL);
+	load_context(context, thread, index);
 	__atomic_store_n(&thread->state, RAVEN_THREAD_RUNNING, __ATOMIC_RELEASE);
-	set_gs_base(guest_gs_base);
+	set_gs_base(guest_gs_bases[index]);
 }
 
 // The first instructions of every handler: on the guest thread, give macOS code its thread data back before anything else runs.
 __attribute__((naked)) static void stop_entry(int signal, siginfo_t *info, void *context)
 {
 	__asm__ volatile(
-		"leaq _raven_agent_altstack(%%rip), %%rax\n"
-		"cmpq %%rax, %%rsp\n"
-		"jb 1f\n"
-		"addq %[size], %%rax\n"
-		"cmpq %%rax, %%rsp\n"
+		"leaq _raven_agent_altstacks(%%rip), %%rax\n"
+		"movq %%rsp, %%r8\n"
+		"subq %%rax, %%r8\n"
+		"shrq $18, %%r8\n"
+		"movl %[count], %%ecx\n"
+		"cmpq %[count], %%r8\n"
 		"jae 1f\n"
 		"pushq %%rdi\n"
 		"pushq %%rsi\n"
 		"pushq %%rdx\n"
-		"movq _raven_agent_tsd(%%rip), %%rdi\n"
+		"leaq _raven_agent_tsds(%%rip), %%rax\n"
+		"movq (%%rax, %%r8, 8), %%rdi\n"
 		"movl $0x3000003, %%eax\n"
 		"syscall\n"
 		"popq %%rdx\n"
 		"popq %%rsi\n"
 		"popq %%rdi\n"
+		"movl %%r8d, %%ecx\n"
 		"1:\n"
 		"jmp _raven_agent_stop\n"
-		: : [size] "i"(ALTSTACK_SIZE));
+		: : [count] "i"(RAVEN_GUEST_MAX_THREADS));
+}
+
+static void prepare_guest(uint32_t index)
+{
+	raven_agent_tsds[index] = find_tsd_base();
+	guest_gs_bases[index] = raven_agent_tsds[index];
+	stack_t alternate = {.ss_sp = raven_agent_altstacks[index], .ss_size = ALTSTACK_SIZE};
+	if (sigaltstack(&alternate, NULL) != 0)
+		fail("cannot set the signal stack");
+}
+
+static void *guest_start(void *raw)
+{
+	const uint32_t index = (uint32_t)(uintptr_t)raw;
+	prepare_guest(index);
+	sigset_t interrupt;
+	sigemptyset(&interrupt);
+	sigaddset(&interrupt, SIGUSR1);
+	pthread_sigmask(SIG_UNBLOCK, &interrupt, NULL);
+	__asm__ volatile("int3" ::: "memory");
+	return NULL;
 }
 
 // Where host calls return to: a breakpoint the agent owns.
@@ -698,17 +808,15 @@ int main(int argc, char **argv)
 	}
 	fcntl(RAVEN_GUEST_CONTROL_FD, F_SETFD, FD_CLOEXEC);
 	fcntl(RAVEN_GUEST_SOCKET_FD, F_SETFD, FD_CLOEXEC);
+	fcntl(RAVEN_GUEST_WAKE_FD, F_SETFD, FD_CLOEXEC);
 	// Nothing may be found at an address no Windows allocation made: the reserve becomes no-access memory.
 	if (mprotect((void *)RAVEN_LOW_START, RAVEN_LOW_END - RAVEN_LOW_START, PROT_NONE) != 0)
 		fail("cannot close the low reserve");
 	if (set_ldt(RAVEN_LDT_CODE32, 0, 0xffffffffULL, 1) != 0)
 		fail("cannot install the 32-bit code segment");
-	raven_agent_tsd = find_tsd_base();
-	guest_gs_base = raven_agent_tsd;
+	guest_threads[0] = pthread_self();
+	prepare_guest(0);
 
-	stack_t alternate = {.ss_sp = raven_agent_altstack, .ss_size = ALTSTACK_SIZE};
-	if (sigaltstack(&alternate, NULL) != 0)
-		fail("cannot set the signal stack");
 	struct sigaction action = {0};
 	action.sa_sigaction = stop_entry;
 	action.sa_flags = SA_SIGINFO | SA_ONSTACK;

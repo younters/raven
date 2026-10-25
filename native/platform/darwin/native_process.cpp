@@ -6,7 +6,7 @@
 // memory through the agent's task port, and through the agent itself where the kernel will not let it.
 //
 // This follows the Linux controller call for call: the stops, the stack frames and the bookkeeping of mappings are the same, so the
-// runtime above sees one behaviour. Guest threads share the one guest thread of the agent; RAVEN_PARALLEL is not supported.
+// runtime above sees one behaviour. By default Windows threads share the main agent thread; RAVEN_PARALLEL gives each its own pthread.
 
 #include "cpu/native_cpu.h"
 #include "cpu/served_queue.h"
@@ -71,6 +71,18 @@ void backtrace_if_asked()
 	}
 }
 
+// Spawn actions can overwrite descriptors 3 through 5, and Darwin's spawn does not clear CLOEXEC for a dup2 onto itself.
+int spawn_source(int descriptor)
+{
+	if (descriptor < 0 || descriptor > RAVEN_GUEST_WAKE_FD)
+		return descriptor;
+	const int moved = fcntl(descriptor, F_DUPFD_CLOEXEC, RAVEN_GUEST_WAKE_FD + 1);
+	const int error = errno;
+	close(descriptor);
+	errno = error;
+	return moved;
+}
+
 }
 
 // The agent process and the channels to it.
@@ -87,8 +99,21 @@ public:
 	uint8_t *data = nullptr;
 	uint64_t gate = 0;
 
-	raven_thread_channel &thread() { return control->thread; }
-	raven_registers &registers() { return control->thread.registers; }
+	pid_t selected = 1;
+	bool parallel = false;
+	raven_thread_channel &thread() { return control->threads[slots.at(selected)]; }
+	raven_registers &registers() { return thread().registers; }
+	int execution_descriptor() const { return parallel ? execution_wake : -1; }
+	void drain_execution();
+	pid_t new_thread();
+	void stop_thread(pid_t thread);
+	void pause_thread();
+	void select(pid_t thread)
+	{
+		if (!slots.contains(thread))
+			throw std::runtime_error("native thread has no execution task");
+		selected = thread;
+	}
 	bool alive();
 	void stop();
 	void set_timeout(std::chrono::milliseconds timeout);
@@ -107,7 +132,9 @@ public:
 	void clear_slice() { slice_end.reset(); }
 
 private:
-	int control_descriptor = -1, host_socket = -1;
+	int control_descriptor = -1, host_socket = -1, execution_wake = -1;
+	std::map<pid_t, uint32_t> slots{{1, 0}};
+	pid_t next_thread = 2;
 	std::chrono::steady_clock::time_point deadline;
 	std::optional<std::chrono::steady_clock::time_point> slice_end;
 	void reap(bool block);
@@ -117,7 +144,7 @@ GuestAgent::GuestAgent(const std::string &bootstrap, std::chrono::milliseconds t
 	: deadline(std::chrono::steady_clock::now() + timeout)
 {
 	try {
-		control_descriptor = memfd_create("raven-guest-control", MFD_CLOEXEC);
+		control_descriptor = spawn_source(memfd_create("raven-guest-control", MFD_CLOEXEC));
 		if (control_descriptor < 0 || ftruncate(control_descriptor, RAVEN_CONTROL_SIZE) != 0)
 			throw std::runtime_error("cannot create the guest control block");
 		void *mapped = mmap(nullptr, RAVEN_CONTROL_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, control_descriptor, 0);
@@ -131,7 +158,28 @@ GuestAgent::GuestAgent(const std::string &bootstrap, std::chrono::milliseconds t
 		if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) != 0)
 			throw std::runtime_error("cannot create the guest descriptor channel");
 		host_socket = pair[0];
-		const int guest_socket = pair[1];
+		const int guest_socket = spawn_source(pair[1]);
+		if (guest_socket < 0)
+			throw std::runtime_error("cannot reserve the guest descriptor channel");
+		int wake[2];
+		if (pipe(wake) != 0) {
+			close(guest_socket);
+			throw std::runtime_error("cannot create the guest stop channel");
+		}
+		execution_wake = wake[0];
+		wake[1] = spawn_source(wake[1]);
+		if (wake[1] < 0) {
+			close(guest_socket);
+			throw std::runtime_error("cannot reserve the guest stop channel");
+		}
+		fcntl(wake[0], F_SETFD, FD_CLOEXEC);
+		fcntl(wake[1], F_SETFD, FD_CLOEXEC);
+		fcntl(wake[0], F_SETFL, O_NONBLOCK);
+		fcntl(wake[1], F_SETFL, O_NONBLOCK);
+		struct WakeGuard {
+			int descriptor;
+			~WakeGuard() { close(descriptor); }
+		} wake_guard{wake[1]};
 
 		// The agent hands over its task port through a name only this host knows.
 		mach_port_t port = MACH_PORT_NULL;
@@ -167,6 +215,7 @@ GuestAgent::GuestAgent(const std::string &bootstrap, std::chrono::milliseconds t
 			posix_spawn_file_actions_addinherit_np(&actions, guest_socket);
 		else
 			posix_spawn_file_actions_adddup2(&actions, guest_socket, RAVEN_GUEST_SOCKET_FD);
+		posix_spawn_file_actions_adddup2(&actions, wake[1], RAVEN_GUEST_WAKE_FD);
 		posix_spawn_file_actions_addinherit_np(&actions, STDERR_FILENO);
 		posix_spawnattr_t attributes;
 		posix_spawnattr_init(&attributes);
@@ -218,9 +267,9 @@ GuestAgent::GuestAgent(const std::string &bootstrap, std::chrono::milliseconds t
 		if (pid_for_task(task, &task_pid) != KERN_SUCCESS || task_pid != pid)
 			throw std::runtime_error("the guest task port belongs to another process");
 		const int stopped = wait();
-		if (stopped != 1 || control->thread.signal != SIGTRAP)
+		if (stopped != 1 || thread().signal != SIGTRAP)
 			throw std::runtime_error("the guest agent did not reach its setup stop (wait " + std::to_string(stopped) + ", signal " +
-				std::to_string(control->thread.signal) + ", state " + std::to_string(control->thread.state) + ")");
+				std::to_string(thread().signal) + ", state " + std::to_string(thread().state) + ")");
 		gate = control->return_gate;
 	} catch (...) {
 		stop();
@@ -266,6 +315,10 @@ void GuestAgent::stop()
 		mach_port_deallocate(mach_task_self(), task);
 		task = MACH_PORT_NULL;
 	}
+	if (execution_wake >= 0) {
+		close(execution_wake);
+		execution_wake = -1;
+	}
 	if (host_socket >= 0) {
 		close(host_socket);
 		host_socket = -1;
@@ -290,7 +343,7 @@ void GuestAgent::set_timeout(std::chrono::milliseconds timeout)
 
 int GuestAgent::wait(const std::function<bool()> *served)
 {
-	auto *state = &control->thread.state;
+	auto *state = &thread().state;
 	// Guest code usually reaches its next stop within microseconds, so it is polled first; a guest that runs longer is waited for asleep.
 	unsigned polls = 0;
 	for (;;) {
@@ -319,15 +372,58 @@ int GuestAgent::wait(const std::function<bool()> *served)
 
 void GuestAgent::resume(bool trace)
 {
-	control->thread.trace = trace;
-	store(&control->thread.state, RAVEN_THREAD_RESUME);
+	thread().trace = trace;
+	store(&thread().state, RAVEN_THREAD_RESUME);
 }
 
 void GuestAgent::interrupt()
 {
-	__atomic_fetch_add(&control->thread.interrupts_requested, 1, __ATOMIC_ACQ_REL);
-	if (pid > 0)
-		kill(pid, SIGUSR1);
+	__atomic_fetch_add(&thread().interrupts_requested, 1, __ATOMIC_ACQ_REL);
+	service(RAVEN_SERVICE_THREAD_INTERRUPT, {slots.at(selected)}, "thread interrupt");
+}
+
+void GuestAgent::drain_execution()
+{
+	char bytes[256];
+	while (read(execution_wake, bytes, sizeof bytes) > 0) {}
+}
+
+pid_t GuestAgent::new_thread()
+{
+	uint32_t index = 1;
+	for (; index < RAVEN_GUEST_MAX_THREADS; ++index)
+		if (std::none_of(slots.begin(), slots.end(), [index](const auto &item) { return item.second == index; }))
+			break;
+	if (index == RAVEN_GUEST_MAX_THREADS || next_thread == INT32_MAX)
+		throw std::runtime_error("native guest thread limit reached");
+	std::memset(&control->threads[index], 0, sizeof control->threads[index]);
+	service(RAVEN_SERVICE_THREAD_CREATE, {index}, "thread creation");
+	const pid_t task = next_thread++;
+	slots.emplace(task, index);
+	return task;
+}
+
+void GuestAgent::pause_thread()
+{
+	if (load(&thread().state) == RAVEN_THREAD_STOPPED)
+		return;
+	interrupt();
+	set_timeout(std::chrono::seconds(2));
+	if (wait() != 1)
+		throw std::runtime_error("native guest did not stop for suspension");
+}
+
+void GuestAgent::stop_thread(pid_t task)
+{
+	const auto found = slots.find(task);
+	if (found == slots.end())
+		return;
+	if (!found->second)
+		throw std::runtime_error("cannot join the main guest thread");
+	auto &channel = control->threads[found->second];
+	__atomic_fetch_add(&channel.interrupts_requested, 1, __ATOMIC_ACQ_REL);
+	service(RAVEN_SERVICE_THREAD_JOIN, {found->second}, "thread exit");
+	slots.erase(found);
 }
 
 uint64_t GuestAgent::service(uint32_t command, std::initializer_list<uint64_t> arguments, const char *what)
@@ -429,6 +525,13 @@ struct NativeProcess::State {
 	std::function<void(uint64_t)> step_sink;
 	uint64_t *served_block = nullptr;
 	uint64_t thread_teb = 0;
+	uint64_t thread_served_guest = 0;
+	uint64_t *thread_served_block = nullptr;
+	std::vector<uint64_t> queued_stubs;
+	std::map<uint64_t, uint64_t *> queued_blocks;
+	std::map<uint64_t *, uint64_t> served_owners;
+	uint64_t queued_calls = 0;
+	NativeContext initial_context;
 	std::vector<uint64_t> served_stubs;
 	std::vector<uint64_t> served_yield_traps;
 	size_t served_stub_size = 0;
@@ -436,6 +539,7 @@ struct NativeProcess::State {
 	std::function<void(uint64_t)> served_handler;
 	std::function<void()> resume_hook;
 	std::function<bool()> poll_served;
+	std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> execution_wait;
 	bool serving = false, serving_queued = false;
 	std::chrono::milliseconds sample_period{0};
 	std::function<void(uint64_t)> sampler;
@@ -483,7 +587,8 @@ void NativeProcess::State::require_memory() const
 {
 	if (!child || child->pid == -1)
 		throw std::runtime_error("native guest process is gone");
-	require_stopped();
+	if (!child->parallel)
+		require_stopped();
 }
 
 bool NativeProcess::State::covers(uint64_t address, size_t size, int protection) const
@@ -516,8 +621,6 @@ NativeProcess::NativeProcess(std::span<LoadedImage *const> images, const std::st
 {
 	if (setup_timeout.count() <= 0)
 		throw std::runtime_error("native execution requires a positive timeout");
-	if (std::getenv("RAVEN_PARALLEL"))
-		std::cerr << "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns\n";
 	state->mode = mode;
 	for (auto *mapped_image : images) {
 		if (!mapped_image)
@@ -526,6 +629,8 @@ NativeProcess::NativeProcess(std::span<LoadedImage *const> images, const std::st
 			throw std::runtime_error("native image does not fit the guest address space");
 	}
 	state->child = std::make_unique<GuestAgent>(bootstrap, setup_timeout);
+	state->child->parallel = std::getenv("RAVEN_PARALLEL") != nullptr;
+	store(&state->child->control->parallel, state->child->parallel);
 	for (auto *mapped_image : images) {
 		const auto base = mapped_image->base(), size = uint64_t(mapped_image->data().size());
 		state->child->send_descriptor(mapped_image->descriptor());
@@ -564,9 +669,14 @@ NativeProcess::NativeProcess(std::span<LoadedImage *const> images, const std::st
 	registers.cs = 0x33;
 	registers.orig_rax = uint64_t(-1);
 	registers.eflags = 0x202;
+	state->initial_context = context();
 }
 
-NativeProcess::~NativeProcess() = default;
+NativeProcess::~NativeProcess()
+{
+	if (std::getenv("RAVEN_PROFILE") && std::getenv("RAVEN_QUEUED_GRAPHICS"))
+		std::cerr << "profile: queued calls=" << state->queued_calls << '\n';
+}
 
 void NativeProcess::install_seccomp()
 {
@@ -660,6 +770,8 @@ uint64_t NativeProcess::compare_exchange(uint64_t address, uint64_t expected, ui
 	if ((size != 4 && size != 8) || address % size)
 		throw std::runtime_error("invalid native atomic memory operand");
 	validate_write_memory(address, size);
+	if (parallel())
+		return state->service(RAVEN_SERVICE_COMPARE_EXCHANGE, {address, expected, desired, size}, "atomic exchange");
 	// The guest is stopped: nothing else changes its memory meanwhile.
 	const auto bytes = read_memory(address, size);
 	uint64_t previous = 0;
@@ -836,6 +948,9 @@ void NativeProcess::unmap_memory(uint64_t address)
 		throw std::runtime_error("native release requires a dynamic allocation base");
 	const uint64_t end = address + owned->second;
 	state->service(RAVEN_SERVICE_UNMAP, {address, owned->second}, "release");
+	state->queued_blocks.erase(address);
+	if (const auto view = state->shared_views.find(address); view != state->shared_views.end())
+		state->served_owners.erase(reinterpret_cast<uint64_t *>(view->second->host));
 	state->shared_views.erase(address);
 	state->mappings.erase(state->mappings.lower_bound(address), state->mappings.lower_bound(end));
 	state->api_traps.erase(state->api_traps.lower_bound(address), state->api_traps.lower_bound(end));
@@ -965,6 +1080,10 @@ void NativeProcess::abandon_call()
 
 void NativeProcess::end_call()
 {
+	if (parallel() && !state->stopped) {
+		state->child->pause_thread();
+		state->stopped = true;
+	}
 	state->require_stopped();
 	state->callbacks.clear();
 	state->callback_cleanups.clear();
@@ -1014,20 +1133,39 @@ void NativeProcess::watch_write(uint64_t address)
 		throw std::runtime_error("hardware watchpoints are not available under Rosetta 2");
 }
 
-NativeThreadState NativeProcess::save_thread(bool) const
+NativeThreadState NativeProcess::save_thread(bool snapshot_registers) const
 {
-	state->require_stopped();
-	NativeContext saved = context();
+	if (!parallel() || state->stopped)
+		state->require_stopped();
+	const bool in_task = parallel() && !snapshot_registers;
+	NativeContext saved{};
+	if (state->stopped) {
+		if (in_task)
+			std::memcpy(&saved.registers, &state->registers(), sizeof saved.registers);
+		else
+			saved = context();
+	}
+	if (!state->stopped && state->mode == NativeMode::x86) {
+		saved.registers.fs = state->fs_selector;
+		saved.registers.fs_base = state->fs_base;
+	}
 	return {std::move(saved), state->callbacks, state->callback_cleanups, state->active_call, state->awaiting_api, state->awaiting_syscall,
 		state->debug_print_fault, state->pending_cleanup, state->stack_top, state->translated_words, state->translated_depth,
-		state->translated_floats, state->translated_result, 0, state->stopped, 0, nullptr, state->serving, state->served_stack, false,
+		state->translated_floats, state->translated_result, parallel() ? state->child->selected : 0, state->stopped,
+		state->thread_served_guest, state->thread_served_block, state->serving, state->served_stack, in_task,
 		state->serving_queued};
 }
 
 void NativeProcess::load_thread(const NativeThreadState &thread)
 {
-	state->require_stopped();
-	set_context(thread.context);
+	if (parallel()) {
+		state->child->select(thread.task);
+		state->stopped = thread.stopped;
+	} else {
+		state->require_stopped();
+	}
+	if (state->stopped && !thread.context_in_task)
+		set_context(thread.context);
 	state->callbacks = thread.callbacks;
 	state->callback_cleanups = thread.callback_cleanups;
 	state->active_call = thread.active_call;
@@ -1040,6 +1178,8 @@ void NativeProcess::load_thread(const NativeThreadState &thread)
 	state->translated_depth = thread.translated_depth;
 	state->translated_floats = thread.translated_floats;
 	state->translated_result = thread.translated_result;
+	state->thread_served_guest = thread.served_guest;
+	state->thread_served_block = thread.served_block;
 	state->serving = thread.serving;
 	state->serving_queued = thread.serving_queued;
 	state->served_stack = thread.served_stack;
@@ -1052,9 +1192,9 @@ void NativeProcess::load_thread(const NativeThreadState &thread)
 
 NativeThreadState NativeProcess::new_thread(uint64_t stack_top, uint64_t teb)
 {
-	state->require_stopped();
+	state->require_memory();
 	NativeThreadState thread{};
-	thread.context = context();
+	thread.context = state->stopped ? context() : state->initial_context;
 	if (state->mode == NativeMode::x86) {
 		// Every thread owns an LDT entry, so a switch only reloads registers.
 		const uint32_t entry = state->ldt_entries++;
@@ -1065,12 +1205,16 @@ NativeThreadState NativeProcess::new_thread(uint64_t stack_top, uint64_t teb)
 		thread.context.registers.gs_base = teb;
 	}
 	thread.stack_top = stack_top;
+	if (parallel() && state->served_handler)
+		make_served_block(teb, thread.served_guest, thread.served_block);
+	if (parallel())
+		thread.task = state->child->new_thread();
 	return thread;
 }
 
 bool NativeProcess::parallel() const
 {
-	return false;
+	return state->child->parallel;
 }
 
 bool NativeProcess::stopped() const
@@ -1080,23 +1224,47 @@ bool NativeProcess::stopped() const
 
 int NativeProcess::execution_descriptor() const
 {
-	return -1;
+	return state->child->execution_descriptor();
 }
 
 void NativeProcess::drain_execution()
 {
+	state->child->drain_execution();
 }
 
-void NativeProcess::set_execution_wait(std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)>)
+void NativeProcess::set_execution_wait(std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> wait)
 {
+	state->execution_wait = std::move(wait);
 }
 
-void NativeProcess::stop_thread(const NativeThreadState &)
+void NativeProcess::stop_thread(const NativeThreadState &thread)
 {
+	if (parallel() && thread.task > 0 && thread.task != state->child->selected) {
+		state->child->stop_thread(thread.task);
+		drain_queued_calls(true);
+	}
 }
 
-void NativeProcess::pause_thread(NativeThreadState &)
+void NativeProcess::pause_thread(NativeThreadState &thread)
 {
+	if (!parallel() || thread.stopped)
+		return;
+	auto &child = *state->child;
+	const pid_t caller = child.selected;
+	const bool stopped = state->stopped;
+	try {
+		child.select(thread.task);
+		child.pause_thread();
+		state->stopped = true;
+		drain_queued_calls(true);
+		thread.context = context();
+	} catch (...) {
+		child.select(caller);
+		state->stopped = stopped;
+		throw;
+	}
+	child.select(caller);
+	state->stopped = stopped;
 }
 
 void NativeProcess::enter_fault_dispatch()
@@ -1291,11 +1459,13 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 	}
 	auto &child = *state->child;
 	auto &thread = child.thread();
+	drain_queued_calls(true);
 	child.set_timeout(timeout);
+	const auto execution_deadline = std::chrono::steady_clock::now() + timeout;
 	int signal = 0, code = 0;
 	uint64_t fault_address = 0;
 	for (;;) {
-		const bool slicing = state->slice.count() > 0 && state->slice_yield && state->slice_wanted && state->slice_wanted();
+		const bool slicing = !parallel() && state->slice.count() > 0 && state->slice_yield && state->slice_wanted && state->slice_wanted();
 		std::chrono::steady_clock::duration period = state->slice;
 		if (slicing && std::chrono::steady_clock::now() - state->slice_started >= state->slice) {
 			if (inside_served_stub()) {
@@ -1317,7 +1487,29 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 			state->resume_hook();
 		child.resume(state->steps_left > 0);
 		state->stopped = false;
-		int status = child.wait(state->poll_served ? &state->poll_served : nullptr);
+		int status = 0;
+		if (parallel() && state->execution_wait) {
+			// Capture this channel: the scheduler can select and run other pthreads while this frame waits.
+			uint64_t *const block = state->thread_served_block;
+			const auto command = [block] { return block && __atomic_load_n(&block[0], __ATOMIC_ACQUIRE); };
+			const auto queued = [block] {
+				return block && __atomic_load_n(&block[ServedQueue::head], __ATOMIC_ACQUIRE) !=
+					__atomic_load_n(&block[ServedQueue::tail], __ATOMIC_ACQUIRE);
+			};
+			const auto ready = [&] { return load(&thread.state) == RAVEN_THREAD_STOPPED || command() || queued(); };
+			const auto until = sampling ? std::min(execution_deadline, std::chrono::steady_clock::now() + state->sample_period) : execution_deadline;
+			while (load(&thread.state) != RAVEN_THREAD_STOPPED && std::chrono::steady_clock::now() < until) {
+				const auto spin_until = std::min(until, std::chrono::steady_clock::now() + std::chrono::microseconds(5));
+				while (!ready() && std::chrono::steady_clock::now() < spin_until) {}
+				if (!ready())
+					state->execution_wait(ready, until);
+				if (command() || queued())
+					serve_pending();
+			}
+			status = load(&thread.state) == RAVEN_THREAD_STOPPED ? 1 : sampling && until < execution_deadline ? -2 : -1;
+		} else {
+			status = child.wait(state->poll_served ? &state->poll_served : nullptr);
+		}
 		child.clear_slice();
 		if (status == -2) {
 			++state->slice_interrupts;
@@ -1354,6 +1546,7 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 			return {NativeStop::timeout, 0, 0, 0};
 		}
 		state->stopped = true;
+		drain_queued_calls(true);
 		auto &registers = thread.registers;
 		signal = thread.signal;
 		code = thread.code;
@@ -1467,14 +1660,37 @@ void NativeProcess::set_guest_sampler(std::chrono::milliseconds period, std::fun
 	state->sampler = std::move(sampler);
 }
 
-void NativeProcess::make_served_block(uint64_t, uint64_t &, uint64_t *&)
+void NativeProcess::make_served_block(uint64_t teb, uint64_t &guest, uint64_t *&host)
 {
-	throw std::runtime_error("per-thread served blocks belong to parallel execution, which macOS does not have");
+	const int descriptor = memfd_create("raven-thread-calls", MFD_CLOEXEC);
+	if (descriptor < 0)
+		throw std::runtime_error("cannot create thread call block");
+	try {
+		if (ftruncate(descriptor, 4096) != 0)
+			throw std::runtime_error("cannot size thread call block");
+		guest = map_descriptor(descriptor, 4096);
+		// Raven's extended TEB holds this thread's command block beyond the Windows fields.
+		write_memory(teb + 0x1ff0, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&guest), 8));
+		host = reinterpret_cast<uint64_t *>(state->shared_views.at(guest)->host);
+		state->served_owners.emplace(host, teb);
+		if (state->mode == NativeMode::x64 && std::getenv("RAVEN_QUEUED_GRAPHICS")) {
+			host[ServedQueue::enabled] = 1;
+			state->queued_blocks.emplace(guest, host);
+		}
+	} catch (...) {
+		close(descriptor);
+		throw;
+	}
+	close(descriptor);
 }
 
 uint64_t NativeProcess::serving_teb() const
 {
-	return state->serving ? state->thread_teb : 0;
+	if (!state->serving) return 0;
+	if (!parallel()) return state->thread_teb;
+	const auto found = state->served_owners.find(state->thread_served_block);
+	if (found == state->served_owners.end()) throw std::runtime_error("served call has no thread-block owner");
+	return found->second;
 }
 
 bool NativeProcess::serving_queued() const
@@ -1482,25 +1698,35 @@ bool NativeProcess::serving_queued() const
 	return state->serving && state->serving_queued;
 }
 
-void NativeProcess::set_queued_gl_elements(bool)
+void NativeProcess::set_queued_gl_elements(bool available)
 {
+	if (parallel() && state->thread_served_block)
+		__atomic_store_n(&state->thread_served_block[ServedQueue::gl_elements], uint64_t(available), __ATOMIC_RELEASE);
 }
 
 void NativeProcess::set_served_calls(uint64_t *block, std::vector<uint64_t> stubs, size_t stub_size, size_t wait_offset,
-	std::vector<uint64_t> yield_traps, std::function<void(uint64_t)> handler, std::vector<uint64_t>)
+	std::vector<uint64_t> yield_traps, std::function<void(uint64_t)> handler, std::vector<uint64_t> queued_stubs)
 {
 	std::sort(stubs.begin(), stubs.end());
 	std::sort(yield_traps.begin(), yield_traps.end());
+	std::sort(queued_stubs.begin(), queued_stubs.end());
+	state->queued_stubs = std::move(queued_stubs);
 	state->served_wait_offset = wait_offset;
 	state->served_block = block;
 	state->served_stubs = std::move(stubs);
 	state->served_yield_traps = std::move(yield_traps);
 	state->served_stub_size = stub_size;
 	state->served_handler = std::move(handler);
+	if (parallel() && state->served_handler && !state->thread_served_block)
+		make_served_block(state->mode == NativeMode::x86 ? state->fs_base : context().registers.gs_base,
+			state->thread_served_guest, state->thread_served_block);
 	state->poll_served = [this] {
 		if (!serve_pending())
 			return false;
-		const auto *block = state->served_block;
+		// A served call can make another thread ready (a wake) without the guest stopping, so the guest gets a slice to be measured
+		// against if it has none.
+		// Give the acknowledged stub time to reach its own safe breakpoint before forcing a signal stop.
+		const auto *block = parallel() ? state->thread_served_block : state->served_block;
 		if (block[11])
 			state->child->set_slice(state->slice);
 		else if (state->slice.count() > 0 && state->slice_yield)
@@ -1565,28 +1791,79 @@ uint64_t NativeProcess::serve_call(uint64_t stub, std::vector<uint64_t> words, s
 
 bool NativeProcess::queued_pending() const
 {
-	return false;
+	const auto *block = parallel() ? state->thread_served_block : nullptr;
+	return block && __atomic_load_n(&block[ServedQueue::head], __ATOMIC_ACQUIRE) != block[ServedQueue::tail];
 }
 
-bool NativeProcess::drain_queued_calls(bool)
+bool NativeProcess::drain_queued_calls(bool all)
 {
-	return false;
+	if (all) {
+		// A caller may have observed another thread's atomic publication without a Windows wait. The served handler selects each
+		// producer's TLS, so flush every thread before a synchronous operation can observe their commands.
+		auto *current = state->thread_served_block;
+		bool drained = false;
+		try {
+			for (const auto &[guest, block] : state->queued_blocks) {
+				(void)guest;
+				state->thread_served_block = block;
+				drained |= drain_queued_calls();
+			}
+		} catch (...) {
+			state->thread_served_block = current;
+			throw;
+		}
+		state->thread_served_block = current;
+		return drained;
+	}
+	if (!queued_pending())
+		return false;
+	auto *block = state->thread_served_block;
+	const uint64_t head = __atomic_load_n(&block[ServedQueue::head], __ATOMIC_ACQUIRE);
+	uint64_t tail = block[ServedQueue::tail];
+	if (head - tail > ServedQueue::capacity)
+		throw std::runtime_error("native served queue indices exceed capacity");
+	// Consume a bounded snapshot. The producer may reuse a slot only after its arguments have been copied and served.
+	while (tail != head) {
+		const auto *record = block + ServedQueue::records + (tail % ServedQueue::capacity) * ServedQueue::words;
+		const uint64_t stub = record[0];
+		if (!std::binary_search(state->queued_stubs.begin(), state->queued_stubs.end(), stub))
+			throw std::runtime_error("native served queue contains a synchronous or unknown call");
+		serve_call(stub, {record[1], record[2], record[3], record[4], record[5], record[6], record[7], record[8]},
+			{record[9], record[10], record[11], record[12]}, 0, true);
+		++state->queued_calls;
+		__atomic_store_n(&block[ServedQueue::tail], ++tail, __ATOMIC_RELEASE);
+	}
+	return true;
 }
 
 bool NativeProcess::serve_pending()
 {
-	uint64_t *block = state->served_block;
+	const bool queued = drain_queued_calls();
+	uint64_t *block = parallel() ? state->thread_served_block : state->served_block;
 	if (!block)
-		return false;
+		return queued;
 	const uint64_t stub = __atomic_load_n(&block[0], __ATOMIC_ACQUIRE);
-	if (!stub)
+	if (!stub && !queued)
 		return false;
-	block[10] = serve_call(stub, {block[1], block[2], block[3], block[4]}, {block[6], block[7], block[8], block[9]}, block[5] + 40);
+	// A synchronous call observes every earlier queued record on this thread.
+	if (stub) {
+		drain_queued_calls(true);
+		block[10] = serve_call(stub, {block[1], block[2], block[3], block[4]}, {block[6], block[7], block[8], block[9]}, block[5] + 40);
+	}
 	if (state->resume_hook)
 		state->resume_hook();
-	const bool due = state->slice.count() > 0 && state->slice_yield && std::chrono::steady_clock::now() - state->slice_started >= state->slice;
-	block[11] = !state->served_yield_traps.empty() && due;
-	__atomic_store_n(&block[0], 0, __ATOMIC_RELEASE);
+	// The stub saves its result in RAX before obeying this request; later threads may then overwrite the shared result slot.
+	const bool due = state->slice.count() > 0 && state->slice_yield &&
+		std::chrono::steady_clock::now() - state->slice_started >= state->slice;
+	block[11] = !parallel() && !state->served_yield_traps.empty() && due;
+	if (stub)
+		__atomic_store_n(&block[0], 0, __ATOMIC_RELEASE);
+	// Parallel threads own their results, so another host frame can run as soon as this reply is published.
+	if (parallel() && due) {
+		state->slice_started = std::chrono::steady_clock::now();
+		if (state->slice_wanted && state->slice_wanted())
+			state->slice_yield();
+	}
 	return true;
 }
 

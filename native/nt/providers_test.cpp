@@ -132,7 +132,8 @@ static void parallel_served_result(const std::string &bootstrap)
 	const auto timeout = std::chrono::seconds(2);
 	const uint64_t base = 0x180000000ULL;
 	const std::array<std::string_view, 1> names{"vkCmdDrawIndexed"};
-	const raven::PEImage image(raven::runtime_provider("vulkan-1.dll", base, names));
+	const auto bytes = raven::runtime_provider("vulkan-1.dll", base, names);
+	const raven::PEImage image(bytes);
 	raven::LoadedImage loaded(image, base);
 	raven::LoadedImage *images[] = {&loaded};
 	raven::NativeProcess process(images, bootstrap, timeout);

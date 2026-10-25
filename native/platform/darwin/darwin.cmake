@@ -15,6 +15,20 @@ if(TARGET raven_cpu)
         list(REMOVE_ITEM RAVEN_CPU_LINK_OPTIONS "LINKER:--no-as-needed")
         set_property(TARGET raven_cpu PROPERTY INTERFACE_LINK_OPTIONS ${RAVEN_CPU_LINK_OPTIONS})
     endif()
+    add_executable(darwin_parallel_test ${RAVEN_DARWIN_DIR}/parallel_test.cpp)
+    target_link_libraries(darwin_parallel_test PRIVATE raven_cpu)
+    add_dependencies(darwin_parallel_test raven-bootstrap)
+    add_test(NAME native_darwin_parallel_contracts COMMAND darwin_parallel_test $<TARGET_FILE:raven-bootstrap>)
+    set_tests_properties(native_darwin_parallel_contracts PROPERTIES TIMEOUT 30 ENVIRONMENT RAVEN_PARALLEL=1)
+    if(RAVEN_MINGW64)
+        set(RAVEN_DARWIN_PARALLEL_BENCHMARK ${CMAKE_CURRENT_BINARY_DIR}/darwin-parallel-benchmark.exe)
+        add_custom_command(OUTPUT ${RAVEN_DARWIN_PARALLEL_BENCHMARK}
+            COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector
+                -Wl,--entry,raven_entry,--image-base,0x199a00000
+                -o ${RAVEN_DARWIN_PARALLEL_BENCHMARK} ${RAVEN_DARWIN_DIR}/parallel_benchmark.c -lkernel32
+            DEPENDS ${RAVEN_DARWIN_DIR}/parallel_benchmark.c VERBATIM)
+        add_custom_target(darwin_parallel_benchmark ALL DEPENDS ${RAVEN_DARWIN_PARALLEL_BENCHMARK})
+    endif()
 endif()
 
 # A Windows Vulkan program presents into the actual CAMetalLayer, then replaces its swapchain after a client resize.

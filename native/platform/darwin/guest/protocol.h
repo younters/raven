@@ -1,19 +1,21 @@
 // The control block the macOS host shares with its guest agent. The host (arm64) and the agent (x86_64, under Rosetta 2) both compile
 // this; every field has a fixed width and offset on either side.
 //
-// Two channels share the block. The service channel carries the memory, mapping and descriptor operations, which a thread of the agent
-// performs whenever the host asks, whether Windows code is running or not. The thread channel belongs to the guest thread: when Windows
+// The service channel carries memory, mapping, descriptor and pthread operations, which a thread of the agent
+// performs whenever the host asks, whether Windows code is running or not. Each thread channel belongs to one guest pthread: when Windows
 // code stops (a breakpoint, a fault, a system call, an interrupt) the agent's signal handler publishes the registers there and waits; the
 // host reads and changes them in place and lets the thread resume, and the handler returns into them.
 #pragma once
 #include <stdint.h>
 
 #define RAVEN_GUEST_MAGIC 0x52564e47U // "RVNG"
-#define RAVEN_GUEST_VERSION 1U
+#define RAVEN_GUEST_VERSION 2U
 
 // Descriptors the host gives the agent at startup.
 #define RAVEN_GUEST_CONTROL_FD 3
 #define RAVEN_GUEST_SOCKET_FD 4
+#define RAVEN_GUEST_WAKE_FD 5
+#define RAVEN_GUEST_MAX_THREADS 256
 
 // The XSAVE layout the runtime keeps extended state in: the legacy FXSAVE image, the XSAVE header, and the upper halves of YMM0-15.
 #define RAVEN_XSTATE_SIZE 832
@@ -52,6 +54,12 @@ enum raven_service_command {
 	RAVEN_SERVICE_AVAILABLE,
 	// a0 address, a1 size: the address range code was changed in, so it is translated again.
 	RAVEN_SERVICE_FLUSH,
+	// a0 channel index: start a pthread and wait for its initial stop, interrupt it, or stop and join it.
+	RAVEN_SERVICE_THREAD_CREATE,
+	RAVEN_SERVICE_THREAD_INTERRUPT,
+	RAVEN_SERVICE_THREAD_JOIN,
+	// a0 address, a1 expected, a2 desired, a3 operand size (4 or 8): a locked exchange in the guest's memory domain.
+	RAVEN_SERVICE_COMPARE_EXCHANGE,
 	RAVEN_SERVICE_EXIT,
 };
 
@@ -108,26 +116,26 @@ struct raven_control {
 	uint32_t magic;
 	uint32_t version;
 	uint32_t ready;
-	uint32_t pad;
+	uint32_t parallel;
 	// Filled in by the agent: where calls return to (an INT3) and its process identity.
 	uint64_t return_gate;
 	uint64_t agent_pid;
 	uint64_t reserved[12];
 	struct raven_service_channel service;
 	uint64_t pad1[2];
-	struct raven_thread_channel thread;
+	struct raven_thread_channel threads[RAVEN_GUEST_MAX_THREADS];
 	uint64_t pad2[6];
 };
 
 // The size of the shared file: the block, and the data area that READ and WRITE move memory through.
 #define RAVEN_CONTROL_SIZE (1024 * 1024)
-#define RAVEN_CONTROL_DATA_OFFSET 4096
+#define RAVEN_CONTROL_DATA_OFFSET (512 * 1024)
 #define RAVEN_CONTROL_DATA_SIZE (RAVEN_CONTROL_SIZE - RAVEN_CONTROL_DATA_OFFSET)
 
 #ifdef __cplusplus
 static_assert(sizeof(struct raven_registers) == 27 * 8, "Linux register layout");
-static_assert(sizeof(struct raven_control) <= RAVEN_CONTROL_DATA_OFFSET, "control block fits its page");
+static_assert(sizeof(struct raven_control) <= RAVEN_CONTROL_DATA_OFFSET, "control block fits before data area");
 #else
 _Static_assert(sizeof(struct raven_registers) == 27 * 8, "Linux register layout");
-_Static_assert(sizeof(struct raven_control) <= RAVEN_CONTROL_DATA_OFFSET, "control block fits its page");
+_Static_assert(sizeof(struct raven_control) <= RAVEN_CONTROL_DATA_OFFSET, "control block fits before data area");
 #endif
