@@ -525,22 +525,24 @@ struct CocoaPresentation::State {
 		}
 	}
 
-	// Which edges of a resizable window's content a screen point is close enough to for resizing.
+	// Which edges of a resizable window's frame a screen point is close enough to for resizing.
 	int edges_at(const Surface &target, NSPoint screen) const
 	{
 		if (!target.native || !(target.style & 0x40000U) || target.maximized || target.popup)
 			return 0;
 		constexpr CGFloat zone = 5;
-		const NSRect content = content_of(target.window);
-		if (!NSPointInRect(screen, NSInsetRect(content, -1, -1)))
+		const NSRect frame = target.window.frame;
+		if (!NSPointInRect(screen, NSInsetRect(frame, -1, -1)))
 			return 0;
 		int edges = 0;
-		if (screen.x < NSMinX(content) + zone)
+		if (screen.x < NSMinX(frame) + zone)
 			edges |= 1;
-		else if (screen.x > NSMaxX(content) - zone)
+		else if (screen.x > NSMaxX(frame) - zone)
 			edges |= 2;
-		if (screen.y < NSMinY(content) + zone)
+		if (screen.y < NSMinY(frame) + zone)
 			edges |= 4;
+		else if (screen.y > NSMaxY(frame) - zone)
+			edges |= 8;
 		return edges;
 	}
 
@@ -551,6 +553,9 @@ struct CocoaPresentation::State {
 		else if (edges == 2) position = NSCursorFrameResizePositionRight;
 		else if (edges == 5) position = NSCursorFrameResizePositionBottomLeft;
 		else if (edges == 6) position = NSCursorFrameResizePositionBottomRight;
+		else if (edges == 8) position = NSCursorFrameResizePositionTop;
+		else if (edges == 9) position = NSCursorFrameResizePositionTopLeft;
+		else if (edges == 10) position = NSCursorFrameResizePositionTopRight;
 		return [NSCursor frameResizeCursorFromPosition:position inDirections:NSCursorFrameResizeDirectionsAll];
 	}
 
@@ -559,8 +564,8 @@ struct CocoaPresentation::State {
 		const NSPoint point = NSEvent.mouseLocation;
 		Surface *target = surface(window_at(point));
 		const bool client = NSApp.active && target && NSPointInRect(point, content_of(target->window));
-		const int edges = client ? edges_at(*target, point) : 0;
-		cursor.apply(client, edges ? resize_cursor_for(edges) : nil);
+		const int edges = NSApp.active && target ? edges_at(*target, point) : 0;
+		cursor.apply(client || edges, edges ? resize_cursor_for(edges) : nil);
 	}
 
 	// Follows a drag of the edges: each movement resizes the window, and the program, told at once, draws the new size before the next.
