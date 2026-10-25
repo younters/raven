@@ -21,6 +21,23 @@ CRT char **__argv;
 CRT char *_acmdln;
 CRT wchar_t *_wcmdln;
 
+#ifdef __i386__
+/* The frame prologue the Microsoft compiler calls with the frame's handler in eax: it links an exception registration (the handler, a
+ * state of -1 and the previous registration) at the top of the frame, makes ebp point at it, and returns with the caller's return
+ * address on top again. Packers such as UPX resolve it by name and stop when it is missing. */
+__asm__(".globl _raven_eh_prolog\n"
+	"_raven_eh_prolog:\n"
+	"\tpushl $-1\n"
+	"\tpushl %eax\n"
+	"\tpushl %fs:0\n"
+	"\tmovl %esp, %fs:0\n"
+	"\tmovl 12(%esp), %eax\n"
+	"\tmovl %ebp, 12(%esp)\n"
+	"\tleal 12(%esp), %ebp\n"
+	"\tpushl %eax\n"
+	"\tret\n");
+#endif
+
 static void msvcrt_attach(void)
 {
 	_acmdln = (char *)GetCommandLineA();

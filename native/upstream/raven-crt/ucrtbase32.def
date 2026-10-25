@@ -5,6 +5,7 @@ EXPORTS
 	__CxxFrameHandler = raven_cxx_frame_handler
 	__CxxFrameHandler2 = raven_cxx_frame_handler
 	__CxxFrameHandler3 = raven_cxx_frame_handler
+	_EH_prolog = raven_eh_prolog
 	??1type_info@@UAE@XZ = raven_type_info_destroy
 	??_7type_info@@6B@ = raven_type_info_vtable DATA
 	?name@type_info@@QBEPBDXZ = raven_type_info_name
