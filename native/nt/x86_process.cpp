@@ -674,7 +674,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				return item.words;
 		return uint32_t(4);
 	});
-	// The common controls come from the common controls component once it is built for 32 bits; until then these names resolve and fail when called.
+	// The provisioned common controls component is loaded by the launcher; these are fallback names when it is absent.
 	static constexpr std::array<std::string_view, 5> controls_names{"ImageList_AddMasked", "ImageList_Create", "ImageList_Destroy", "InitCommonControls", "InitCommonControlsEx"};
 	static constexpr std::array<std::pair<std::string_view, uint16_t>, 1> controls_ordinals{{{"InitCommonControls", 17}}};
 	add_library("comctl32.dll", controls_names, {}, [](std::string_view name) {
@@ -1194,6 +1194,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_platform_api(shared_api, kernel);
 	register_actctx_api(shared_api, kernel);
 	register_mmio_api(shared_api, kernel);
+	register_wave_api(shared_api, kernel);
 	register_process_api(shared_api, kernel);
 	register_thread_api(shared_api, kernel);
 	register_sync_api(shared_api, kernel);
@@ -1206,6 +1207,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_crypt32_api(shared_api, kernel);
 	register_process_info_api(shared_api, kernel);
 	register_font_service(shared_api, kernel);
+	register_canvas_service(shared_api, kernel);
 	// A 32-bit program runs under WOW64 on the 64-bit system Raven presents, its System32 being SysWOW64 until it switches redirection
 	// off. The value it keeps for the switch back is 1 when redirection was on.
 	shared_api.add("Wow64DisableWow64FsRedirection", 1, [&paths](ApiCall &call) {
@@ -1223,11 +1225,6 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		paths.redirect((call.u32(0) & 0xff) != 0);
 		call.ret(1);
 	});
-	// Waveform audio for 32-bit programs has no device yet: they hear that none exists, as on a machine without sound, and go on silent.
-	shared_api.add("waveOutGetNumDevs", 0, [](ApiCall &call) { call.ret(0); });
-	shared_api.add("waveInGetNumDevs", 0, [](ApiCall &call) { call.ret(0); });
-	for (const auto *name : {"waveOutGetDevCapsW", "waveOutGetDevCapsA", "waveInGetDevCapsW", "waveInGetDevCapsA"})
-		shared_api.add(name, 3, [](ApiCall &call) { call.ret(2); });
 	register_profile_api(shared_api, profile);
 	register_ansi_adapters(shared_api);
 	register_legacy_file_api(shared_api);
