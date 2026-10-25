@@ -521,8 +521,13 @@ int main(int argc, char **argv)
 					}();
 					// A .NET program reaches every system library through its runtime, which loads them as it needs them: it gets every component.
 					const bool managed = entry->image.directories[14].address && entry->image.directories[14].size;
+					// Packed programs rebuild their imports through GetProcAddress: their file's import table does not name the libraries whose
+					// components they need. Put those components in place before the runtime providers and their forwarders are bound.
+					const bool resolves_imports = std::any_of(entry->imports.begin(), entry->imports.end(), [](const auto &symbol) {
+						return !symbol.by_ordinal && symbol.name == "GetProcAddress";
+					});
 					const auto imports_any = [&](std::initializer_list<const char *> libraries) {
-						return managed || std::any_of(libraries.begin(), libraries.end(), [&](const char *library) {
+						return managed || resolves_imports || std::any_of(libraries.begin(), libraries.end(), [&](const char *library) {
 							const std::string_view wanted(library);
 							// A trailing '*' names a family of API set libraries.
 							if (wanted.ends_with('*'))

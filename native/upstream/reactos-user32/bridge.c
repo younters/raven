@@ -52,6 +52,23 @@ Imm32ApiTable gImmApiEntries;
 static const WCHAR function_property[] = {'R','a','v','e','n','F','n','i','d',0};
 static const WCHAR dialog_property[] = {'R','a','v','e','n','D','l','g',0};
 
+/* The dialog manager consumes Unicode messages; translate ANSI character messages before entering it. */
+BOOL WINAPI IsDialogMessageA(HWND dialog, LPMSG message)
+{
+	MSG wide = *message;
+	if (message->message == WM_CHAR || message->message == WM_SYSCHAR) {
+		char text[2];
+		WCHAR character;
+		int count = message->wParam > 0xff ? 2 : 1;
+		text[0] = count == 2 ? HIBYTE(message->wParam) : LOBYTE(message->wParam);
+		text[1] = LOBYTE(message->wParam);
+		if (!MultiByteToWideChar(CP_ACP, 0, text, count, &character, 1))
+			return FALSE;
+		wide.wParam = character;
+	}
+	return IsDialogMessageW(dialog, &wide);
+}
+
 /* Control and dialog code reads these fields through a window pointer; the values are sampled per call. */
 PWND FASTCALL ValidateHwnd(HWND window)
 {

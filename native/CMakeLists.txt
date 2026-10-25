@@ -1637,6 +1637,34 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
             endforeach()
             add_custom_target(etw_controller_fixtures ALL DEPENDS ${ETW_CLIENTS})
             add_custom_target(process_enum_fixtures ALL DEPENDS ${PROCESS_ENUM_CLIENTS})
+            # System APIs discovered after startup still use the guest dialog manager and task allocator, at either pointer width.
+            set(DYNAMIC_DIALOG_CLIENTS)
+            foreach(width 64 32)
+                if(width EQUAL 64)
+                    set(dialog_compiler ${RAVEN_MINGW64})
+                    set(dialog_windres x86_64-w64-mingw32-windres)
+                    set(dialog_entry raven_entry)
+                else()
+                    set(dialog_compiler ${RAVEN_MINGW32})
+                    set(dialog_windres i686-w64-mingw32-windres)
+                    set(dialog_entry _raven_entry)
+                endif()
+                if(dialog_compiler AND (width EQUAL 64 OR RAVEN_CONTROLS32_COMPONENT_DIR))
+                    set(dialog_client ${CMAKE_CURRENT_BINARY_DIR}/dynamic-dialog${width}.exe)
+                    set(dialog_resource ${CMAKE_CURRENT_BINARY_DIR}/dynamic-dialog${width}.o)
+                    add_custom_command(OUTPUT ${dialog_client} ${dialog_resource}
+                        COMMAND ${dialog_windres} ${PROJECT_SOURCE_DIR}/testdata/native_loader/dynamic_dialog.rc -o ${dialog_resource}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--image-base,0x1e600000,--no-insert-timestamp
+                            -o ${dialog_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/dynamic_dialog_client.c ${dialog_resource} -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/dynamic_dialog_client.c
+                            ${PROJECT_SOURCE_DIR}/testdata/native_loader/dynamic_dialog.rc VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${dialog_client})
+                    add_test(NAME native_dynamic_dialog_x${width} COMMAND raven --run-process --execution=native ${dialog_client})
+                    set_tests_properties(native_dynamic_dialog_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                endif()
+            endforeach()
+            add_custom_target(dynamic_dialog_fixtures ALL DEPENDS ${DYNAMIC_DIALOG_CLIENTS})
             set(SOCKET_MESSAGE_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/socket-message-client.exe)
             add_custom_command(OUTPUT ${SOCKET_MESSAGE_CLIENT}
                 COMMAND ${RAVEN_MINGW64} -nostdlib -O1 -fno-builtin -fno-stack-protector
