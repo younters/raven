@@ -9,10 +9,10 @@
 static struct raven_control *control;
 extern void raven_dxmt_wrap_presentation(void **table);
 
-// Windows threads share the agent's one pthread. Their autorelease scopes can overlap without nesting, so draining an actual pool
-// for one Windows thread would also drain another thread's newer pool. Keep native temporaries until every overlapping scope ends.
-static NSAutoreleasePool *shared_pool;
-static unsigned pool_scopes;
+// Logical Windows threads can overlap scopes on the default scheduler's pthread. Parallel pthreads must own independent pools.
+// Keep native temporaries until every overlapping scope on this pthread ends.
+static __thread NSAutoreleasePool *shared_pool;
+static __thread unsigned pool_scopes;
 
 @interface RavenDXMTPool : NSObject
 @end

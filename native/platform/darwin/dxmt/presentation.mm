@@ -127,6 +127,9 @@ struct DarwinDXMTPresentation::State {
 				CALayer *parent = (__bridge CALayer *)host->surface;
 				CALayer *layer = [CALayer layer];
 				layer.frame = parent.bounds;
+				// Cocoa selects render scale for the program's DPI awareness, including 1 for unaware programs.
+				layer.contentsScale = parent.contentsScale;
+				layer.magnificationFilter = kCAFilterNearest;
 				layer.autoresizingMask = kCALayerWidthSizable | kCALayerHeightSizable;
 				layer.contentsGravity = kCAGravityResize;
 				layer.opaque = YES;

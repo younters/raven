@@ -1,15 +1,42 @@
 #include "unix_call_shared.h"
 #include <errno.h>
 #include <pthread.h>
+#include <signal.h>
 #include <time.h>
 #include <string.h>
 #include <unistd.h>
+
+static void *native_worker(void *args)
+{
+	(void)args;
+	const pthread_t self = pthread_self();
+	errno = EDOM;
+	raise(SIGUSR1);
+	return (void *)(uintptr_t)(pthread_self() == self && errno == EDOM);
+}
 
 static int32_t probe(void *args)
 {
 	struct unix_call_probe *p = args;
 	if (!p->native_allocation)
 		p->native_allocation = (uint64_t)strdup("native allocation");
+	if (!p->calls) {
+		pthread_t worker;
+		void *result = NULL;
+		if (pthread_create(&worker, NULL, native_worker, NULL) || pthread_join(worker, &result) || result != (void *)1)
+			return (int32_t)0xc0000001;
+	}
+	// Both native calls must enter before either returns: a serialized gate fails this rendezvous.
+	if (!p->calls && p->rendezvous) {
+		uint32_t *arrivals = (uint32_t *)(uintptr_t)p->rendezvous;
+		__atomic_add_fetch(arrivals, 1, __ATOMIC_ACQ_REL);
+		unsigned waits = 0;
+		while (__atomic_load_n(arrivals, __ATOMIC_ACQUIRE) != 2) {
+			if (++waits == 2000)
+				return (int32_t)0xc0000001;
+			usleep(1000);
+		}
+	}
 	char local;
 	p->native_stack = (uint64_t)&local;
 	p->native_thread = (uint64_t)pthread_self();
@@ -22,7 +49,10 @@ static int32_t probe(void *args)
 	struct timespec start, now;
 	clock_gettime(CLOCK_MONOTONIC, &start);
 	do {
+		errno = EDOM;
 		usleep(1000);
+		if (pthread_self() != (pthread_t)p->native_thread || (errno != EDOM && errno != EINTR))
+			return (int32_t)0xc0000001;
 		clock_gettime(CLOCK_MONOTONIC, &now);
 	} while ((now.tv_sec - start.tv_sec) * 1000000000LL + now.tv_nsec - start.tv_nsec < 50000000);
 	errno = EDOM;

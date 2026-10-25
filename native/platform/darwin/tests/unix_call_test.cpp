@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iostream>
 #include <sys/mman.h>
+#include <poll.h>
 
 int main(int argc, char **argv)
 {
@@ -44,6 +45,53 @@ int main(int argc, char **argv)
 				std::to_string(result.value) + " calls " + std::to_string(probe.calls) + " registers " + std::to_string(probe.preserved));
 		std::cout << "PE -> x86_64 unixlib: GS, native stack, GPRs, XMM6-15, repeated calls and invalid handles/codes passed; "
 			<< samples << " interrupts, " << yields << " scheduler yields outside native calls\n";
+		if (process.parallel()) {
+			const auto second_stack = process.map_memory(65536, PROT_READ | PROT_WRITE);
+			const auto second_teb = process.map_memory(4096, PROT_READ | PROT_WRITE);
+			process.write_memory(second_teb + 0x30, {reinterpret_cast<const uint8_t *>(&second_teb), sizeof second_teb});
+			const auto second_data = process.map_memory(4096, PROT_READ | PROT_WRITE);
+			unix_call_probe second{process.unix_call_gate(), handle, second_stack, second_stack + 65536, second_teb};
+			process.write_memory(second_data, {reinterpret_cast<const uint8_t *>(&second), sizeof second});
+			second.rendezvous = second_data + sizeof second;
+			process.write_memory(second_data, {reinterpret_cast<const uint8_t *>(&second), sizeof second});
+			probe.rendezvous = second.rendezvous;
+			probe.calls = 0;
+			process.write_memory(data, {reinterpret_cast<const uint8_t *>(&probe), sizeof probe});
+			bool started = false;
+			raven::NativeThreadState other;
+			process.set_execution_wait([&](std::function<bool()> ready, auto until) {
+				if (!started) {
+					started = true;
+					const auto main = process.save_thread(false);
+					other = process.new_thread(second_stack + 65536, second_teb);
+					process.load_thread(other);
+					const uint64_t arguments[]{second_data};
+					const auto result = process.call(loaded.base() + image.entry, arguments, std::chrono::seconds(5));
+					if (result.stop != raven::NativeStop::returned || result.value)
+						throw std::runtime_error("second pthread unix call failed");
+					other = process.save_thread(false);
+					process.load_thread(main);
+				}
+				while (!ready() && std::chrono::steady_clock::now() < until) {
+					pollfd wake{process.execution_descriptor(), POLLIN, 0};
+					::poll(&wake, 1, 1);
+					process.drain_execution();
+				}
+			});
+			const auto concurrent = process.call(loaded.base() + image.entry, args, std::chrono::seconds(5));
+			process.set_execution_wait({});
+			process.stop_thread(other);
+			const auto output = process.read_memory(second_data, sizeof second);
+			std::memcpy(&second, output.data(), sizeof second);
+			const auto main_output = process.read_memory(data, sizeof probe);
+			std::memcpy(&probe, main_output.data(), sizeof probe);
+			if (!started || probe.calls != 4 || !probe.preserved || !second.preserved)
+				throw std::runtime_error("parallel unix calls did not both complete");
+			if (concurrent.stop != raven::NativeStop::returned || concurrent.value || second.calls != 4 ||
+				second.native_thread == probe.native_thread || second.native_stack == probe.native_stack)
+				throw std::runtime_error("parallel unix calls shared pthread state");
+			std::cout << "concurrent pthread unix calls use distinct TSD, stacks and channels\n";
+		}
 		// Repeated native interrupts must not restart the call's deadline (a permanent native runloop would otherwise never time out).
 		const auto timed = process.call(loaded.base() + image.entry, args, std::chrono::milliseconds(10));
 		if (timed.stop != raven::NativeStop::timeout)

@@ -1,20 +1,27 @@
 # Direct3D through a guest-side Metal driver
 
-The x86_64 guest can call Darwin libraries on its main thread. `guest/unix_call.s` implements the Win64 unix-call entry
+The x86_64 guest can call Darwin libraries on each Windows pthread. `guest/unix_call.s` implements the Win64 unix-call entry
 `NTSTATUS (uint64_t handle, uint32_t code, void *args)`. The handle is a registered array of Darwin SysV functions, each taking
 one argument pointer. The agent service loads an explicitly supplied host library and finds `__wine_unix_call_funcs`.
 The caller must supply the table length from the pinned library's ABI; neither the guest nor a DLL search path chooses a native library.
 Libraries stay loaded until the agent exits. WoW64 tables and native-to-PE callbacks are not implemented.
 
-The gate preserves Win64's nonvolatile GPRs, XMM6-15 and floating-point control state. It uses a separate 2 MiB guarded stack,
-restores the agent's TSD before calling Darwin, and restores the Windows GS base before returning. Signal handling keeps the guest's
+The gate preserves Win64's nonvolatile GPRs, XMM6-15 and floating-point control state. Each pthread owns a separate 2 MiB guarded stack. The gate
+restores that pthread's Darwin TSD before calling Darwin, and restores the Windows GS base before returning. Signal handling keeps the guest's
 GS base separately: Rosetta's signal context reports zero for native GS, so the two assembly transitions identify the actual base.
-The scheduler defers switching Windows threads while the gate or its native function is active. Deadlines still terminate the agent.
+Before restoring TSD, the gate uses the TSD-independent `thread_selfid` syscall to find its pthread record. Records publish the
+native stack, TSD, Windows GS location and channel's active flag before entering PE code; joining a pthread retires its identity.
+The existing alternate-stack signal entry selects only Windows channels. Native Metal/dispatch workers have no such stack and
+ignore scheduler signals. The default scheduler defers logical switches while that channel's gate or native function is active;
+parallel channels continue independently. Deadlines still terminate the agent.
 
 `darwin_unix_call` runs an import-free PE with a real TEB, a tiny x86_64 Mach-O unixlib, and 1 ms scheduler interrupts. It verifies
 native pthread/TLS access, stack separation, GS restoration, all Win64 nonvolatile integer/vector registers, repeated calls,
 NTSTATUS results and rejection of unknown handles and function indices. It also checks that a unixlib allocation is readable by host
-APIs and that repeated native interrupts do not restart a call's deadline.
+APIs and that repeated native interrupts do not restart a call's deadline. `darwin_unix_call_parallel` additionally rendezvous two
+Windows pthreads inside native calls, checks distinct stacks/TSD and preserved state on both, and sends SIGUSR1 to native workers.
+The host pumps frames and completion events at most 1 ms apart while parallel guest channels run, as well as during Windows waits.
+IOSurface child layers inherit the existing Cocoa graphics layer's contentsScale; Cocoa retains control of DPI and resize pacing.
 
 ## Selected driver and presentation design
 
@@ -70,8 +77,9 @@ Wine's optional `__wine_dbg_output` now writes driver diagnostics to Raven's std
 `winemetal.dll` needs it (initial imports alone did not publish it). Metal validation/capture environment variables explicitly set
 on the host are forwarded to the native agent. Native faults report a module and backtrace without a debugger.
 
-Autorelease scopes need special handling because logical Windows threads share one pthread: their scopes may overlap without
-nesting. The adapter returns independent scope tokens and drains a shared native pool only when every overlapping scope ends.
+Autorelease scopes need special handling because logical Windows threads share one pthread in the default scheduler: their scopes
+may overlap without nesting. The adapter returns independent scope tokens and drains a native pool only when every overlapping
+scope on that pthread ends. Both the pool and scope count use Darwin thread-local storage for parallel mode.
 `darwin_dxmt_pool` deliberately releases the older of two scopes first and verifies that the second scope's NSString survives.
 MSAA and MRT fixtures also passed three cold-cache runs each after this change.
 

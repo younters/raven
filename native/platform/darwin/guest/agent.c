@@ -547,6 +547,8 @@ static void serve(struct raven_service_channel *service)
 		store(&control->threads[a[0]].state, RAVEN_THREAD_EXIT);
 		errno = pthread_join(guest_threads[a[0]], NULL);
 		ok = errno == 0;
+		if (ok)
+			__atomic_store_n(&raven_unix_threads[a[0]].identity, 0, __ATOMIC_RELEASE);
 		break;
 	case RAVEN_SERVICE_COMPARE_EXCHANGE:
 		if ((a[3] != 4 && a[3] != 8) || a[0] % a[3]) {
@@ -772,6 +774,9 @@ static void load_context(ucontext_t *context, const struct raven_thread_channel 
 void raven_agent_stop(int signal, siginfo_t *info, void *raw, uint32_t index)
 {
 	if (index >= RAVEN_GUEST_MAX_THREADS) {
+		// Native dispatch/Metal workers have no Windows channel or alternate stack. A stray scheduler signal has no work for them.
+		if (signal == SIGUSR1)
+			return;
 		// A fault of a guarded copy the service makes, not of the guest.
 		if (pthread_equal(pthread_self(), service_thread) && service_guarded)
 			siglongjmp(service_recovery, 1);

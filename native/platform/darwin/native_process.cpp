@@ -1571,6 +1571,12 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 	int signal = 0, code = 0;
 	uint64_t fault_address = 0;
 	for (;;) {
+		const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(execution_deadline - std::chrono::steady_clock::now());
+		if (remaining.count() <= 0) {
+			child.stop();
+			return {NativeStop::timeout, 0, 0, 0};
+		}
+		child.set_timeout(remaining);
 		const bool slicing = !parallel() && state->slice.count() > 0 && state->slice_yield && state->slice_wanted && state->slice_wanted();
 		std::chrono::steady_clock::duration period = state->slice;
 		if (slicing && std::chrono::steady_clock::now() - state->slice_started >= state->slice) {
@@ -1608,8 +1614,9 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 				const auto spin_until = std::min(until, std::chrono::steady_clock::now() + std::chrono::microseconds(5));
 				while (!ready() && std::chrono::steady_clock::now() < spin_until) {}
 				if (!ready())
-					state->execution_wait(ready, until);
-				if (command() || queued())
+					state->execution_wait(ready, state->unix_pump ?
+						std::min(until, std::chrono::steady_clock::now() + std::chrono::milliseconds(1)) : until);
+				if (command() || queued() || state->unix_pump)
 					serve_pending();
 			}
 			status = load(&thread.state) == RAVEN_THREAD_STOPPED ? 1 : sampling && until < execution_deadline ? -2 : -1;
@@ -1848,7 +1855,7 @@ bool NativeProcess::served_wait_trap(uint64_t address) const
 
 bool NativeProcess::inside_served_stub() const
 {
-	// Darwin libraries run on the one real guest thread with its own stack and TSD. A stopped unix call must resume on that thread.
+	// A stopped unix call owns this pthread's native stack and TSD. Defer logical thread switches on its channel only.
 	const auto &control = *state->child->control;
 	const uint64_t instruction = state->registers().rip;
 	if (load(&state->child->thread().unix_active) || (instruction >= control.unix_call_gate && instruction < control.unix_call_gate_end))

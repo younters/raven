@@ -9,8 +9,10 @@
 _raven_unix_call_gate:
 	// SYS_thread_selfid has no arguments and needs neither GS nor libc. Preserve the Win64 handle across syscall.
 	movq %rcx, %r9
+	movq %rdx, %r10
 	movl $0x2000174, %eax
 	syscall
+	movq %r10, %rdx
 	leaq _raven_unix_threads(%rip), %r10
 	movl $256, %r11d
 1:

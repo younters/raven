@@ -142,7 +142,10 @@ if(TARGET raven_cpu AND RAVEN_MINGW64)
     add_dependencies(darwin_unix_call_test darwin_unix_call_fixtures raven-bootstrap)
     add_test(NAME darwin_unix_call COMMAND darwin_unix_call_test $<TARGET_FILE:raven-bootstrap>
         ${RAVEN_UNIX_CALL_PE} ${RAVEN_UNIX_CALL_LIBRARY})
-    set_tests_properties(darwin_unix_call PROPERTIES TIMEOUT 20)
+    add_test(NAME darwin_unix_call_parallel COMMAND ${CMAKE_COMMAND} -E env RAVEN_PARALLEL=1
+        $<TARGET_FILE:darwin_unix_call_test> $<TARGET_FILE:raven-bootstrap>
+        ${RAVEN_UNIX_CALL_PE} ${RAVEN_UNIX_CALL_LIBRARY})
+    set_tests_properties(darwin_unix_call darwin_unix_call_parallel PROPERTIES TIMEOUT 20)
 endif()
 
 # raven-bootstrap keeps its name, so everything that locates it next to raven finds the macOS guest the same way.
