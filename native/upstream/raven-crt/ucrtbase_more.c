@@ -1188,6 +1188,39 @@ RavenDivision raven_div(int numerator, int denominator)
 
 /* ---- math ---- */
 
+/* MinGW's reentrant gamma implementation uses the same double ABI as the Windows CRT. Windows long double is also a double. */
+extern double __lgamma_r(double, int *);
+__asm__(".section .drectve\n\t.ascii \" -export:lgamma\"\n\t.text");
+CRT float lgammaf(float x) { int sign; return (float)__lgamma_r(x, &sign); }
+CRT double lgammal(double x) { int sign; return __lgamma_r(x, &sign); }
+
+/* log1p preserves the small arguments; the large-argument forms avoid squaring values that would overflow. */
+CRT double acosh(double x)
+{
+	if (x > 1e154) return log(x) + 0.69314718055994530942;
+	return log1p(x - 1 + sqrt(x - 1) * sqrt(x + 1));
+}
+
+CRT double asinh(double x)
+{
+	const double magnitude = fabs(x);
+	if (magnitude < 1e-154) return x;
+	const double result = magnitude > 1e154 ? log(magnitude) + 0.69314718055994530942 :
+		log1p(magnitude + magnitude * magnitude / (1 + sqrt(1 + magnitude * magnitude)));
+	return copysign(result, x);
+}
+
+CRT double atanh(double x)
+{
+	const double magnitude = fabs(x);
+	if (magnitude < 1e-154) return x;
+	return copysign(0.5 * log1p(2 * magnitude / (1 - magnitude)), x);
+}
+
+CRT float acoshf(float x) { return (float)acosh(x); }
+CRT float asinhf(float x) { return (float)asinh(x); }
+CRT float atanhf(float x) { return (float)atanh(x); }
+
 /* Rounding to an integer in the current mode: adding and removing 2^52 leaves no fraction bits. Larger values are integers already. */
 CRT double rint(double x)
 {

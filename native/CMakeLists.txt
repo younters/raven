@@ -1671,6 +1671,15 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     list(APPEND DYNAMIC_DIALOG_CLIENTS ${secure_client})
                     add_test(NAME native_secure_stream_x${width} COMMAND raven --run-process --execution=native ${secure_client})
                     set_tests_properties(native_secure_stream_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(gamma_client ${CMAKE_CURRENT_BINARY_DIR}/gamma${width}.exe)
+                    add_custom_command(OUTPUT ${gamma_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${gamma_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/gamma_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/gamma_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${gamma_client})
+                    add_test(NAME native_gamma_x${width} COMMAND raven --run-process --execution=native ${gamma_client})
+                    set_tests_properties(native_gamma_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                     set(bitmap_client ${CMAKE_CURRENT_BINARY_DIR}/bitmap-file${width}.exe)
                     set(bitmap_defines)
                     if((width EQUAL 64 AND RAVEN_INSTALLER_COMPONENT_DIR) OR (width EQUAL 32 AND RAVEN_INSTALLER32_COMPONENT_DIR))
@@ -2455,7 +2464,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     COMMAND ${RAVEN_MINGW32} -c -O2 -w -ffreestanding -fno-builtin -ffile-prefix-map=${PROJECT_SOURCE_DIR}=raven
                         ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase.c -o ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.o
                     COMMAND ${RAVEN_MINGW32} -shared -nostdlib -Wl,--entry,_DllMain@12,--image-base,0x1fc00000,--no-insert-timestamp
-                        -o ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.dll ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.o ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase32.def -lkernel32 -lgcc
+                        -o ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.dll ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.o ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase32.def -lmingwex -lkernel32 -lgcc
                     DEPENDS ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase32.def ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_io.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_legacy.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_msvcrt.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_cpp.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_cxx.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_more.c VERBATIM)
                 add_custom_target(x86_ucrt_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.dll)
                 # mscoree.dll, the system's entry to the .NET Framework, for each width: it hands every call to the shim implementation the

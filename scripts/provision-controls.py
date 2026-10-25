@@ -318,7 +318,7 @@ def main():
         run([triple + "-gcc", "-c", "-O2", "-w", "-ffreestanding", "-fno-builtin", f"-ffile-prefix-map={repo}=raven",
              repo / "native/upstream/raven-crt/ucrtbase.c", "-o", crt_object])
         run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['crt']:#x},--no-insert-timestamp", *link_extra,
-             "-o", output / "ucrtbase.dll", crt_object, "-lkernel32", "-lgcc"])
+             "-o", output / "ucrtbase.dll", crt_object, "-lmingwex", "-lkernel32", "-lgcc"])
     result = dict(revision=REVISION, archive_sha256=ARCHIVE_SHA256, commands=records,
                   license_notices=preserve_notices(source, output),
                   component_sha256={name: hashlib.sha256((output / name).read_bytes()).hexdigest()
