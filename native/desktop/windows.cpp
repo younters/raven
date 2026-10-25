@@ -125,13 +125,26 @@ uint64_t NativeWindows::surface_dc(uint64_t handle)
 	const auto size=(size_t(width)*size_t(height)*4+4095)&~size_t(4095);
 	std::shared_ptr<SharedPixels> shared;
 	uint64_t address=0;
-	if (const auto spare=spare_surfaces.find(handle); spare!=spare_surfaces.end() && spare->second.size>=size) {
+	// Only at the same width: what draws into a surface from the guest knows it by its address, rows and all, so a narrower surface at
+	// the old address would be drawn with the old row length.
+	if (const auto spare=spare_surfaces.find(handle); spare!=spare_surfaces.end() && spare->second.size>=size && spare->second.width==uint32_t(width)) {
 		shared=spare->second.pixels;
 		address=spare->second.address;
 		spare_surfaces.erase(spare);
 	} else {
-		drop_spare_surface(handle);
 		shared=std::make_shared<SharedPixels>(size);
+		// A resized window shows what it showed before until it draws again, as on Windows, instead of a blank surface.
+		if (const auto spare=spare_surfaces.find(handle); spare!=spare_surfaces.end() && spare->second.pixels && spare->second.width) {
+			const auto &old=spare->second;
+			const size_t columns=std::min<size_t>(old.width,size_t(width))*4,rows=std::min<size_t>(old.height,size_t(height));
+			// What was never shown has the face color of windows until the program paints it.
+			const uint32_t face=0xfff0f0f0U;
+			for (size_t at=0;at<size_t(width)*size_t(height);++at)
+				std::memcpy(shared->data()+at*4,&face,4);
+			for (size_t row=0;row<rows;++row)
+				std::memcpy(shared->data()+row*size_t(width)*4,old.pixels->data()+row*size_t(old.width)*4,columns);
+		}
+		drop_spare_surface(handle);
 		address=process.map_shared(shared->descriptor(),size);
 	}
 	uint64_t bitmap=0,dc=0;
@@ -520,7 +533,7 @@ void NativeWindows::release_surface(uint64_t handle)
 		const auto address=record->address;
 		if (resizing && record->shared) {
 			drop_spare_surface(handle);
-			spare_surfaces[handle]={record->shared,address,record->shared->size()};
+			spare_surfaces[handle]={record->shared,address,record->shared->size(),record->width,record->height};
 		} else {
 			process.unmap_memory(address);
 		}

@@ -145,6 +145,12 @@ struct CocoaPresentation::State {
 		uint64_t parent = 0;
 		int32_t popup_x = 0, popup_y = 0;
 		uint32_t width = 0, height = 0, pending_width = 0, pending_height = 0;
+		// The size last told to the program and when, until a frame of that size arrives: one at a time, as a compositor's configure
+		// waits for its acknowledgement, so a resize never lands in the middle of the program drawing the previous one.
+		uint32_t told_width = 0, told_height = 0;
+		std::chrono::steady_clock::time_point told{}, last_present{};
+		// Whether a frame of the size told has arrived: the next size waits for the program to stop drawing after it.
+		bool told_answered = false;
 		NSRect restored{};
 		~Surface()
 		{
@@ -186,6 +192,13 @@ struct CocoaPresentation::State {
 	bool resize_cursor = false;
 	// RAVEN_TRACE_COCOA=1 reports sizes and events.
 	const bool trace = std::getenv("RAVEN_TRACE_COCOA") != nullptr;
+	// Diagnostics: RAVEN_COCOA_DUMP=<directory> writes each frame presented as a PPM image; RAVEN_COCOA_RESIZE_TEST=1 resizes the first
+	// window from its right edge in steps a few seconds after it is shown, as a drag would.
+	const char *dump_directory = std::getenv("RAVEN_COCOA_DUMP");
+	unsigned dumped = 0;
+	const bool resize_test = std::getenv("RAVEN_COCOA_RESIZE_TEST") != nullptr;
+	std::chrono::steady_clock::time_point first_shown{}, last_step{};
+	int resize_steps = 0;
 	double wheel = 0, horizontal_wheel = 0;
 
 	xkb_context *context = nullptr;
@@ -836,10 +849,27 @@ struct CocoaPresentation::State {
 					target->pending_width, target->pending_height);
 			if (target->pending_width == width && target->pending_height == height)
 				target->resized = false;
+			target->last_present = std::chrono::steady_clock::now();
+			if (target->told_width == width && target->told_height == height)
+				target->told_answered = true;
 			target->width = width;
 			target->height = height;
 			set_size(*target, width, height);
 			show(*target, pixels, width, height);
+			if (dump_directory && dumped < 400) {
+				const auto path = std::string(dump_directory) + "/frame-" + std::to_string(dumped++) + "-" + std::to_string(width) + "x" +
+					std::to_string(height) + ".ppm";
+				if (FILE *file = std::fopen(path.c_str(), "wb")) {
+					std::fprintf(file, "P6\n%u %u\n255\n", width, height);
+					for (size_t at = 0; at < pixels.size(); at += 4) {
+						const uint8_t rgb[3] = {pixels[at + 2], pixels[at + 1], pixels[at]};
+						std::fwrite(rgb, 1, 3, file);
+					}
+					std::fclose(file);
+				}
+			}
+			if (first_shown == std::chrono::steady_clock::time_point{})
+				first_shown = std::chrono::steady_clock::now();
 			if (target->window.miniaturized)
 				[target->window deminiaturize:nil];
 			if (!target->window.visible)
@@ -1037,16 +1067,39 @@ struct CocoaPresentation::State {
 			return events;
 		}
 		pump(budget);
+		if (resize_test && first_shown != std::chrono::steady_clock::time_point{} && resize_steps < 16) {
+			const auto now = std::chrono::steady_clock::now();
+			if (now - first_shown > std::chrono::seconds(4) && now - last_step > std::chrono::milliseconds(120)) {
+				for (auto &[handle, window] : surfaces)
+					if (!window->popup) {
+						NSRect frame = window->window.frame;
+						frame.size.width += resize_steps < 8 ? 37 : -29;
+						[window->window setFrame:frame display:YES];
+						break;
+					}
+				++resize_steps;
+				last_step = now;
+			}
+		}
 		events.swap(pending);
 		if (trace)
 			for (const auto &event : events)
 				if (event.kind == DesktopEventKind::resize || event.kind == DesktopEventKind::message)
 					std::fprintf(stderr, "cocoa: event %d window %llx message %x x %d y %d\n", int(event.kind),
 						(unsigned long long)event.window, event.message, event.x, event.y);
+		const auto now = std::chrono::steady_clock::now();
 		for (auto &[handle, window] : surfaces)
 			if (window->resized && !window->popup) {
+				// Still waiting for the program to draw the size it was told last, unless it settled on another one meanwhile.
+				const bool settled = window->told_answered && now - window->last_present > std::chrono::milliseconds(12);
+				if (window->told_width && !settled && now - window->told < std::chrono::milliseconds(250))
+					continue;
 				events.push_back({handle, 0, 0, 0, DesktopEventKind::resize, int32_t(window->pending_width), int32_t(window->pending_height)});
 				window->resized = false;
+				window->told_width = window->pending_width;
+				window->told_height = window->pending_height;
+				window->told = now;
+				window->told_answered = false;
 			}
 		return events;
 	}
