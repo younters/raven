@@ -214,6 +214,7 @@ struct CocoaPresentation::State {
 	std::chrono::steady_clock::time_point first_shown{}, last_step{};
 	int resize_steps = 0;
 	double wheel = 0, horizontal_wheel = 0;
+	bool control_click = false;
 
 	xkb_context *context = nullptr;
 	xkb_keymap *keymap = nullptr;
@@ -635,11 +636,13 @@ struct CocoaPresentation::State {
 		case NSEventTypeLeftMouseDown:
 			last_press = event;
 			// Control-click is the Mac's right click.
-			pointer(DesktopEventKind::pointer_button, window, x, y,
-				(event.modifierFlags & NSEventModifierFlagControl) && !command_is_control ? button_right : button_left, 1);
+			control_click = (event.modifierFlags & NSEventModifierFlagControl) && !command_is_control;
+			pointer(DesktopEventKind::pointer_button, window, x, y, control_click ? button_right : button_left, 1);
 			break;
 		case NSEventTypeLeftMouseUp:
-			pointer(DesktopEventKind::pointer_button, window, x, y, button_left, 0);
+			// The release of a Control-click is the right button's, whether Control is still held or not.
+			pointer(DesktopEventKind::pointer_button, window, x, y, control_click ? button_right : button_left, 0);
+			control_click = false;
 			break;
 		case NSEventTypeRightMouseDown:
 		case NSEventTypeRightMouseUp:

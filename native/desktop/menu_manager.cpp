@@ -176,7 +176,8 @@ void NativeWindows::register_menu_api(ApiRegistry &registry)
 			return;
 		}
 		size_t position = menu->items.size();
-		if (call.u32(1) != UINT32_MAX) {
+		// A position at or past the end appends, as Windows does: programs build menus by inserting at 0, 1, 2 and so on.
+		if (call.u32(1) != UINT32_MAX && !((flags & by_position) && call.u32(1) >= menu->items.size())) {
 			const auto where = locate(call[0], call.u32(1), flags);
 			if (!where.found || where.menu != call[0]) {
 				call.fail(1456);
@@ -346,7 +347,7 @@ void NativeWindows::register_menu_api(ApiRegistry &registry)
 			const auto where = locate(call[0], call.u32(1), call.u32(2) ? by_position : 0);
 			if (call.u32(1) != UINT32_MAX && where.found && where.menu == call[0])
 				position = where.index;
-			else if (call.u32(1) != UINT32_MAX && call.u32(2)) {
+			else if (call.u32(1) != UINT32_MAX && call.u32(2) && call.u32(1) < menu->items.size()) {
 				call.fail(1456);
 				return;
 			} else if (where.found && where.menu == call[0]) {
