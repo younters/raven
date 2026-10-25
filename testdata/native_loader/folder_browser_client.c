@@ -16,6 +16,45 @@ static int CALLBACK browse(HWND window, UINT message, LPARAM selection, LPARAM d
 	return 0;
 }
 
+static LRESULT CALLBACK paint_child(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+{
+	if (message == WM_PAINT) {
+		PAINTSTRUCT paint;
+		HDC dc = BeginPaint(window, &paint);
+		FillRect(dc, &paint.rcPaint, GetStockObject(BLACK_BRUSH));
+		EndPaint(window, &paint);
+		return 0;
+	}
+	return DefWindowProcW(window, message, wparam, lparam);
+}
+
+/* A default parent paint must schedule children it erased to paint again, just as EndPaint does. */
+static int repaint_children(void)
+{
+	WNDCLASSW parent_class = {0}, child_class = {0};
+	parent_class.lpfnWndProc = DefWindowProcW;
+	parent_class.lpszClassName = L"parity-paint-parent";
+	parent_class.hbrBackground = GetStockObject(WHITE_BRUSH);
+	child_class.lpfnWndProc = paint_child;
+	child_class.lpszClassName = L"parity-paint-child";
+	if (!RegisterClassW(&parent_class) || !RegisterClassW(&child_class)) return 11;
+	HWND parent = CreateWindowW(parent_class.lpszClassName, L"", WS_VISIBLE | WS_POPUP, 0, 0, 100, 80, NULL, NULL, NULL, NULL);
+	HWND child = CreateWindowW(child_class.lpszClassName, L"", WS_VISIBLE | WS_CHILD, 10, 10, 40, 20, parent, NULL, NULL, NULL);
+	if (!parent || !child) return 12;
+	UpdateWindow(parent);
+	UpdateWindow(child);
+	if (GetUpdateRect(child, NULL, FALSE)) return 13;
+	InvalidateRect(parent, NULL, TRUE);
+	UpdateWindow(parent);
+	if (!GetUpdateRect(child, NULL, FALSE)) return 14;
+	UpdateWindow(child);
+	HDC dc = GetDC(parent);
+	COLORREF pixel = GetPixel(dc, 15, 15);
+	ReleaseDC(parent, dc);
+	DestroyWindow(parent);
+	return pixel == RGB(0, 0, 0) ? 0 : 15;
+}
+
 int raven_entry(void)
 {
 	HMODULE shell = LoadLibraryW(L"shell32.dll");
@@ -52,5 +91,5 @@ int raven_entry(void)
 	if (SHGetSpecialFolderLocation(NULL, CSIDL_PROGRAM_FILES, &pidl) || !pidl || !SHGetPathFromIDListW(pidl, display) || lstrcmpW(path, display)) return 10;
 	free_list(pidl);
 	free_list(NULL);
-	return 0;
+	return repaint_children();
 }

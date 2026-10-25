@@ -465,6 +465,7 @@ private:
 	DesktopRect update_rect(uint64_t window,uint64_t address);
 	struct PaintStart { uint64_t dc; DesktopRect rect; bool erase; };
 	PaintStart start_paint(uint64_t window);
+	void finish_paint(uint64_t window);
 	std::string text(uint64_t address);
 	std::u16string window_text(uint64_t address);
 	uint64_t copy_window_text(uint64_t window,uint64_t output,uint64_t capacity);

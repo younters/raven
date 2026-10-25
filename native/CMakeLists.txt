@@ -1718,7 +1718,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     add_custom_command(OUTPUT ${folder_browser_client}
                         COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
                             -Wl,--entry,${dialog_entry},--no-insert-timestamp
-                            -o ${folder_browser_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/folder_browser_client.c -lkernel32 -luser32 -lshell32 -lole32
+                            -o ${folder_browser_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/folder_browser_client.c -lkernel32 -luser32 -lgdi32 -lshell32 -lole32
                         DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/folder_browser_client.c VERBATIM)
                     list(APPEND DYNAMIC_DIALOG_CLIENTS ${folder_browser_client})
                     if((width EQUAL 64 AND RAVEN_CONTROLS_COMPONENT_DIR) OR (width EQUAL 32 AND RAVEN_CONTROLS32_COMPONENT_DIR))
