@@ -507,6 +507,7 @@ void GuestAgent::send_descriptor(int descriptor)
 
 struct NativeProcess::State {
 	std::unique_ptr<GuestAgent> child;
+	bool unix_loaded = false;
 	// The host's own mapping of a view: from the host page at or before its offset, pointed at the guest's first byte.
 	struct SharedView {
 		void *mapping = MAP_FAILED;
@@ -640,12 +641,32 @@ bool NativeProcess::State::covers(uint64_t address, size_t size, int protection)
 	const uint64_t end = address + size;
 	while (address < end) {
 		auto found = mappings.upper_bound(address);
-		if (found == mappings.begin())
+		if (found != mappings.begin()) {
+			const auto &mapping = std::prev(found)->second;
+			if (address - mapping.address < mapping.size) {
+				if ((mapping.protection & protection) != protection)
+					return false;
+				address = std::min(end, mapping.address + mapping.size);
+				continue;
+			}
+		}
+		// Unix libraries and Metal allocate memory themselves (mapped staging textures, shader blobs, malloc). These addresses never
+		// enter the Windows allocator's map. Validate them against the guest task's actual VM permissions before a host API uses them.
+		if (!unix_loaded)
 			return false;
-		const auto &mapping = std::prev(found)->second;
-		if (address - mapping.address >= mapping.size || (mapping.protection & protection) != protection)
+		mach_vm_address_t base = address;
+		mach_vm_size_t length = 0;
+		vm_region_basic_info_data_64_t info{};
+		mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+		mach_port_t object = MACH_PORT_NULL;
+		const auto status = mach_vm_region(child->task, &base, &length, VM_REGION_BASIC_INFO_64,
+			reinterpret_cast<vm_region_info_t>(&info), &count, &object);
+		if (object != MACH_PORT_NULL)
+			mach_port_deallocate(mach_task_self(), object);
+		if (status != KERN_SUCCESS || base > address || !length || (info.protection & protection) != protection)
 			return false;
-		address = std::min(end, mapping.address + mapping.size);
+		const uint64_t limit = found == mappings.end() ? end : std::min(end, found->first);
+		address = std::min(limit, base + length);
 	}
 	return true;
 }
@@ -653,8 +674,12 @@ bool NativeProcess::State::covers(uint64_t address, size_t size, int protection)
 int NativeProcess::State::protection_at(uint64_t address) const
 {
 	const auto found = mappings.upper_bound(address);
-	if (found == mappings.begin() || address - std::prev(found)->second.address >= std::prev(found)->second.size)
-		return PROT_NONE;
+	if (found == mappings.begin() || address - std::prev(found)->second.address >= std::prev(found)->second.size) {
+		if (!unix_loaded)
+			return PROT_NONE;
+		return (covers(address, 1, PROT_READ) ? PROT_READ : 0) | (covers(address, 1, PROT_WRITE) ? PROT_WRITE : 0) |
+			(covers(address, 1, PROT_EXEC) ? PROT_EXEC : 0);
+	}
 	return std::prev(found)->second.protection;
 }
 
@@ -1604,7 +1629,6 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 				} else if (!wanted) {
 					state->slice_started = std::chrono::steady_clock::now();
 				}
-				child.set_timeout(timeout);
 				continue;
 			}
 			// A stop of the guest's own came first; the interrupt it answered is spent.
@@ -1837,6 +1861,13 @@ uint64_t NativeProcess::unix_call_gate() const
 	return state->mode == NativeMode::x64 ? state->child->control->unix_call_gate : 0;
 }
 
+void NativeProcess::drain_unix_events(const std::function<void(uint64_t)> &signal)
+{
+	for (auto &slot : state->child->control->unix_events)
+		if (const uint64_t handle = __atomic_exchange_n(&slot, 0, __ATOMIC_ACQ_REL))
+			signal(handle);
+}
+
 uint64_t NativeProcess::load_unix_library(const std::string &path, uint32_t function_count)
 {
 	state->require_stopped();
@@ -1844,7 +1875,9 @@ uint64_t NativeProcess::load_unix_library(const std::string &path, uint32_t func
 		path.find('\0') != path.npos || path.size() >= RAVEN_CONTROL_DATA_SIZE)
 		throw std::runtime_error("invalid x64 unix library request");
 	std::memcpy(state->child->data, path.c_str(), path.size() + 1);
-	return state->service(RAVEN_SERVICE_LOAD_UNIXLIB, {function_count}, "unix library load");
+	const auto handle = state->service(RAVEN_SERVICE_LOAD_UNIXLIB, {function_count}, "unix library load");
+	state->unix_loaded = true;
+	return handle;
 }
 
 uint64_t NativeProcess::serve_call(uint64_t stub, std::vector<uint64_t> words, std::array<uint64_t, 4> floats, uint64_t stack, bool queued)

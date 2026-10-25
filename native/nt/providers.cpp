@@ -25,6 +25,9 @@
 #include "desktop/api.h"
 #include "desktop/windows.h"
 #include "cpu/served_queue.h"
+#ifdef __APPLE__
+#include "platform/darwin/unix_calls.h"
+#endif
 #ifdef RAVEN_OPENGL
 #include "graphics/opengl_bridge.h"
 #endif
@@ -1553,6 +1556,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	std::map<uint64_t,std::pair<uint32_t,std::string>> services;
 	std::map<uint32_t, std::string> generated_services;
 	std::vector<std::string_view> nt_names(NativeMemory::nt_exports().begin(),NativeMemory::nt_exports().end());
+#ifdef __APPLE__
+	nt_names.push_back("__wine_unix_call_dispatcher");
+#endif
 	nt_names.insert(nt_names.end(),NativeEnvironment::nt_exports().begin(),NativeEnvironment::nt_exports().end());
 	nt_names.insert(nt_names.end(),NativeObjectAPI::nt_exports().begin(),NativeObjectAPI::nt_exports().end());
 	const bool has_heap=modules.all().contains("raven-rtl.dll");
@@ -1719,6 +1725,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	if (modules.all().contains("ntdll.dll"))
 		for (const auto &symbol : modules.all().at("ntdll.dll")->exports)
 			for (const auto &name : symbol.names)
+#ifdef __APPLE__
+				if (name != "__wine_unix_call_dispatcher")
+#endif
 				if (symbol.address && (modules.all().at("ntdll.dll")->runtime_api || std::find(nt_names.begin(),nt_names.end(),name)!=nt_names.end()) && symbol.forwarder.empty()) {
 					const auto &image=*modules.all().at("ntdll.dll");
 					if (image.runtime_api) {
@@ -1767,6 +1776,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		images.push_back(&module->loaded);
 	const auto deadline = std::chrono::steady_clock::now() + timeout;
 	NativeProcess process(images, bootstrap, timeout, NativeMode::x64, entry.image.stack_reserve);
+#ifdef __APPLE__
+	DarwinUnixCalls darwin_unix_calls(process, modules);
+#endif
 	for (const auto &[address, name] : traps)
 		process.add_api_trap(address);
 	NativeEnvironment environment(process, entry.loaded.base(), uint32_t(::getpid()), 1);
@@ -2005,6 +2017,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			try {
 				const WindowCallScope window_scope(windows);
 				// The generalized desktop services come first so that they replace the older narrow ones.
+#ifdef __APPLE__
+				if (darwin_unix_calls.dispatch(api_name))
+					dispatched = true;
+				else
+#endif
 				dispatched = desktop_api.dispatch(process, environment, api_name) || environment.dispatch(api_name) || module_api.dispatch(api_name) || resources.dispatch(api_name) || memory.dispatch(api_name) || object_api.dispatch(api_name) || heap.dispatch(api_name) || desktop.dispatch(api_name) || windows.dispatch(api_name) || api_registry.dispatch(process, environment, api_name)
 #ifdef RAVEN_VULKAN
 					|| vulkan.dispatch(api_name)
@@ -2121,6 +2138,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	});
 	GuestAllocator allocator(memory, heap);
 	NativeThreads threads(process, environment, memory, &tls, deadline);
+#ifdef __APPLE__
+	const auto unix_events = [&] { process.drain_unix_events([&](uint64_t event) { kernel_objects.set_event(event, true); }); };
+	threads.add_service(unix_events);
+	threads.add_pump(unix_events);
+#endif
 	threads.set_runner(invoke);
 	threads_ptr = &threads;
 #ifdef __APPLE__

@@ -5,13 +5,17 @@
 if(TARGET raven_cpu)
     get_target_property(RAVEN_CPU_SOURCES raven_cpu SOURCES)
     list(REMOVE_ITEM RAVEN_CPU_SOURCES cpu/native_cpu.cpp)
-    list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/native_process.cpp)
+    list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/native_process.cpp ${RAVEN_DARWIN_DIR}/unix_calls.cpp)
     list(REMOVE_ITEM RAVEN_CPU_SOURCES desktop/shared_pixels.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/shared_pixels.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/system_api.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/desktop_idle.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/dpi.cpp)
     set_property(TARGET raven_cpu PROPERTY SOURCES ${RAVEN_CPU_SOURCES})
+    set(RAVEN_DXMT_ROOT "" CACHE PATH "Provisioned DXMT root (pe64/ and unix64/); RAVEN_DXMT_ROOT environment overrides it")
+    if(RAVEN_DXMT_ROOT)
+        set_property(SOURCE ${RAVEN_DARWIN_DIR}/unix_calls.cpp APPEND PROPERTY COMPILE_DEFINITIONS RAVEN_DXMT_ROOT="${RAVEN_DXMT_ROOT}")
+    endif()
     # GNU ld only; ld64 keeps every library it is given.
     get_target_property(RAVEN_CPU_LINK_OPTIONS raven_cpu INTERFACE_LINK_OPTIONS)
     if(RAVEN_CPU_LINK_OPTIONS)
@@ -53,6 +57,25 @@ if(TARGET vulkan_pe_fixture AND RAVEN_MINGW64)
             ${CMAKE_CURRENT_BINARY_DIR}/vulkan-cocoa-present)
         set_tests_properties(native_vulkan_cocoa_present PROPERTIES TIMEOUT 60)
     endif()
+endif()
+
+if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
+    foreach(workload device triangle)
+        if(workload STREQUAL "device")
+            set(RAVEN_DXMT_FIXTURE ${RAVEN_DARWIN_DIR}/tests/dxmt_device.c)
+        else()
+            set(RAVEN_DXMT_FIXTURE ${PROJECT_SOURCE_DIR}/testdata/d3d11/triangle.c)
+        endif()
+        set(RAVEN_DXMT_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-${workload}.exe)
+        add_custom_command(OUTPUT ${RAVEN_DXMT_EXE}
+            COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DXMT_FIXTURE}
+                -o ${RAVEN_DXMT_EXE} -ld3d11 -ldxgi -lkernel32 -luser32 -lgcc
+            DEPENDS ${RAVEN_DXMT_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/d3d11/tri_shaders.h VERBATIM)
+        add_custom_target(darwin_dxmt_${workload}_fixture ALL DEPENDS ${RAVEN_DXMT_EXE})
+        add_test(NAME darwin_dxmt_${workload} COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+            $<TARGET_FILE:raven> ${RAVEN_DXMT_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-${workload} ${workload})
+        set_tests_properties(darwin_dxmt_${workload} PROPERTIES TIMEOUT 120)
+    endforeach()
 endif()
 
 # A real PE caller and a tiny Mach-O unixlib exercise the boundary without Wine or a graphics driver.

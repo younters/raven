@@ -574,6 +574,18 @@ static void serve(struct raven_service_channel *service)
 			break;
 		}
 		const uint32_t index = unix_library_count;
+		void (*initialize)(struct raven_control *) = dlsym(module, "raven_unixlib_init");
+		if (initialize)
+			initialize(control);
+		void *(*wrap)(void *, uint32_t) = dlsym(module, "raven_unixlib_wrap_table");
+		if (wrap)
+			functions = wrap(functions, (uint32_t)a[0]);
+		if (!functions) {
+			errno = ENOEXEC;
+			ok = 0;
+			dlclose(module);
+			break;
+		}
 		unix_libraries[index] = (struct unix_library){module, functions, (uint32_t)a[0]};
 		__atomic_store_n(&unix_library_count, index + 1, __ATOMIC_RELEASE);
 		result = (uint64_t)functions;

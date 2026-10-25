@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import urllib.request
 
@@ -87,7 +88,12 @@ def main():
     arguments = parser.parse_args()
     manifest_path = Path(__file__).resolve().parent.parent / "native/graphics/backends.json"
     try:
-        provision(arguments.destination.resolve(), json.loads(manifest_path.read_text()))
+        packages = json.loads(manifest_path.read_text())
+        packages.pop("dxmt", None)
+        provision(arguments.destination.resolve(), packages)
+        if sys.platform == "darwin":
+            subprocess.run([sys.executable, str(Path(__file__).with_name("provision-dxmt.py")),
+                            "--destination", str(arguments.destination.resolve())], check=True)
     except (OSError, RuntimeError, subprocess.CalledProcessError, tarfile.TarError) as error:
         parser.exit(1, f"graphics provisioning failed: {error}\n")
 

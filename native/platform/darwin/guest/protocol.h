@@ -84,6 +84,8 @@ enum raven_thread_state {
 // Stop reasons beyond signal numbers.
 #define RAVEN_STOP_INTERRUPT (-1)
 
+#define RAVEN_UNIX_EVENT_SLOTS 64
+
 // Linux's user_regs_struct, field for field.
 struct raven_registers {
 	uint64_t r15, r14, r13, r12, rbp, rbx, r11, r10, r9, r8, rax, rcx, rdx, rsi, rdi, orig_rax, rip, cs, eflags, rsp, ss, fs_base,
@@ -131,6 +133,8 @@ struct raven_control {
 	uint64_t pad1[2];
 	struct raven_thread_channel threads[RAVEN_GUEST_MAX_THREADS];
 	uint64_t pad2[6];
+	// Native GPU completion callbacks publish Windows event handles; the host scheduler consumes each nonzero slot.
+	uint64_t unix_events[RAVEN_UNIX_EVENT_SLOTS];
 };
 
 // The size of the shared file: the block, and the data area that READ and WRITE move memory through.

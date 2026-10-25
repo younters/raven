@@ -2,11 +2,14 @@
 #include <errno.h>
 #include <pthread.h>
 #include <time.h>
+#include <string.h>
 #include <unistd.h>
 
 static int32_t probe(void *args)
 {
 	struct unix_call_probe *p = args;
+	if (!p->native_allocation)
+		p->native_allocation = (uint64_t)strdup("native allocation");
 	char local;
 	p->native_stack = (uint64_t)&local;
 	p->native_thread = (uint64_t)pthread_self();

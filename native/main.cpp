@@ -14,6 +14,9 @@
 #include "nt/handle_channel.h"
 #include "nt/text.h"
 #include "nt/system_exports.h"
+#ifdef __APPLE__
+#include "platform/darwin/unix_calls.h"
+#endif
 #ifdef RAVEN_OPENGL
 #include "graphics/opengl_bridge.h"
 #endif
@@ -445,6 +448,11 @@ int main(int argc, char **argv)
 							if (std::filesystem::exists(component))
 								return read_module(component.c_str());
 						}
+#ifdef __APPLE__
+						if (!selected)
+							if (auto module = raven::darwin_graphics_module(name, entry->image.is_64))
+								return module;
+#endif
 						// The Direct3D libraries a Windows installation provides come from RAVEN_D3D_DIRECTORY (a DXVK build of the program's width)
 						// or from beside the runtime.
 						if (!selected && (name=="dxgi.dll" || name=="d3d11.dll" || name=="d3d10core.dll" || name=="d3d9.dll" || name=="d3d8.dll")) {

@@ -111,6 +111,7 @@ public:
 	// Wine's x64 unix-call ABI: an agent-owned Win64 entry and a table of SysV functions loaded in the x86 process.
 	uint64_t unix_call_gate() const;
 	uint64_t load_unix_library(const std::string &path, uint32_t function_count);
+	void drain_unix_events(const std::function<void(uint64_t)> &signal);
 #endif
 	size_t callback_depth() const;
 	// The guest's registers at the API call that started the callback at this nesting index (0 is the outermost), with the current

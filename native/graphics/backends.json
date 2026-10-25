@@ -1,4 +1,15 @@
 {
+  "dxmt": {
+    "version": "0.80",
+    "commit": "589adb780354b461645b29999cefaf533594ee99",
+    "archive": "dxmt-v0.80-builtin.tar.gz",
+    "size": 18681669,
+    "url": "https://github.com/3Shain/dxmt/releases/download/v0.80/dxmt-v0.80-builtin.tar.gz",
+    "sha256": "8f260e36b5739e68f3bad613381441385c4dc7b85b78ba8de653d5a6a264529d",
+    "archive_root": "v0.80",
+    "architectures": {"pe64": "x86_64-windows"},
+    "dlls": ["d3d10core.dll", "d3d11.dll", "dxgi.dll", "winemetal.dll"]
+  },
   "dxvk": {
     "version": "3.1.1",
     "archive": "dxvk-3.1.1.tar.gz",
