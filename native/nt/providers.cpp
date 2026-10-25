@@ -69,8 +69,8 @@ static constexpr std::array<std::string_view, 50> names{
 	"FindResourceA", "FindResourceExA", "FindResourceExW", "FindResourceW", "FreeLibrary",
 	"GetACP", "GetCommandLineA", "GetCommandLineW", "GetCurrentProcessId", "GetCurrentThreadId", "GetFileType", "GetLastError", "GetModuleHandleA",
 	"GetModuleHandleW", "GetProcAddress", "GetProcessHeap", "GetStartupInfoA", "GetStartupInfoW", "GetStdHandle", "HeapAlloc", "HeapCreate", "HeapDestroy", "HeapFree", "HeapReAlloc", "HeapSize",
-	"LoadLibraryA", "LoadLibraryW", "LoadResource", "OpenProcessToken", "OpenThreadToken",
-	"LockResource", "MultiByteToWideChar", "PathCchCanonicalize", "PathCchCombineEx", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
+	"LoadLibraryA", "LoadLibraryW", "LoadResource",
+	"LockResource", "MultiByteToWideChar", "OpenProcessToken", "OpenThreadToken", "PathCchCanonicalize", "PathCchCombineEx", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
 	"VirtualAlloc", "VirtualFree", "VirtualProtect", "VirtualQuery", "WaitForSingleObject", "WriteFile"
 };
 
