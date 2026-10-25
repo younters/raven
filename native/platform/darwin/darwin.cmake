@@ -29,6 +29,10 @@ if(TARGET raven-bootstrap)
         -Wl,-image_base,0x700000000000 -Wl,-segaddr,RAVEN_LOW,0x10000 -Wl,-w)
 endif()
 
+# The Linux interprocess behaviour of the shims: sequenced packets, abstract socket names and the /proc process files.
+add_executable(darwin_compat_test ${RAVEN_DARWIN_DIR}/compat/compat_test.cpp)
+add_test(NAME darwin_compat_contract COMMAND darwin_compat_test)
+
 # The Vulkan loader of the LunarG SDK names itself @rpath/libvulkan.1.dylib.
 if(TARGET Vulkan::Vulkan AND Vulkan_LIBRARY)
     get_filename_component(RAVEN_VULKAN_LIBRARY_DIRECTORY ${Vulkan_LIBRARY} DIRECTORY)

@@ -22,13 +22,19 @@ The Vulkan loader and `vk.xml` come from the LunarG SDK, which installs them und
 | `darwin.cmake` | Included at the end of `native/CMakeLists.txt`: swaps the guest controller and the bootstrap for the macOS ones |
 | `include/` | Linux headers the runtime includes, on top of the macOS facilities they map to; ahead of the SDK on the include path |
 | `compat/linux.cpp` | The functions behind those headers (`raven_darwin`, linked into every host target) |
+| `compat/sockets.cpp` | `SOCK_SEQPACKET` and abstract names for Unix sockets; defines `send`, `recv`, `sendmsg`, `recvmsg`, `bind`, `connect`, `close` |
+| `compat/procfs.cpp` | The `/proc` files read as a process API, from libproc, sysctl and Mach |
+| `compat/compat_test.cpp` | `darwin_compat_contract`: the interprocess behaviour of the two above |
 | `native_process.cpp` | `NativeProcess` for macOS, built instead of `cpu/native_cpu.cpp` |
 | `guest/` | The x86_64 guest agent and the zero-fill segment that keeps the low 4 GiB free for Windows images |
 | `bin/raven-clang` | clang for Windows targets, with Homebrew's MinGW-w64 sysroot |
 
 Upstream files changed for macOS: `CMakeLists.txt` and `native/CMakeLists.txt` (the platform gates and the two includes),
 `native/main.cpp` (a `to_string` cast for libc++'s 128-bit file times) and `native/desktop/foreign_surface.cpp` (`__atomic_load_n`
-where libc++ has no `atomic_ref<const T>`).
+where libc++ has no `atomic_ref<const T>`). Where the runtime reads a `/proc` file with an `ifstream` or lists `/proc`, an `#ifdef __APPLE__`
+reads `raven_darwin::proc_stream` or `proc_directory` instead: `nt/child_process.cpp`, `nt/service_api.cpp`, `nt/process_info_api.cpp`
+and `nt/winsock_api.cpp`, which also writes guest socket addresses in the macOS layout (length byte, then family byte). `nt/pipe.cpp`
+asks `raven_darwin_unix_name_bound` where Linux reads `/proc/net/unix`, and `nt/file_api.cpp` reopens a file with `raven_darwin_reopen`.
 
 ## Status
 
@@ -61,11 +67,14 @@ Measured on macOS 27.2, M4 Pro.
 These compile, but do not yet behave as on Linux.
 
 ### Sockets and handles
-- Named pipes in message mode and the handle channels between processes use `SOCK_SEQPACKET`, which macOS lacks. They need message
-  framing over stream sockets.
-- Named pipes and process channels bind abstract Unix socket names, which macOS lacks. They need paths under a runtime directory.
-- `/proc/net/unix`, `/proc/net/tcp*` and `/proc/<pid>/{stat,exe}` are used for pipes, sockets and processes. `/proc/self/fd/N` is used to
-  reopen a file as a new open file description for OFD locks.
+- `SOCK_SEQPACKET` Unix sockets (message-mode named pipes, handle channels) are stream sockets that frame each send as a 32-bit length
+  and the message, with descriptors on the frame's first byte. A send-buffer low-water mark of 256 KiB + 0x5ec marks such a socket in
+  every process that holds it, and makes the kernel take each frame whole or not at all. Messages are limited to that mark less 4
+  bytes. `read` and `write` on one see the frames; the runtime uses `recv` and `send`.
+- Abstract Unix socket names are socket files in `$TMPDIR/raven-<uid>/`, one per socket type, beside a lock file whose
+  open-file-description lock the binding process holds. A bind replaces the files of a process that ended without closing them.
+- `/proc/net/tcp*` lists only the sockets of processes this user may inspect.
+- `MSG_CMSG_CLOEXEC` is a flag `recvmsg` takes out, then marks the descriptors received close-on-exec.
 
 ### Memory, events and waits
 - `SharedPixels` maps on the host at section offsets aligned to 4 KiB. The host's pages are 16 KiB.
