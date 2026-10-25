@@ -7,6 +7,7 @@
 
 #include <windows.h>
 #include <shobjidl.h>
+#include <shlobj.h>
 
 #define MAX_FILTERS 32
 #define MAX_RESULTS 64
@@ -18,6 +19,9 @@ typedef struct {
 } Filter;
 
 typedef struct {
+	/* The classic folder browser uses the same window, with its initialization callback. */
+	BFFCALLBACK browse_callback;
+	LPARAM browse_data;
 	BOOL save;
 	DWORD options; /* FOS_* values; the classic flags are translated by the callers */
 	WCHAR title[128];

@@ -99,6 +99,10 @@ std::vector<std::u16string> file_list(ApiCall &call, uint64_t address, bool ansi
 
 void register_shell_api(ApiRegistry &registry, KernelContext &context)
 {
+	registry.add("ILFree", 1, [&context](ApiCall &call) {
+		if (call[0])
+			context.allocator.release(call[0]);
+	});
 	// There are no printers yet: the print and page setup dialogs answer as when the user cancels them (FALSE, with CommDlgExtendedError
 	// still zero), which programs handle as an ordinary choice instead of an error.
 	for (const auto *name : {"PrintDlgW", "PrintDlgA", "PageSetupDlgW", "PageSetupDlgA"})
@@ -202,7 +206,8 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("SHCloneSpecialIDList", 3, [folder_list](ApiCall &call) {
 		call.ret(folder_list(call, call.i32(1) & 0xff, call.i32(2) || (call.i32(1) & 0x8000)).first);
 	});
-	registry.add("SHGetPathFromIDListW", 2, [](ApiCall &call) {
+	for (const bool ansi : {false, true})
+		registry.add(ansi ? "SHGetPathFromIDListA" : "SHGetPathFromIDListW", 2, [ansi](ApiCall &call) {
 		if (!call[0] || !call[1]) {
 			call.ret(0);
 			return;
@@ -217,7 +222,10 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context)
 		std::u16string text;
 		for (size_t index = 0; index + 1 < raw.size(); index += 2)
 			text.push_back(char16_t(raw[index] | raw[index + 1] << 8));
-		call.put_wide(call[1], text, 260);
+		if (ansi)
+			call.put_narrow(call[1], to_ansi(text, 0), 260);
+		else
+			call.put_wide(call[1], text, 260);
 		call.ret(1);
 	});
 	for (const bool ansi : {false, true})

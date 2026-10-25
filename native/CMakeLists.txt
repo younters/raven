@@ -1680,6 +1680,17 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     list(APPEND DYNAMIC_DIALOG_CLIENTS ${gamma_client})
                     add_test(NAME native_gamma_x${width} COMMAND raven --run-process --execution=native ${gamma_client})
                     set_tests_properties(native_gamma_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(folder_browser_client ${CMAKE_CURRENT_BINARY_DIR}/folder-browser${width}.exe)
+                    add_custom_command(OUTPUT ${folder_browser_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${folder_browser_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/folder_browser_client.c -lkernel32 -luser32 -lshell32 -lole32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/folder_browser_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${folder_browser_client})
+                    if((width EQUAL 64 AND RAVEN_CONTROLS_COMPONENT_DIR) OR (width EQUAL 32 AND RAVEN_CONTROLS32_COMPONENT_DIR))
+                        add_test(NAME native_folder_browser_x${width} COMMAND raven --run-process --execution=native ${folder_browser_client})
+                        set_tests_properties(native_folder_browser_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    endif()
                     set(contract_client ${CMAKE_CURRENT_BINARY_DIR}/api-contract${width}.exe)
                     add_custom_command(OUTPUT ${contract_client}
                         COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
