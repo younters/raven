@@ -1109,6 +1109,23 @@ CRT char *strtok(char *text, const char *delimiters)
 	return strtok_s(text, delimiters, &context);
 }
 
+CRT wchar_t *wcstok_s(wchar_t *text, const wchar_t *delimiters, wchar_t **context)
+{
+	wchar_t *start;
+	if (!delimiters || !context || (!text && !*context)) {
+		*_errno() = 22;
+		_invalid_parameter_noinfo();
+		return NULL;
+	}
+	if (!text) text = *context;
+	while (*text && wcschr(delimiters, *text)) ++text;
+	start = text;
+	while (*text && !wcschr(delimiters, *text)) ++text;
+	if (*text) *text++ = 0;
+	*context = text;
+	return *start ? start : NULL;
+}
+
 /* strncpy_s copies at most count characters and always terminates; _TRUNCATE copies what fits. */
 CRT int strncpy_s(char *to, size_t size, const char *from, size_t count)
 {
