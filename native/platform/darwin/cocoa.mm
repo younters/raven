@@ -175,6 +175,7 @@ struct CocoaPresentation::State {
 	std::map<uint64_t, std::unique_ptr<Surface>> surfaces;
 	std::map<NSInteger, uint64_t> numbers;
 	std::set<uint64_t> maximized;
+	std::set<uint64_t> alpha_windows;
 	std::vector<DesktopEvent> pending;
 	uint64_t pointer_window = 0, keyboard_window = 0;
 	bool keyboard_known = false;
@@ -770,15 +771,19 @@ struct CocoaPresentation::State {
 		return window;
 	}
 
-	void show(Surface &target, std::span<const uint8_t> pixels, uint32_t width, uint32_t height)
+	void show(Surface &target, std::span<const uint8_t> pixels, uint32_t width, uint32_t height, bool alpha)
 	{
+		target.window.opaque = !alpha;
+		target.window.backgroundColor = alpha ? NSColor.clearColor : NSColor.windowBackgroundColor;
+		target.view.layer.opaque = !alpha;
 		const auto &inset = target.insets;
 		const bool cropped = inset[0] || inset[1] || inset[2] || inset[3];
 		CFDataRef data = CFDataCreate(nullptr, pixels.data(), CFIndex(pixels.size()));
 		CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
 		CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
 		CGImageRef image = CGImageCreate(width, height, 8, 32, size_t(width) * 4, space,
-			CGBitmapInfo(kCGBitmapByteOrder32Little) | CGBitmapInfo(kCGImageAlphaNoneSkipFirst), provider, nullptr, false, kCGRenderingIntentDefault);
+			CGBitmapInfo(kCGBitmapByteOrder32Little) | CGBitmapInfo(alpha ? kCGImageAlphaPremultipliedFirst : kCGImageAlphaNoneSkipFirst),
+			provider, nullptr, false, kCGRenderingIntentDefault);
 		CGImageRef shown = image;
 		if (cropped && uint32_t(inset[0] + inset[2]) < width && uint32_t(inset[1] + inset[3]) < height)
 			shown = CGImageCreateWithImageInRect(image, CGRectMake(inset[0], inset[1], width - inset[0] - inset[2], height - inset[1] - inset[3]));
@@ -797,6 +802,8 @@ struct CocoaPresentation::State {
 		target.view.layer.contentsScale = scale;
 		target.view.layer.contents = (__bridge id)shown;
 		[CATransaction commit];
+		if (alpha)
+			[target.window invalidateShadow];
 		if (shown != image)
 			CGImageRelease(shown);
 		CGImageRelease(image);
@@ -934,7 +941,7 @@ struct CocoaPresentation::State {
 			target->width = width;
 			target->height = height;
 			set_size(*target, width, height);
-			show(*target, pixels, width, height);
+			show(*target, pixels, width, height, alpha_windows.contains(handle));
 			if (dump_directory && dumped < 400) {
 				const auto path = std::string(dump_directory) + "/frame-" + std::to_string(dumped++) + "-" + std::to_string(width) + "x" +
 					std::to_string(height) + ".ppm";
@@ -986,7 +993,7 @@ struct CocoaPresentation::State {
 			target->height = height;
 			const NSPoint corner = screen_of(*owner, x, y);
 			[target->window setFrame:NSMakeRect(corner.x, corner.y - height / scale, width / scale, height / scale) display:NO];
-			show(*target, pixels, width, height);
+			show(*target, pixels, width, height, alpha_windows.contains(handle));
 			if (!target->window.parentWindow)
 				[owner->window addChildWindow:target->window ordered:NSWindowAbove];
 			[target->window orderFront:nil];
@@ -1254,10 +1261,17 @@ DesktopPresentation CocoaPresentation::callbacks()
 	};
 	result.remove = [this](uint64_t handle) {
 		state->maximized.erase(handle);
+		state->alpha_windows.erase(handle);
 		state->frames.erase(handle);
 		@autoreleasepool {
 			state->forget(handle);
 		}
+	};
+	result.alpha = [this](uint64_t handle, bool enabled) {
+		if (enabled)
+			state->alpha_windows.insert(handle);
+		else
+			state->alpha_windows.erase(handle);
 	};
 	result.poll = [this](std::chrono::milliseconds budget) { return state->poll(budget); };
 	result.popup = [this](uint64_t handle, uint64_t parent, int32_t x, int32_t y, uint32_t width, uint32_t height, std::span<const uint8_t> pixels) {

@@ -86,6 +86,8 @@ struct DesktopPresentation {
 	// and bottom insets; the menu bar is not part of them) and the window's style. The host shows the rest and reports pointer positions
 	// on the whole frame as before.
 	std::function<void(uint64_t handle,std::array<int32_t,4> insets,uint32_t style)> frame;
+	// Whether the surface carries premultiplied pixel alpha, rather than GDI's unused high byte.
+	std::function<void(uint64_t handle,bool enabled)> alpha;
 	// Minimizes a window to the host's own place for it instead of removing it; the host reports the window's restoration as
 	// WM_SYSCOMMAND SC_RESTORE.
 	std::function<void(uint64_t handle)> minimize;
