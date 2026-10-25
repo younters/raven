@@ -165,7 +165,7 @@ The user drove installation. Welcome/header logos rendered; this is not an exhau
 
 Manual verification after the painting fix: the destination is prefilled immediately; Browse opens the shared filesystem dialog;
 selecting Program Files (x86) returns successfully with NSIS's Steam suffix. Screenshots:
-`/tmp/parity-steam/screenshots/03-baseline-empty.png`, `04-destination-fixed.png`, `05-folder-picker.png`.
+`/tmp/parity-steam/screenshots/03-baseline-empty.png`, `04-destination-fixed.png`, `05-folder-picker.png`, and `06-updater-error.png` (the user-supplied first-run failure).
 
 The installed Steam updater starts but fails its first manifest download after about a minute with “Steam needs to be online to update.”
 Its log names `https://cdn.steamstatic.com/client/steam_client_win32`; DNS and nonblocking connect succeed, a 517-byte send succeeds, but
@@ -173,12 +173,29 @@ no read readiness/receive follows in the trace. Host curl reaches the same URL w
 request is unresolved; this does not establish a problem with the user's network. The updated Steam client/login screen was not reached.
 The bootstrap log is in the installed Steam `logs/bootstrap_log.txt`; the API trace is `/tmp/parity-steam/setup-2.log`.
 
-Serial full-suite comparison pending completion. Both widths' new folder/paint and library contracts and the live export guard pass. Tests are always serial (`-j1`); subsequent runs use the shared `/tmp/raven-ctest-lock.sh` wrapper to prevent races with other worktrees.
+Full serial comparison against `fb2b97b` completed (454 seconds each):
+
+| Run | Total | Passed | Failed | Skipped |
+|---|---:|---:|---:|---:|
+| Baseline | 295 | 277 | 15 | 3 |
+| Final | 303 | 289 | 11 | 3 |
+
+**No new failures, removed tests or changed skips. All eight added tests pass.** Existing `native_dynamic_dialog_x64/x32` and
+`native_bitmap_file_x64/x32` improve from failed to passed with the reprovisioned components.
+
+The eleven remaining failures also fail on the baseline: `native_memory_contract`, `native_layout_failure_component`, `native_coordinate_contract`, `native_dwrite`, `native_secure_stream_x64`, `native_gamma_x64`, `native_desktop_icon_contract`, `native_string_resource_contract`, `native_dynamic_loader_contract`, `native_dll_lifecycle`, `darwin_dxmt_tessellation`.
+
+The final command was `/tmp/raven-ctest-lock.sh parity ctest --test-dir build -j1 --timeout 120 --output-on-failure --output-junit /tmp/parity-final.xml`.
+The baseline used the untouched cloned build with the same serial options. Logs and JUnit are `/tmp/parity-baseline-full.{log,xml}` and
+`/tmp/parity-final.{log,xml}`; `/tmp/parity-suite-comparison.json` records the exact per-name comparison. An earlier partial final run was
+stopped after another worktree started tests concurrently; it is excluded. The locked final run completed without that overlap.
+The slot was released and `/tmp/raven-ctest.parity-done` created. No further tests or benchmarks are queued by this task.
 
 The new fixtures call the same contracts in both widths: environment enumeration and WOW64 defaults, registry ProgramFilesDir, version
 reporting, URL and proxy structure guards, sockets, data protection, BSTRs and actual common-control image lists; folder selection through
 initialization callbacks, both PIDL converters, both free functions and cancellation; Direct2D geometry, animation doubles and canvas pixel
-round trips. The existing DirectWrite interface fixture also runs as x86.
+round trips. The existing DirectWrite interface fixture also runs as x86. Existing API-contract and version fixtures cover SetupDi device-set lifetime,
+OLE task allocation and actual version-resource reads at x86.
 
 The explicit shared x86 lists are checked against live registered handlers. This found a stale `GetCurrentProcessId` entry (served by the
 dedicated environment dispatcher). An assertion over all provider exports would fail by design in **both** widths: Raven publishes
@@ -189,4 +206,42 @@ unimplemented Windows names to allow imports to bind and report unsupported call
 Rebuild `scripts/provision-controls.py` for **both x64 and x86**. x86 now includes the three graphics/animation components; x64 and x86 shell
 DLLs need the new folder-browser exports. Rebuild installer components for both widths to pick up the **base** OLE DIB-section patch.
 Validation uses `/tmp/parity-controls64`, `/tmp/parity-controls32`, `/tmp/parity-installer64` and `/tmp/parity-installer32` overlays.
+The x64 overlay retains the supplied graphics/CRT DLLs; its shell and the x86 controls/graphics are rebuilt, as are both installer overlays.
 The tool PATH needs `raven-components/tools/bin` for `widl` and Homebrew's `bison/bin` for the installer grammar.
+
+## Upstream-facing diff
+
+All implementation changes are platform-neutral. No Darwin implementation source changed. Line counts against `fb2b97b`:
+
+| File | Added / removed |
+|---|---:|
+| `native/CMakeLists.txt` | +68 / −0 |
+| `native/desktop/folder_browser_test.cpp` | +59 / −0 |
+| `native/desktop/theme.cpp` | +1 / −1 |
+| `native/desktop/windows.cpp` | +33 / −28 |
+| `native/desktop/windows.h` | +1 / −0 |
+| `native/main.cpp` | +2 / −2 |
+| `native/nt/api.cpp` | +8 / −0 |
+| `native/nt/api.h` | +2 / −0 |
+| `native/nt/platform_api.cpp` | +10 / −7 |
+| `native/nt/providers.cpp` | +24 / −0 |
+| `native/nt/providers.h` | +3 / −1 |
+| `native/nt/registry_words.inc` | +9 / −0 |
+| `native/nt/shell_api.cpp` | +10 / −2 |
+| `native/nt/system_api.cpp` | +38 / −24 |
+| `native/nt/system_arguments.inc` | +2 / −2 |
+| `native/nt/x86_compat_api.cpp` | +4 / −26 |
+| `native/nt/x86_compat_api.h` | +1 / −1 |
+| `native/nt/x86_loader.cpp` | +9 / −0 |
+| `native/nt/x86_process.cpp` | +57 / −11 |
+| `native/upstream/raven-shell/dialog.c` | +20 / −0 |
+| `native/upstream/raven-shell/shell.c` | +65 / −0 |
+| `native/upstream/raven-shell/shell.h` | +4 / −0 |
+| `scripts/generate-registry-words.py` | +6 / −0 |
+| `scripts/generate-system-exports.py` | +3 / −0 |
+| `scripts/native-api-inventory-test.py` | +34 / −0 |
+| `scripts/native-api-inventory.py` | +109 / −0 |
+| `scripts/provision-controls.py` | +14 / −10 |
+| `testdata/native_loader/folder_browser_client.c` | +95 / −0 |
+| `testdata/native_loader/graphics_parity_client.c` | +43 / −0 |
+| `testdata/native_loader/library_parity_client.c` | +152 / −0 |
