@@ -581,6 +581,7 @@ struct NativeProcess::State {
 	size_t served_wait_offset = 0;
 	std::function<void(uint64_t)> served_handler;
 	std::function<void()> resume_hook;
+	std::function<void()> unix_pump;
 	std::function<bool()> poll_served;
 	std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> execution_wait;
 	bool serving = false, serving_queued = false;
@@ -1863,9 +1864,31 @@ uint64_t NativeProcess::unix_call_gate() const
 
 void NativeProcess::drain_unix_events(const std::function<void(uint64_t)> &signal)
 {
+	if (!state->child->control)
+		return;
 	for (auto &slot : state->child->control->unix_events)
 		if (const uint64_t handle = __atomic_exchange_n(&slot, 0, __ATOMIC_ACQ_REL))
 			signal(handle);
+}
+
+raven_control *NativeProcess::darwin_control() const
+{
+	return state->child->control;
+}
+
+uint32_t NativeProcess::copy_unix_port(uint32_t guest_port) const
+{
+	mach_port_t result = MACH_PORT_NULL;
+	mach_msg_type_name_t type = 0;
+	if (state->child->task == MACH_PORT_NULL || mach_port_extract_right(state->child->task, guest_port, MACH_MSG_TYPE_COPY_SEND,
+		&result, &type) != KERN_SUCCESS)
+		return 0;
+	return result;
+}
+
+void NativeProcess::set_unix_pump(std::function<void()> pump)
+{
+	state->unix_pump = std::move(pump);
 }
 
 uint64_t NativeProcess::load_unix_library(const std::string &path, uint32_t function_count)
@@ -1966,6 +1989,14 @@ bool NativeProcess::drain_queued_calls(bool all)
 
 bool NativeProcess::serve_pending()
 {
+	if (state->unix_pump) {
+		// Like a served graphics call, presentation may read guest window pixels while the guest waits on its native buffer pool.
+		const bool was_serving = state->serving;
+		state->serving = true;
+		try { state->unix_pump(); }
+		catch (...) { state->serving = was_serving; throw; }
+		state->serving = was_serving;
+	}
 	const bool queued = drain_queued_calls();
 	uint64_t *block = parallel() ? state->thread_served_block : state->served_block;
 	if (!block)

@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #define RAVEN_GUEST_MAGIC 0x52564e47U // "RVNG"
-#define RAVEN_GUEST_VERSION 3U
+#define RAVEN_GUEST_VERSION 4U
 
 // Descriptors the host gives the agent at startup.
 #define RAVEN_GUEST_CONTROL_FD 3
@@ -85,6 +85,28 @@ enum raven_thread_state {
 #define RAVEN_STOP_INTERRUPT (-1)
 
 #define RAVEN_UNIX_EVENT_SLOTS 64
+#define RAVEN_SURFACE_SLOTS 16
+
+enum raven_surface_state {
+	RAVEN_SURFACE_UNUSED,
+	RAVEN_SURFACE_AVAILABLE,
+	RAVEN_SURFACE_READY,
+	RAVEN_SURFACE_DISPLAYED,
+	RAVEN_SURFACE_WRITING,
+	RAVEN_SURFACE_RETIRE,
+	RAVEN_SURFACE_IMPORTING,
+};
+
+// A guest-owned IOSurface send right. The host copies it through the guest task port; no global IOSurface IDs are used.
+struct raven_surface_frame {
+	uint32_t state;
+	uint32_t port;
+	uint64_t window;
+	uint64_t sequence;
+	uint32_t width, height;
+	uint32_t pixel_format;
+	uint32_t reserved;
+};
 
 // Linux's user_regs_struct, field for field.
 struct raven_registers {
@@ -135,6 +157,9 @@ struct raven_control {
 	uint64_t pad2[6];
 	// Native GPU completion callbacks publish Windows event handles; the host scheduler consumes each nonzero slot.
 	uint64_t unix_events[RAVEN_UNIX_EVENT_SLOTS];
+	struct raven_surface_frame surfaces[RAVEN_SURFACE_SLOTS];
+	uint64_t surfaces_presented;
+	uint64_t surface_errors;
 };
 
 // The size of the shared file: the block, and the data area that READ and WRITE move memory through.

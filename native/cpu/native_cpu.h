@@ -10,6 +10,9 @@
 #include <string>
 #include <sys/user.h>
 #include <utility>
+#ifdef __APPLE__
+struct raven_control;
+#endif
 
 namespace raven {
 
@@ -112,6 +115,9 @@ public:
 	uint64_t unix_call_gate() const;
 	uint64_t load_unix_library(const std::string &path, uint32_t function_count);
 	void drain_unix_events(const std::function<void(uint64_t)> &signal);
+	raven_control *darwin_control() const;
+	uint32_t copy_unix_port(uint32_t guest_port) const;
+	void set_unix_pump(std::function<void()> pump);
 #endif
 	size_t callback_depth() const;
 	// The guest's registers at the API call that started the callback at this nesting index (0 is the outermost), with the current

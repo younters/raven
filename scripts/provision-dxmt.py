@@ -33,7 +33,8 @@ def provision(destination):
     source = repository / "native/platform/darwin/dxmt/unix_adapter.m"
     adapter = native / "raven-dxmt.dylib"
     subprocess.run(["/usr/bin/clang", "-arch", "x86_64", "-dynamiclib", "-O2", "-Wall", "-Wextra", "-fblocks",
-                    str(source), "-framework", "Foundation", "-framework", "Metal",
+                    str(source), str(source.with_name("presentation.m")), "-framework", "Foundation", "-framework", "Metal",
+                    "-framework", "IOSurface",
                     "-Wl,-install_name,@rpath/raven-dxmt.dylib", "-o", str(adapter)], check=True)
     with tarfile.open(destination / package["archive"], "r:gz") as archive:
         entry = archive.getmember(f'{package["archive_root"]}/x86_64-unix/winemetal.so')

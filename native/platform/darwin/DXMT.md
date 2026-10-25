@@ -37,11 +37,26 @@ Phase (b) works: `darwin_dxmt_device` creates a hardware D3D11 device, immediate
 runs the existing `testdata/d3d11/triangle.c` and passes the pixel reference comparison. Neither test copies graphics DLLs beside its
 program: Raven resolves the four driver DLLs through the configured DXMT root. Program-local DLLs still take precedence.
 
-Presentation will use IOSurface-backed Metal textures in the guest. After command completion, an IOSurface Mach send right and the
-HWND go to the host, which imports it and sets the corresponding window layer's contents. Acknowledgement and a bounded buffer pool
-must prevent reuse before the compositor has consumed a frame; resizing and closing must retire in-flight surfaces. This uses public
-APIs, works across architectures, and avoids private `CAContext`/`CALayerHost` dependencies. Host-owned NSView/CAMetalLayer pointers
-are not valid in the guest. This presentation path is not implemented by the gate spike.
+Phase (c) works through public IOSurface APIs. The adapter replaces the pinned driver's drawable/window table entries with a
+three-buffer IOSurface-backed Metal texture pool per swap chain. GPU completion publishes a Mach send right, HWND and sequence in
+the control block. The host uses `mach_port_extract_right` on the guest task, imports the surface, and sets an ordinary child
+CALayer's contents inside the existing Cocoa graphics surface. No NSView/Metal object pointer crosses processes, and no private
+`CAContext`/`CALayerHost` API is used.
+
+The host holds an IOSurface use count while a frame is displayed. Replacing the contents acknowledges the previous buffer; the
+guest also requires `IOSurfaceIsInUse` to be false before reuse. A live IOSurface Mach port itself increments global use count, so
+ports are created after GPU completion and dropped by the guest after import acknowledgement. A separate importing state prevents
+the guest from dropping the port while the host is copying it. GPU completion blocks retain their drawable; retirement acknowledges
+port destruction, and resizing allocates a fresh pool. The shared table has 16 slots across all swap chains.
+
+The host polls presentation both during guest execution and while Windows threads wait. It uses the existing served-call memory
+access discipline while the native guest is waiting, avoiding a buffer-pool/host-pump deadlock. `RAVEN_TRACE_DXMT=1` reports frame
+counts; `RAVEN_DXMT_CAPTURE_DIRECTORY` optionally records imported RGBA frames for diagnosis.
+
+`darwin_dxmt_window` runs the existing `testdata/d3d11/window.c` under `--desktop=macos`. All 310 frames presented with zero errors.
+The test compares imported surface pixels **and actual per-window screen captures** with GPU readback at 256x256 and after resizing
+to 320x200. Evidence is in `build/native/dxmt-window/{last,resized}-{window,client}.png`. The public transport currently supports
+8-bit RGBA/BGRA SDR surfaces. HDR, minimum-duration/vsync pacing and WoW64 are not implemented by this phase.
 
 ## Reproduce
 

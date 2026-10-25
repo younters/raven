@@ -7,6 +7,12 @@
 #import <Metal/Metal.h>
 
 static struct raven_control *control;
+extern void raven_dxmt_wrap_presentation(void **table);
+
+struct raven_control *raven_dxmt_control(void)
+{
+	return __atomic_load_n(&control, __ATOMIC_ACQUIRE);
+}
 
 void raven_unixlib_init(struct raven_control *shared)
 {
@@ -75,5 +81,6 @@ void *raven_unixlib_wrap_table(void *original, uint32_t count)
 	table[108] = create_listener;
 	table[109] = start_listener;
 	table[110] = destroy_listener;
+	raven_dxmt_wrap_presentation(table);
 	return table;
 }

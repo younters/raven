@@ -27,6 +27,7 @@
 #include "cpu/served_queue.h"
 #ifdef __APPLE__
 #include "platform/darwin/unix_calls.h"
+#include "platform/darwin/dxmt/presentation.h"
 #endif
 #ifdef RAVEN_OPENGL
 #include "graphics/opengl_bridge.h"
@@ -1828,6 +1829,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	windows.set_deadline(deadline);
 	windows.set_menu_loader([&desktop](uint64_t instance,uint64_t identifier) { return desktop.menu_resource(instance,identifier); });
 	windows.set_presentation(std::move(presentation));
+#ifdef __APPLE__
+	DarwinDXMTPresentation dxmt_presentation(process, windows);
+#endif
 #ifdef RAVEN_OPENGL
 	std::unique_ptr<OpenGLBridge> opengl;
 	if (OpenGLBridge::enabled()) opengl = std::make_unique<OpenGLBridge>(process, modules, desktop_objects, windows);
@@ -2139,7 +2143,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	GuestAllocator allocator(memory, heap);
 	NativeThreads threads(process, environment, memory, &tls, deadline);
 #ifdef __APPLE__
-	const auto unix_events = [&] { process.drain_unix_events([&](uint64_t event) { kernel_objects.set_event(event, true); }); };
+	const auto unix_events = [&] {
+		process.drain_unix_events([&](uint64_t event) { kernel_objects.set_event(event, true); });
+		dxmt_presentation.poll();
+	};
 	threads.add_service(unix_events);
 	threads.add_pump(unix_events);
 #endif

@@ -60,20 +60,44 @@ if(TARGET vulkan_pe_fixture AND RAVEN_MINGW64)
 endif()
 
 if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
-    foreach(workload device triangle)
+    set(RAVEN_DXMT_IMAGE_PYTHON "")
+    foreach(candidate ${Python3_EXECUTABLE} /opt/homebrew/bin/python3 /usr/bin/python3)
+        if(NOT RAVEN_DXMT_IMAGE_PYTHON AND EXISTS ${candidate})
+            execute_process(COMMAND ${candidate} -c "import PIL" RESULT_VARIABLE pillow_result OUTPUT_QUIET ERROR_QUIET)
+            if(pillow_result EQUAL 0)
+                set(RAVEN_DXMT_IMAGE_PYTHON ${candidate})
+            endif()
+        endif()
+    endforeach()
+    if(NOT RAVEN_DXMT_IMAGE_PYTHON)
+        message(FATAL_ERROR "DXMT screen tests need a Python interpreter with Pillow")
+    endif()
+    set(RAVEN_DXMT_WINDOW_INFO ${CMAKE_CURRENT_BINARY_DIR}/dxmt-window-info)
+    add_custom_command(OUTPUT ${RAVEN_DXMT_WINDOW_INFO}
+        COMMAND /usr/bin/clang -fobjc-arc ${RAVEN_DARWIN_DIR}/tests/window_info.m -framework Foundation -framework CoreGraphics
+            -o ${RAVEN_DXMT_WINDOW_INFO}
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/window_info.m VERBATIM)
+    add_custom_target(darwin_dxmt_window_info ALL DEPENDS ${RAVEN_DXMT_WINDOW_INFO})
+    foreach(workload device triangle window)
         if(workload STREQUAL "device")
             set(RAVEN_DXMT_FIXTURE ${RAVEN_DARWIN_DIR}/tests/dxmt_device.c)
         else()
-            set(RAVEN_DXMT_FIXTURE ${PROJECT_SOURCE_DIR}/testdata/d3d11/triangle.c)
+            set(RAVEN_DXMT_FIXTURE ${PROJECT_SOURCE_DIR}/testdata/d3d11/${workload}.c)
         endif()
         set(RAVEN_DXMT_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-${workload}.exe)
         add_custom_command(OUTPUT ${RAVEN_DXMT_EXE}
             COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DXMT_FIXTURE}
-                -o ${RAVEN_DXMT_EXE} -ld3d11 -ldxgi -lkernel32 -luser32 -lgcc
+                -o ${RAVEN_DXMT_EXE} -ld3d11 -ldxgi -ldxguid -lkernel32 -luser32 -lgcc
             DEPENDS ${RAVEN_DXMT_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/d3d11/tri_shaders.h VERBATIM)
         add_custom_target(darwin_dxmt_${workload}_fixture ALL DEPENDS ${RAVEN_DXMT_EXE})
-        add_test(NAME darwin_dxmt_${workload} COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
-            $<TARGET_FILE:raven> ${RAVEN_DXMT_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-${workload} ${workload})
+        if(workload STREQUAL "window")
+            add_test(NAME darwin_dxmt_window COMMAND ${RAVEN_DXMT_IMAGE_PYTHON} ${RAVEN_DARWIN_DIR}/tests/run_present.py
+                $<TARGET_FILE:raven> ${RAVEN_DXMT_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-window ${RAVEN_DXMT_WINDOW_INFO})
+            set_tests_properties(darwin_dxmt_window PROPERTIES RESOURCE_LOCK raven_compositor)
+        else()
+            add_test(NAME darwin_dxmt_${workload} COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+                $<TARGET_FILE:raven> ${RAVEN_DXMT_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-${workload} ${workload})
+        endif()
         set_tests_properties(darwin_dxmt_${workload} PROPERTIES TIMEOUT 120)
     endforeach()
 endif()
@@ -147,6 +171,10 @@ endforeach()
 # The macOS desktop (--desktop=macos): AppKit windows, Metal surfaces for graphics drivers, and keymaps from xkbcommon.
 if(TARGET raven_cpu)
     enable_language(OBJCXX)
+    target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/dxmt/presentation.mm)
+    set_source_files_properties(${RAVEN_DARWIN_DIR}/dxmt/presentation.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wall;-Wextra")
+    set_property(TARGET raven_cpu PROPERTY OBJCXX_STANDARD 20)
+    target_link_libraries(raven_cpu PUBLIC "-framework IOSurface" "-framework QuartzCore")
     target_sources(raven PRIVATE ${RAVEN_DARWIN_DIR}/cocoa.mm)
     set_source_files_properties(${RAVEN_DARWIN_DIR}/cocoa.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wall;-Wextra")
     set_property(TARGET raven PROPERTY OBJCXX_STANDARD 20)
