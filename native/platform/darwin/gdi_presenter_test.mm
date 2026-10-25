@@ -28,6 +28,9 @@ int main()
 			const auto span = std::span<const uint8_t>(pixels.data(), size_t(width) * height * 4);
 			auto first = static_cast<IOSurfaceRef>(presenter.frame(span, width, height));
 			check(first, "Metal failed to present an odd-width surface");
+			CFTypeRef profile = IOSurfaceCopyValue(first, kIOSurfaceColorSpace);
+			check(profile, "Metal output lost its explicit colour space");
+			CFRelease(profile);
 			IOSurfaceLock(first, kIOSurfaceLockReadOnly, nullptr);
 			const auto *output = static_cast<const uint8_t *>(IOSurfaceGetBaseAddress(first));
 			for (uint32_t y = 0; y < height; ++y)

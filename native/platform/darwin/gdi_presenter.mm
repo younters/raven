@@ -2,6 +2,7 @@
 #include "shared_surface.h"
 
 #import <Metal/Metal.h>
+#import <CoreGraphics/CoreGraphics.h>
 #import <QuartzCore/QuartzCore.h>
 #include <array>
 #include <cstdio>
@@ -118,6 +119,13 @@ struct GDIPresenter::State {
 			const size_t stride = IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, size_t(w) * 4);
 			available->surface = create_pixel_surface(w, h, stride, stride * h);
 			if (!available->surface) return nullptr;
+			// Match the CGImage backend explicitly, including on wide-gamut displays. Attach once
+			// per allocation: IOSurface value serialization belongs off the per-frame path.
+			CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+			CFPropertyListRef profile = CGColorSpaceCopyPropertyList(space);
+			IOSurfaceSetValue(available->surface, kIOSurfaceColorSpace, profile);
+			CFRelease(profile);
+			CGColorSpaceRelease(space);
 			MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
 				width:w height:h mipmapped:NO];
 			descriptor.usage = MTLTextureUsageRenderTarget;
