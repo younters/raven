@@ -1430,22 +1430,24 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 				call.store<int32_t>(call[5] + 4, int32_t(bitmap->width));
 				call.store<int32_t>(call[5] + 8, int32_t(bitmap->height));
 				call.store<uint16_t>(call[5] + 12, 1);
-				call.store<uint16_t>(call[5] + 14, uint16_t(bitmap->depth == 1 ? 1 : 32));
+				call.store<uint16_t>(call[5] + 14, uint16_t(bitmap->depth));
 				call.store<uint32_t>(call[5] + 16, 0);
-				call.store<uint32_t>(call[5] + 20, uint32_t(((size_t(bitmap->width) * (bitmap->depth == 1 ? 1 : 32) + 31) / 32) * 4 * bitmap->height));
-				call.ret(1);
-				return;
-			}
-			if (!call[4]) {
+				call.store<uint32_t>(call[5] + 20, uint32_t(((size_t(bitmap->width) * bitmap->depth + 31) / 32) * 4 * bitmap->height));
 				call.ret(1);
 				return;
 			}
 			if (bit_count != 32 && bit_count != 24 && bit_count != 8 && bit_count != 1)
 				throw uint32_t(120);
+			const size_t stride = ((size_t(bitmap->width) * bit_count + 31) / 32) * 4;
+			// A format query must report the required storage even when the caller has already selected its bit count.
+			call.store<uint32_t>(call[5] + 20, uint32_t(stride * bitmap->height));
+			if (!call[4]) {
+				call.ret(1);
+				return;
+			}
 			const uint32_t start = call.u32(2), lines = call.u32(3);
 			const int32_t height_field = call.load<int32_t>(call[5] + 8);
 			const bool top_down = height_field < 0;
-			const size_t stride = ((size_t(bitmap->width) * bit_count + 31) / 32) * 4;
 			if (start > bitmap->height)
 				throw uint32_t(87);
 			const uint32_t take = std::min<uint32_t>(lines, bitmap->height - start);
@@ -1628,6 +1630,19 @@ void NativeDesktop::register_image_api(ApiRegistry &registry)
 			throw uint32_t(environment.last_error());
 		return handle;
 	};
+	const auto sized_bitmap = [this](uint64_t handle, uint32_t cx, uint32_t cy) -> uint64_t {
+		auto *bitmap=objects.bitmap(handle);
+		if ((cx && cx!=bitmap->width) || (cy && cy!=bitmap->height)) {
+			const auto width=cx ? cx : bitmap->width,height=cy ? cy : bitmap->height;
+			if (width>8192 || height>8192 || uint64_t(width)*height>16*1024*1024) { objects.erase(handle); throw uint32_t(87); }
+			auto pixels=stretch_blackonwhite(bitmap->pixels(),bitmap->width,bitmap->height,4,width,height);
+			const auto resized=allocate_bitmap(width,height,32,false,true);
+			if (!resized) { objects.erase(handle); throw uint32_t(8); }
+			std::copy(pixels.begin(),pixels.end(),objects.bitmap(resized)->pixels().begin());
+			objects.erase(handle);
+			return resized;
+		} else return handle;
+	};
 	const auto load_image = [=, this](ApiCall &call, bool ansi) {
 		guarded(call, 0, [&] {
 			const uint32_t type = call.u32(2), flags = call.u32(5);
@@ -1649,7 +1664,7 @@ void NativeDesktop::register_image_api(ApiRegistry &registry)
 						throw;
 					}
 					process.unmap_memory(buffer);
-					call.ret(handle);
+					call.ret(sized_bitmap(handle,cx,cy));
 				} else if (type == 1) {
 					call.ret(icon_file(bytes, cx, cy));
 				} else {
@@ -1660,17 +1675,7 @@ void NativeDesktop::register_image_api(ApiRegistry &registry)
 			const auto name = wide_name(call, call[1], ansi);
 			if (type == 0) {
 				const auto handle=bitmap_resource(call,call[0],name,(flags & 0x2000)!=0);
-				auto *bitmap=objects.bitmap(handle);
-				if ((cx && cx!=bitmap->width) || (cy && cy!=bitmap->height)) {
-					const auto width=cx ? cx : bitmap->width,height=cy ? cy : bitmap->height;
-					if (width>8192 || height>8192 || uint64_t(width)*height>16*1024*1024) { objects.erase(handle); throw uint32_t(87); }
-					auto pixels=stretch_blackonwhite(bitmap->pixels(),bitmap->width,bitmap->height,4,width,height);
-					const auto resized=allocate_bitmap(width,height,32,false,true);
-					if (!resized) { objects.erase(handle); throw uint32_t(8); }
-					std::copy(pixels.begin(),pixels.end(),objects.bitmap(resized)->pixels().begin());
-					objects.erase(handle);
-					call.ret(resized);
-				} else call.ret(handle);
+				call.ret(sized_bitmap(handle,cx,cy));
 			}
 			else if (type == 1)
 				call.ret(icon_resource(call, call[0], name, cx, cy));

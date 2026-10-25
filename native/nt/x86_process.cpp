@@ -1,5 +1,6 @@
 #include "providers.h"
 #include "handle_channel.h"
+#include "section.h"
 #include "object_api.h"
 #include "module_api.h"
 #include "resources.h"
@@ -465,7 +466,8 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		struct Rule { const char *library, *component, *prefix; };
 		static constexpr Rule rules[] = {{"user32.dll", "raven-user32.dll", "raven-user32."}, {"comdlg32.dll", "raven-shell.dll", "raven-shell."},
 			{"ole32.dll", "raven-shell.dll", "raven-shell."}, {"shell32.dll", "raven-shell.dll", "raven-shell."}, {"msvcrt.dll", "ucrtbase.dll", "ucrtbase."}, {"shlwapi.dll", "raven-shell.dll", "raven-shell."}, {"setupapi.dll", "raven-setupapi.dll", "raven-setupapi."},
-			{"ole32.dll", "raven-storage.dll", "raven-storage."}, {"combase.dll", "raven-shell.dll", "raven-shell."}};
+			{"ole32.dll", "raven-storage.dll", "raven-storage."}, {"combase.dll", "raven-shell.dll", "raven-shell."},
+			{"uiautomationcore.dll", "raven-shell.dll", "raven-shell."}};
 		for (const auto &rule : rules) {
 			if (library != rule.library)
 				continue;
@@ -795,10 +797,33 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	module_api.set_path_lookup([&](const std::string &path) { return library_loader.find(path); });
 	DesktopObjects desktop_objects;
 	NativeDesktop desktop(process, environment, desktop_objects, resources);
+	desktop.set_source(source);
+	desktop.set_section_source([&](uint64_t handle) -> std::optional<std::pair<int, uint64_t>> {
+		const auto section = kernel_objects.object_as<SectionObject>(handle);
+		if (!section || section->descriptor < 0)
+			return std::nullopt;
+		return std::make_pair(section->descriptor, section->size);
+	});
+	// File-backed images use the same prefix path resolution as other file APIs, just as for 64-bit programs.
+	desktop.set_host_files([&paths](std::u16string_view path) -> std::optional<std::vector<uint8_t>> {
+		const auto resolved = paths.resolve(path);
+		if (!resolved || !resolved->exists || !std::filesystem::is_regular_file(resolved->host))
+			return std::nullopt;
+		std::ifstream stream(resolved->host, std::ios::binary | std::ios::ate);
+		const auto size = stream ? stream.tellg() : std::streampos(-1);
+		if (size <= 0)
+			return std::nullopt;
+		std::vector<uint8_t> bytes(static_cast<size_t>(size));
+		stream.seekg(0);
+		if (!stream.read(reinterpret_cast<char *>(bytes.data()), size))
+			return std::nullopt;
+		return bytes;
+	});
 	// The built-in bitmaps, icons and cursors of user32 live in the component when it is there.
 	if (const auto component = modules.all().find("raven-user32.dll"); component != modules.all().end() && !component->second->runtime_api)
 		desktop.set_oem_module(component->second->loaded.base());
 	NativeWindows windows(process, environment, desktop_objects);
+	windows.set_menu_loader([&desktop](uint64_t instance,uint64_t identifier) { return desktop.menu_resource(instance,identifier); });
 	// Registry handlers whose arguments carry no pointer-width structures also serve 32-bit programs.
 	ApiRegistry shared_api;
 	windows.register_api(shared_api);
@@ -1109,6 +1134,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		return result;
 	};
 	windows.set_call(invoke);
+	desktop.set_call(invoke);
 	guest_threads.set_runner(invoke);
 	// Threads announce themselves to the images that keep per-thread state: TLS callbacks first, then the library entry points.
 	guest_threads.set_notifier([&](uint32_t reason) {
@@ -1142,6 +1168,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// File, memory, text and system handlers of the shared registry take 32-bit words as well; they get the same process services.
 	NativeHeap guest_heap(process, environment, modules, entry.image);
 	GuestAllocator allocator(memory, guest_heap);
+	windows.set_global_allocator([&allocator](uint64_t size) { return allocator.allocate(size,true); });
 	compat.set_global_blocks([&allocator](uint64_t address) { return allocator.size(address); }, [&allocator](uint64_t address) { return allocator.release(address); });
 	KernelContext kernel{process, environment, memory, allocator, kernel_objects, guest_threads, paths, modules, entry, *launch, invoke};
 	guest_threads.set_watched([reactor = kernel.reactor](std::vector<pollfd> &descriptors) { reactor->watch(descriptors); });

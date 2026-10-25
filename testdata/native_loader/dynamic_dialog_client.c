@@ -49,10 +49,16 @@ UINT raven_entry(void)
 	HMODULE shell;
 	void *store = (void *)1;
 	const GUID property_store = {0x886d8eeb, 0x8cf2, 0x4446, {0x8d, 0x02, 0xcd, 0xba, 0x1d, 0xbd, 0xcf, 0x99}};
+	struct { const WCHAR *text; DWORD guard; } string = {NULL, 0x12345678};
 
 	user = LoadLibraryA("user32.dll");
 	ole = LoadLibraryA("ole32.dll");
 	check(user && ole && definition, 1);
+	check(API(LoadStringW)(instance, 1, (WCHAR *)&string.text, 0) == 13 && string.text && string.text[0] == 'p' && string.guard == 0x12345678, 6);
+	HMODULE gdi = LoadLibraryA("gdi32.dll");
+	int (WINAPI *get_object)(HGDIOBJ, int, void *) = (void *)GetProcAddress(gdi, "GetObjectW");
+	HGDIOBJ (WINAPI *get_stock)(int) = (void *)GetProcAddress(gdi, "GetStockObject");
+	check(get_object(get_stock(WHITE_BRUSH), 0, NULL) == sizeof(LOGBRUSH), 7);
 	get_malloc = (void *)GetProcAddress(ole, "CoGetMalloc");
 	check(get_malloc && get_malloc(MEMCTX_TASK, &allocator) == S_OK && allocator, 2);
 	memory = IMalloc_Alloc(allocator, 32);
@@ -101,5 +107,13 @@ UINT raven_entry(void)
 	dialog = API(CreateDialogIndirectParamA)(instance, definition, NULL, dialog_proc, -123);
 	check(dialog && API(DestroyWindow)(dialog), 49);
 	check(initialized == 8, 50);
+	WNDCLASSW menu_class = {0};
+	menu_class.lpfnWndProc = API(DefWindowProcW);
+	menu_class.hInstance = instance;
+	menu_class.lpszClassName = L"menu resource contract";
+	menu_class.lpszMenuName = MAKEINTRESOURCEW(2);
+	check(API(RegisterClassW)(&menu_class), 51);
+	dialog = API(CreateWindowExW)(0, menu_class.lpszClassName, L"", WS_OVERLAPPEDWINDOW, 0, 0, 200, 100, NULL, NULL, instance, NULL);
+	check(dialog && API(GetMenu)(dialog) && API(DestroyWindow)(dialog), 52);
 	return 0;
 }

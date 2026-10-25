@@ -91,8 +91,8 @@ bool NativeDesktop::load_dispatch(std::string_view name)
 			else
 				environment.set_last_error(120);
 		} else {
-			const auto bytes = process.read_memory(scratch, 8);
-			for (size_t index = 0; index < 8; ++index)
+			const auto bytes = process.read_memory(scratch, process.mode()==NativeMode::x86 ? 4 : 8);
+			for (size_t index = 0; index < bytes.size(); ++index)
 				result |= uint64_t(bytes[index]) << (index * 8);
 		}
 	} catch (uint32_t error) { environment.set_last_error(error); }
