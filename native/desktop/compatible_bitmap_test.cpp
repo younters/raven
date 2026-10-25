@@ -1,7 +1,9 @@
 #include "api.h"
 #include "nt/providers.h"
+#include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -23,7 +25,9 @@ int main(int argc,char **argv)
 		auto &module=modules.add("gdi32.dll",raven::runtime_provider("gdi32.dll",0x180000000,raven::NativeDesktop::gdi_exports()));
 		raven::LoadedImage *images[]{&module.loaded};
 		raven::NativeProcess process(images,argv[1],std::chrono::seconds(2));
-		for (const auto &symbol : module.exports) process.add_api_trap(module.loaded.base()+symbol.address);
+		for (const auto &symbol : module.exports)
+			if (!symbol.names.empty() && symbol.forwarder.empty())
+				process.add_api_trap(raven::api_trap_address(module,"gdi32.dll",symbol.names.at(0),symbol.address));
 		raven::NativeEnvironment environment(process,module.loaded.base(),1,1);
 		raven::NativeResources resources(process,environment,modules,module);
 		raven::DesktopObjects objects(4096+sizeof(raven::DesktopDC));
@@ -59,8 +63,19 @@ int main(int argc,char **argv)
 			return result.str();
 		};
 #else
-		std::ifstream children("/proc/self/task/"+std::to_string(getpid())+"/children"); long child=0,extra=0; children>>child;
-		check(child>0 && !(children>>extra),"owned bootstrap child is ambiguous");
+		// The guest is started by the thread that traces it, which need not be the main one, and kernels without the per-task
+		// children lists still give every process its parent.
+		std::vector<long> owned;
+		for (const auto &entry:std::filesystem::directory_iterator("/proc")) {
+			const auto name=entry.path().filename().string();
+			if (name.empty() || name.find_first_not_of("0123456789")!=name.npos) continue;
+			std::ifstream stat(entry.path()/"stat"); std::string line; std::getline(stat,line);
+			const auto close=line.rfind(')'); if (close==line.npos) continue;
+			std::istringstream fields(line.substr(close+2)); char state=0; long parent=0;
+			if (fields>>state>>parent && parent==getpid()) owned.push_back(std::stol(name));
+		}
+		check(owned.size()==1,"owned bootstrap child is ambiguous");
+		const long child=owned.front();
 		const auto mappings=[&]() {
 			std::ifstream file("/proc/"+std::to_string(child)+"/maps"); check(bool(file),"cannot inspect owned guest mappings");
 			return std::string(std::istreambuf_iterator<char>(file),{});

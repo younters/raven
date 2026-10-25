@@ -61,9 +61,10 @@ int main(int argc, char **argv)
 		auto &resource_module = modules.add("icons.dll", read_file(directory / "icons.dll"));
 		raven::LoadedImage *images[] = {&entry.loaded, &user.loaded, &gdi.loaded, &controls.loaded, &resource_module.loaded};
 		raven::NativeProcess process(images, argv[1], std::chrono::seconds(2));
-		for (const auto *provider : {&user, &gdi, &controls})
+		for (const auto &[provider, name] : {std::pair{&user, "user32.dll"}, {&gdi, "gdi32.dll"}, {&controls, "comctl32.dll"}})
 			for (const auto &symbol : provider->exports)
-				process.add_api_trap(provider->loaded.base() + symbol.address);
+				if (!symbol.names.empty() && symbol.forwarder.empty())
+					process.add_api_trap(raven::api_trap_address(*provider, name, symbol.names.at(0), symbol.address));
 		raven::NativeEnvironment environment(process, entry.loaded.base(), 1, 1);
 		raven::DesktopObjects objects;
 		{

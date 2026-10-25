@@ -1,3 +1,4 @@
+#include "loader.h"
 #include "memory.h"
 #include "providers.h"
 
@@ -58,8 +59,11 @@ int main(int argc, char **argv)
 			!memory.count() && !memory.bytes(),"whole decommit/release leaked state");
 		check(memory.allocate(0,20000,0x3000,4).status==0xc0000017U && !memory.count(),"reservation limit created state");
 		check(memory.allocate(0,0,0x3000,4).status && memory.allocate(UINT64_MAX,4096,0x3000,4).status &&
-			memory.allocate(0,4096,0x103000,4).status && memory.allocate(0,4096,0x3000,0x104).status && !memory.count(),
+			memory.allocate(0,4096,0x403000,4).status && memory.allocate(0,4096,0x3000,0x104).status && !memory.count(),
 			"invalid geometry or unsupported modifiers succeeded");
+		// MEM_TOP_DOWN only states a preference for high addresses, which any free address satisfies.
+		const auto top_down=memory.allocate(0,4096,0x103000,4);
+		check(!top_down.status && !memory.free(top_down.address,0,0x8000).status && !memory.count(),"top-down allocation failed");
 		const auto code=memory.allocate(0,4096,0x3000,4);
 		check(!code.status,"executable test allocation failed");
 		process.write_memory(code.address,std::array<uint8_t,6>{0xb8,42,0,0,0,0xc3});
@@ -107,8 +111,16 @@ int main(int argc, char **argv)
 		check(api("NtFreeVirtualMemory",{UINT64_MAX,allocated,output+8,0x8000})==0xc00000bbU && memory.count()==1 &&
 			process.read_memory(allocated,8)==bytes,"release output alias removed its own parameter storage");
 		check(allocated && !memory.free(allocated,0,0x8000).status && !memory.count(),"NT syscall allocation was not owned or released");
-		check(!api("VirtualQuery",{entry.loaded.base(),output,48}) && environment.last_error()==120,
-			"untracked image was reported as free memory");
+		// The loader registers every module it maps, which VirtualQuery then reports as image memory based at the module.
+		raven::register_images(memory,modules);
+		const auto read_quad=[&](uint64_t at) {
+			const auto value=process.read_memory(at,8);
+			uint64_t result=0;
+			for (size_t byte=0; byte<8; ++byte) result|=uint64_t(value[byte])<<(byte*8);
+			return result;
+		};
+		check(api("VirtualQuery",{entry.loaded.base(),output,48})==48 && read_quad(output+8)==entry.loaded.base() &&
+			uint32_t(read_quad(output+40))==0x1000000,"a mapped image was not reported as image memory");
 		check(!memory.dispatch("Unimplemented"),"unimplemented memory function succeeded");
 		rejected([&] { process.complete_debug_print(0); },"INT 2D");
 		const auto debug=process.map_memory(4096,PROT_READ | PROT_WRITE);

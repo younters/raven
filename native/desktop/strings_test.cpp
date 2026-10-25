@@ -35,7 +35,7 @@ int main(int argc, char **argv)
 		raven::LoadedImage *images[] = {&entry.loaded, &user.loaded};
 		raven::NativeProcess process(images, argv[1], std::chrono::seconds(2));
 		const auto function = modules.resolve({"user32.dll", "LoadStringW", 0, false, 0});
-		process.add_api_trap(function);
+		process.add_api_trap(raven::api_trap_address(user, "user32.dll", "LoadStringW", uint32_t(function - user.loaded.base())));
 		raven::NativeEnvironment environment(process, entry.loaded.base(), 1, 1);
 		raven::NativeResources resources(process, environment, modules, entry);
 		raven::DesktopObjects objects;
