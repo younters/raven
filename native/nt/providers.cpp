@@ -1909,6 +1909,18 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 								}
 							} catch (const std::runtime_error &) {}
 						}
+						try {
+							NativeUnwinder trace_unwinder(process, modules);
+							auto frame = context_from_process(process.context());
+							std::cerr << " stack:";
+							for (int depth = 0; depth < 24; ++depth) {
+								const auto pc = context_rip(frame);
+								if (!trace_unwinder.module_at(pc)) break;
+								std::cerr << ' ' << describe(pc);
+								if (const auto function = trace_unwinder.lookup(pc)) trace_unwinder.unwind(0, pc, *function, frame);
+								else trace_unwinder.unwind_leaf(frame);
+							}
+						} catch (const std::runtime_error &) {}
 						std::cerr << std::dec << '\n';
 					}
 					// A CPU fault is a Windows exception: structured handlers of the faulting frames get the first chance.
