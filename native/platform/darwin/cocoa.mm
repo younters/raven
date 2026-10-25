@@ -220,6 +220,7 @@ struct CocoaPresentation::State {
 	NSString *double_click_action = nil;
 	uint64_t unmaximizing = 0;
 	NSPoint unmaximize_start{}, unmaximize_offset{};
+	NSEvent *unmaximize_press = nil;
 	bool unmaximize_moved = false;
 
 	xkb_context *context = nullptr;
@@ -631,6 +632,13 @@ struct CocoaPresentation::State {
 			presenting = false;
 			// WM_SYSCOMMAND SC_RESTORE: the program restores itself, and that restore finds the frame already where the pointer is.
 			push({unmaximizing, 0x112, 0xf120});
+			// The rest of the drag is the window server's, as smooth as any other title-bar drag; its release belongs to macOS too.
+			if (unmaximize_press) {
+				[target->window performWindowDragWithEvent:unmaximize_press];
+				unmaximize_press = nil;
+				unmaximizing = 0;
+				host_press = true;
+			}
 			return;
 		}
 		const NSPoint origin = NSMakePoint(std::round(screen.x - unmaximize_offset.x), std::round(screen.y - unmaximize_offset.y));
@@ -696,6 +704,7 @@ struct CocoaPresentation::State {
 				unmaximizing = handle_of(event.window);
 				unmaximize_start = point;
 				unmaximize_moved = false;
+				unmaximize_press = event;
 				[under->window makeKeyAndOrderFront:nil];
 				return false;
 			}
