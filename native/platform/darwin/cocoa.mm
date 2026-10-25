@@ -217,6 +217,10 @@ struct CocoaPresentation::State {
 	double wheel = 0, horizontal_wheel = 0;
 	bool control_click = false;
 	bool host_press = false;
+	NSString *double_click_action = nil;
+	uint64_t unmaximizing = 0;
+	NSPoint unmaximize_start{}, unmaximize_offset{};
+	bool unmaximize_moved = false;
 
 	xkb_context *context = nullptr;
 	xkb_keymap *keymap = nullptr;
@@ -252,6 +256,10 @@ struct CocoaPresentation::State {
 			throw std::runtime_error("the macOS desktop runs on the main thread");
 		[NSApplication sharedApplication];
 		[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+		// The title-bar double click is the program's (maximize, as on Windows): AppKit's own action would resize the window behind its
+		// back. The user's choice is kept to decide what the double click does.
+		double_click_action = [[NSUserDefaults.standardUserDefaults persistentDomainForName:NSGlobalDomain][@"AppleActionOnDoubleClick"] copy];
+		[NSUserDefaults.standardUserDefaults setVolatileDomain:@{@"AppleActionOnDoubleClick": @"None"} forName:NSArgumentDomain];
 		delegate = [RavenApplicationDelegate new];
 		delegate.state = this;
 		NSApp.delegate = delegate;
@@ -593,9 +601,56 @@ struct CocoaPresentation::State {
 		[target->window setFrame:NSIntegralRect(frame) display:YES];
 	}
 
+	// Dragging a maximized window's title bar restores it under the pointer and carries it along, as Windows does: past a few points
+	// of movement the window takes its restored size, placed so the pointer keeps its place across the title bar.
+	void follow_unmaximize(NSPoint screen)
+	{
+		Surface *target = surface(unmaximizing);
+		if (!target)
+			return;
+		if (!unmaximize_moved) {
+			if (std::hypot(screen.x - unmaximize_start.x, screen.y - unmaximize_start.y) < 4)
+				return;
+			unmaximize_moved = true;
+			const NSRect from = target->window.frame;
+			NSRect restored = target->restored;
+			// Without a remembered frame (maximized before it had one), restore to two thirds of the maximized size.
+			if (restored.size.width < 1 || restored.size.height < 1)
+				restored.size = NSMakeSize(std::round(from.size.width * 2 / 3), std::round(from.size.height * 2 / 3));
+			const CGFloat across = from.size.width > 0 ? (unmaximize_start.x - from.origin.x) / from.size.width : 0.5;
+			restored.origin.x = screen.x - across * restored.size.width;
+			restored.origin.y = screen.y + (NSMaxY(from) - unmaximize_start.y) - restored.size.height;
+			restored = NSIntegralRect(restored);
+			target->restored = restored;
+			unmaximize_offset = NSMakePoint(screen.x - restored.origin.x, screen.y - restored.origin.y);
+			if (trace)
+				std::fprintf(stderr, "cocoa: unmaximize pointer %g,%g from %s to %s\n", screen.x, screen.y,
+					NSStringFromRect(from).UTF8String, NSStringFromRect(restored).UTF8String);
+			presenting = true;
+			[target->window setFrame:restored display:NO];
+			presenting = false;
+			// WM_SYSCOMMAND SC_RESTORE: the program restores itself, and that restore finds the frame already where the pointer is.
+			push({unmaximizing, 0x112, 0xf120});
+			return;
+		}
+		const NSPoint origin = NSMakePoint(std::round(screen.x - unmaximize_offset.x), std::round(screen.y - unmaximize_offset.y));
+		[target->window setFrameOrigin:origin];
+		target->restored.origin = origin;
+	}
+
 	bool mouse(NSEvent *event)
 	{
 		const NSPoint screen = screen_point(event);
+		if (unmaximizing) {
+			if (event.type == NSEventTypeLeftMouseDragged || event.type == NSEventTypeLeftMouseUp) {
+				follow_unmaximize(NSEvent.mouseLocation);
+				if (event.type == NSEventTypeLeftMouseUp)
+					unmaximizing = 0;
+				return false;
+			}
+			if (event.type != NSEventTypeMouseMoved)
+				unmaximizing = 0;
+		}
 		if (resizing) {
 			if (event.type == NSEventTypeLeftMouseDragged || event.type == NSEventTypeLeftMouseUp) {
 				follow_resize(NSEvent.mouseLocation);
@@ -610,6 +665,40 @@ struct CocoaPresentation::State {
 			}
 			if (event.type != NSEventTypeMouseMoved)
 				resizing = 0;
+		}
+		// A double click on the title bar maximizes or restores through the program, as Windows does, unless the Mac is set to
+		// minimize or do nothing on a title-bar double click instead.
+		if (Surface *under = surface(handle_of(event.window)); under && event.type == NSEventTypeLeftMouseDown && event.clickCount == 2 &&
+			under->native && !under->popup) {
+			const NSPoint point = NSEvent.mouseLocation;
+			NSView *frame_view = under->window.contentView.superview;
+			NSView *hit = [frame_view hitTest:[frame_view convertPoint:event.locationInWindow fromView:nil]];
+			if (point.y >= NSMaxY(content_of(under->window)) && NSPointInRect(point, under->window.frame) && ![hit isKindOfClass:NSControl.class]) {
+				unmaximizing = 0;
+				if (trace)
+					std::fprintf(stderr, "cocoa: title double click, window %s\n", NSStringFromRect(under->window.frame).UTF8String);
+				NSString *action = double_click_action;
+				if ([action isEqualToString:@"Minimize"])
+					push({handle_of(event.window), 0x112, 0xf020});
+				else if (![action isEqualToString:@"None"])
+					push({handle_of(event.window), 0x112, uint64_t(under->maximized ? 0xf120 : 0xf030)});
+				return false;
+			}
+		}
+		if (Surface *under = surface(handle_of(event.window)); under && event.type == NSEventTypeLeftMouseDown && event.clickCount == 1 &&
+			under->native && under->maximized && !under->popup) {
+			const NSPoint point = NSEvent.mouseLocation;
+			const NSRect content = content_of(under->window);
+			NSView *frame_view = under->window.contentView.superview;
+			NSView *hit = [frame_view hitTest:[frame_view convertPoint:event.locationInWindow fromView:nil]];
+			// The title bar, not its buttons: those, and a double click (zoom), stay with macOS.
+			if (point.y >= NSMaxY(content) && NSPointInRect(point, under->window.frame) && ![hit isKindOfClass:NSControl.class]) {
+				unmaximizing = handle_of(event.window);
+				unmaximize_start = point;
+				unmaximize_moved = false;
+				[under->window makeKeyAndOrderFront:nil];
+				return false;
+			}
 		}
 		if (Surface *under = surface(handle_of(event.window))) {
 			const int edges = edges_at(*under, NSEvent.mouseLocation);
@@ -842,6 +931,9 @@ struct CocoaPresentation::State {
 		const CGFloat top = NSMaxY(content);
 		content.size = size;
 		content.origin.y = top - size.height;
+		if (trace)
+			std::fprintf(stderr, "cocoa: set_size moves window to %gx%g (was %gx%g)\n", size.width, size.height,
+				content_of(target.window).size.width, content_of(target.window).size.height);
 		presenting = true;
 		[target.window setFrame:[target.window frameRectForContentRect:content] display:NO];
 		presenting = false;
@@ -906,6 +998,10 @@ struct CocoaPresentation::State {
 			Surface *target = surface(handle);
 			if (target && (target->native != native || target->insets != (native ? insets : std::array<int32_t, 4>{}) ||
 				target->style != style)) {
+				if (trace)
+					std::fprintf(stderr, "cocoa: frame change %llx native %d insets %d,%d,%d,%d style %x, window %s\n",
+						(unsigned long long)handle, int(native), insets[0], insets[1], insets[2], insets[3], style,
+						NSStringFromRect(target->window.frame).UTF8String);
 				target->native = native;
 				target->insets = native ? insets : std::array<int32_t, 4>{};
 				target->style = style;
@@ -941,6 +1037,7 @@ struct CocoaPresentation::State {
 				surfaces.emplace(handle, std::move(created));
 				[target->window makeKeyAndOrderFront:nil];
 				register_window(handle, *target);
+				// A window shown maximized remembers the frame it was created with, to restore to.
 				if (maximized.contains(handle))
 					maximize(handle, true);
 			}
@@ -1071,6 +1168,8 @@ struct CocoaPresentation::State {
 		} else {
 			frame = target->restored;
 		}
+		if (trace)
+			std::fprintf(stderr, "cocoa: maximize %llx %d to %s\n", (unsigned long long)handle, int(wanted), NSStringFromRect(frame).UTF8String);
 		presenting = true;
 		[target->window setFrame:frame display:NO];
 		presenting = false;
@@ -1229,6 +1328,8 @@ struct CocoaPresentation::State {
 }
 - (void)windowDidResize:(NSNotification *)notification
 {
+	if (self.state && self.state->trace)
+		std::fprintf(stderr, "cocoa: did resize %s\n", NSStringFromRect(((NSWindow *)notification.object).frame).UTF8String);
 	if (self.state)
 		self.state->resized_by_host(self.handle);
 }
