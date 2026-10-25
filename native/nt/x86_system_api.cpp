@@ -39,7 +39,6 @@ constexpr std::array exported{
 	Export{"gdi32.dll", "D3DKMTOpenResourceFromNtHandle", 1}, Export{"gdi32.dll", "D3DKMTOpenSyncObjectFromNtHandle", 1},
 	Export{"gdi32.dll", "D3DKMTOpenSynchronizationObject", 1}, Export{"gdi32.dll", "D3DKMTQueryResourceInfo", 1},
 	Export{"advapi32.dll", "AllocateLocallyUniqueId", 1}, Export{"advapi32.dll", "RegNotifyChangeKeyValue", 5},
-	Export{"setupapi.dll", "SetupDiEnumDeviceInterfaces", 5}, Export{"setupapi.dll", "SetupDiGetClassDevsW", 4},
 	Export{"setupapi.dll", "SetupDiGetDeviceInterfaceDetailW", 6}, Export{"setupapi.dll", "SetupDiOpenDevRegKey", 6},
 };
 
@@ -455,9 +454,8 @@ bool NativeX86System::dispatch(std::string_view name)
 		process.return_api(1);
 	} else if (name == "RegNotifyChangeKeyValue") {
 		process.return_api(0);
-	} else if (name == "SetupDiEnumDeviceInterfaces") {
-		fail(259);
-	} else if (name == "SetupDiGetClassDevsW" || name == "SetupDiOpenDevRegKey") {
+
+	} else if (name == "SetupDiOpenDevRegKey") {
 		fail(50, UINT32_MAX);
 	} else {
 		fail(50);

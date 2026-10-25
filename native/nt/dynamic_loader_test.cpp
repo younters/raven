@@ -50,16 +50,21 @@ int main(int argc, char **argv)
 				}
 				return bytes;
 			};
-			const auto result = raven::run_native_process(modules, entry, argv[1], std::chrono::milliseconds(500), source);
+			// Include process startup under Rosetta in the deadline, including the
+			// detach-loop case which must enter the caller before it can time out.
+			const auto result = raven::run_native_process(modules, entry, argv[1], std::chrono::seconds(5), source);
 			const auto address = modules.resolve({"client.exe", "entered", 0, false, 0}) - entry.loaded.base();
 			check(address < entry.loaded.data().size(), "fixture state is outside image");
 			const auto entered = entry.loaded.data()[static_cast<size_t>(address)];
 			if (selected == "fault" || selected == "loop" || selected == "detach_fault" || selected == "detach_loop") {
 				check(result.stop == (selected.ends_with("fault") ? raven::NativeStop::fault : raven::NativeStop::timeout), "dynamic DLL did not propagate terminal stop");
-				check(entered == (selected.starts_with("detach_") ? 1 : 0), "dynamic DLL stop resumed the guest caller");
+				if (entered != (selected.starts_with("detach_") ? 1 : 0))
+					throw std::runtime_error("dynamic DLL " + selected + " terminal stop has entered=" + std::to_string(entered));
 			} else {
 				const uint64_t error = selected == "success" ? 0 : selected == "reject" ? 1114 : selected == "executable" ? 120 : 126;
-				check(result.stop == raven::NativeStop::returned && result.value == error && entered == 1, "dynamic loader failure contract differs");
+				if (result.stop != raven::NativeStop::returned || result.value != error || entered != 1)
+					throw std::runtime_error("dynamic loader " + selected + " failure contract differs: stop=" +
+						std::to_string(int(result.stop)) + " value=" + std::to_string(result.value) + " entered=" + std::to_string(entered));
 				check(!modules.all().contains("probe.dll") && !modules.all().contains("tlsprobe.dll"), "dynamic rollback or release retained graph images");
 			}
 		}

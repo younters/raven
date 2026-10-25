@@ -1,0 +1,28 @@
+--- a/dll/win32/oleaut32/olepicture.c
++++ b/dll/win32/oleaut32/olepicture.c
+@@ -987,6 +987,25 @@
+     BITMAPINFO		*bi = (BITMAPINFO*)(bfh+1);
+     HDC			hdcref;
+ 
++    /* Keep uncompressed bitmaps in a DIB section: IPicture callers may read the
++     * original pixels through GetObject, as they do on Windows. */
++    if (bi->bmiHeader.biSize >= sizeof(BITMAPINFOHEADER) &&
++        (bi->bmiHeader.biCompression == BI_RGB || bi->bmiHeader.biCompression == BI_BITFIELDS))
++    {
++        void *bits;
++        ULONGLONG height = bi->bmiHeader.biHeight < 0 ? -(LONGLONG)bi->bmiHeader.biHeight : bi->bmiHeader.biHeight;
++        ULONGLONG size = (((ULONGLONG)bi->bmiHeader.biWidth * bi->bmiHeader.biBitCount + 31) / 32) * 4 * height;
++        if (bi->bmiHeader.biWidth <= 0 || !height || bfh->bfOffBits > xread || size > xread - bfh->bfOffBits)
++            return E_FAIL;
++        This->desc.bmp.hbitmap = CreateDIBSection(0, bi, DIB_RGB_COLORS, &bits, NULL, 0);
++        if (!This->desc.bmp.hbitmap)
++            return E_FAIL;
++        memcpy(bits, xbuf + bfh->bfOffBits, size);
++        This->desc.picType = PICTYPE_BITMAP;
++        OLEPictureImpl_SetBitmap(This);
++        return S_OK;
++    }
++
+     /* Does not matter whether this is a coreheader or not, we only use
+      * components which are in both
+      */

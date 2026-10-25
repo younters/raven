@@ -1389,6 +1389,12 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		catch (const ApiFault &) { call.ret(0xc0000005U); }
 	});
 	// What the object manager tells about a handle: the basic record, the name (objects here have none), the type and the handle flags.
+	// Object-manager directories are not file-system directories. No such namespace is published by this runtime yet.
+	registry.add("NtOpenDirectoryObject", 3, [](ApiCall &call) {
+		if (call[0]) call.store_pointer(call[0], 0);
+		call.ret(0xc0000034U); // STATUS_OBJECT_NAME_NOT_FOUND
+	});
+	registry.add("NtQueryDirectoryObject", 7, [](ApiCall &call) { call.ret(0xc0000008U); });
 	registry.add("NtQueryObject", 5, [&objects](ApiCall &call) {
 		const uint64_t handle = call[0];
 		const size_t width = call.pointer_width();

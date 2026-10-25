@@ -123,6 +123,7 @@ void register_sync_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(call.process.compare_exchange(call[0], 0, 1, call.pointer_width()) == 0);
 	});
 	registry.add("ReleaseSRWLockExclusive", 1, release_exclusive);
+	registry.add("RtlReleaseSRWLockExclusive", 1, release_exclusive);
 	registry.add("AcquireSRWLockShared", 1, acquire_shared);
 	registry.add("RtlAcquireSRWLockShared", 1, acquire_shared);
 	registry.add("TryAcquireSRWLockShared", 1, [](ApiCall &call) {
@@ -139,6 +140,7 @@ void register_sync_api(ApiRegistry &registry, KernelContext &context)
 		}
 	});
 	registry.add("ReleaseSRWLockShared", 1, release_shared);
+	registry.add("RtlReleaseSRWLockShared", 1, release_shared);
 
 	// Condition variables keep their waiters host-side, keyed by the variable's address. The variable's word holds how many sleep on it,
 	// so a guest can see that a wake has nobody to wake without asking.
@@ -277,6 +279,15 @@ void register_sync_api(ApiRegistry &registry, KernelContext &context)
 		call.store_pointer(once, (produced & ~3ULL) | 2);
 		if (call[3]) call.store_pointer(call[3], produced);
 		call.ret(1);
+	});
+
+	// The native entry has the same callback and context ABI, but returns an NT status instead of a Win32 boolean.
+	const auto execute_once = registry.find("InitOnceExecuteOnce")->second;
+	registry.add("RtlRunOnceExecuteOnce", 4, [execute_once](ApiCall &call) {
+		const auto error = call.last_error();
+		execute_once(call);
+		call.ret(call.result ? 0 : 0xc0000001U);
+		call.set_last_error(error);
 	});
 
 	// WaitOnAddress watches memory directly; wakeups are implicit because waiting threads re-check the value.

@@ -165,6 +165,9 @@ static int selected_events(void)
 		connect(client, (SOCKADDR *)&address, size) || !network_event(listener, event, FD_ACCEPT)) return 40;
 	SOCKET server = accept(listener, NULL, NULL);
 	closesocket(listener);
+	char empty;
+	if (server == INVALID_SOCKET || recv(server, &empty, 1, 0) != SOCKET_ERROR ||
+		WSAGetLastError() != WSAEWOULDBLOCK) return 49;
 	if (server == INVALID_SOCKET || WSAEventSelect(server, event, FD_READ | FD_WRITE | FD_CLOSE) ||
 		!network_event(server, event, FD_WRITE)) return 41;
 	WSANETWORKEVENTS events;
@@ -175,6 +178,14 @@ static int selected_events(void)
 	}
 	if (send(client, "ab", 2, 0) != 2 || !network_event(server, event, FD_READ) ||
 		WSAEnumNetworkEvents(server, event, &events) || events.lNetworkEvents) return 43;
+	/* The same descriptor must retain each requested readiness kind. */
+	fd_set readable, writable, exceptional;
+	FD_ZERO(&readable); FD_SET(server, &readable);
+	FD_ZERO(&writable); FD_SET(server, &writable);
+	FD_ZERO(&exceptional); FD_SET(server, &exceptional);
+	struct timeval timeout = {1, 0};
+	if (select(0, &readable, &writable, &exceptional, &timeout) != 2 ||
+		!FD_ISSET(server, &readable) || !FD_ISSET(server, &writable) || exceptional.fd_count) return 48;
 	char byte;
 	if (recv(server, &byte, 1, 0) != 1 || byte != 'a' || !network_event(server, event, FD_READ) ||
 		recv(server, &byte, 1, 0) != 1 || byte != 'b') return 44;

@@ -296,6 +296,22 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("GetTimeZoneInformation", 1, [zone_information](ApiCall &call) { zone_information(call, false); });
 	registry.add("GetDynamicTimeZoneInformation", 1, [zone_information](ApiCall &call) { zone_information(call, true); });
+	// A prefix has no per-year Dynamic DST registry overrides; use the supplied recurring rules, or the local zone when omitted.
+	registry.add("GetTimeZoneInformationForYear", 3, [zone_information](ApiCall &call) {
+		if (!call.u32(0) || !call[2]) { call.fail(87); return; }
+		if (call[1]) {
+			auto bytes = call.read(call[1], 172);
+			if (call.load<uint8_t>(call[1] + 428)) {
+				std::fill(bytes.begin() + 68, bytes.begin() + 84, 0);
+				std::fill(bytes.begin() + 152, bytes.end(), 0);
+			}
+			call.write(call[2], bytes);
+		} else {
+			ApiCall local(call.process, call.environment, {call[2]});
+			zone_information(local, false);
+		}
+		call.ret(1);
+	});
 	// The reverse of the call below: a local time becomes UTC by taking the zone's offset off.
 	registry.add("TzSpecificLocalTimeToSystemTime", 3, [](ApiCall &call) {
 		const auto ticks = ticks_from(call.read(call[1], 16));
@@ -720,6 +736,13 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	// The native form answers STATUS_REVISION_MISMATCH where the Win32 one fails with ERROR_OLD_WIN_VERSION.
 	registry.add("RtlVerifyVersionInfo", 3, [verify_version](ApiCall &call) { call.ret(verify_version(call, true) ? 0 : 0xc0000059U); });
 	// kernel32's memory exports: moving, filling and clearing a block of the program's memory.
+	registry.add("RtlSetLastWin32Error", 1, [](ApiCall &call) { call.set_last_error(call.u32(0)); });
+	registry.add("RtlCompareMemory", 3, [](ApiCall &call) {
+		const auto first = call.read(call[0], size_t(call[2])), second = call.read(call[1], size_t(call[2]));
+		size_t matched = 0;
+		while (matched < first.size() && first[matched] == second[matched]) ++matched;
+		call.ret(matched);
+	});
 	registry.add("RtlMoveMemory", 3, [](ApiCall &call) {
 		if (call[2])
 			call.write(call[0], call.read(call[1], size_t(call[2])));

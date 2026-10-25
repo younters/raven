@@ -347,8 +347,9 @@ uint64_t NativeDesktop::get_object(std::span<const uint64_t> args,bool ansi)
 		return count;
 	}
 	if (const auto *brush=objects.brush(args[0])) {
-		if (!args[2]) return 16;
-		const auto count=std::min(size_t(uint32_t(args[1])),size_t(16)); if (!count) return 0;
+		const size_t size=process.mode()==NativeMode::x86 ? 12 : 16;
+		if (!args[2]) return size;
+		const auto count=std::min(size_t(uint32_t(args[1])),size); if (!count) return 0;
 		std::array<uint8_t,16> bytes{}; put(bytes,0,brush->hollow ? 1 : 0); put(bytes,4,brush->color);
 		process.write_memory(args[2],std::span(bytes).first(count)); return count;
 	}
@@ -431,8 +432,9 @@ uint64_t NativeDesktop::load_string(std::span<const uint64_t> args)
 	}
 	if (!capacity) {
 		std::array<uint8_t, 8> pointer{};
-		put(pointer, 0, table->address + offset, 8);
-		process.write_memory(args[2], pointer);
+		const size_t width=process.mode()==NativeMode::x86 ? 4 : 8;
+		put(pointer, 0, table->address + offset, width);
+		process.write_memory(args[2], std::span(pointer).first(width));
 		return length;
 	}
 	const size_t count = std::min(size_t(length), size_t(capacity - 1));

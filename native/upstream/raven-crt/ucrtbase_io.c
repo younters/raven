@@ -728,6 +728,14 @@ CRT char *setlocale(int category, const char *name)
 	return c_locale;
 }
 
+CRT wchar_t *_wsetlocale(int category, const wchar_t *name)
+{
+	static wchar_t c_locale[] = L"C";
+	if (name && *name && wcscmp(name, L"C") && wcscmp(name, L"POSIX"))
+		return NULL;
+	return c_locale;
+}
+
 CRT char *strerror(int code)
 {
 	switch (code) {

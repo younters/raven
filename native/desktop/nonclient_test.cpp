@@ -53,6 +53,40 @@ int main(int argc,char **argv)
 				"invalid host dimensions changed screen metrics");
 		}
 		windows.set_presentation(presentation);
+		{
+			const auto owner=objects.add(raven::DesktopWindow{0,0,u"owner",0,0,4,4});
+			objects.window(owner)->visible=true;
+			const auto popup=objects.add(raven::DesktopWindow{0,0,u"popup",0,0,4,4});
+			auto *window=objects.window(popup);
+			window->owner=owner;
+			window->visible=window->painted=true;
+			window->style=0x90000000U;
+			window->glass=std::array<int32_t,4>{-1,-1,-1,-1};
+			std::vector<uint8_t> pixels(4*4*4,255);
+			pixels[0]=pixels[1]=pixels[2]=pixels[3]=0;
+			pixels[4]=16; pixels[5]=32; pixels[6]=48; pixels[7]=64;
+			pixels[8]=pixels[9]=pixels[10]=0; pixels[11]=255;
+			const auto bitmap=objects.add(raven::DesktopBitmap{4,4,32,pixels});
+			window=objects.window(popup);
+			window->bitmap=bitmap;
+			window->dc=objects.add(raven::DesktopDC{bitmap,bitmap,popup});
+			bool alpha=false;
+			unsigned frames=0;
+			auto glass=presentation;
+			glass.present=[](auto,auto,auto,auto,auto) {};
+			glass.alpha=[&](uint64_t handle,bool enabled) { check(handle==popup,"wrong alpha surface"); alpha=enabled; };
+			glass.owned_popup=[&](uint64_t handle,uint64_t parent,auto,auto,auto,auto,std::span<const uint8_t> shown) {
+				check(handle==popup && parent==owner && alpha==(frames==0),"glass popup alpha mode differs");
+				check(std::equal(shown.begin(),shown.end(),pixels.begin(),pixels.end()),"glass popup lost transparent or opaque black pixels");
+				++frames;
+			};
+			windows.set_presentation(glass);
+			windows.drawing(popup); windows.flush_dirty(true);
+			objects.window(popup)->glass.reset();
+			windows.drawing(popup); windows.flush_dirty(true);
+			check(frames==2,"glass popup was not presented");
+			windows.set_presentation(presentation);
+		}
 		const auto page=process.map_memory(8192,PROT_READ | PROT_WRITE); process.protect_memory(page+4096,4096,PROT_NONE);
 		const auto rect=page+4096-16;
 		const std::array<uint8_t,16> input{0,0,0,0,0,0,0,0,64,1,0,0,240,0,0,0}; process.write_memory(rect,input);

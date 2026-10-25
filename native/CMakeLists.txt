@@ -1637,6 +1637,83 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
             endforeach()
             add_custom_target(etw_controller_fixtures ALL DEPENDS ${ETW_CLIENTS})
             add_custom_target(process_enum_fixtures ALL DEPENDS ${PROCESS_ENUM_CLIENTS})
+            # System APIs discovered after startup still use the guest dialog manager and task allocator, at either pointer width.
+            set(DYNAMIC_DIALOG_CLIENTS)
+            foreach(width 64 32)
+                if(width EQUAL 64)
+                    set(dialog_compiler ${RAVEN_MINGW64})
+                    set(dialog_windres x86_64-w64-mingw32-windres)
+                    set(dialog_entry raven_entry)
+                else()
+                    set(dialog_compiler ${RAVEN_MINGW32})
+                    set(dialog_windres i686-w64-mingw32-windres)
+                    set(dialog_entry _raven_entry)
+                endif()
+                if(dialog_compiler AND (width EQUAL 64 OR RAVEN_CONTROLS32_COMPONENT_DIR))
+                    set(dialog_client ${CMAKE_CURRENT_BINARY_DIR}/dynamic-dialog${width}.exe)
+                    set(dialog_resource ${CMAKE_CURRENT_BINARY_DIR}/dynamic-dialog${width}.o)
+                    add_custom_command(OUTPUT ${dialog_client} ${dialog_resource}
+                        COMMAND ${dialog_windres} ${PROJECT_SOURCE_DIR}/testdata/native_loader/dynamic_dialog.rc -o ${dialog_resource}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--image-base,0x1e600000,--no-insert-timestamp
+                            -o ${dialog_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/dynamic_dialog_client.c ${dialog_resource} -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/dynamic_dialog_client.c
+                            ${PROJECT_SOURCE_DIR}/testdata/native_loader/dynamic_dialog.rc VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${dialog_client})
+                    add_test(NAME native_dynamic_dialog_x${width} COMMAND raven --run-process --execution=native ${dialog_client})
+                    set_tests_properties(native_dynamic_dialog_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(secure_client ${CMAKE_CURRENT_BINARY_DIR}/secure-stream${width}.exe)
+                    add_custom_command(OUTPUT ${secure_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${secure_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/secure_stream_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/secure_stream_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${secure_client})
+                    add_test(NAME native_secure_stream_x${width} COMMAND raven --run-process --execution=native ${secure_client})
+                    set_tests_properties(native_secure_stream_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(gamma_client ${CMAKE_CURRENT_BINARY_DIR}/gamma${width}.exe)
+                    add_custom_command(OUTPUT ${gamma_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${gamma_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/gamma_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/gamma_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${gamma_client})
+                    add_test(NAME native_gamma_x${width} COMMAND raven --run-process --execution=native ${gamma_client})
+                    set_tests_properties(native_gamma_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(contract_client ${CMAKE_CURRENT_BINARY_DIR}/api-contract${width}.exe)
+                    add_custom_command(OUTPUT ${contract_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${contract_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/api_contract_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/api_contract_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${contract_client})
+                    add_test(NAME native_api_contract_x${width} COMMAND raven --run-process --execution=native ${contract_client})
+                    set_tests_properties(native_api_contract_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(bitmap_client ${CMAKE_CURRENT_BINARY_DIR}/bitmap-file${width}.exe)
+                    set(bitmap_defines)
+                    if((width EQUAL 64 AND RAVEN_INSTALLER_COMPONENT_DIR) OR (width EQUAL 32 AND RAVEN_INSTALLER32_COMPONENT_DIR))
+                        set(bitmap_defines -DRAVEN_TEST_OLE)
+                    endif()
+                    add_custom_command(OUTPUT ${bitmap_client}
+                        COMMAND ${dialog_compiler} ${bitmap_defines} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${bitmap_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/bitmap_file_client.c -lkernel32 -luser32 -lgdi32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/bitmap_file_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${bitmap_client})
+                    add_test(NAME native_bitmap_file_x${width} COMMAND raven --run-process --execution=native ${bitmap_client})
+                    set_tests_properties(native_bitmap_file_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(profile_client ${CMAKE_CURRENT_BINARY_DIR}/profile-write${width}.exe)
+                    add_custom_command(OUTPUT ${profile_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${profile_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/profile_write_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/profile_write_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${profile_client})
+                    add_test(NAME native_profile_write_x${width} COMMAND raven --run-process --execution=native ${profile_client})
+                    set_tests_properties(native_profile_write_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                endif()
+            endforeach()
+            add_custom_target(dynamic_dialog_fixtures ALL DEPENDS ${DYNAMIC_DIALOG_CLIENTS})
             set(SOCKET_MESSAGE_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/socket-message-client.exe)
             add_custom_command(OUTPUT ${SOCKET_MESSAGE_CLIENT}
                 COMMAND ${RAVEN_MINGW64} -nostdlib -O1 -fno-builtin -fno-stack-protector
@@ -2334,6 +2411,14 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                 add_custom_target(x86_socket_message_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/x86-socket-message-client.exe)
                 add_test(NAME native_socket_messages_x32 COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/x86-socket-message-client.exe)
                 set_tests_properties(native_socket_messages_x32 PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/x86-window-state-client.exe
+                    COMMAND ${RAVEN_MINGW32} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                        -Wl,--entry,_raven_entry,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/x86-window-state-client.exe
+                        ${LOADER_SOURCES}/window_state_client.c -luser32 -lkernel32
+                    DEPENDS ${LOADER_SOURCES}/window_state_client.c VERBATIM)
+                add_custom_target(x86_window_state_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/x86-window-state-client.exe)
+                add_test(NAME native_window_state_x32 COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/x86-window-state-client.exe)
+                set_tests_properties(native_window_state_x32 PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                 add_test(NAME native_x86_threads COMMAND raven --run-process --execution=native
                     ${CMAKE_CURRENT_BINARY_DIR}/x86-thread-client.exe)
                 set_tests_properties(native_x86_threads PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
@@ -2396,7 +2481,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     COMMAND ${RAVEN_MINGW32} -c -O2 -w -ffreestanding -fno-builtin -ffile-prefix-map=${PROJECT_SOURCE_DIR}=raven
                         ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase.c -o ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.o
                     COMMAND ${RAVEN_MINGW32} -shared -nostdlib -Wl,--entry,_DllMain@12,--image-base,0x1fc00000,--no-insert-timestamp
-                        -o ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.dll ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.o ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase32.def -lkernel32 -lgcc
+                        -o ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.dll ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.o ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase32.def -lmingwex -lkernel32 -lgcc
                     DEPENDS ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase32.def ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_io.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_legacy.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_msvcrt.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_cpp.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_cxx.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_more.c VERBATIM)
                 add_custom_target(x86_ucrt_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.dll)
                 # mscoree.dll, the system's entry to the .NET Framework, for each width: it hands every call to the shim implementation the
@@ -3337,7 +3422,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
         add_custom_command(OUTPUT ${DYNAMIC_FIXTURES}/tlsprobe.dll ${DYNAMIC_FIXTURES}/tlsprobe.a
             COMMAND ${CMAKE_COMMAND} -E make_directory ${DYNAMIC_FIXTURES}
             COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -shared -fno-stack-protector
-                -DRAVEN_TLS_DLL -DRAVEN_TLS_DYNAMIC -Wl,--entry,DllMain,--image-base,0x190000000
+                -DRAVEN_TLS_DLL -DRAVEN_TLS_DYNAMIC -Wl,--entry,DllMain,--image-base,0x240000000
                 -Wl,--out-implib,${DYNAMIC_FIXTURES}/tlsprobe.a
                 -o ${DYNAMIC_FIXTURES}/tlsprobe.dll ${LOADER_SOURCES}/tls_client.c -lkernel32
             DEPENDS ${LOADER_SOURCES}/tls_client.c VERBATIM)
@@ -3356,7 +3441,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
             endif()
             add_custom_command(OUTPUT ${DYNAMIC_FIXTURES}/${DYNAMIC_DLL}.dll
                 COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -shared -fno-stack-protector ${DYNAMIC_OPTIONS}
-                    -Wl,--entry,DllMain,--image-base,0x190000000
+                    -Wl,--entry,DllMain,--image-base,0x240000000
                     -o ${DYNAMIC_FIXTURES}/${DYNAMIC_DLL}.dll ${LOADER_SOURCES}/dynamic_parent.c
                     ${DYNAMIC_FIXTURES}/tlsprobe.a -lkernel32
                 DEPENDS ${LOADER_SOURCES}/dynamic_parent.c ${DYNAMIC_FIXTURES}/tlsprobe.a VERBATIM)
@@ -3379,7 +3464,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
         target_link_libraries(dynamic_loader_test PRIVATE raven_cpu)
         add_dependencies(dynamic_loader_test dynamic_pe_fixtures raven-bootstrap)
         add_test(NAME native_dynamic_loader_contract COMMAND dynamic_loader_test $<TARGET_FILE:raven-bootstrap> ${DYNAMIC_FIXTURES})
-        set_tests_properties(native_dynamic_loader_contract PROPERTIES TIMEOUT 15)
+        set_tests_properties(native_dynamic_loader_contract PROPERTIES TIMEOUT 60)
         add_test(NAME native_dynamic_loader_cli COMMAND raven --run-process --execution=native ${DYNAMIC_FIXTURES}/client.exe)
         set_tests_properties(native_dynamic_loader_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
         # An installer puts a redistributable library in the system directory and copies over system libraries.

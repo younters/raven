@@ -225,3 +225,8 @@ CRT unsigned long _getdrives(void) { return GetLogicalDrives(); }
 
 /* Whether a byte begins a double-byte character in the program's code page. */
 CRT int _ismbblead(unsigned int character) { return IsDBCSLeadByte((BYTE)character); }
+
+CRT unsigned char *_mbsinc(const unsigned char *text)
+{
+	return (unsigned char *)text + (_ismbblead(*text) && text[1] ? 2 : 1);
+}

@@ -450,9 +450,14 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			socket->select_enabled |= fd_accept;
 			const int accepted = ::accept4(socket->descriptor, reinterpret_cast<sockaddr *>(&storage), &length, SOCK_NONBLOCK | SOCK_CLOEXEC);
 			if (accepted >= 0) {
-				const auto made = objects.add_object(std::make_shared<SocketObject>(accepted));
+				const auto child = std::make_shared<SocketObject>(accepted);
+				// Winsock accepts inherit the listener's blocking mode and event selection.
+				child->guest_nonblocking = socket->guest_nonblocking;
+				child->select_event = socket->select_event;
+				child->select_mask = socket->select_mask;
+				child->select_enabled = socket->select_mask;
+				const auto made = objects.add_object(child);
 				if (made.status) {
-					::close(accepted);
 					fail(call, wsaemfile);
 					return;
 				}
@@ -1717,11 +1722,19 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			wake = std::chrono::steady_clock::now() + std::chrono::seconds(std::max(seconds, 0)) + std::chrono::microseconds(std::max(micros, 0));
 		}
 		static constexpr short events[3] = {POLLIN, POLLOUT, POLLPRI};
+		// A socket can occur in several sets. macOS poll only observes the last
+		// entry for a descriptor, so combine its requested events into one entry.
+		std::map<int, size_t> positions;
+		std::vector<pollfd> requested;
+		for (int kind = 0; kind < 3; ++kind)
+			for (const auto &item : sets[kind]) {
+				const auto [position, added] = positions.emplace(item.descriptor, requested.size());
+				if (added)
+					requested.push_back({item.descriptor, 0, 0});
+				requested[position->second].events |= events[kind];
+			}
 		const auto poll_once = [&](std::vector<pollfd> &entries) {
-			entries.clear();
-			for (int kind = 0; kind < 3; ++kind)
-				for (const auto &item : sets[kind])
-					entries.push_back({item.descriptor, events[kind], 0});
+			entries = requested;
 			return entries.empty() ? 0 : ::poll(entries.data(), nfds_t(entries.size()), 0);
 		};
 		std::vector<pollfd> entries;
@@ -1738,13 +1751,12 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			fail(call, wsa_error(errno));
 			return;
 		}
-		size_t position = 0;
 		uint32_t total = 0;
 		for (int kind = 0; kind < 3; ++kind) {
 			const auto address = call[1 + size_t(kind)];
 			std::vector<uint64_t> kept;
 			for (const auto &item : sets[kind]) {
-				const auto revents = entries[position++].revents;
+				const auto revents = entries[positions.at(item.descriptor)].revents;
 				const auto socket = socket_of(item.handle);
 				const bool connecting = socket && socket->connecting;
 				const bool failed = (revents & (POLLERR | POLLHUP)) != 0;

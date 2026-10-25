@@ -1,5 +1,6 @@
 #include "providers.h"
 #include "handle_channel.h"
+#include "section.h"
 #include "object_api.h"
 #include "module_api.h"
 #include "resources.h"
@@ -49,8 +50,8 @@ namespace raven {
 namespace {
 
 // stdcall argument counts for every API the x86 process runner can dispatch.
-constexpr std::array<std::pair<std::string_view, uint32_t>, 115> kernel32_exports{{
-	{"CloseHandle", 1}, {"CreateEventA", 4}, {"CreateEventW", 4}, {"CreateThread", 6}, {"DeleteCriticalSection", 1}, {"EnterCriticalSection", 1}, {"ExitProcess", 1}, {"ExitThread", 1}, {"FindResourceA", 3},
+constexpr std::array<std::pair<std::string_view, uint32_t>, 117> kernel32_exports{{
+	{"OpenProcessToken", 3}, {"OpenThreadToken", 4}, {"CloseHandle", 1}, {"CreateEventA", 4}, {"CreateEventW", 4}, {"CreateThread", 6}, {"DeleteCriticalSection", 1}, {"EnterCriticalSection", 1}, {"ExitProcess", 1}, {"ExitThread", 1}, {"FindResourceA", 3},
 	{"FindResourceExA", 4}, {"FindResourceExW", 4}, {"FindResourceW", 3}, {"FreeLibrary", 1}, {"GetACP", 0},
 	{"GetCommandLineA", 0}, {"GetCommandLineW", 0}, {"GetCurrentProcessId", 0}, {"GetCurrentThreadId", 0}, {"GetExitCodeThread", 2},
 	{"GetFileType", 1}, {"GetLastError", 0}, {"GetModuleFileNameA", 3}, {"GetModuleHandleA", 1},
@@ -69,6 +70,7 @@ constexpr std::array<std::pair<std::string_view, uint32_t>, 115> kernel32_export
 
 // Shared-registry handlers that serve 32-bit programs as they are: every argument is one 32-bit word and no structure holds a pointer.
 constexpr std::array shared_exports{
+	NativeX86System::Export{"setupapi.dll", "SetupDiEnumDeviceInterfaces", 5}, NativeX86System::Export{"setupapi.dll", "SetupDiGetClassDevsW", 4},
 	// A trace identifier occupies two stack words; its controller adapter combines them before shared dispatch.
 	NativeX86System::Export{"advapi32.dll", "StopTraceA", 4}, NativeX86System::Export{"advapi32.dll", "StopTraceW", 4},
 	NativeX86System::Export{"advapi32.dll", "ControlTraceA", 5}, NativeX86System::Export{"advapi32.dll", "ControlTraceW", 5},
@@ -102,7 +104,8 @@ constexpr std::array shared_exports{
 // More shared handlers a 32-bit program may use as they are; their words come from the registry and their library from the public
 // export lists. Anything with a pointer-width structure, a 64-bit argument or a callback into x64 conventions is not here.
 constexpr std::string_view shared_allowed[] = {
-	"WaitForSingleObjectEx",
+	"WaitForSingleObjectEx", "OpenThreadToken", "RtlCompareMemory", "RtlSetLastWin32Error", "RtlRunOnceExecuteOnce",
+	"RtlAcquireSRWLockExclusive", "RtlReleaseSRWLockExclusive", "RtlAcquireSRWLockShared", "RtlReleaseSRWLockShared",
 	"EnumProcesses", "K32EnumProcesses",
 	"QueryFullProcessImageNameW", "QueryFullProcessImageNameA",
 	"NtQueryInformationProcess", "NtReadVirtualMemory", "NtWriteVirtualMemory", "ReadProcessMemory", "WriteProcessMemory", "OpenProcess",
@@ -443,6 +446,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// A library's own list of names together with the ones the graph imports from it.
 	const auto with_imports = [&](const std::string &library, std::span<const std::string_view> own) {
 		std::vector<std::string_view> merged(own.begin(), own.end());
+		if (library == "ntdll.dll")
+			for (const auto name : {"memcpy", "memmove", "memset", "memcmp", "strlen", "wcslen"})
+				merged.push_back(name);
 		// A library loaded later, such as an installer plug-in, imports names the initial graph never named: every public name binds.
 		const auto published = system_export_names(library);
 		merged.insert(merged.end(), published.begin(), published.end());
@@ -463,9 +469,11 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// A guest component that implements part of a system library receives those calls directly, as for 64-bit programs.
 	const auto overlay = [&](PEModule &provider, std::string_view library) {
 		struct Rule { const char *library, *component, *prefix; };
-		static constexpr Rule rules[] = {{"user32.dll", "raven-user32.dll", "raven-user32."}, {"comdlg32.dll", "raven-shell.dll", "raven-shell."},
+		static constexpr Rule rules[] = {{"ntdll.dll", "ucrtbase.dll", "ucrtbase."},
+			{"user32.dll", "raven-user32.dll", "raven-user32."}, {"comdlg32.dll", "raven-shell.dll", "raven-shell."},
 			{"ole32.dll", "raven-shell.dll", "raven-shell."}, {"shell32.dll", "raven-shell.dll", "raven-shell."}, {"msvcrt.dll", "ucrtbase.dll", "ucrtbase."}, {"shlwapi.dll", "raven-shell.dll", "raven-shell."}, {"setupapi.dll", "raven-setupapi.dll", "raven-setupapi."},
-			{"ole32.dll", "raven-storage.dll", "raven-storage."}, {"combase.dll", "raven-shell.dll", "raven-shell."}};
+			{"ole32.dll", "raven-storage.dll", "raven-storage."}, {"combase.dll", "raven-shell.dll", "raven-shell."},
+			{"uiautomationcore.dll", "raven-shell.dll", "raven-shell."}};
 		for (const auto &rule : rules) {
 			if (library != rule.library)
 				continue;
@@ -475,7 +483,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			// The startup and exception entry points of msvcrt.dll stay with the runtime, which knows the process.
 			const auto host_crt = std::string_view(rule.library) == "msvcrt.dll" ? NativeCRT::exports() : std::span<const std::string_view>{};
 			for (auto &symbol : provider.exports)
-				if (!symbol.names.empty() && std::find(host_crt.begin(), host_crt.end(), symbol.names.front()) == host_crt.end() &&
+				if (!symbol.names.empty() && !host_device_export(library, symbol.names.front()) && std::find(host_crt.begin(), host_crt.end(), symbol.names.front()) == host_crt.end() &&
 					std::any_of(component->second->exports.begin(), component->second->exports.end(), [&](const auto &candidate) {
 						return candidate.forwarder.empty() && std::find(candidate.names.begin(), candidate.names.end(), symbol.names.front()) != candidate.names.end();
 					}))
@@ -795,10 +803,33 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	module_api.set_path_lookup([&](const std::string &path) { return library_loader.find(path); });
 	DesktopObjects desktop_objects;
 	NativeDesktop desktop(process, environment, desktop_objects, resources);
+	desktop.set_source(source);
+	desktop.set_section_source([&](uint64_t handle) -> std::optional<std::pair<int, uint64_t>> {
+		const auto section = kernel_objects.object_as<SectionObject>(handle);
+		if (!section || section->descriptor < 0)
+			return std::nullopt;
+		return std::make_pair(section->descriptor, section->size);
+	});
+	// File-backed images use the same prefix path resolution as other file APIs, just as for 64-bit programs.
+	desktop.set_host_files([&paths](std::u16string_view path) -> std::optional<std::vector<uint8_t>> {
+		const auto resolved = paths.resolve(path);
+		if (!resolved || !resolved->exists || !std::filesystem::is_regular_file(resolved->host))
+			return std::nullopt;
+		std::ifstream stream(resolved->host, std::ios::binary | std::ios::ate);
+		const auto size = stream ? stream.tellg() : std::streampos(-1);
+		if (size <= 0)
+			return std::nullopt;
+		std::vector<uint8_t> bytes(static_cast<size_t>(size));
+		stream.seekg(0);
+		if (!stream.read(reinterpret_cast<char *>(bytes.data()), size))
+			return std::nullopt;
+		return bytes;
+	});
 	// The built-in bitmaps, icons and cursors of user32 live in the component when it is there.
 	if (const auto component = modules.all().find("raven-user32.dll"); component != modules.all().end() && !component->second->runtime_api)
 		desktop.set_oem_module(component->second->loaded.base());
 	NativeWindows windows(process, environment, desktop_objects);
+	windows.set_menu_loader([&desktop](uint64_t instance,uint64_t identifier) { return desktop.menu_resource(instance,identifier); });
 	// Registry handlers whose arguments carry no pointer-width structures also serve 32-bit programs.
 	ApiRegistry shared_api;
 	windows.register_api(shared_api);
@@ -1109,6 +1140,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		return result;
 	};
 	windows.set_call(invoke);
+	desktop.set_call(invoke);
 	guest_threads.set_runner(invoke);
 	// Threads announce themselves to the images that keep per-thread state: TLS callbacks first, then the library entry points.
 	guest_threads.set_notifier([&](uint32_t reason) {
@@ -1142,6 +1174,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// File, memory, text and system handlers of the shared registry take 32-bit words as well; they get the same process services.
 	NativeHeap guest_heap(process, environment, modules, entry.image);
 	GuestAllocator allocator(memory, guest_heap);
+	windows.set_global_allocator([&allocator](uint64_t size) { return allocator.allocate(size,true); });
 	compat.set_global_blocks([&allocator](uint64_t address) { return allocator.size(address); }, [&allocator](uint64_t address) { return allocator.release(address); });
 	KernelContext kernel{process, environment, memory, allocator, kernel_objects, guest_threads, paths, modules, entry, *launch, invoke};
 	guest_threads.set_watched([reactor = kernel.reactor](std::vector<pollfd> &descriptors) { reactor->watch(descriptors); });

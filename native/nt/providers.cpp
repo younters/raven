@@ -64,15 +64,21 @@ static std::vector<uint8_t> read_host_file(const std::filesystem::path &path)
 }
 
 // PathCchCombineEx and PathCchSkipRoot live in kernelbase.dll on Windows and are not in the import libraries the public lists come from.
-static constexpr std::array<std::string_view, 47> names{
+static constexpr std::array<std::string_view, 50> names{
 	"CloseHandle","CreateEventA","CreateEventW","ExitProcess",
 	"FindResourceA", "FindResourceExA", "FindResourceExW", "FindResourceW", "FreeLibrary",
 	"GetACP", "GetCommandLineA", "GetCommandLineW", "GetCurrentProcessId", "GetCurrentThreadId", "GetFileType", "GetLastError", "GetModuleHandleA",
 	"GetModuleHandleW", "GetProcAddress", "GetProcessHeap", "GetStartupInfoA", "GetStartupInfoW", "GetStdHandle", "HeapAlloc", "HeapCreate", "HeapDestroy", "HeapFree", "HeapReAlloc", "HeapSize",
 	"LoadLibraryA", "LoadLibraryW", "LoadResource",
-	"LockResource", "MultiByteToWideChar", "PathCchCombineEx", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
+	"LockResource", "MultiByteToWideChar", "OpenProcessToken", "OpenThreadToken", "PathCchCanonicalize", "PathCchCombineEx", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
 	"VirtualAlloc", "VirtualFree", "VirtualProtect", "VirtualQuery", "WaitForSingleObject", "WriteFile"
 };
+
+bool host_device_export(std::string_view library, std::string_view name)
+{
+	return library == "setupapi.dll" && (name == "SetupDiGetClassDevsA" || name == "SetupDiGetClassDevsW" ||
+		name == "SetupDiEnumDeviceInfo" || name == "SetupDiEnumDeviceInterfaces" || name == "SetupDiDestroyDeviceInfoList");
+}
 
 std::vector<uint8_t> environment_provider(std::string_view name, uint64_t base)
 {
@@ -1578,9 +1584,12 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	for (const auto name : {"NtSetInformationThread", "NtOpenThreadToken", "NtOpenThreadTokenEx", "NtOpenThread", "NtOpenProcess", "NtOpenProcessToken", "NtOpenProcessTokenEx", "NtQueryInformationProcess", "NtReadVirtualMemory", "NtWriteVirtualMemory", "NtQuerySection", "NtFlushInstructionCache", "RtlAddGrowableFunctionTable", "RtlGrowFunctionTable", "RtlDeleteGrowableFunctionTable",
 		"NtWriteFile", "NtQueryDirectoryFile", "ZwQueryDirectoryFile", "RtlNtStatusToDosError", "NtQueryObject", "NtMapViewOfSection", "NtUnmapViewOfSection",
 		"RtlAcquireSRWLockExclusive", "RtlAcquireSRWLockShared", "RtlWakeConditionVariable", "RtlWakeAllConditionVariable", "RtlWaitOnAddress",
-		"RtlWakeAddressSingle", "RtlWakeAddressAll",
+		"RtlWakeAddressSingle", "RtlWakeAddressAll", "RtlReleaseSRWLockExclusive", "RtlReleaseSRWLockShared",
+		"RtlRunOnceExecuteOnce", "RtlSetLastWin32Error", "RtlCompareMemory", "RtlMoveMemory", "RtlFillMemory", "RtlZeroMemory",
+		"memcpy", "memmove", "memset", "memcmp", "strlen", "wcslen",
 		// What the runtime's own components import from ntdll, which they need whether a program loads them at start or later.
-		"DbgPrint", "NtCancelIoFile", "NtCreateSection", "NtFsControlFile", "NtReadFile", "RtlCreateUnicodeStringFromAsciiz", "RtlFreeHeap",
+		"DbgPrint", "NtCancelIoFileEx", "NtDeviceIoControlFile", "NtOpenDirectoryObject", "NtQueryDirectoryObject",
+		"RtlDosPathNameToNtPathName_U_WithStatus", "NtCancelIoFile", "NtCreateSection", "NtFsControlFile", "NtReadFile", "RtlCreateUnicodeStringFromAsciiz", "RtlFreeHeap",
 		"RtlFreeUnicodeString", "RtlDllShutdownInProgress", "RtlGetVersion", "RtlGetNtVersionNumbers", "RtlIpv6AddressToStringExW", "RtlIpv6StringToAddressW", "RtlLengthSid", "RtlUnicodeToMultiByteN",
 		"RtlUnicodeToMultiByteSize", "RtlIsTextUnicode", "RtlImageNtHeader", "NtDeleteKey",
 		// The unwinding of 64-bit frames, which libraries built with their own exception handling import.
@@ -1675,6 +1684,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		if (provider->runtime_api) {
 			struct Overlay { const char *library, *component, *prefix; };
 			static constexpr Overlay overlays[] = {
+				{"ntdll.dll", "ucrtbase.dll", "ucrtbase."},
 				{"user32.dll", "raven-user32.dll", "raven-user32."}, {"comdlg32.dll", "raven-shell.dll", "raven-shell."},
 				{"ole32.dll", "raven-shell.dll", "raven-shell."}, {"shell32.dll", "raven-shell.dll", "raven-shell."},
 				{"shlwapi.dll", "raven-shell.dll", "raven-shell."}, {"setupapi.dll", "raven-setupapi.dll", "raven-setupapi."},
@@ -1689,7 +1699,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				if (overlay == modules.all().end() || overlay->second->runtime_api)
 					continue;
 				for (auto &symbol : provider->exports)
-					if (!symbol.names.empty() && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
+					if (!symbol.names.empty() && !host_device_export(name, symbol.names.at(0)) && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
 							return candidate.forwarder.empty() && std::find(candidate.names.begin(), candidate.names.end(), symbol.names.at(0)) != candidate.names.end();
 						}))
 						symbol.forwarder = overlay_rule.prefix + symbol.names.at(0);
@@ -1899,6 +1909,18 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 								}
 							} catch (const std::runtime_error &) {}
 						}
+						try {
+							NativeUnwinder trace_unwinder(process, modules);
+							auto frame = context_from_process(process.context());
+							std::cerr << " stack:";
+							for (int depth = 0; depth < 24; ++depth) {
+								const auto pc = context_rip(frame);
+								if (!trace_unwinder.module_at(pc)) break;
+								std::cerr << ' ' << describe(pc);
+								if (const auto function = trace_unwinder.lookup(pc)) trace_unwinder.unwind(0, pc, *function, frame);
+								else trace_unwinder.unwind_leaf(frame);
+							}
+						} catch (const std::runtime_error &) {}
 						std::cerr << std::dec << '\n';
 					}
 					// A CPU fault is a Windows exception: structured handlers of the faulting frames get the first chance.
@@ -2608,7 +2630,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				origin = explicit_file->second;
 			} else {
 				const auto system_names = system_library_names();
-				const bool system = std::find(system_names.begin(), system_names.end(), identity) != system_names.end();
+				// COM graphics components have no Win32 import-library export list, but are system libraries too.
+				const bool system = std::find(system_names.begin(), system_names.end(), identity) != system_names.end() ||
+					identity == "dwrite.dll" || identity == "d2d1.dll" || identity == "uianimation.dll";
 				if (!system && !activation_contexts().library_folder(identity)) {
 					if (const auto found = paths.find_library(launch->image_path, from_utf8(identity), true, flags)) {
 						bytes = ModuleBytes::map(found->host);

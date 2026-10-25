@@ -20,6 +20,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include "caption_font.h"
 
 #define ALLOC(size) HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (size))
 #define FREE(block) HeapFree(GetProcessHeap(), 0, (block))
@@ -362,6 +363,7 @@ static const WCHAR *aliases[][2] = {
 	{L"Calibri", L"Noto Sans"}, {L"Consolas", L"DejaVu Sans Mono"}, {L"Lucida Console", L"DejaVu Sans Mono"}, {L"Georgia", L"DejaVu Serif"},
 	{L"Trebuchet MS", L"Noto Sans"}, {L"Segoe UI Emoji", L"Noto Sans"}, {L"Segoe UI Symbol", L"DejaVu Sans"}, {L"Cambria", L"DejaVu Serif"},
 	{L"Palatino Linotype", L"DejaVu Serif"}, {L"Symbol", L"DejaVu Sans"}, {L"MS Gothic", L"DejaVu Sans Mono"},
+	{L"Segoe MDL2 Assets", L"Raven UI Symbols"}, {L"Segoe Fluent Icons", L"Raven UI Symbols"},
 };
 
 static BOOL CALLBACK build_system(PINIT_ONCE once, PVOID parameter, PVOID *context)
@@ -381,7 +383,7 @@ static BOOL CALLBACK build_system(PINIT_ONCE once, PVOID parameter, PVOID *conte
 				++count;
 				walk += record;
 			}
-			font_entries = ALLOC(count * sizeof(FontEntry));
+			font_entries = ALLOC((count + 1) * sizeof(FontEntry));
 			for (walk = 0; walk + 4 <= size && font_count < count;) {
 				DWORD record = *(DWORD *)(records + walk);
 				const char *strings = (const char *)records + walk + 24;
@@ -432,6 +434,24 @@ static BOOL CALLBACK build_system(PINIT_ONCE once, PVOID parameter, PVOID *conte
 		if (records)
 			FREE(records);
 	}
+	/* Supply caption symbols even on hosts without the Windows icon fonts. The
+	 * embedded sfnt also supplies cmap/outlines to clients that shape the font. */
+	if (!font_entries)
+		font_entries = ALLOC(sizeof(FontEntry));
+	if (font_entries) {
+		FontEntry *entry = &font_entries[font_count++];
+		FamilyEntry *family;
+		entry->path = wdup(L"raven:ui-symbols");
+		entry->family = wdup(L"Raven UI Symbols");
+		entry->face = wdup(L"Regular");
+		entry->full = wdup(L"Raven UI Symbols Regular");
+		entry->postscript = wdup(L"RavenUISymbols-Regular");
+		entry->weight = 400;
+		entry->stretch = 5;
+		family = add_family(entry->family);
+		if (family)
+			family_add(family, entry);
+	}
 	/* Families are listed in name order, as DirectWrite does. */
 	{
 		UINT32 outer, inner;
@@ -470,6 +490,12 @@ static void ensure_system(void)
 }
 
 /* ---- font data: one opened face of a font file ---- */
+typedef struct FontTable {
+	struct FontTable *next;
+	UINT32 tag, size;
+	BYTE bytes[];
+} FontTable;
+
 typedef struct FaceData {
 	LONG refs;
 	DWORD host;
@@ -479,11 +505,18 @@ typedef struct FaceData {
 	DWORD index;
 	INT32 info[20];
 	DWORD face_type;
+	SRWLOCK table_lock;
+	FontTable *tables;
 } FaceData;
 
 static void face_data_release(FaceData *data)
 {
 	if (data && InterlockedDecrement(&data->refs) == 0) {
+		while (data->tables) {
+			FontTable *table = data->tables;
+			data->tables = table->next;
+			FREE(table);
+		}
 		RavenFontClose(data->host);
 		if (data->bytes)
 			FREE(data->bytes);
@@ -517,6 +550,14 @@ static FaceData *face_data_create(BYTE *bytes, DWORD size, DWORD index, const WC
 
 static BYTE *read_file(const WCHAR *path, DWORD *size)
 {
+	if (wequal_fold(path, L"raven:ui-symbols")) {
+		BYTE *bytes = ALLOC(sizeof(caption_font));
+		if (bytes) {
+			memcpy(bytes, caption_font, sizeof(caption_font));
+			*size = sizeof(caption_font);
+		}
+		return bytes;
+	}
 	HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	BYTE *bytes = NULL;
 	DWORD length, done = 0;
@@ -839,6 +880,11 @@ static HRESULT STDMETHODCALLTYPE loader_write_time(IDWriteLocalFontFileLoader *s
 	if (!path)
 		return E_OUTOFMEMORY;
 	memcpy(path, key, length * sizeof(WCHAR));
+	if (wequal_fold(path, L"raven:ui-symbols")) {
+		time->dwLowDateTime = time->dwHighDateTime = 0;
+		FREE(path);
+		return S_OK;
+	}
 	found = GetFileAttributesExW(path, GetFileExInfoStandard, &attributes);
 	FREE(path);
 	if (!found)
@@ -1141,31 +1187,45 @@ static UINT32 swap_tag(UINT32 tag)
 {
 	return (tag & 0xff) << 24 | (tag & 0xff00) << 8 | (tag >> 8 & 0xff00) | tag >> 24;
 }
+/* Table bytes belong to the face, as for a memory-mapped font file. A null context needs no per-call release. */
 static HRESULT STDMETHODCALLTYPE face_table(IDWriteFontFace *self, UINT32 tag, const void **data, UINT32 *size, void **context, WINBOOL *exists)
 {
-	Face *face = FACE_OF(self);
-	DWORD length = RavenFontTable(face->data->host, swap_tag(tag), 0, NULL, 0);
-	BYTE *copy;
+	FaceData *face = FACE_OF(self)->data;
+	FontTable *table;
+	DWORD length;
 	*data = NULL;
 	*size = 0;
 	*context = NULL;
 	*exists = FALSE;
-	if (length == 0xffffffffU || length == 0)
-		return S_OK;
-	copy = ALLOC(length);
-	if (!copy)
-		return E_OUTOFMEMORY;
-	RavenFontTable(face->data->host, swap_tag(tag), 0, copy, length);
-	*data = copy;
-	*size = length;
-	*context = copy;
+	AcquireSRWLockExclusive(&face->table_lock);
+	for (table = face->tables; table; table = table->next)
+		if (table->tag == tag) break;
+	if (!table) {
+		length = RavenFontTable(face->host, swap_tag(tag), 0, NULL, 0);
+		if (length == 0xffffffffU || length == 0) {
+			ReleaseSRWLockExclusive(&face->table_lock);
+			return S_OK;
+		}
+		table = ALLOC(sizeof(*table) + (size_t)length);
+		if (!table) {
+			ReleaseSRWLockExclusive(&face->table_lock);
+			return E_OUTOFMEMORY;
+		}
+		table->tag = tag;
+		table->size = length;
+		RavenFontTable(face->host, swap_tag(tag), 0, table->bytes, length);
+		table->next = face->tables;
+		face->tables = table;
+	}
+	*data = table->bytes;
+	*size = table->size;
 	*exists = TRUE;
+	ReleaseSRWLockExclusive(&face->table_lock);
 	return S_OK;
 }
 static void STDMETHODCALLTYPE face_release_table(IDWriteFontFace *self, void *context)
 {
-	if (context)
-		FREE(context);
+	/* Every table stays valid until the last reference to its face is released. */
 }
 
 /* Glyph outlines go to the geometry sink with y downward from the baseline, in units of the em size. */
@@ -2568,7 +2628,7 @@ static HRESULT STDMETHODCALLTYPE factory_file_reference(IDWriteFactory2 *self, c
 	if (!path)
 		return E_INVALIDARG;
 	length = wlen(path);
-	if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES)
+	if (!wequal_fold(path, L"raven:ui-symbols") && GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES)
 		return DWRITE_E_FILENOTFOUND;
 	*file = make_file(path, (UINT32)((length + 1) * sizeof(WCHAR)), get_system_loader());
 	return *file ? S_OK : E_OUTOFMEMORY;

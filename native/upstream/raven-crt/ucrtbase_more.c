@@ -1109,6 +1109,23 @@ CRT char *strtok(char *text, const char *delimiters)
 	return strtok_s(text, delimiters, &context);
 }
 
+CRT wchar_t *wcstok_s(wchar_t *text, const wchar_t *delimiters, wchar_t **context)
+{
+	wchar_t *start;
+	if (!delimiters || !context || (!text && !*context)) {
+		*_errno() = 22;
+		_invalid_parameter_noinfo();
+		return NULL;
+	}
+	if (!text) text = *context;
+	while (*text && wcschr(delimiters, *text)) ++text;
+	start = text;
+	while (*text && !wcschr(delimiters, *text)) ++text;
+	if (*text) *text++ = 0;
+	*context = text;
+	return *start ? start : NULL;
+}
+
 /* strncpy_s copies at most count characters and always terminates; _TRUNCATE copies what fits. */
 CRT int strncpy_s(char *to, size_t size, const char *from, size_t count)
 {
@@ -1171,6 +1188,40 @@ RavenDivision raven_div(int numerator, int denominator)
 
 /* ---- math ---- */
 
+/* MinGW's reentrant gamma implementation uses the same double ABI as the Windows CRT. Windows long double is also a double. */
+extern double __lgamma_r(double, int *);
+__asm__(".section .drectve\n\t.ascii \" -export:lgamma=raven_lgamma\"\n\t.text");
+double raven_lgamma(double x) { int sign; volatile double result = __lgamma_r(x, &sign); return result; }
+CRT float lgammaf(float x) { int sign; return (float)__lgamma_r(x, &sign); }
+CRT double lgammal(double x) { return raven_lgamma(x); }
+
+/* log1p preserves the small arguments; the large-argument forms avoid squaring values that would overflow. */
+CRT double acosh(double x)
+{
+	if (x > 1e154) return log(x) + 0.69314718055994530942;
+	return log1p(x - 1 + sqrt(x - 1) * sqrt(x + 1));
+}
+
+CRT double asinh(double x)
+{
+	const double magnitude = fabs(x);
+	if (magnitude < 1e-154) return x;
+	const double result = magnitude > 1e154 ? log(magnitude) + 0.69314718055994530942 :
+		log1p(magnitude + magnitude * magnitude / (1 + sqrt(1 + magnitude * magnitude)));
+	return copysign(result, x);
+}
+
+CRT double atanh(double x)
+{
+	const double magnitude = fabs(x);
+	if (magnitude < 1e-154) return x;
+	return copysign(0.5 * log1p(2 * magnitude / (1 - magnitude)), x);
+}
+
+CRT float acoshf(float x) { return (float)acosh(x); }
+CRT float asinhf(float x) { return (float)asinh(x); }
+CRT float atanhf(float x) { return (float)atanh(x); }
+
 /* Rounding to an integer in the current mode: adding and removing 2^52 leaves no fraction bits. Larger values are integers already. */
 CRT double rint(double x)
 {
@@ -1229,3 +1280,117 @@ CRT int _fdsign(float x) { return __builtin_signbit(x) ? 0x8000 : 0; }
 
 /* No floating point exception is pending when a program asks; operations here do not record them for the C library. */
 CRT unsigned _statusfp(void) { return 0; }
+
+/* MinGW provides these with its extended precision ABI; the public exports use Windows doubles. */
+extern long double cbrtl(long double), fmal(long double, long double, long double), remainderl(long double, long double);
+CRT double cbrt(double x) { return (double)cbrtl(x); }
+CRT float cbrtf(float x) { return (float)cbrtl(x); }
+CRT double fma(double x, double y, double z) { return (double)fmal(x, y, z); }
+CRT float fmaf(float x, float y, float z) { return (float)fmal(x, y, z); }
+CRT double remainder(double x, double y) { return (double)remainderl(x, y); }
+CRT int fegetround(void)
+{
+	unsigned short control;
+	__asm__("fnstcw %0" : "=m"(control));
+	return control & 0xc00;
+}
+CRT double nextafter(double x, double y)
+{
+	union { double number; unsigned long long bits; } value = {x};
+	if (x != x || y != y) return x + y;
+	if (x == y) return y;
+	if (x == 0) { value.bits = 1 | (y < 0 ? 1ULL << 63 : 0); return value.number; }
+	if ((x < y) == (x > 0)) ++value.bits; else --value.bits;
+	return value.number;
+}
+CRT float nextafterf(float x, float y)
+{
+	union { float number; unsigned bits; } value = {x};
+	if (x != x || y != y) return x + y;
+	if (x == y) return y;
+	if (x == 0) { value.bits = 1 | (y < 0 ? 1U << 31 : 0); return value.number; }
+	if ((x < y) == (x > 0)) ++value.bits; else --value.bits;
+	return value.number;
+}
+CRT double hypot(double x, double y) { return _hypot(x, y); }
+CRT float coshf(float x) { return (float)cosh(x); }
+CRT float sinhf(float x) { return (float)sinh(x); }
+CRT float tanhf(float x) { return (float)tanh(x); }
+CRT float nearbyintf(float x) { return (float)nearbyint(x); }
+CRT double scalbn(double x, int exponent) { return ldexp(x, exponent); }
+CRT float scalbnf(float x, int exponent) { return (float)ldexp(x, exponent); }
+extern double nextafter(double, double);
+CRT double nexttoward(double x, double y) { return nextafter(x, y); }
+
+CRT long *__timezone(void) { return &_timezone; }
+static char **timezone_names = _tzname;
+CRT char ***__tzname(void) { return &timezone_names; }
+CRT void setbuf(void *stream, char *buffer) { setvbuf(stream, buffer, buffer ? 0 : 4, 512); }
+CRT char *_fullpath(char *buffer, const char *path, size_t size)
+{
+	const DWORD needed = GetFullPathNameA(path, 0, NULL, NULL);
+	if (!needed) return NULL;
+	if (!buffer) { buffer = malloc(needed); size = needed; }
+	if (!buffer || size < needed) { set_errno(34); return NULL; }
+	return GetFullPathNameA(path, (DWORD)size, buffer, NULL) ? buffer : NULL;
+}
+CRT char *_i64toa(long long value, char *to, int radix)
+{
+	return digits_of(value < 0 && radix == 10 ? 0ULL - (unsigned long long)value : (unsigned long long)value,
+		value < 0 && radix == 10, to, radix);
+}
+CRT char *_ui64toa(unsigned long long value, char *to, int radix) { return digits_of(value, 0, to, radix); }
+typedef struct { long long quotient, remainder; } RavenLongDivision;
+__asm__(".section .drectve\n\t.ascii \" -export:lldiv=raven_lldiv -export:imaxdiv=raven_lldiv\"\n\t.text");
+RavenLongDivision raven_lldiv(long long numerator, long long denominator)
+{
+	RavenLongDivision result = {numerator / denominator, numerator % denominator};
+	return result;
+}
+CRT int _mktemp_s(char *name, size_t capacity)
+{
+	if (!name || !capacity || strnlen(name, capacity) == capacity) {
+		if (name && capacity) name[0] = 0;
+		set_errno(22); _invalid_parameter_noinfo(); return 22;
+	}
+	if (_mktemp(name)) return 0;
+	name[0] = 0;
+	return *_errno();
+}
+CRT int _wmktemp_s(wchar_t *name, size_t capacity)
+{
+	if (!name || !capacity || wcsnlen(name, capacity) == capacity) {
+		if (name && capacity) name[0] = 0;
+		set_errno(22); _invalid_parameter_noinfo(); return 22;
+	}
+	const size_t length = wcslen(name);
+	if (length < 6 || memcmp(name + length - 6, L"XXXXXX", 12)) {
+		name[0] = 0; set_errno(22); return 22;
+	}
+	wchar_t *suffix = name + length - 6;
+	unsigned number = GetCurrentThreadId() % 100000;
+	for (int at = 5; at; --at) { suffix[at] = L'0' + number % 10; number /= 10; }
+	for (wchar_t letter = L'a'; letter <= L'z'; ++letter) {
+		suffix[0] = letter;
+		if (GetFileAttributesW(name) == INVALID_FILE_ATTRIBUTES) return 0;
+	}
+	name[0] = 0; set_errno(17); return 17;
+}
+CRT void _wassert(const wchar_t *expression, const wchar_t *file, unsigned line)
+{
+	ExitProcess(3);
+}
+
+CRT int _i64tow_s(long long value, wchar_t *buffer, size_t capacity, int radix)
+{
+	char text[72];
+	if (!buffer || !capacity || radix < 2 || radix > 36) {
+		if (buffer && capacity) buffer[0] = 0;
+		set_errno(22); _invalid_parameter_noinfo(); return 22;
+	}
+	_i64toa(value, text, radix);
+	const size_t length = strlen(text);
+	if (length >= capacity) { buffer[0] = 0; set_errno(34); return 34; }
+	for (size_t at = 0; at <= length; ++at) buffer[at] = (unsigned char)text[at];
+	return 0;
+}

@@ -694,6 +694,33 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// Files of a prefix lie on a host file system that answers no device or file system control codes: the caller hears that the
 	// function is not supported, as from a volume whose driver lacks it, and nothing comes back.
+	registry.add("NtDeviceIoControlFile", 10, [](ApiCall &call) {
+		const uint32_t status = 0xc0000010U; // STATUS_INVALID_DEVICE_REQUEST
+		if (call[4]) {
+			call.store_pointer(call[4], status);
+			call.store_pointer(call[4] + call.pointer_width(), 0);
+		}
+		call.ret(status);
+	});
+	// DOS paths become owned native strings. RtlFreeUnicodeString releases the buffer through the same allocator.
+	registry.add("RtlDosPathNameToNtPathName_U_WithStatus", 4, [&context](ApiCall &call) {
+		if (!call[0] || !call[1]) { call.ret(0xc000000dU); return; }
+		auto path = context.paths.full(call.wide(call[0]));
+		if (path.empty()) { call.ret(0xc0000033U); return; }
+		if (path.starts_with(u"\\\\")) path = u"UNC\\" + path.substr(2);
+		path = u"\\??\\" + path;
+		if (path.size() >= 32767) { call.ret(0xc0000106U); return; }
+		const auto buffer = context.allocator.allocate(path.size() * 2 + 2, true);
+		if (!buffer) { call.ret(0xc0000017U); return; }
+		call.put_wide(buffer, path, path.size() + 1);
+		call.store<uint16_t>(call[1], uint16_t(path.size() * 2));
+		call.store<uint16_t>(call[1] + 2, uint16_t(path.size() * 2 + 2));
+		call.store_pointer(call[1] + (call.pointer_width() == 4 ? 4 : 8), buffer);
+		const auto slash = path.find_last_of(u'\\');
+		if (call[2]) call.store_pointer(call[2], slash == path.npos || slash + 1 == path.size() ? 0 : buffer + (slash + 1) * 2);
+		if (call[3]) call.write(call[3], std::vector<uint8_t>(call.pointer_width() == 4 ? 16 : 32));
+		call.ret(0);
+	});
 	registry.add("DeviceIoControl", 8, [](ApiCall &call) {
 		if (call[6])
 			call.store<uint32_t>(call[6], 0);
@@ -1601,8 +1628,12 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			// A copy cannot carry rights the original lacks; asking for them is refused.
 			const uint32_t held = objects.access_of(call[1]);
 			uint32_t wanted = call.u32(4);
-			if (wanted & (0x10000000U | 0x02000000U))
-				wanted = held;
+			// Generic access bits describe object-specific rights, rather than extra rights to compare literally.
+			if (wanted & 0x80000000U) wanted = (wanted & ~0x80000000U) | 0x20005;
+			if (wanted & 0x40000000U) wanted = (wanted & ~0x40000000U) | 0x20002;
+			if (wanted & 0x20000000U) wanted = (wanted & ~0x20000000U) | 0x20008;
+			if (wanted & 0x10000000U) wanted = (wanted & ~0x10000000U) | 0xf001f;
+			if (wanted & 0x02000000U) wanted = held;
 			if (wanted & ~held) {
 				if (std::getenv("RAVEN_TRACE_FAIL"))
 					std::fprintf(stderr, "raven: section handle %llx holds %x, a copy asked for %x\n", (unsigned long long)call[1], held, wanted);

@@ -224,10 +224,15 @@ void NativeWindows::present(uint64_t handle, bool force)
 	const auto *bitmap=objects.bitmap(window->bitmap);
 	if (!bitmap) return;
 	auto pixels=std::span<const uint8_t>(bitmap->pixels().data(),size_t(bitmap->width)*bitmap->height*4);
+	// Fully extended glass on an owned popup carries the program's alpha, including
+	// its transparent corners. It is not a caption to fill with the frame color.
+	const bool alpha=presentation.alpha && shown_on_owner(*window) && window->glass &&
+		std::any_of(window->glass->begin(),window->glass->end(),[](int32_t margin) { return margin<0; });
+	if (presentation.alpha) presentation.alpha(handle,alpha);
 	// The frame extended into the client area shows through what the program painted black there, black with no alpha to GDI, as the
 	// Windows compositor shows its frame, and the compositor draws the caption buttons over it when the client area covers the caption.
 	std::vector<uint8_t> glazed;
-	if (window->glass) {
+	if (window->glass && !alpha) {
 		glazed.assign(pixels.begin(),pixels.end());
 		const int32_t width=int32_t(bitmap->width),height=int32_t(bitmap->height);
 		const int32_t left=std::max(window->x-window->outer.left,0),top=std::max(window->y-window->outer.top,0);

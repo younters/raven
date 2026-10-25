@@ -175,6 +175,7 @@ struct CocoaPresentation::State {
 	std::map<uint64_t, std::unique_ptr<Surface>> surfaces;
 	std::map<NSInteger, uint64_t> numbers;
 	std::set<uint64_t> maximized;
+	std::set<uint64_t> alpha_windows;
 	std::vector<DesktopEvent> pending;
 	uint64_t pointer_window = 0, keyboard_window = 0;
 	bool keyboard_known = false;
@@ -191,7 +192,7 @@ struct CocoaPresentation::State {
 	bool native_frames = true;
 	std::map<uint64_t, std::pair<std::array<int32_t, 4>, uint32_t>> frames;
 	bool presenting = false;
-	// A resize from the window's edges in progress: the window, which edges (left 1, right 2, bottom 4), where it began.
+	// A resize from the window's edges in progress: the window, which edges (left 1, right 2, bottom 4, top 8), where it began.
 	uint64_t resizing = 0;
 	int resize_edges = 0;
 	NSPoint resize_start{};
@@ -404,6 +405,29 @@ struct CocoaPresentation::State {
 		}
 	}
 
+	// Synthesized key events can carry modifiers without separate flagsChanged events.
+	void sync_modifiers(NSEventModifierFlags flags)
+	{
+		const auto sync = [&](NSEventModifierFlags mask, unsigned short left, unsigned short right) {
+			const uint32_t l = translate(left), r = translate(right);
+			if (!(flags & mask)) {
+				key(l, false);
+				key(r, false);
+			} else if (!held.contains(l) && !held.contains(r)) {
+				key(l, true);
+			}
+		};
+		sync(NSEventModifierFlagShift, kVK_Shift, kVK_RightShift);
+		sync(NSEventModifierFlagOption, kVK_Option, kVK_RightOption);
+		if (command_is_control) {
+			sync(NSEventModifierFlagControl | NSEventModifierFlagCommand, kVK_Control, kVK_RightControl);
+		} else {
+			sync(NSEventModifierFlagControl, kVK_Control, kVK_RightControl);
+			sync(NSEventModifierFlagCommand, kVK_Command, kVK_RightCommand);
+		}
+		sync_caps(flags);
+	}
+
 	void focus_changed()
 	{
 		const uint64_t now = handle_of(NSApp.keyWindow);
@@ -462,6 +486,7 @@ struct CocoaPresentation::State {
 			}
 			if (!keyboard_window)
 				focus_changed();
+			sync_modifiers(event.modifierFlags);
 			key(translate(event.keyCode), down, down && event.isARepeat);
 			return false;
 		}
@@ -502,22 +527,24 @@ struct CocoaPresentation::State {
 		}
 	}
 
-	// Which edges of a resizable window's content a screen point is close enough to for resizing.
+	// Which edges of a resizable window's frame a screen point is close enough to for resizing.
 	int edges_at(const Surface &target, NSPoint screen) const
 	{
 		if (!target.native || !(target.style & 0x40000U) || target.maximized || target.popup)
 			return 0;
 		constexpr CGFloat zone = 5;
-		const NSRect content = content_of(target.window);
-		if (!NSPointInRect(screen, NSInsetRect(content, -1, -1)))
+		const NSRect frame = target.window.frame;
+		if (!NSPointInRect(screen, NSInsetRect(frame, -1, -1)))
 			return 0;
 		int edges = 0;
-		if (screen.x < NSMinX(content) + zone)
+		if (screen.x < NSMinX(frame) + zone)
 			edges |= 1;
-		else if (screen.x > NSMaxX(content) - zone)
+		else if (screen.x > NSMaxX(frame) - zone)
 			edges |= 2;
-		if (screen.y < NSMinY(content) + zone)
+		if (screen.y < NSMinY(frame) + zone)
 			edges |= 4;
+		else if (screen.y > NSMaxY(frame) - zone)
+			edges |= 8;
 		return edges;
 	}
 
@@ -528,6 +555,9 @@ struct CocoaPresentation::State {
 		else if (edges == 2) position = NSCursorFrameResizePositionRight;
 		else if (edges == 5) position = NSCursorFrameResizePositionBottomLeft;
 		else if (edges == 6) position = NSCursorFrameResizePositionBottomRight;
+		else if (edges == 8) position = NSCursorFrameResizePositionTop;
+		else if (edges == 9) position = NSCursorFrameResizePositionTopLeft;
+		else if (edges == 10) position = NSCursorFrameResizePositionTopRight;
 		return [NSCursor frameResizeCursorFromPosition:position inDirections:NSCursorFrameResizeDirectionsAll];
 	}
 
@@ -536,8 +566,8 @@ struct CocoaPresentation::State {
 		const NSPoint point = NSEvent.mouseLocation;
 		Surface *target = surface(window_at(point));
 		const bool client = NSApp.active && target && NSPointInRect(point, content_of(target->window));
-		const int edges = client ? edges_at(*target, point) : 0;
-		cursor.apply(client, edges ? resize_cursor_for(edges) : nil);
+		const int edges = NSApp.active && target ? edges_at(*target, point) : 0;
+		cursor.apply(client || edges, edges ? resize_cursor_for(edges) : nil);
 	}
 
 	// Follows a drag of the edges: each movement resizes the window, and the program, told at once, draws the new size before the next.
@@ -554,6 +584,8 @@ struct CocoaPresentation::State {
 			frame.size.width = std::max<CGFloat>(120, resize_from.size.width - dx);
 			frame.origin.x = NSMaxX(resize_from) - frame.size.width;
 		}
+		if (resize_edges & 8)
+			frame.size.height = std::max<CGFloat>(80, resize_from.size.height + dy);
 		if (resize_edges & 4) {
 			frame.size.height = std::max<CGFloat>(80, resize_from.size.height - dy);
 			frame.origin.y = NSMaxY(resize_from) - frame.size.height;
@@ -567,8 +599,13 @@ struct CocoaPresentation::State {
 		if (resizing) {
 			if (event.type == NSEventTypeLeftMouseDragged || event.type == NSEventTypeLeftMouseUp) {
 				follow_resize(NSEvent.mouseLocation);
-				if (event.type == NSEventTypeLeftMouseUp)
+				if (event.type == NSEventTypeLeftMouseUp) {
+					if (const auto *target = surface(resizing)) {
+						const auto [x, y] = frame_point(target->window, screen);
+						pointer(DesktopEventKind::pointer_button, resizing, x, y, button_left, 0);
+					}
 					resizing = 0;
+				}
 				return false;
 			}
 			if (event.type != NSEventTypeMouseMoved)
@@ -751,15 +788,19 @@ struct CocoaPresentation::State {
 		return window;
 	}
 
-	void show(Surface &target, std::span<const uint8_t> pixels, uint32_t width, uint32_t height)
+	void show(Surface &target, std::span<const uint8_t> pixels, uint32_t width, uint32_t height, bool alpha)
 	{
+		target.window.opaque = !alpha;
+		target.window.backgroundColor = alpha ? NSColor.clearColor : NSColor.windowBackgroundColor;
+		target.view.layer.opaque = !alpha;
 		const auto &inset = target.insets;
 		const bool cropped = inset[0] || inset[1] || inset[2] || inset[3];
 		CFDataRef data = CFDataCreate(nullptr, pixels.data(), CFIndex(pixels.size()));
 		CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
 		CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
 		CGImageRef image = CGImageCreate(width, height, 8, 32, size_t(width) * 4, space,
-			CGBitmapInfo(kCGBitmapByteOrder32Little) | CGBitmapInfo(kCGImageAlphaNoneSkipFirst), provider, nullptr, false, kCGRenderingIntentDefault);
+			CGBitmapInfo(kCGBitmapByteOrder32Little) | CGBitmapInfo(alpha ? kCGImageAlphaPremultipliedFirst : kCGImageAlphaNoneSkipFirst),
+			provider, nullptr, false, kCGRenderingIntentDefault);
 		CGImageRef shown = image;
 		if (cropped && uint32_t(inset[0] + inset[2]) < width && uint32_t(inset[1] + inset[3]) < height)
 			shown = CGImageCreateWithImageInRect(image, CGRectMake(inset[0], inset[1], width - inset[0] - inset[2], height - inset[1] - inset[3]));
@@ -778,6 +819,8 @@ struct CocoaPresentation::State {
 		target.view.layer.contentsScale = scale;
 		target.view.layer.contents = (__bridge id)shown;
 		[CATransaction commit];
+		if (alpha)
+			[target.window invalidateShadow];
 		if (shown != image)
 			CGImageRelease(shown);
 		CGImageRelease(image);
@@ -831,6 +874,7 @@ struct CocoaPresentation::State {
 
 	void register_window(uint64_t handle, Surface &target)
 	{
+		std::erase_if(numbers, [&](const auto &entry) { return entry.second == handle && entry.first != target.window.windowNumber; });
 		numbers[target.window.windowNumber] = handle;
 	}
 
@@ -871,6 +915,8 @@ struct CocoaPresentation::State {
 				[target->window standardWindowButton:NSWindowZoomButton].enabled = (style & 0x10000U) != 0;
 				[target->window setFrame:[target->window frameRectForContentRect:content] display:NO];
 				presenting = false;
+				// AppKit can replace the backing window number when its style changes.
+				register_window(handle, *target);
 			}
 			if (!target) {
 				auto created = std::make_unique<Surface>();
@@ -888,7 +934,6 @@ struct CocoaPresentation::State {
 				[created->window standardWindowButton:NSWindowZoomButton].enabled = (style & 0x10000U) != 0;
 				created->width = width;
 				created->height = height;
-				created->maximized = maximized.contains(handle);
 				if (NSEqualPoints(cascade, NSZeroPoint))
 					[created->window center];
 				cascade = [created->window cascadeTopLeftFromPoint:cascade];
@@ -896,7 +941,7 @@ struct CocoaPresentation::State {
 				surfaces.emplace(handle, std::move(created));
 				[target->window makeKeyAndOrderFront:nil];
 				register_window(handle, *target);
-				if (target->maximized)
+				if (maximized.contains(handle))
 					maximize(handle, true);
 			}
 			target->window.title = [NSString stringWithUTF8String:std::string(title).c_str()] ?: @"";
@@ -912,10 +957,15 @@ struct CocoaPresentation::State {
 				target->told_answered = true;
 				target->answer = target->answer * 0.75 + (target->last_present - target->told) * 0.25;
 			}
+			// A frame drawn before a host resize (including maximize) must not undo
+			// that geometry while the guest is still drawing its requested size.
+			const bool stale = target->pending_width && (width != target->pending_width || height != target->pending_height) &&
+				width == target->width && height == target->height;
 			target->width = width;
 			target->height = height;
-			set_size(*target, width, height);
-			show(*target, pixels, width, height);
+			if (!stale)
+				set_size(*target, width, height);
+			show(*target, pixels, width, height, alpha_windows.contains(handle));
 			if (dump_directory && dumped < 400) {
 				const auto path = std::string(dump_directory) + "/frame-" + std::to_string(dumped++) + "-" + std::to_string(width) + "x" +
 					std::to_string(height) + ".ppm";
@@ -967,7 +1017,7 @@ struct CocoaPresentation::State {
 			target->height = height;
 			const NSPoint corner = screen_of(*owner, x, y);
 			[target->window setFrame:NSMakeRect(corner.x, corner.y - height / scale, width / scale, height / scale) display:NO];
-			show(*target, pixels, width, height);
+			show(*target, pixels, width, height, alpha_windows.contains(handle));
 			if (!target->window.parentWindow)
 				[owner->window addChildWindow:target->window ordered:NSWindowAbove];
 			[target->window orderFront:nil];
@@ -988,39 +1038,16 @@ struct CocoaPresentation::State {
 			if (last_press && last_press.window == window)
 				[window performWindowDragWithEvent:last_press];
 		} else {
-			const NSPoint start = NSEvent.mouseLocation;
-			const NSRect from = window.frame;
-			const bool top = action == 1 || action == 5 || action == 9, bottom = action == 2 || action == 6 || action == 10;
-			const bool left = action == 4 || action == 5 || action == 6, right = action == 8 || action == 9 || action == 10;
-			for (;;) {
-				@autoreleasepool {
-					NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp
-						untilDate:[NSDate distantFuture] inMode:NSEventTrackingRunLoopMode dequeue:YES];
-					const NSPoint now = NSEvent.mouseLocation;
-					const CGFloat dx = now.x - start.x, dy = now.y - start.y;
-					NSRect frame = from;
-					if (right) frame.size.width = std::max<CGFloat>(64, from.size.width + dx);
-					if (left) {
-						frame.size.width = std::max<CGFloat>(64, from.size.width - dx);
-						frame.origin.x = NSMaxX(from) - frame.size.width;
-					}
-					if (top) frame.size.height = std::max<CGFloat>(32, from.size.height + dy);
-					if (bottom) {
-						frame.size.height = std::max<CGFloat>(32, from.size.height - dy);
-						frame.origin.y = NSMaxY(from) - frame.size.height;
-					}
-					[window setFrame:NSIntegralRect(frame) display:YES];
-					if (event.type == NSEventTypeLeftMouseUp)
-						break;
-				}
-			}
-			const auto [width, height] = frame_size(*target);
-			if (width != target->width || height != target->height) {
-				target->pending_width = width;
-				target->pending_height = height;
-				target->resized = true;
-				target->pending_changed = std::chrono::steady_clock::now();
-			}
+			// Follow guest-initiated resizing through the normal event pump too: a nested
+			// AppKit tracking loop prevents guest frames from being presented until release.
+			resizing = handle;
+			resize_edges = (action == 4 || action == 5 || action == 6 ? 1 : 0) |
+				(action == 8 || action == 9 || action == 10 ? 2 : 0) |
+				(action == 2 || action == 6 || action == 10 ? 4 : 0) |
+				(action == 1 || action == 5 || action == 9 ? 8 : 0);
+			resize_start = NSEvent.mouseLocation;
+			resize_from = window.frame;
+			return;
 		}
 		const auto [x, y] = frame_point(window, NSEvent.mouseLocation);
 		pointer(DesktopEventKind::pointer_motion, handle, x, y);
@@ -1258,10 +1285,17 @@ DesktopPresentation CocoaPresentation::callbacks()
 	};
 	result.remove = [this](uint64_t handle) {
 		state->maximized.erase(handle);
+		state->alpha_windows.erase(handle);
 		state->frames.erase(handle);
 		@autoreleasepool {
 			state->forget(handle);
 		}
+	};
+	result.alpha = [this](uint64_t handle, bool enabled) {
+		if (enabled)
+			state->alpha_windows.insert(handle);
+		else
+			state->alpha_windows.erase(handle);
 	};
 	result.poll = [this](std::chrono::milliseconds budget) { return state->poll(budget); };
 	result.popup = [this](uint64_t handle, uint64_t parent, int32_t x, int32_t y, uint32_t width, uint32_t height, std::span<const uint8_t> pixels) {

@@ -653,7 +653,18 @@ static ErrorState *thread_errors(void)
 
 CRT int *_errno(void) { return &thread_errors()->error; }
 CRT unsigned long *__doserrno(void) { return &thread_errors()->dos_error; }
-CRT void _invalid_parameter_noinfo(void) {}
+typedef void (__cdecl *RavenInvalidParameterHandler)(const wchar_t *, const wchar_t *, const wchar_t *, unsigned, uintptr_t);
+static RavenInvalidParameterHandler invalid_parameter_handler;
+CRT RavenInvalidParameterHandler _set_invalid_parameter_handler(RavenInvalidParameterHandler handler)
+{
+	RavenInvalidParameterHandler previous = invalid_parameter_handler;
+	invalid_parameter_handler = handler;
+	return previous;
+}
+CRT void _invalid_parameter_noinfo(void)
+{
+	if (invalid_parameter_handler) invalid_parameter_handler(NULL, NULL, NULL, 0, 0);
+}
 CRT void _invalid_parameter_noinfo_noreturn(void) { ExitProcess(3); }
 
 /* ---- streams ---- */
@@ -988,6 +999,27 @@ CRT int __stdio_common_vfwprintf(unsigned long long options, void *stream, const
 	return finish(&sink);
 }
 
+/* The secure stream forms share the formatter, but reject missing streams and formats before writing. */
+CRT int __stdio_common_vfprintf_s(unsigned long long options, void *stream, const char *text, void *locale, va_list arguments)
+{
+	if (!stream || !text) {
+		*_errno() = 22;
+		_invalid_parameter_noinfo();
+		return -1;
+	}
+	return __stdio_common_vfprintf(options, stream, text, locale, arguments);
+}
+
+CRT int __stdio_common_vfwprintf_s(unsigned long long options, void *stream, const wchar_t *text, void *locale, va_list arguments)
+{
+	if (!stream || !text) {
+		*_errno() = 22;
+		_invalid_parameter_noinfo();
+		return -1;
+	}
+	return __stdio_common_vfwprintf(options, stream, text, locale, arguments);
+}
+
 CRT int __stdio_common_vsprintf(unsigned long long options, char *buffer, size_t count, const char *text, void *locale, va_list arguments)
 {
 	Sink sink = {0};
@@ -1015,6 +1047,11 @@ CRT int __stdio_common_vswprintf(unsigned long long options, wchar_t *buffer, si
 CRT int __stdio_common_vsnprintf_s(unsigned long long options, char *buffer, size_t size, size_t count, const char *text, void *locale, va_list arguments)
 {
 	return __stdio_common_vsprintf(options, buffer, count < size ? count + 1 : size, text, locale, arguments);
+}
+
+CRT int __stdio_common_vsnwprintf_s(unsigned long long options, wchar_t *buffer, size_t size, size_t count, const wchar_t *text, void *locale, va_list arguments)
+{
+	return __stdio_common_vswprintf(options, buffer, count < size ? count + 1 : size, text, locale, arguments);
 }
 
 static void msvcrt_attach(void);
