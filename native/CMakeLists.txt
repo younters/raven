@@ -1671,6 +1671,15 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     list(APPEND DYNAMIC_DIALOG_CLIENTS ${secure_client})
                     add_test(NAME native_secure_stream_x${width} COMMAND raven --run-process --execution=native ${secure_client})
                     set_tests_properties(native_secure_stream_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(profile_client ${CMAKE_CURRENT_BINARY_DIR}/profile-write${width}.exe)
+                    add_custom_command(OUTPUT ${profile_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${profile_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/profile_write_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/profile_write_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${profile_client})
+                    add_test(NAME native_profile_write_x${width} COMMAND raven --run-process --execution=native ${profile_client})
+                    set_tests_properties(native_profile_write_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                 endif()
             endforeach()
             add_custom_target(dynamic_dialog_fixtures ALL DEPENDS ${DYNAMIC_DIALOG_CLIENTS})
