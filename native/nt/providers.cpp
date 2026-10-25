@@ -2104,6 +2104,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	NativeThreads threads(process, environment, memory, &tls, deadline);
 	threads.set_runner(invoke);
 	threads_ptr = &threads;
+#ifdef __APPLE__
+	if (windows.needs_idle_poll())
+		threads.set_idle([&windows](std::chrono::milliseconds budget) { windows.poll_idle(budget); });
+#endif
 	// Other processes ask for handles of this one and send theirs; the scheduler answers them.
 	threads.add_service([&kernel_objects] { receive_handles(kernel_objects); });
 	object_api.set_cooperative(true);

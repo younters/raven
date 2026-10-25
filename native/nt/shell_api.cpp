@@ -418,7 +418,11 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context)
 		const pid_t child = ::fork();
 		if (child == 0) {
 			::setsid();
+#ifdef __APPLE__
+			::execl("/usr/bin/open", "open", argument.c_str(), static_cast<char *>(nullptr));
+#else
 			::execlp("xdg-open", "xdg-open", argument.c_str(), static_cast<char *>(nullptr));
+#endif
 			::_exit(127);
 		}
 		return child < 0 ? 0 : 42;

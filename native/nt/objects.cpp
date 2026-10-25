@@ -260,7 +260,7 @@ std::atomic<int> shared_object_count{0};
 NativeObjectResult NativeObjects::set_event(uint64_t handle, bool signaled)
 {
 	const auto held = object(handle);
-	if (!held) return {0,invalid_handle};
+	if (!held) return {0,type_name(handle) ? 0xc0000024U : invalid_handle};
 	if (held->type_name() == u"Event" && !(access_of(handle) & 2))
 		return {0,denied};
 	const auto previous = held->set_state(signaled);

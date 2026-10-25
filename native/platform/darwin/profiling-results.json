@@ -1,0 +1,1320 @@
+{
+  "date": "2026-10-25",
+  "host": "Apple M4 Pro / macOS 27.2",
+  "base_commit": "c9c7e1ab9aa84f8e472a9f8c409f339e0e74ba5b",
+  "method": {
+    "workloads": "one warm-up followed by three measured runs; no desktop; --timeout-ms=10000; isolated prefixes; fresh Notepad++ copy per run",
+    "instrumentation": [
+      "RAVEN_PROFILE=1",
+      "RAVEN_PROFILE_CONTROLLER=1"
+    ],
+    "cpu": "host plus reaped guest user+system CPU seconds",
+    "microbenchmark": "median of three runs; baseline NativeProcess rebuilt from base commit and linked with the same current support libraries",
+    "caveat": "Other work was running on the shared machine; signal timing varied. Notepad++ exits with status 0xffffffff after startup."
+  },
+  "workloads": {
+    "npp": {
+      "before": {
+        "median_ms": 475.681,
+        "cpu_median_ms": 490.62,
+        "wall_ms_samples": [
+          475.681,
+          496.856,
+          474.618
+        ],
+        "cpu_ms_samples": [
+          491.339,
+          490.62,
+          486.958
+        ],
+        "exit_codes": [
+          255,
+          255,
+          255
+        ]
+      },
+      "after": {
+        "median_ms": 380.81,
+        "cpu_median_ms": 519.057,
+        "wall_ms_samples": [
+          373.274,
+          380.81,
+          387.485
+        ],
+        "cpu_ms_samples": [
+          511.671,
+          519.057,
+          527.121
+        ],
+        "exit_codes": [
+          255,
+          255,
+          255
+        ]
+      },
+      "wall_reduction_percent": 19.9
+    },
+    "kernel-file": {
+      "before": {
+        "median_ms": 70.764,
+        "cpu_median_ms": 65.103,
+        "wall_ms_samples": [
+          71.386,
+          70.522,
+          70.764
+        ],
+        "cpu_ms_samples": [
+          65.547,
+          64.82,
+          65.103
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "after": {
+        "median_ms": 68.739,
+        "cpu_median_ms": 66.564,
+        "wall_ms_samples": [
+          68.739,
+          69.656,
+          68.163
+        ],
+        "cpu_ms_samples": [
+          65.636,
+          66.564,
+          67.089
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "wall_reduction_percent": 2.9
+    },
+    "kernel-ansi": {
+      "before": {
+        "median_ms": 69.71,
+        "cpu_median_ms": 63.935,
+        "wall_ms_samples": [
+          69.71,
+          72.139,
+          67.991
+        ],
+        "cpu_ms_samples": [
+          63.935,
+          66.026,
+          62.375
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "after": {
+        "median_ms": 66.377,
+        "cpu_median_ms": 63.604,
+        "wall_ms_samples": [
+          66.377,
+          64.622,
+          67.051
+        ],
+        "cpu_ms_samples": [
+          63.604,
+          61.643,
+          63.905
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "wall_reduction_percent": 4.8
+    },
+    "kernel-threads": {
+      "before": {
+        "median_ms": 862.591,
+        "cpu_median_ms": 134.504,
+        "wall_ms_samples": [
+          860.889,
+          864.734,
+          862.591
+        ],
+        "cpu_ms_samples": [
+          131.269,
+          135.281,
+          134.504
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "after": {
+        "median_ms": 848.014,
+        "cpu_median_ms": 152.093,
+        "wall_ms_samples": [
+          840.294,
+          848.014,
+          850.342
+        ],
+        "cpu_ms_samples": [
+          143.051,
+          152.093,
+          155.91
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "wall_reduction_percent": 1.7
+    },
+    "kernel-shlwapi": {
+      "before": {
+        "median_ms": 72.986,
+        "cpu_median_ms": 67.179,
+        "wall_ms_samples": [
+          73.056,
+          72.981,
+          72.986
+        ],
+        "cpu_ms_samples": [
+          67.179,
+          66.871,
+          67.455
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "after": {
+        "median_ms": 68.085,
+        "cpu_median_ms": 64.908,
+        "wall_ms_samples": [
+          68.085,
+          66.879,
+          69.568
+        ],
+        "cpu_ms_samples": [
+          66.049,
+          64.148,
+          64.908
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "wall_reduction_percent": 6.7
+    },
+    "kernel-heap-stress": {
+      "before": {
+        "median_ms": 368.935,
+        "cpu_median_ms": 378.598,
+        "wall_ms_samples": [
+          355.91,
+          368.935,
+          373.447
+        ],
+        "cpu_ms_samples": [
+          376.029,
+          378.598,
+          382.214
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "after": {
+        "median_ms": 297.343,
+        "cpu_median_ms": 456.091,
+        "wall_ms_samples": [
+          297.343,
+          295.774,
+          318.419
+        ],
+        "cpu_ms_samples": [
+          451.87,
+          456.091,
+          489.881
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "wall_reduction_percent": 19.4
+    },
+    "kernel-seh": {
+      "before": {
+        "median_ms": 66.908,
+        "cpu_median_ms": 61.183,
+        "wall_ms_samples": [
+          66.698,
+          67.715,
+          66.908
+        ],
+        "cpu_ms_samples": [
+          60.755,
+          61.215,
+          61.183
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "after": {
+        "median_ms": 62.787,
+        "cpu_median_ms": 58.928,
+        "wall_ms_samples": [
+          61.219,
+          62.787,
+          63.592
+        ],
+        "cpu_ms_samples": [
+          57.892,
+          58.928,
+          59.887
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "wall_reduction_percent": 6.2
+    }
+  },
+  "spin_comparison": {
+    "0": {
+      "npp": {
+        "median_ms": 429.29,
+        "cpu_median_ms": 435.467,
+        "wall_ms_samples": [
+          412.029,
+          449.177,
+          429.29
+        ],
+        "cpu_ms_samples": [
+          419.294,
+          449.835,
+          435.467
+        ],
+        "exit_codes": [
+          255,
+          255,
+          255
+        ]
+      },
+      "kernel-heap-stress": {
+        "median_ms": 364.614,
+        "cpu_median_ms": 371.807,
+        "wall_ms_samples": [
+          362.943,
+          368.745,
+          364.614
+        ],
+        "cpu_ms_samples": [
+          372.037,
+          371.407,
+          371.807
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "kernel-threads": {
+        "median_ms": 868.9,
+        "cpu_median_ms": 130.767,
+        "wall_ms_samples": [
+          860.898,
+          868.9,
+          869.023
+        ],
+        "cpu_ms_samples": [
+          129.839,
+          136.759,
+          130.767
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "10": {
+      "npp": {
+        "median_ms": 428.74,
+        "cpu_median_ms": 466.688,
+        "wall_ms_samples": [
+          430.971,
+          428.74,
+          418.768
+        ],
+        "cpu_ms_samples": [
+          477.39,
+          466.688,
+          465.46
+        ],
+        "exit_codes": [
+          255,
+          255,
+          255
+        ]
+      },
+      "kernel-heap-stress": {
+        "median_ms": 326.681,
+        "cpu_median_ms": 389.866,
+        "wall_ms_samples": [
+          326.331,
+          343.856,
+          326.681
+        ],
+        "cpu_ms_samples": [
+          389.866,
+          405.799,
+          389.799
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "kernel-threads": {
+        "median_ms": 858.236,
+        "cpu_median_ms": 138.634,
+        "wall_ms_samples": [
+          860.8,
+          858.236,
+          857.07
+        ],
+        "cpu_ms_samples": [
+          142.173,
+          138.402,
+          138.634
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "30": {
+      "npp": {
+        "median_ms": 404.984,
+        "cpu_median_ms": 518.796,
+        "wall_ms_samples": [
+          404.659,
+          404.984,
+          408.876
+        ],
+        "cpu_ms_samples": [
+          518.796,
+          518.419,
+          521.712
+        ],
+        "exit_codes": [
+          255,
+          255,
+          255
+        ]
+      },
+      "kernel-heap-stress": {
+        "median_ms": 313.608,
+        "cpu_median_ms": 448.709,
+        "wall_ms_samples": [
+          309.784,
+          313.608,
+          317.73
+        ],
+        "cpu_ms_samples": [
+          442.861,
+          448.709,
+          453.362
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "kernel-threads": {
+        "median_ms": 845.886,
+        "cpu_median_ms": 148.96,
+        "wall_ms_samples": [
+          848.16,
+          844.587,
+          845.886
+        ],
+        "cpu_ms_samples": [
+          148.96,
+          146.609,
+          148.995
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "60": {
+      "npp": {
+        "median_ms": 380.81,
+        "cpu_median_ms": 519.057,
+        "wall_ms_samples": [
+          373.274,
+          380.81,
+          387.485
+        ],
+        "cpu_ms_samples": [
+          511.671,
+          519.057,
+          527.121
+        ],
+        "exit_codes": [
+          255,
+          255,
+          255
+        ]
+      },
+      "kernel-heap-stress": {
+        "median_ms": 297.343,
+        "cpu_median_ms": 456.091,
+        "wall_ms_samples": [
+          297.343,
+          295.774,
+          318.419
+        ],
+        "cpu_ms_samples": [
+          451.87,
+          456.091,
+          489.881
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      },
+      "kernel-threads": {
+        "median_ms": 848.014,
+        "cpu_median_ms": 152.093,
+        "wall_ms_samples": [
+          840.294,
+          848.014,
+          850.342
+        ],
+        "cpu_ms_samples": [
+          143.051,
+          152.093,
+          155.91
+        ],
+        "exit_codes": [
+          0,
+          0,
+          0
+        ]
+      }
+    }
+  },
+  "microseconds_per_call": {
+    "before": {
+      "api-trap-loop": {
+        "median": 58.3297,
+        "samples": [
+          74.5638,
+          58.3297,
+          57.1111
+        ]
+      },
+      "served-loop": {
+        "median": 39.8743,
+        "samples": [
+          57.4389,
+          39.0176,
+          39.8743
+        ]
+      },
+      "mach-read-8": {
+        "median": 1.79788,
+        "samples": [
+          1.82151,
+          1.72991,
+          1.79788
+        ]
+      },
+      "mach-write-8": {
+        "median": 1.63272,
+        "samples": [
+          1.63439,
+          1.63272,
+          1.55524
+        ]
+      },
+      "shared-read-8": {
+        "median": 0.0227,
+        "samples": [
+          0.0227042,
+          0.02205,
+          0.0248291
+        ]
+      },
+      "shared-write-8": {
+        "median": 0.00736,
+        "samples": [
+          0.0075583,
+          0.0072833,
+          0.0073625
+        ]
+      },
+      "service-protect-pair": {
+        "median": 57.5825,
+        "samples": [
+          75.6767,
+          57.5825,
+          50.6963
+        ]
+      }
+    },
+    "after": {
+      "api-trap-loop": {
+        "median": 50.1681,
+        "samples": [
+          48.0934,
+          50.1681,
+          52.464
+        ]
+      },
+      "served-loop": {
+        "median": 0.27401,
+        "samples": [
+          0.199063,
+          0.305196,
+          0.274006
+        ]
+      },
+      "mach-read-8": {
+        "median": 1.71864,
+        "samples": [
+          1.70438,
+          1.71864,
+          1.88196
+        ]
+      },
+      "mach-write-8": {
+        "median": 1.61009,
+        "samples": [
+          1.61009,
+          1.60383,
+          1.83125
+        ]
+      },
+      "shared-read-8": {
+        "median": 0.03015,
+        "samples": [
+          0.03015,
+          0.0238292,
+          0.0301709
+        ]
+      },
+      "shared-write-8": {
+        "median": 0.01045,
+        "samples": [
+          0.0104458,
+          0.0116583,
+          0.0102917
+        ]
+      },
+      "service-protect-pair": {
+        "median": 3.06796,
+        "samples": [
+          2.33438,
+          3.06796,
+          3.31137
+        ]
+      }
+    }
+  },
+  "controller_counters": {
+    "before": {
+      "read": {
+        "calls": 12531,
+        "bytes": 6668171,
+        "ms": 28.938,
+        "us_per_call": 2.309
+      },
+      "write": {
+        "calls": 8739,
+        "bytes": 939923,
+        "ms": 19.326,
+        "us_per_call": 2.212
+      },
+      "shared-read": {
+        "calls": 0,
+        "bytes": 0,
+        "ms": 0.0,
+        "us_per_call": 0.0
+      },
+      "shared-write": {
+        "calls": 0,
+        "bytes": 0,
+        "ms": 0.0,
+        "us_per_call": 0.0
+      },
+      "mach-read": {
+        "calls": 12534,
+        "bytes": 6668167,
+        "ms": 27.772,
+        "us_per_call": 2.216
+      },
+      "mach-write": {
+        "calls": 8739,
+        "bytes": 939923,
+        "ms": 18.981,
+        "us_per_call": 2.172
+      },
+      "stop-wait": {
+        "calls": 3587,
+        "bytes": 0,
+        "ms": 217.96,
+        "us_per_call": 60.764
+      }
+    },
+    "after": {
+      "read": {
+        "calls": 12958,
+        "bytes": 6695702,
+        "ms": 2.944,
+        "us_per_call": 0.227
+      },
+      "write": {
+        "calls": 9047,
+        "bytes": 942345,
+        "ms": 4.939,
+        "us_per_call": 0.546
+      },
+      "shared-read": {
+        "calls": 12313,
+        "bytes": 6386591,
+        "ms": 0.64,
+        "us_per_call": 0.052
+      },
+      "shared-write": {
+        "calls": 7340,
+        "bytes": 71679,
+        "ms": 0.139,
+        "us_per_call": 0.019
+      },
+      "mach-read": {
+        "calls": 644,
+        "bytes": 309107,
+        "ms": 1.37,
+        "us_per_call": 2.128
+      },
+      "mach-write": {
+        "calls": 1707,
+        "bytes": 870666,
+        "ms": 4.424,
+        "us_per_call": 2.592
+      },
+      "stop-wait": {
+        "calls": 3664,
+        "bytes": 0,
+        "ms": 192.611,
+        "us_per_call": 52.568
+      }
+    }
+  },
+  "validation": {
+    "baseline": {
+      "passed": 195,
+      "failed": 57,
+      "skipped": 1,
+      "total_seconds": 230.87
+    },
+    "final": {
+      "passed": 211,
+      "failed": 43,
+      "skipped": 1,
+      "total_seconds": 130.92
+    },
+    "baseline_command": "ctest --test-dir build -j1 --timeout 120",
+    "final_command": "RAVEN_PREFIX=/tmp/raven-5cbc-final-prefix ctest --test-dir build -j1 --timeout 120",
+    "prefix_note": "Final run uses an isolated prefix. The shared default prefix had a 42 MB registry under concurrent work; the 300 ms DLL loop fixture timed out before attach (base_state=0), while an isolated prefix produced the expected base_state=1125. No test assertion was relaxed.",
+    "fixed_existing": [
+      "native_bitblt_paint",
+      "native_clock_cli",
+      "native_compatible_bitmap_contract",
+      "native_compatible_bitmap_paint",
+      "native_dwrite",
+      "native_keyboard_client",
+      "native_keyboard_focus_duplicate",
+      "native_keyboard_focus_held",
+      "native_keyboard_focus_nofocus",
+      "native_keyboard_focus_outofrange",
+      "native_paint",
+      "native_parallel_clock_cli",
+      "native_shared_mapping_contract",
+      "native_standard_files"
+    ],
+    "new_passing": [
+      "native_darwin_compat",
+      "native_darwin_system_api"
+    ],
+    "regressed": [],
+    "skipped": [
+      "native_minesweeper_workflow"
+    ],
+    "remaining": [
+      {
+        "test": "native_coordinate_contract",
+        "reason": "Stale test registers the user32 export entrypoint, which now starts with a 14-byte preamble. Diagnostic copies using api_trap_address pass. Controller INT3 validation preserved.",
+        "output": [
+          "native API trap must be an executable INT3"
+        ]
+      },
+      {
+        "test": "native_desktop_icon_contract",
+        "reason": "Stale test registers the user32 export entrypoint, which now starts with a 14-byte preamble. Diagnostic copies using api_trap_address pass. Controller INT3 validation preserved.",
+        "output": [
+          "native API trap must be an executable INT3"
+        ]
+      },
+      {
+        "test": "native_handle_channel_contract",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "cannot create test channel"
+        ]
+      },
+      {
+        "test": "native_layout_failure_component",
+        "reason": "Fixture expects error 120 for text that the current logical fallback successfully measures/draws; trace confirms fallback success. Cross-platform expectation left intact.",
+        "output": [
+          "Native entry returned 10 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_memory_contract",
+        "reason": "Stale negative assertion expects supported MEM_TOP_DOWN (0x103000) to fail. Diagnostic copy substituting an unsupported modifier passes the remainder after the untracked-mapping query fix.",
+        "output": [
+          "invalid geometry or unsupported modifiers succeeded"
+        ]
+      },
+      {
+        "test": "native_parallel_lifecycle_x32",
+        "reason": "Excluded parallel execution/per-thread channel workstream; Darwin currently uses serial fallback. Some cases also depend on process transport.",
+        "output": [
+          "exit: expected exit 0",
+          "fault: expected exit 1",
+          "Traceback (most recent call last):",
+          "  File \"/Users/yount/.t3/worktrees/raven/t3-5cbc83f1/scripts/native-parallel-lifecycle.py\", line 25, in <module>",
+          "    main()",
+          "    ~~~~^^",
+          "  File \"/Users/yount/.t3/worktrees/raven/t3-5cbc83f1/scripts/native-parallel-lifecycle.py\", line 17, in main",
+          "    result = subprocess.run([runtime, \"--run-process\", \"--execution=native\", f\"--timeout-ms={limit}\", fixture, \"--\", mode],",
+          "                            env=os.environ | extra, capture_output=True, text=True, timeout=20)",
+          "  File \"/opt/homebrew/Cellar/python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py\", line 556, in run",
+          "    stdout, stderr = process.communicate(input, timeout=timeout)",
+          "                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^",
+          "  File \"/opt/homebrew/Cellar/python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py\", line 1222, in communicate",
+          "    stdout, stderr = self._communicate(input, endtime, timeout)",
+          "                     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^",
+          "  File \"/opt/homebrew/Cellar/python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py\", line 2126, in _communicate",
+          "    self._check_timeout(endtime, orig_timeout, stdout, stderr)",
+          "    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+          "  File \"/opt/homebrew/Cellar/python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py\", line 1266, in _check_timeout",
+          "    raise TimeoutExpired(",
+          "    ...<2 lines>...",
+          "            stderr=b''.join(stderr_seq) if stderr_seq else None)",
+          "subprocess.TimeoutExpired: Command '['/Users/yount/.t3/worktrees/raven/t3-5cbc83f1/build/native/raven', '--run-process', '--execution=native', '--timeout-ms=1000', '/Users/yount/.t3/worktrees/raven/t3-5cbc83f1/build/native/parallel-lifecycle32.exe', '--', 'timeout']' timed out after 20 seconds"
+        ]
+      },
+      {
+        "test": "native_parallel_lifecycle_x64",
+        "reason": "Excluded parallel execution/per-thread channel workstream; Darwin currently uses serial fallback. Some cases also depend on process transport.",
+        "output": [
+          "exit: expected exit 0",
+          "fault: expected exit 1",
+          "Traceback (most recent call last):",
+          "  File \"/Users/yount/.t3/worktrees/raven/t3-5cbc83f1/scripts/native-parallel-lifecycle.py\", line 25, in <module>",
+          "    main()",
+          "    ~~~~^^",
+          "  File \"/Users/yount/.t3/worktrees/raven/t3-5cbc83f1/scripts/native-parallel-lifecycle.py\", line 17, in main",
+          "    result = subprocess.run([runtime, \"--run-process\", \"--execution=native\", f\"--timeout-ms={limit}\", fixture, \"--\", mode],",
+          "                            env=os.environ | extra, capture_output=True, text=True, timeout=20)",
+          "  File \"/opt/homebrew/Cellar/python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py\", line 556, in run",
+          "    stdout, stderr = process.communicate(input, timeout=timeout)",
+          "                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^",
+          "  File \"/opt/homebrew/Cellar/python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py\", line 1222, in communicate",
+          "    stdout, stderr = self._communicate(input, endtime, timeout)",
+          "                     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^",
+          "  File \"/opt/homebrew/Cellar/python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py\", line 2126, in _communicate",
+          "    self._check_timeout(endtime, orig_timeout, stdout, stderr)",
+          "    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+          "  File \"/opt/homebrew/Cellar/python@3.13/3.13.3/Frameworks/Python.framework/Versions/3.13/lib/python3.13/subprocess.py\", line 1266, in _check_timeout",
+          "    raise TimeoutExpired(",
+          "    ...<2 lines>...",
+          "            stderr=b''.join(stderr_seq) if stderr_seq else None)",
+          "subprocess.TimeoutExpired: Command '['/Users/yount/.t3/worktrees/raven/t3-5cbc83f1/build/native/raven', '--run-process', '--execution=native', '--timeout-ms=1000', '/Users/yount/.t3/worktrees/raven/t3-5cbc83f1/build/native/parallel-lifecycle64.exe', '--', 'timeout']' timed out after 20 seconds"
+        ]
+      },
+      {
+        "test": "native_parallel_remote_x32",
+        "reason": "Excluded parallel execution/per-thread channel workstream; Darwin currently uses serial fallback. Some cases also depend on process transport.",
+        "output": [
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "Native entry returned 3 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_parallel_remote_x64",
+        "reason": "Excluded parallel execution/per-thread channel workstream; Darwin currently uses serial fallback. Some cases also depend on process transport.",
+        "output": [
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "Native entry returned 3 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_parallel_served_contract",
+        "reason": "Excluded parallel execution/per-thread channel workstream; Darwin currently uses serial fallback. Some cases also depend on process transport.",
+        "output": [
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "parallel served test needs separate execution tasks"
+        ]
+      },
+      {
+        "test": "native_parallel_stop_contract",
+        "reason": "Excluded parallel execution/per-thread channel workstream; Darwin currently uses serial fallback. Some cases also depend on process transport.",
+        "output": [
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "stop delivery test requires parallel tasks"
+        ]
+      },
+      {
+        "test": "native_parallel_wait_x32",
+        "reason": "Excluded parallel execution/per-thread channel workstream; Darwin currently uses serial fallback. Some cases also depend on process transport.",
+        "output": [
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "raven: native entry timed out at 0x0"
+        ]
+      },
+      {
+        "test": "native_parallel_wait_x64",
+        "reason": "Excluded parallel execution/per-thread channel workstream; Darwin currently uses serial fallback. Some cases also depend on process transport.",
+        "output": [
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "raven: native entry timed out at 0x0"
+        ]
+      },
+      {
+        "test": "native_peer_process_x32",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Native entry returned 3 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_peer_process_x64",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Native entry returned 3 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_pipes",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Native entry returned 1 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_prefix_setup_children",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Traceback (most recent call last):",
+          "  File \"/Users/yount/.t3/worktrees/raven/t3-5cbc83f1/scripts/native-prefix-setup.py\", line 38, in <module>",
+          "    main()",
+          "    ~~~~^^",
+          "  File \"/Users/yount/.t3/worktrees/raven/t3-5cbc83f1/scripts/native-prefix-setup.py\", line 30, in main",
+          "    raise RuntimeError(f\"prefix setup client failed: {result.stdout}\")",
+          "RuntimeError: prefix setup client failed: Native entry returned 1 (process initialization not implemented)",
+          "Native entry returned 1 (process initialization not implemented)",
+          "Native entry returned 1 (process initialization not implemented)",
+          "Native entry returned 1 (process initialization not implemented)",
+          "Native entry returned 12 (process initialization not implemented)",
+          "Native entry returned 1 (process initialization not implemented)",
+          "Native entry returned 1 (process initialization not implemented)",
+          "Native entry returned 1 (process initialization not implemented)",
+          "Native entry returned 1 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_prefix_setup_children_parallel",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Traceback (most recent call last):",
+          "  File \"/Users/yount/.t3/worktrees/raven/t3-5cbc83f1/scripts/native-prefix-setup.py\", line 38, in <module>",
+          "    main()",
+          "    ~~~~^^",
+          "  File \"/Users/yount/.t3/worktrees/raven/t3-5cbc83f1/scripts/native-prefix-setup.py\", line 30, in main",
+          "    raise RuntimeError(f\"prefix setup client failed: {result.stdout}\")",
+          "RuntimeError: prefix setup client failed: raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "Native entry returned 1 (process initialization not implemented)",
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "Native entry returned 1 (process initialization not implemented)",
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "Native entry returned 1 (process initialization not implemented)",
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "Native entry returned 1 (process initialization not implemented)",
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "Native entry returned 12 (process initialization not implemented)",
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "Native entry returned 1 (process initialization not implemented)",
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "Native entry returned 1 (process initialization not implemented)",
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "Native entry returned 1 (process initialization not implemented)",
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "Native entry returned 1 (process initialization not implemented)",
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns"
+        ]
+      },
+      {
+        "test": "native_process_enumeration_x32",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "Native entry returned 12 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_process_enumeration_x64",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "Native entry returned 12 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_process_event_x32",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Native entry returned 3 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_process_event_x64",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Native entry returned 3 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_process_token_x32",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Native entry returned 32 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_process_token_x64",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Native entry returned 32 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_queued_served_contract",
+        "reason": "Excluded parallel execution/per-thread channel workstream; Darwin currently uses serial fallback. Some cases also depend on process transport.",
+        "output": [
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "queued test needs parallel execution"
+        ]
+      },
+      {
+        "test": "native_remote_process_x32",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Native entry returned 100 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_remote_process_x64",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Native entry returned 100 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_shared_gpu_memory_contract",
+        "reason": "Graphics descriptor scan still requires /proc/self/fd; excluded Vulkan/graphics workstream.",
+        "output": [
+          "cannot create Vulkan instance"
+        ]
+      },
+      {
+        "test": "native_socket_messages_x32",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Native entry returned 110 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_socket_messages_x64",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Native entry returned 110 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_string_resource_contract",
+        "reason": "Stale test registers the user32 export entrypoint, which now starts with a 14-byte preamble. Diagnostic copies using api_trap_address pass. Controller INT3 validation preserved.",
+        "output": [
+          "native API trap must be an executable INT3"
+        ]
+      },
+      {
+        "test": "native_thread_snapshot_x32",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Native entry returned 11 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_thread_snapshot_x64",
+        "reason": "Excluded pipe/process/socket API workstream: Linux process discovery or Unix socket/descriptor transport remains unported.",
+        "output": [
+          "Native entry returned 11 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_vulkan_cli",
+        "reason": "Excluded Vulkan bridge workstream; recorded output identifies the failing contract.",
+        "output": [
+          "Native entry returned 133 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_vulkan_contract",
+        "reason": "Excluded Vulkan bridge workstream; recorded output identifies the failing contract.",
+        "output": [
+          "compiled Vulkan workflow failed"
+        ]
+      },
+      {
+        "test": "native_vulkan_descriptor_buffer_x32",
+        "reason": "Excluded Vulkan bridge workstream; recorded output identifies the failing contract.",
+        "output": [
+          "Native entry returned 3 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_vulkan_descriptor_buffer_x64",
+        "reason": "Excluded Vulkan bridge workstream; recorded output identifies the failing contract.",
+        "output": [
+          "Native entry returned 3 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_vulkan_foreign_present_x32",
+        "reason": "Excluded Vulkan bridge workstream; recorded output identifies the failing contract.",
+        "output": [
+          "Foreign presentation returned 1",
+          "foreign Vulkan child ended before its frame"
+        ]
+      },
+      {
+        "test": "native_vulkan_foreign_present_x64",
+        "reason": "Excluded Vulkan bridge workstream; recorded output identifies the failing contract.",
+        "output": [
+          "Foreign presentation returned 1",
+          "foreign Vulkan child ended before its frame"
+        ]
+      },
+      {
+        "test": "native_vulkan_queued_extensions_x64",
+        "reason": "Excluded Vulkan bridge workstream; recorded output identifies the failing contract.",
+        "output": [
+          "queued Vulkan check failed: exit=0, queued=0",
+          "Native entry returned 0 (process initialization not implemented)",
+          "raven: RAVEN_PARALLEL is not supported on macOS; guest threads take turns",
+          "profile: 87 API calls served in 26 ms; guest ran 58 times for 5 ms in total",
+          "profile: vkCreateInstance calls=1 ms=12 us/call=12673",
+          "profile: vkQueueWaitIdle calls=2 ms=6 us/call=3098",
+          "profile: vkUnmapMemory calls=1 ms=3 us/call=3534",
+          "profile: vkCreateDevice calls=1 ms=1 us/call=1375",
+          "profile: vkCreateComputePipelines calls=2 ms=1 us/call=585",
+          "profile: vkQueueSubmit calls=2 ms=0 us/call=298",
+          "profile: vkMapMemory calls=1 ms=0 us/call=185",
+          "profile: vkEnumerateDeviceExtensionProperties calls=1 ms=0 us/call=79",
+          "profile: vkDestroyDevice calls=1 ms=0 us/call=75",
+          "profile: vkGetDeviceProcAddr calls=9 ms=0 us/call=6",
+          "profile: NtAllocateVirtualMemory calls=2 ms=0 us/call=21",
+          "profile: vkDestroyInstance calls=1 ms=0 us/call=27",
+          "profile: vkCreateDescriptorSetLayout calls=2 ms=0 us/call=9",
+          "profile: vkDestroyDescriptorPool calls=1 ms=0 us/call=17",
+          "profile: vkDestroyShaderModule calls=1 ms=0 us/call=17",
+          "profile: vkEnumeratePhysicalDevices calls=1 ms=0 us/call=17",
+          "profile: vkAllocateMemory calls=1 ms=0 us/call=16",
+          "profile: vkCreateDescriptorPool calls=1 ms=0 us/call=16",
+          "profile: vkCreateCommandPool calls=1 ms=0 us/call=14",
+          "profile: vkDestroyCommandPool calls=1 ms=0 us/call=13",
+          "profile: vkCreateBuffer calls=1 ms=0 us/call=11",
+          "profile: vkAllocateDescriptorSets calls=1 ms=0 us/call=10",
+          "profile: vkCreateDescriptorUpdateTemplateKHR calls=2 ms=0 us/call=4",
+          "profile: vkDestroyPipeline calls=2 ms=0 us/call=4",
+          "profile: vkTrimCommandPoolKHR calls=1 ms=0 us/call=9",
+          "profile: frequent vkGetDeviceProcAddr calls=9",
+          "profile: frequent (shadow to device) calls=3",
+          "profile: frequent vkCreateDescriptorUpdateTemplateKHR calls=2",
+          "profile: frequent vkQueueWaitIdle calls=2",
+          "profile: frequent (shadow from device) calls=2",
+          "profile: frequent vkCmdBindPipeline calls=2",
+          "profile: frequent vkCreateComputePipelines calls=2",
+          "profile: frequent vkQueueSubmit calls=2",
+          "profile: frequent vkBeginCommandBuffer calls=2",
+          "profile: frequent vkDestroyDescriptorSetLayout calls=2",
+          "profile: frequent vkDestroyDescriptorUpdateTemplateKHR calls=2",
+          "profile: frequent NtAllocateVirtualMemory calls=2",
+          "profile: frequent vkCreateDescriptorSetLayout calls=2",
+          "profile: frequent vkCmdPipelineBarrier calls=2",
+          "profile: frequent vkCmdPushConstants calls=2"
+        ]
+      },
+      {
+        "test": "native_vulkan_thunk32_tables",
+        "reason": "Excluded Vulkan bridge workstream; recorded output identifies the failing contract.",
+        "output": [
+          "dyld[35662]: Library not loaded: @rpath/libvulkan.1.dylib",
+          "  Referenced from: <9853B262-E0EB-36B9-9388-B5D5358E24F8> /Users/yount/.t3/worktrees/raven/t3-5cbc83f1/build/native/vulkan_thunk32_test",
+          "  Reason: no LC_RPATH's found"
+        ]
+      },
+      {
+        "test": "native_window_state_cli",
+        "reason": "AllowSetForegroundWindow(current PID) calls runtime_process_alive, which reads /proc/<pid>/stat and /proc/<pid>/exe. Excluded process-API workstream.",
+        "output": [
+          "Native entry returned 40 (process initialization not implemented)"
+        ]
+      },
+      {
+        "test": "native_x86_vulkan_compute",
+        "reason": "Excluded Vulkan bridge workstream; recorded output identifies the failing contract.",
+        "output": [
+          "Native entry returned 3 (process initialization not implemented)"
+        ]
+      }
+    ],
+    "diagnostics": {
+      "memory_contract": "Only 0x103000 -> 0x203000 in a temporary copy; full contract passes. Production fix prevents controller mappings from being reported free.",
+      "INT3_contracts": "Temporary copies using api_trap_address all pass; no committed changes to these tests.",
+      "cxx_exceptions_x64": "Passes in baseline and final suite; missing component issue not reproduced.",
+      "debugger": "No lldb/debugserver used; host sampling only. No translated child observed stuck in state U."
+    }
+  },
+  "upstream_files": [
+    {
+      "file": "native/cpu/shared_mapping_test.cpp",
+      "added": 25,
+      "removed": 0
+    },
+    {
+      "file": "native/desktop/compatible_bitmap_test.cpp",
+      "added": 28,
+      "removed": 0
+    },
+    {
+      "file": "native/desktop/shared_pixels.cpp",
+      "added": 24,
+      "removed": 0
+    },
+    {
+      "file": "native/desktop/shared_pixels.h",
+      "added": 4,
+      "removed": 0
+    },
+    {
+      "file": "native/desktop/windows.h",
+      "added": 4,
+      "removed": 0
+    },
+    {
+      "file": "native/graphics/text.cpp",
+      "added": 24,
+      "removed": 0
+    },
+    {
+      "file": "native/nt/file_test.cpp",
+      "added": 12,
+      "removed": 0
+    },
+    {
+      "file": "native/nt/font_service.cpp",
+      "added": 7,
+      "removed": 0
+    },
+    {
+      "file": "native/nt/host_api.cpp",
+      "added": 15,
+      "removed": 0
+    },
+    {
+      "file": "native/nt/memory.cpp",
+      "added": 5,
+      "removed": 0
+    },
+    {
+      "file": "native/nt/memory_api.cpp",
+      "added": 12,
+      "removed": 1
+    },
+    {
+      "file": "native/nt/objects.cpp",
+      "added": 1,
+      "removed": 1
+    },
+    {
+      "file": "native/nt/prefix.cpp",
+      "added": 7,
+      "removed": 0
+    },
+    {
+      "file": "native/nt/providers.cpp",
+      "added": 4,
+      "removed": 0
+    },
+    {
+      "file": "native/nt/registry_api.cpp",
+      "added": 6,
+      "removed": 0
+    },
+    {
+      "file": "native/nt/shell_api.cpp",
+      "added": 4,
+      "removed": 0
+    }
+  ]
+}

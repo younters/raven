@@ -15,6 +15,9 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <raven_darwin_system.h>
+#endif
 
 namespace raven {
 
@@ -94,7 +97,11 @@ std::vector<Adapter> host_adapters(uint32_t family)
 			adapter.index = ::if_nametoindex(entry->ifa_name);
 			adapter.status = (entry->ifa_flags & IFF_UP) && (entry->ifa_flags & IFF_RUNNING) ? 1 : 2;
 			adapter.type = (entry->ifa_flags & IFF_LOOPBACK) ? if_type_loopback :
+#ifdef __APPLE__
+				raven_darwin::wireless_interface(entry->ifa_name) ? if_type_wireless : if_type_ethernet;
+#else
 				::access(("/sys/class/net/" + adapter.name + "/wireless").c_str(), F_OK) == 0 ? if_type_wireless : if_type_ethernet;
+#endif
 			if (const int probe = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0); probe >= 0) {
 				ifreq request{};
 				std::strncpy(request.ifr_name, entry->ifa_name, IFNAMSIZ - 1);
@@ -127,6 +134,9 @@ std::vector<Adapter> host_adapters(uint32_t family)
 // The adapter list is built from the host interfaces. The records follow the IP_ADAPTER_ADDRESSES layout of the caller's pointer width.
 void register_host_api(ApiRegistry &registry, KernelContext &context)
 {
+#ifdef __APPLE__
+	raven_darwin::register_firmware_api(registry);
+#endif
 	auto &objects = context.objects;
 	registry.add("GetAdaptersAddresses", 5, [](ApiCall &call) {
 		const uint32_t family = call.u32(0), flags = call.u32(1);
@@ -727,6 +737,10 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 			// PROCESSOR_POWER_INFORMATION per processor: number, maximum, current and limit in MHz, idle states.
 			const long count = std::max<long>(1, ::sysconf(_SC_NPROCESSORS_ONLN));
 			for (long index = 0; index < count; ++index) {
+#ifdef __APPLE__
+				const auto frequency = raven_darwin::cpu_frequency(unsigned(index));
+				const uint32_t maximum = frequency.maximum, current = frequency.current;
+#else
 				const auto read_khz = [&](const char *file) -> uint32_t {
 					std::ifstream input("/sys/devices/system/cpu/cpu" + std::to_string(index) + "/cpufreq/" + file);
 					uint64_t khz = 0;
@@ -744,6 +758,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 				}
 				if (!current)
 					current = maximum;
+#endif
 				const uint32_t fields[6] = {uint32_t(index), maximum, current, maximum, 0, 0};
 				const auto raw = reinterpret_cast<const uint8_t *>(fields);
 				data.insert(data.end(), raw, raw + sizeof(fields));

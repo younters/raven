@@ -18,6 +18,9 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#ifdef __APPLE__
+#include <raven_darwin_fonts.h>
+#endif
 
 namespace raven {
 
@@ -69,7 +72,11 @@ std::vector<uint8_t> scan_fonts()
 	if (!freetype())
 		return cache;
 	std::error_code error;
+#ifdef __APPLE__
+	for (const auto &root : raven_darwin::font_roots()) {
+#else
 	for (const char *root : {"/usr/share/fonts", "/usr/local/share/fonts"}) {
+#endif
 		if (!std::filesystem::exists(root, error))
 			continue;
 		for (std::filesystem::recursive_directory_iterator walk(root, std::filesystem::directory_options::follow_directory_symlink, error), end; walk != end; walk.increment(error)) {

@@ -5,6 +5,10 @@
 #include <stdexcept>
 #include <sys/mman.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <libproc.h>
+#include <sstream>
+#endif
 
 static void check(bool value,const char *message)
 {
@@ -36,12 +40,36 @@ int main(int argc,char **argv)
 		std::vector<uint8_t> input(24,0x53); process.write_memory(address,input);
 		const auto source=objects.add(raven::DesktopBitmap{3,2,32,{},address,true,false,true});
 		check(dc && source && call("SelectObject",{dc,source})==0x10000,"cannot establish budget source");
+#ifdef __APPLE__
+		pid_t children[2]{};
+		proc_listchildpids(getpid(), children, sizeof children);
+		const pid_t child = children[0];
+		check(child > 0 && !children[1], "owned bootstrap child is ambiguous");
+		const auto mappings = [&]() {
+			std::ostringstream result;
+			uint64_t cursor = 0;
+			proc_regioninfo region{};
+			while (proc_pidinfo(child, PROC_PIDREGIONINFO, cursor, &region, sizeof region) == sizeof region) {
+				result << region.pri_address << ' ' << region.pri_size << ' ' << region.pri_protection << '\n';
+				if (!region.pri_size || region.pri_address > UINT64_MAX - region.pri_size)
+					break;
+				cursor = region.pri_address + region.pri_size;
+			}
+			check(!result.str().empty(), "cannot inspect owned guest mappings");
+			return result.str();
+		};
+#else
 		std::ifstream children("/proc/self/task/"+std::to_string(getpid())+"/children"); long child=0,extra=0; children>>child;
 		check(child>0 && !(children>>extra),"owned bootstrap child is ambiguous");
 		const auto mappings=[&]() {
 			std::ifstream file("/proc/"+std::to_string(child)+"/maps"); check(bool(file),"cannot inspect owned guest mappings");
 			return std::string(std::istreambuf_iterator<char>(file),{});
 		};
+#endif
+#ifdef __APPLE__
+		// Rosetta can map translation storage the first time this entry point runs; that belongs to the translator, not the bitmap.
+		check(!call("CreateCompatibleBitmap",{dc,3,2}) && environment.last_error()==8,"bitmap budget did not reject allocation");
+#endif
 		const auto before=mappings(); const auto budget=objects.bytes();
 		for (unsigned attempt=0;attempt<16;++attempt) {
 			environment.set_last_error(0x7654);

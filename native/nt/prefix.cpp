@@ -6,6 +6,9 @@
 #include <vector>
 #include <stdexcept>
 #include <string>
+#ifdef __APPLE__
+#include <raven_darwin_fonts.h>
+#endif
 
 namespace raven {
 
@@ -21,9 +24,13 @@ NativePrefix::NativePrefix(std::filesystem::path root) : directory(std::move(roo
 	const auto fonts = directory / "drive_c" / "windows" / "Fonts";
 	std::error_code error;
 	if (std::filesystem::create_directory(fonts, error)) {
+#ifdef __APPLE__
+		const auto roots = raven_darwin::font_roots();
+#else
 		std::vector<std::filesystem::path> roots{"/usr/share/fonts", "/usr/local/share/fonts"};
 		if (const char *home = std::getenv("HOME"); home && *home)
 			roots.push_back(std::filesystem::path(home) / ".local" / "share" / "fonts");
+#endif
 		for (const auto &root : roots)
 			for (std::filesystem::recursive_directory_iterator walk(root, std::filesystem::directory_options::follow_directory_symlink, error), end;
 					walk != end; walk.increment(error)) {

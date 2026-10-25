@@ -35,6 +35,10 @@ public:
 	// The client area of a window as its swap chains see it; empty for a window that does not exist.
 	std::optional<std::pair<uint32_t,uint32_t>> client_size(uint64_t window);
 	void set_deadline(std::chrono::steady_clock::time_point deadline);
+#ifdef __APPLE__
+	bool needs_idle_poll() const { return presentation.poll && (!presentation.descriptor || presentation.descriptor() < 0); }
+	void poll_idle(std::chrono::milliseconds budget);
+#endif
 	// Parks a message waiter while other guest threads run, until input arrives or the next timer is due.
 	void set_message_wait(std::function<void(std::function<bool()>,std::chrono::steady_clock::time_point)> wait) { message_wait = std::move(wait); }
 	// How a thread waiting for messages sleeps when every other thread waits too: until the time `until` allows for the other threads,

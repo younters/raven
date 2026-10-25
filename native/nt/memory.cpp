@@ -406,6 +406,11 @@ std::optional<std::array<uint8_t,48>> NativeMemory::query(uint64_t address) cons
 			put(bytes,32,0x1000,4); put(bytes,36,4,4); put(bytes,40,0x20000,4);
 			return bytes;
 		}
+#ifdef __APPLE__
+		// The controller can own image or agent mappings that this allocator has not registered. They must never be reported free.
+		if (!process.memory_available(page, 4096))
+			return std::nullopt;
+#endif
 		uint64_t end=user_limit;
 		if (page<stack_low)
 			end=stack_low;

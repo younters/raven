@@ -15,6 +15,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
+#ifdef __APPLE__
+#include <raven_darwin_system.h>
+#endif
 
 namespace raven {
 
@@ -264,15 +267,23 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(87);
 			return;
 		}
+#ifdef __APPLE__
+		const auto table = raven_darwin::smbios_table();
+#else
 		std::ifstream file("/sys/firmware/dmi/tables/DMI", std::ios::binary);
 		if (!file) {
 			call.fail(50);
 			return;
 		}
 		const std::vector<uint8_t> table(std::istreambuf_iterator<char>(file), {});
+#endif
 		const uint64_t memory = smbios_memory(table);
 		const long pages = sysconf(_SC_PHYS_PAGES), page_size = sysconf(_SC_PAGESIZE);
-		if (file.bad() || !memory || pages <= 0 || page_size <= 0 || memory < uint64_t(pages) * uint64_t(page_size) / 1024) {
+		if (
+#ifndef __APPLE__
+			file.bad() ||
+#endif
+			!memory || pages <= 0 || page_size <= 0 || memory < uint64_t(pages) * uint64_t(page_size) / 1024) {
 			call.fail(13);
 			return;
 		}

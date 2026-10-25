@@ -8,6 +8,8 @@ if(TARGET raven_cpu)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/native_process.cpp)
     list(REMOVE_ITEM RAVEN_CPU_SOURCES desktop/shared_pixels.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/shared_pixels.cpp)
+    list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/system_api.cpp)
+    list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/desktop_idle.cpp)
     set_property(TARGET raven_cpu PROPERTY SOURCES ${RAVEN_CPU_SOURCES})
     # GNU ld only; ld64 keeps every library it is given.
     get_target_property(RAVEN_CPU_LINK_OPTIONS raven_cpu INTERFACE_LINK_OPTIONS)
@@ -112,4 +114,24 @@ endif()
 # Skia's macOS build always carries its CoreGraphics image generator.
 if(TARGET raven_text)
     target_link_libraries(raven_text PUBLIC "-framework CoreFoundation" "-framework CoreGraphics" "-framework CoreText" "-framework ImageIO")
+endif()
+
+if(TARGET native_cpu_test)
+    add_executable(darwin_controller_bench ${RAVEN_DARWIN_DIR}/controller_bench.cpp)
+    target_link_libraries(darwin_controller_bench PRIVATE raven_cpu)
+    add_executable(darwin_compat_test ${RAVEN_DARWIN_DIR}/compat_test.cpp)
+    target_link_libraries(darwin_compat_test PRIVATE raven_cpu)
+    add_test(NAME native_darwin_compat COMMAND darwin_compat_test $<TARGET_FILE:raven-bootstrap>)
+    set_tests_properties(native_darwin_compat PROPERTIES TIMEOUT 15)
+    if(RAVEN_MINGW64)
+        set(DARWIN_SYSTEM_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/darwin-system.exe)
+        add_custom_command(OUTPUT ${DARWIN_SYSTEM_FIXTURE}
+            COMMAND ${RAVEN_MINGW64} -nostdlib -Wl,--entry,raven_entry,--image-base,0x1c7000000,--no-insert-timestamp
+                -o ${DARWIN_SYSTEM_FIXTURE} ${RAVEN_DARWIN_DIR}/system_client.c -lkernel32 -ladvapi32
+            DEPENDS ${RAVEN_DARWIN_DIR}/system_client.c VERBATIM)
+        add_custom_target(darwin_system_fixture ALL DEPENDS ${DARWIN_SYSTEM_FIXTURE})
+        add_test(NAME native_darwin_system_api COMMAND raven --run-process --execution=native ${DARWIN_SYSTEM_FIXTURE})
+        set_tests_properties(native_darwin_system_api PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+            ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-system-prefix")
+    endif()
 endif()

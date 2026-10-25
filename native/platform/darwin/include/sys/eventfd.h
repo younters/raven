@@ -1,6 +1,4 @@
-// eventfd on macOS: a FIFO opened for reading and writing through one descriptor. Each write leaves its eight bytes and a read takes
-// what is there, so the descriptor stays readable until it is drained: the way the runtime uses its wake descriptors. Counter
-// semantics (reading the sum) are not provided.
+// A counter with a level-triggered FIFO token. Host read/write/close are dispatched by compat/eventfd.cpp.
 #pragma once
 #include <fcntl.h>
 #include <stdint.h>
@@ -15,6 +13,8 @@ typedef uint64_t eventfd_t;
 extern "C" {
 #endif
 int eventfd(unsigned int initial, int flags);
+int eventfd_read(int descriptor, eventfd_t *value);
+int eventfd_write(int descriptor, eventfd_t value);
 #ifdef __cplusplus
 }
 #endif

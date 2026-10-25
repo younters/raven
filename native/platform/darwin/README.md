@@ -10,6 +10,10 @@ native/platform/darwin/setup.sh          # Homebrew packages, every guest compon
 ctest --test-dir build-macos -j1         # tests share prefixes: one at a time
 RAVEN_PREFIX=~/.local/share/raven/app build-macos/native/raven --run-process --execution=native --timeout-ms=86400000 \
 	--desktop=macos program.exe
+brew install cmake ninja python mingw-w64 lld openssl@3 libpng freetype pixman
+cmake -S . -B build-macos -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build-macos
+ctest --test-dir build-macos -j1 --timeout 120
 ```
 
 `setup.sh` puts what it downloads and builds beside the checkout (`../raven-components`, `../raven-skia`) and skips what is already
@@ -30,13 +34,14 @@ which no x86_64 program starts until `sudo launchctl kickstart -k system/com.app
 | `compat/sockets.cpp` | `SOCK_SEQPACKET` and abstract names for Unix sockets; defines `send`, `recv`, `sendmsg`, `recvmsg`, `bind`, `connect`, `close` |
 | `compat/procfs.cpp` | The `/proc` files read as a process API, from libproc, sysctl and Mach |
 | `compat/compat_test.cpp` | `darwin_compat_contract`: the interprocess behaviour of the two above |
+| `compat/` | Linux shims, event counters and macOS hardware discovery (`raven_darwin`, linked into every host target) |
 | `native_process.cpp` | `NativeProcess` for macOS, built instead of `cpu/native_cpu.cpp` |
 | `guest/` | The x86_64 guest agent and the zero-fill segment that keeps the low 4 GiB free for Windows images |
 | `parallel_test.cpp` | x64/x86 pthread progress, contended atomics, stop wakes, channel reuse, and stream framing contracts |
 | `parallel_benchmark.c` | A fixed amount of independent integer work on four Windows threads |
 | `bin/raven-clang` | clang for Windows targets, with Homebrew's MinGW-w64 sysroot |
 
-Upstream files changed for macOS: `CMakeLists.txt` and `native/CMakeLists.txt` (the platform gates and the two includes),
+Initial upstream build changes: `CMakeLists.txt` and `native/CMakeLists.txt` (the platform gates and the two includes),
 `native/main.cpp` (a `to_string` cast for libc++'s 128-bit file times) and `native/desktop/foreign_surface.cpp` (`__atomic_load_n`
 where libc++ has no `atomic_ref<const T>`). Where the runtime reads a `/proc` file with an `ifstream` or lists `/proc`, an `#ifdef __APPLE__`
 reads `raven_darwin::proc_stream` or `proc_directory` instead: `nt/child_process.cpp`, `nt/service_api.cpp`, `nt/process_info_api.cpp`
@@ -100,6 +105,10 @@ On the same configuration, the complete `ctest -j1 --timeout 120` run changed fr
 none of the previously passing tests regressed. The remaining failures were present in the baseline.
 
 Never run the guest, runtime or tests under lldb/debugserver: debugging translated processes has wedged Rosetta's `oahd` on this machine.
+- The guest controller runs x64 and x86 Windows code. The agent catches its own traps and faults with signal handlers and trades register
+  contexts with the host through shared memory. Images, descriptor views and the main stack have coherent host aliases; anonymous guest
+  heaps and secondary stacks still use the agent's task port. Every host access checks the guest's 4 KiB protections first.
+- Native guest threads take turns; parallel execution is a separate workstream.
 
 ## Rosetta 2 facts the design relies on
 
@@ -116,10 +125,66 @@ Measured on macOS 27.2, M4 Pro.
 - **AVX:** AVX, AVX2, FMA and BMI2 are reported only with `ROSETTA_ADVERTISE_AVX=1`. Signal contexts then carry the AVX state. There is no
   AVX-512.
 - **Timestamp counter:** `rdtsc` in the guest reads the ARM generic timer `cntvct_el0` (1 GHz on M4). The host reads the same counter.
+  Apple's assembler treats a semicolon as a comment, so the host's `isb` and `mrs` must be on separate lines.
 - **Across tasks:**
   - From an arm64 task, `mach_vm_read`, `mach_vm_allocate` and `mach_vm_protect` work on the guest.
   - `mach_vm_write` into the guest's executable pages and x86 `thread_get_state` do not.
 - **Trap cost:** one trap round trip (signal, host answer, resume) costs about 23 µs. Calls Raven serves through shared memory avoid it.
+
+Never run Raven, its bootstrap or a test under lldb/debugserver: attaching to a translated child has wedged Rosetta's `oahd` on this
+machine. `sample <host-pid>` is supported for profiling the arm64 controller. For a host crash report, send the host SIGABRT and inspect
+`~/Library/Logs/DiagnosticReports/*.ips`. Stop testing if translated children hang at launch in process state `U`.
+
+## Host integration
+
+- Section pixels retain the original host-page-aligned mapping, including any leading slack before a 4 KiB guest offset.
+- An allocator query does not report controller-owned images or agent mappings as free just because they are absent from its own table.
+- `eventfd` accumulates a 64-bit counter and holds a single FIFO readiness token. Ordinary host `read`, `write` and `close` dispatch through
+  the shim; non-event descriptors go to libSystem. Counter overflow, zero writes, blocking/nonblocking reads and semaphore reads are
+  supported. Raven's eventfds are local CLOEXEC wake descriptors: duplication, inheritance and POLLOUT overflow readiness are not used
+  or emulated. The scheduler drains them; XCB's initial counter stays readable. The Linux CPU controller's eventfd is not built on Darwin.
+- CPU identity uses Rosetta's x86 CPUID. Registry brand strings name the Apple host and Rosetta; frequencies use available `hw.cpufrequency*`
+  or `hw.perflevel*` values. Apple silicon often publishes no core frequency: zero means unknown, not the 1 GHz timestamp-counter rate.
+- SystemConfiguration identifies Wi-Fi even when its link address looks like Ethernet, with interface media as a fallback.
+- SMBIOS Type 1 exposes the IOKit model and platform UUID, leaving the serial number empty. Type 17 reports `hw.memsize`. The RSMB firmware
+  APIs and installed-memory query use this table.
+- Font scans and new prefix Fonts folders include `/System/Library/Fonts`, `/Library/Fonts` and `~/Library/Fonts`. FreeType and Skia load
+  all faces of TTC/OTC collections, plus TTF/OTF files. Shell opening uses `/usr/bin/open`.
+- Presentation backends without a descriptor receive the scheduler's idle budget; unused time is waited on the scheduler descriptors.
+
+## Controller profiling
+
+`RAVEN_PROFILE=1` reports API handler time. `RAVEN_PROFILE_CONTROLLER=1` separately reports memory operations, Mach calls, service commands,
+stop waits, served calls and sleep counts. Totals are nested: do not add read time to its Mach-read time, or service time to its parent API.
+Stop-wait time includes guest execution and any served handlers; it is not a pure signal-latency measurement.
+
+`RAVEN_DARWIN_SPIN_US` sets the host spin budget, from 0 to 1000 µs (default 60). A short spin keeps served calls off their fallback traps
+and avoids sleeping on fast service replies. A service wait always uses the reply value it already checked, preventing a completed reply
+from becoming the expected value of a fresh 10 ms sleep. The guest protocol and guest thread channels are unchanged.
+
+```sh
+cmake --build build --target darwin_controller_bench
+build/native/darwin_controller_bench build/native/raven-bootstrap
+
+profile_dir=$(mktemp -d /tmp/raven-profile-XXXXXX)
+cp -R build/testdata/npp "$profile_dir/npp"
+RAVEN_PREFIX="$profile_dir/prefix" RAVEN_PROFILE=1 RAVEN_PROFILE_CONTROLLER=1 \
+  build/native/raven --run-process --execution=native --timeout-ms=5000 "$profile_dir/npp/notepad++.exe"
+```
+
+Notepad++ writes beside itself, so use a private copy. On this revision it reaches window creation and exits with status `0xffffffff`;
+startup timing does not establish a working editor session. The `kernel-*.exe` fixtures provide successful end-to-end workloads.
+`profiling-results.json` records the measurements and the 0/10/30/60 µs comparison; workload medians exclude a warm-up run. CPU time sums
+the host and reaped guest, so it may exceed wall time. Signal timings vary with other work running on the machine.
+
+The Darwin tests cover event counter behavior under concurrent writers, nonzero section offsets, hardware data and fonts, the host
+timestamp-counter read, firmware/registry data seen through Windows APIs, untracked mapping queries and Rosetta invalidation after a
+shared executable write. Run them and the controller/mapping contracts serially:
+
+```sh
+ctest --test-dir build -j1 --timeout 120 --output-on-failure \
+  -R 'native_darwin_|native_cpu_contracts|native_shared_mapping_contract|native_compatible_bitmap_contract'
+```
 
 ## Linux behaviour still missing at run time
 
@@ -144,7 +209,6 @@ These compile, but do not yet behave as on Linux.
 ### Graphics, audio and system integration
 - **Desktop / Vulkan:** `--desktop=macos` uses Cocoa windows and Metal child views. The Vulkan bridge presents through MoltenVK;
   see [VULKAN.md](VULKAN.md) for verified tests, the desktop integration test, and Direct3D backend limitations.
+- **Desktop:** Cocoa lives in `cocoa.mm`; graphics bridge work is separate from the controller.
 - **OpenGL:** the bridge uses EGL.
 - **Audio:** uses PulseAudio.
-- **Shell open:** uses `xdg-open`.
-- **System fonts:** looked up under `/usr/share/fonts`.

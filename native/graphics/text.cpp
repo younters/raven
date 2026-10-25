@@ -12,6 +12,11 @@
 #include <vector>
 #include <initializer_list>
 #include <stdexcept>
+#ifdef __APPLE__
+#include <raven_darwin_fonts.h>
+#include "include/core/SkStream.h"
+#include "include/ports/SkFontScanner_FreeType.h"
+#endif
 
 namespace raven {
 
@@ -115,6 +120,25 @@ TextRenderer::TextRenderer(const std::string &directory) : state(std::make_uniqu
 			state->styled[family][style+1]=manager->makeFromFile((directory+"/"+styles[family][style]).c_str());
 	for (const auto *path : {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf","/usr/local/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"})
 		if (auto face=manager->makeFromFile(path)) state->fallbacks.push_back(std::move(face));
+#ifdef __APPLE__
+	// Collections can hold many different fallback faces; load every face, as the FreeType font service does.
+	static const auto host_faces = [] {
+		std::vector<sk_sp<SkTypeface>> faces;
+		auto scanner = SkFontScanner_Make_FreeType();
+		auto manager = SkFontMgr_New_Custom_Empty();
+		for (const auto &path : raven_darwin::font_files()) {
+			SkFILEStream stream(path.c_str());
+			int count = 0;
+			if (!scanner || !stream.isValid() || !scanner->scanFile(&stream, &count))
+				continue;
+			for (int index = 0; index < count; ++index)
+				if (auto face = manager->makeFromFile(path.c_str(), index))
+					faces.push_back(std::move(face));
+		}
+		return faces;
+	}();
+	state->fallbacks.insert(state->fallbacks.end(), host_faces.begin(), host_faces.end());
+#endif
 }
 
 TextRenderer::~TextRenderer() = default;

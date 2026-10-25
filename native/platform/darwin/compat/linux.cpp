@@ -176,17 +176,6 @@ int memfd_create(const char *, unsigned int flags)
 	return descriptor;
 }
 
-int eventfd(unsigned int initial, int flags)
-{
-	const int descriptor = open_fifo(flags);
-	if (descriptor >= 0 && initial) {
-		const uint64_t value = initial;
-		if (write(descriptor, &value, sizeof value) != sizeof value)
-			return fail(descriptor);
-	}
-	return descriptor;
-}
-
 int inotify_init1(int flags)
 {
 	return open_fifo(flags | O_NONBLOCK);

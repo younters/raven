@@ -11,6 +11,7 @@
 #include "cpu/native_cpu.h"
 #include "cpu/served_queue.h"
 #include "guest/protocol.h"
+#include "controller_profile.h"
 
 #include <algorithm>
 #include <atomic>
@@ -63,6 +64,15 @@ void sleep_on(uint32_t *word, uint32_t value, std::chrono::nanoseconds limit)
 		uint64_t(nanoseconds));
 }
 
+std::chrono::microseconds controller_spin()
+{
+	static const auto spin = [] {
+		const char *value = std::getenv("RAVEN_DARWIN_SPIN_US");
+		return std::chrono::microseconds(value ? std::clamp<long>(std::strtol(value, nullptr, 10), 0, 1000) : 60);
+	}();
+	return spin;
+}
+
 void backtrace_if_asked()
 {
 	if (std::getenv("RAVEN_BACKTRACE")) {
@@ -98,6 +108,7 @@ public:
 	raven_control *control = nullptr;
 	uint8_t *data = nullptr;
 	uint64_t gate = 0;
+	mutable ControllerProfile profile;
 
 	pid_t selected = 1;
 	bool parallel = false;
@@ -280,6 +291,7 @@ GuestAgent::GuestAgent(const std::string &bootstrap, std::chrono::milliseconds t
 GuestAgent::~GuestAgent()
 {
 	stop();
+	profile.report();
 }
 
 void GuestAgent::reap(bool block)
@@ -343,30 +355,38 @@ void GuestAgent::set_timeout(std::chrono::milliseconds timeout)
 
 int GuestAgent::wait(const std::function<bool()> *served)
 {
+	ControllerProfile::Scope timing(profile, profile.waits);
 	auto *state = &thread().state;
 	// Guest code usually reaches its next stop within microseconds, so it is polled first; a guest that runs longer is waited for asleep.
 	unsigned polls = 0;
+	auto spin_end = std::chrono::steady_clock::now() + controller_spin();
 	for (;;) {
-		if (load(state) == RAVEN_THREAD_STOPPED)
+		const auto observed = load(state);
+		if (observed == RAVEN_THREAD_STOPPED)
 			return 1;
 		if (served && (*served)()) {
 			polls = 0;
+			spin_end = std::chrono::steady_clock::now() + controller_spin();
 			if (slice_end && std::chrono::steady_clock::now() >= *slice_end)
 				return -2;
 			continue;
 		}
-		if (++polls < 200)
+		if (++polls % 64)
 			continue;
 		const auto now = std::chrono::steady_clock::now();
 		if (slice_end && now >= *slice_end)
 			return -2;
 		if (now >= deadline)
 			return -1;
+		if (now < spin_end)
+			continue;
 		if (!alive())
 			throw std::runtime_error("native guest exited outside the runtime boundary");
 		const auto until = slice_end ? std::min(*slice_end, deadline) : deadline;
 		// A served call ends in a breakpoint if the runtime is not looking, which wakes this sleep.
-		sleep_on(state, RAVEN_THREAD_RUNNING, std::chrono::duration_cast<std::chrono::nanoseconds>(until - now));
+		if (profile.enabled)
+			++profile.wait_sleeps;
+		sleep_on(state, observed, std::chrono::duration_cast<std::chrono::nanoseconds>(until - now));
 	}
 }
 
@@ -428,6 +448,7 @@ void GuestAgent::stop_thread(pid_t task)
 
 uint64_t GuestAgent::service(uint32_t command, std::initializer_list<uint64_t> arguments, const char *what)
 {
+	ControllerProfile::Scope timing(profile, profile.services.at(command));
 	if (!control || pid <= 0)
 		throw std::runtime_error("native guest process is gone");
 	auto &channel = control->service;
@@ -438,8 +459,12 @@ uint64_t GuestAgent::service(uint32_t command, std::initializer_list<uint64_t> a
 	const uint32_t request = channel.request + 1;
 	store(&channel.request, request);
 	const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-	for (unsigned spin = 0; load(&channel.reply) != request; ++spin) {
-		if (spin < 2000)
+	const auto spin_end = std::chrono::steady_clock::now() + controller_spin();
+	for (unsigned spin = 0;; ++spin) {
+		const auto observed = load(&channel.reply);
+		if (observed == request)
+			break;
+		if (spin % 64 || std::chrono::steady_clock::now() < spin_end)
 			continue;
 		if (!alive())
 			throw std::runtime_error(std::string("native guest exited during ") + what);
@@ -447,7 +472,10 @@ uint64_t GuestAgent::service(uint32_t command, std::initializer_list<uint64_t> a
 			stop();
 			throw std::runtime_error(std::string("native guest did not answer ") + what);
 		}
-		sleep_on(&channel.reply, load(&channel.reply), std::chrono::milliseconds(10));
+		if (profile.enabled)
+			++profile.service_sleeps;
+		// Wait on the value already checked. Reloading here can observe the completed reply and then sleep on it for 10 ms.
+		sleep_on(&channel.reply, observed, std::chrono::milliseconds(10));
 	}
 	if (channel.error)
 		throw std::system_error(channel.error, std::generic_category(), std::string("native ") + what);
@@ -487,6 +515,20 @@ struct NativeProcess::State {
 		size_t size = 0;
 		~SharedView() { if (mapping != MAP_FAILED) munmap(mapping, mapping_size); }
 	};
+	static std::unique_ptr<SharedView> host_view(int descriptor, size_t size, uint64_t offset = 0)
+	{
+		auto view = std::make_unique<SharedView>();
+		view->size = size;
+		const size_t slack = offset % uint64_t(getpagesize());
+		if (size > SIZE_MAX - slack)
+			throw std::runtime_error("native host view size overflow");
+		view->mapping_size = size + slack;
+		view->mapping = mmap(nullptr, view->mapping_size, PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, off_t(offset - slack));
+		if (view->mapping == MAP_FAILED)
+			throw std::runtime_error("cannot map native descriptor in host");
+		view->host = static_cast<uint8_t *>(view->mapping) + slack;
+		return view;
+	}
 	std::map<uint64_t, std::unique_ptr<SharedView>> shared_views;
 	std::map<uint64_t, ImageMapping> mappings;
 	std::vector<std::pair<uint64_t, uint64_t>> allocations;
@@ -633,6 +675,7 @@ NativeProcess::NativeProcess(std::span<LoadedImage *const> images, const std::st
 	store(&state->child->control->parallel, state->child->parallel);
 	for (auto *mapped_image : images) {
 		const auto base = mapped_image->base(), size = uint64_t(mapped_image->data().size());
+		auto view = State::host_view(mapped_image->descriptor(), size);
 		state->child->send_descriptor(mapped_image->descriptor());
 		const auto mapped = state->service(RAVEN_SERVICE_MAP_DESCRIPTOR, {base, size, 0, RAVEN_MAP_EXACT, PROT_NONE}, "image mapping");
 		if (mapped != base)
@@ -641,11 +684,28 @@ NativeProcess::NativeProcess(std::span<LoadedImage *const> images, const std::st
 			state->service(RAVEN_SERVICE_PROTECT, {mapping.address, mapping.size, uint64_t(mapping.protection)}, "image protection");
 			state->mappings.insert_or_assign(mapping.address, mapping);
 		}
+		state->shared_views.emplace(base, std::move(view));
 	}
 	const uint64_t stack_size = std::clamp<uint64_t>((stack_reserve + 0xffff) & ~uint64_t(0xffff), 1024 * 1024, 64 * 1024 * 1024);
 	state->initial_stack_size = stack_size;
-	const auto stack = state->service(RAVEN_SERVICE_MAP, {0, stack_size + 8192, PROT_NONE,
-		uint64_t(mode == NativeMode::x86 ? RAVEN_MAP_LOW : RAVEN_MAP_GRANULAR)}, "stack mapping");
+	// Stack arguments, return addresses and callback frames are read and written for almost every API. Keep a coherent host alias.
+	const int stack_file = memfd_create("raven-stack", MFD_CLOEXEC);
+	if (stack_file < 0)
+		throw std::runtime_error("cannot create native stack backing");
+	uint64_t stack;
+	try {
+		if (ftruncate(stack_file, off_t(stack_size + 8192)) != 0)
+			throw std::runtime_error("cannot size native stack backing");
+		auto view = State::host_view(stack_file, stack_size + 8192);
+		state->child->send_descriptor(stack_file);
+		stack = state->service(RAVEN_SERVICE_MAP_DESCRIPTOR, {0, stack_size + 8192, 0,
+			uint64_t(mode == NativeMode::x86 ? RAVEN_MAP_LOW : RAVEN_MAP_GRANULAR), PROT_NONE}, "stack mapping");
+		state->shared_views.emplace(stack, std::move(view));
+	} catch (...) {
+		close(stack_file);
+		throw;
+	}
+	close(stack_file);
 	if (stack + stack_size + 8192 > state->limit())
 		throw std::runtime_error("host placed the native stack outside the guest address space");
 	state->service(RAVEN_SERVICE_PROTECT, {stack + 4096, stack_size, PROT_READ | PROT_WRITE}, "stack protection");
@@ -676,6 +736,10 @@ NativeProcess::~NativeProcess()
 {
 	if (std::getenv("RAVEN_PROFILE") && std::getenv("RAVEN_QUEUED_GRAPHICS"))
 		std::cerr << "profile: queued calls=" << state->queued_calls << '\n';
+	if (state->child && state->child->profile.enabled)
+		std::fprintf(stderr, "controller: served=%llu served-trap-waits=%llu served-yields=%llu\n",
+			static_cast<unsigned long long>(state->served_calls), static_cast<unsigned long long>(state->served_waits),
+			static_cast<unsigned long long>(state->served_yields));
 }
 
 void NativeProcess::install_seccomp()
@@ -707,6 +771,8 @@ void NativeProcess::set_context(const NativeContext &context)
 std::vector<uint8_t> NativeProcess::read_memory(uint64_t address, size_t size) const
 {
 	state->require_memory();
+	auto &profile = state->child->profile;
+	ControllerProfile::Scope timing(profile, profile.reads, size);
 	if (!state->covers(address, size, PROT_READ))
 		throw std::runtime_error("native read exceeds readable guest memory" +
 			(std::getenv("RAVEN_TRACE_API") ? " at " + std::to_string(address) + "+" + std::to_string(size) : std::string()));
@@ -714,14 +780,20 @@ std::vector<uint8_t> NativeProcess::read_memory(uint64_t address, size_t size) c
 	for (size_t offset = 0; offset < size;) {
 		size_t count = size - offset;
 		if (const auto *shared = state->shared_memory(address + offset, count)) {
+			ControllerProfile::Scope timing(profile, profile.shared_reads, count);
 			std::memcpy(result.data() + offset, shared, count);
 			offset += count;
 			continue;
 		}
 		count = std::min<size_t>(count, RAVEN_CONTROL_DATA_SIZE);
 		mach_vm_size_t copied = 0;
-		if (mach_vm_read_overwrite(state->child->task, address + offset, count, reinterpret_cast<mach_vm_address_t>(result.data() + offset),
-				&copied) != KERN_SUCCESS || copied != count) {
+		kern_return_t read;
+		{
+			ControllerProfile::Scope timing(profile, profile.mach_reads, count);
+			read = mach_vm_read_overwrite(state->child->task, address + offset, count,
+				reinterpret_cast<mach_vm_address_t>(result.data() + offset), &copied);
+		}
+		if (read != KERN_SUCCESS || copied != count) {
 			// The kernel works in the host's 16 KiB pages; a range at the edge of a 4 KiB guest mapping goes through the agent.
 			state->service(RAVEN_SERVICE_READ, {address + offset, count}, "memory read");
 			std::memcpy(result.data() + offset, state->child->data, count);
@@ -735,22 +807,30 @@ void NativeProcess::write_memory(uint64_t address, std::span<const uint8_t> byte
 {
 	state->trap_page.clear();
 	validate_write_memory(address, bytes.size());
+	auto &profile = state->child->profile;
+	ControllerProfile::Scope timing(profile, profile.writes, bytes.size());
 	for (size_t offset = 0; offset < bytes.size();) {
 		size_t count = bytes.size() - offset;
-		if (auto *shared = state->shared_memory(address + offset, count)) {
+		// Executable shared views must still be changed through guest stores, so Rosetta invalidates their translation.
+		const auto after = state->mappings.upper_bound(address + offset);
+		const auto &mapping = std::prev(after)->second;
+		count = std::min(count, size_t(mapping.address + mapping.size - address - offset));
+		const bool code = mapping.protection & PROT_EXEC;
+		if (auto *shared = state->shared_memory(address + offset, count); shared && !code) {
+			ControllerProfile::Scope timing(profile, profile.shared_writes, count);
 			std::memcpy(shared, bytes.data() + offset, count);
 			offset += count;
 			continue;
 		}
 		count = std::min<size_t>(count, RAVEN_CONTROL_DATA_SIZE);
 		// Pages that may hold code are written by the guest itself, so Rosetta sees it change; others take the host's write.
-		uint64_t end = address + offset + count;
-		int protection = PROT_NONE;
-		for (uint64_t page = (address + offset) & ~uint64_t(4095); page < end; page += 4096)
-			protection |= state->protection_at(page);
-		const bool code = protection & PROT_EXEC;
-		if (code || mach_vm_write(state->child->task, address + offset, reinterpret_cast<vm_offset_t>(bytes.data() + offset),
-				mach_msg_type_number_t(count)) != KERN_SUCCESS) {
+		kern_return_t written = KERN_FAILURE;
+		if (!code) {
+			ControllerProfile::Scope timing(profile, profile.mach_writes, count);
+			written = mach_vm_write(state->child->task, address + offset, reinterpret_cast<vm_offset_t>(bytes.data() + offset),
+				mach_msg_type_number_t(count));
+		}
+		if (written != KERN_SUCCESS) {
 			std::memcpy(state->child->data, bytes.data() + offset, count);
 			state->service(RAVEN_SERVICE_WRITE, {address + offset, count, uint64_t(state->protection_at(address + offset))}, "memory write");
 		}
@@ -817,7 +897,7 @@ uint64_t NativeProcess::map_memory(size_t size, int protection, uint64_t address
 
 uint64_t NativeProcess::map_shared(int descriptor, size_t size, uint64_t offset)
 {
-	return map_file(descriptor, size, offset, false);
+	return map_descriptor(descriptor, size, offset);
 }
 
 uint64_t NativeProcess::map_descriptor(int descriptor, size_t size, uint64_t offset)
@@ -827,15 +907,7 @@ uint64_t NativeProcess::map_descriptor(int descriptor, size_t size, uint64_t off
 	const auto flags = fcntl(descriptor, F_GETFL);
 	if (flags == -1 || (flags & O_ACCMODE) != O_RDWR || (offset & 4095) || offset > INT64_MAX || size > INT64_MAX - offset)
 		throw std::runtime_error("invalid native mapping descriptor or offset");
-	auto view = std::make_unique<State::SharedView>();
-	view->size = size;
-	// The host maps in its own 16 KiB pages, the guest in 4 KiB ones.
-	const uint64_t slack = offset % uint64_t(getpagesize());
-	view->mapping_size = size + slack;
-	view->mapping = mmap(nullptr, view->mapping_size, PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, off_t(offset - slack));
-	if (view->mapping == MAP_FAILED)
-		throw std::runtime_error("cannot map native descriptor in host");
-	view->host = static_cast<uint8_t *>(view->mapping) + slack;
+	auto view = State::host_view(descriptor, size, offset);
 	const auto address = map_file(descriptor, size, offset, true);
 	try {
 		state->shared_views.emplace(address, std::move(view));
@@ -1008,6 +1080,7 @@ void NativeProcess::map_image(LoadedImage &image)
 	const auto size = image.data().size();
 	memory_range(base, size, PROT_NONE, state->limit());
 	const auto mappings = image.mappings();
+	auto view = State::host_view(image.descriptor(), size);
 	state->image_allocations.reserve(state->image_allocations.size() + 1);
 	bool mapped = false;
 	try {
@@ -1023,6 +1096,7 @@ void NativeProcess::map_image(LoadedImage &image)
 		for (const auto &mapping : mappings)
 			state->mappings.insert_or_assign(mapping.address, mapping);
 		state->image_allocations.emplace_back(base, size);
+		state->shared_views.emplace(base, std::move(view));
 	} catch (const std::system_error &) {
 		if (mapped)
 			state->service(RAVEN_SERVICE_UNMAP, {base, size}, "image release");
@@ -1048,6 +1122,7 @@ void NativeProcess::unmap_image(uint64_t address)
 		throw std::runtime_error("native image release requires a dynamically mapped image base");
 	const uint64_t end = address + owned->second;
 	state->service(RAVEN_SERVICE_UNMAP, {address, owned->second}, "image release");
+	state->shared_views.erase(address);
 	state->mappings.erase(state->mappings.lower_bound(address), state->mappings.lower_bound(end));
 	state->api_traps.erase(state->api_traps.lower_bound(address), state->api_traps.lower_bound(end));
 	state->returning_traps.erase(state->returning_traps.lower_bound(address), state->returning_traps.lower_bound(end));

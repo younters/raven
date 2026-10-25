@@ -10,6 +10,9 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <libproc.h>
+#endif
 
 static void check(bool value,const char *message)
 {
@@ -18,7 +21,16 @@ static void check(bool value,const char *message)
 
 static size_t descriptors()
 {
+#ifdef __APPLE__
+	const int bytes = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, nullptr, 0);
+	check(bytes > 0, "cannot inspect host descriptors");
+	std::vector<proc_fdinfo> entries(size_t(bytes) / sizeof(proc_fdinfo) + 16);
+	const int copied = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, entries.data(), int(entries.size() * sizeof(proc_fdinfo)));
+	check(copied > 0, "cannot list host descriptors");
+	return size_t(copied) / sizeof(proc_fdinfo);
+#else
 	return size_t(std::distance(std::filesystem::directory_iterator("/proc/self/fd"),std::filesystem::directory_iterator{}));
+#endif
 }
 
 int main(int argc,char **argv)

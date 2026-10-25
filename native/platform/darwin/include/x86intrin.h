@@ -9,6 +9,7 @@
 static inline uint64_t __rdtsc(void)
 {
 	uint64_t counter;
+	// Apple's assembler treats ';' as a comment: the instructions must occupy separate lines.
 	__asm__ volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(counter) : : "memory");
 	return counter;
 }
