@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import urllib.request
 
@@ -75,8 +76,34 @@ def main():
         if not shutil.which(tool):
             raise RuntimeError(f"required installer build tool is missing: {tool}")
     records = []
+    # Homebrew's MinGW-w64 defaults to the UCRT, so its libmsvcrt.a imports the api-ms-win-crt DLLs: msvcrt.dll's import library is libmsvcrt-os.a.
+    msvcrt = None
+    if sys.platform == "darwin":
+        msvcrt = output / "msvcrt"
+        msvcrt.mkdir(exist_ok=True)
+        sysroot = subprocess.run([triple + "-gcc", "-print-sysroot"], capture_output=True, text=True, check=True).stdout.strip()
+        shutil.copyfile(Path(sysroot) / triple / "lib/libmsvcrt-os.a", msvcrt / "libmsvcrt.a")
+        # Its OS-neutral wrappers for isprint and isblank call _isctype, and the 32-bit _gmtime64 calls gmtime: the C runtime the programs run
+        # on exports isprint and _gmtime64 itself and lacks both _isctype and gmtime, so import those two directly.
+        wrappers = [name for name in subprocess.run([triple + "-ar", "t", msvcrt / "libmsvcrt.a"], capture_output=True, text=True, check=True).stdout.split()
+                    if name.endswith(("-isprint.o", "-isblank.o")) or (x86 and name.endswith("-_gmtime64.o"))]
+        subprocess.run([triple + "-ar", "d", msvcrt / "libmsvcrt.a", *wrappers], check=True)
+        (msvcrt / "direct.def").write_text("LIBRARY msvcrt.dll\nEXPORTS\n isprint\n" + (" _gmtime64\n" if x86 else ""))
+        subprocess.run([triple + "-dlltool", "-d", msvcrt / "direct.def", "-l", msvcrt / "libdirect.a", "-k"], check=True)
+        subprocess.run([triple + "-ar", "x", "libdirect.a"], cwd=msvcrt, check=True)
+        direct = sorted(msvcrt.glob("*libdirect_a_*.o"))
+        subprocess.run([triple + "-ar", "qs", "libmsvcrt.a", *[path.name for path in direct]], cwd=msvcrt, check=True)
+        for path in direct:
+            path.unlink()
+        if x86:
+            # The 32-bit import library of kernel32 leaves out the LZ functions, which kernel32.dll exports: lz32.dll alone has them there.
+            (msvcrt / "kernel32-lz.def").write_text("LIBRARY kernel32.dll\nEXPORTS\n LZClose@4\n LZOpenFileW@12\n LZRead@12\n LZSeek@12\n")
+            subprocess.run([triple + "-dlltool", "-d", msvcrt / "kernel32-lz.def", "-l", msvcrt / "libkernel32-lz.a", "-k"], check=True)
 
     def run(command, cwd=None):
+        if msvcrt and command[0] == triple + "-gcc":
+            # Newer MinGW libraries keep some msvcrt functions, such as iswctype, in libmingwex, which -nostdlib leaves out.
+            command = [command[0], "-L" + str(msvcrt), *command[1:], *([] if "-c" in command else ["-lmingwex", "-lmsvcrt", "-lkernel32", *(["-lkernel32-lz"] if x86 else [])])]
         result = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
         records.append(dict(command=[str(part) for part in command], returncode=result.returncode))
         if result.returncode:
@@ -154,7 +181,7 @@ def main():
                 source / "sdk/include/crt", source / "sdk/include/ndk", source / "sdk/include", source / "sdk/include/reactos", source / "sdk/include/ddk"]
     # A function the headers do not declare would return a truncated int: none is allowed. The sources use the old CRT names, which the
     # oldnames library supplies upstream.
-    flags = ["-O2", "-nostdinc", "-isystem", gcc_include, "-fgnu89-inline", "-Werror=implicit-function-declaration", "-Werror=int-conversion",
+    flags = ["-O2", "-nostdinc", "-isystem", gcc_include, "-fgnu89-inline", "-Werror=implicit-function-declaration", "-Werror=int-conversion", "-Wno-incompatible-pointer-types",
              "-Dwcsdup=_wcsdup", "-Dwcsicmp=_wcsicmp", "-Dwcsnicmp=_wcsnicmp", "-Dwcsupr=_wcsupr", "-Dwcslwr=_wcslwr", "-Dstrdup=_strdup", "-Dstricmp=_stricmp", "-Dstrnicmp=_strnicmp",
              "-D_WIN32_WINNT=0x600", "-DWINVER=0x600", "-D_WIN32_IE=0x0A00", "-D__REACTOS__", "-DUNICODE", "-D_UNICODE",
              "-D_M_IX86" if x86 else "-D_M_AMD64", "-D__WINESRC__", "-D_WINE", *([] if x86 else ["-D__ROS_LONG64__"]),
@@ -492,7 +519,7 @@ def main():
             "-I" + str(generated)], ["rpcrt4", "gdi32", "comctl32", "advapi32", "user32", "version", "comdlg32", "shell32", "wintrust"],
             wine_module=False, sources=[*listed_sources(setupapi_root), generated / "pnp_c.c"], rc=generated / "setupapi.rc",
             objects_more=[compile(support / "printers.c", "setupapi_printers"),
-                          compile(source / "dll/win32/kernel32/wine/lzexpand.c", "setupapi_lzexpand", ["-I" + str(generated / "lzexpand")],
+                          compile(source / "dll/win32/kernel32/wine/lzexpand.c", "setupapi_lzexpand", ["-I" + str(generated / "lzexpand"), "-Wno-error=implicit-int", "-Wno-error=declaration-missing-parameter-type"],
                                   wine_module=False)])
     # regsvr32.exe: registers the classes a library serves, as installers and the runtime's own prefix setup run it.
     regsvr32_root = source / "base/system/regsvr32"
