@@ -155,7 +155,8 @@ void NativeWindows::recalculate_client(uint64_t handle,int32_t previous_width,in
 	if (resized)
 		publish_window(handle, uint32_t(std::max(window->width, 0)), uint32_t(std::max(window->height, 0)));
 	if (resized)
-		send(handle, 5, 0, uint16_t(window->width) | (uint64_t(uint16_t(window->height)) << 16));
+		send(handle, 5, (window->style & 0x01000000U) ? 2 : (window->style & 0x20000000U) ? 1 : 0,
+			uint16_t(window->width) | (uint64_t(uint16_t(window->height)) << 16));
 	if (objects.window(handle) && objects.window_visible(handle)) {
 		window = objects.window(handle);
 		objects.invalidate(handle, {0, 0, window->width, window->height}, true);

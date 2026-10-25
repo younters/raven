@@ -117,6 +117,15 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 	const bool maximize = command == 3;
 	const bool activate_it = command == 1 || command == 3 || command == 5 || command == 9 || command == 10 || command == 2;
 	if (!window->parent && (minimize || maximize || command == 9 || command == 1 || command == 10)) {
+		const auto place = [&](DesktopRect target) {
+			// State changes need the same WINDOWPOS notifications as SetWindowPos,
+			// and retain the host surface that the compositor maximizes.
+			const bool kept = keep_host_window;
+			keep_host_window = true;
+			try { place_window(handle, target, 0, swp_nozorder | swp_noactivate | 0x20); }
+			catch (...) { keep_host_window = kept; throw; }
+			keep_host_window = kept;
+		};
 		// Maximizing fills the work area; restoring brings back the rectangle remembered when the state first changed.
 		const auto &screen = objects.nonclient_metrics();
 		const bool is_max = window->style & ws_maximize, is_min = window->style & ws_minimize;
@@ -126,7 +135,7 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 			window->style = (window->style & ~ws_minimize) | ws_maximize;
 			const auto frame = adjust_window_rect(objects.nonclient_metrics(), {0, 0, 0, 0}, window->style & ~ws_visible, window->menu != 0, window->ex_style);
 			(void)frame;
-			reshape(handle, {0, 0, screen.screen_x, screen.screen_y});
+			place({0, 0, screen.screen_x, screen.screen_y});
 		} else if (minimize && !is_min) {
 			if (!is_max)
 				window->restore = window->outer;
@@ -135,7 +144,7 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 			window->style &= ~(ws_maximize | ws_minimize);
 			const auto target = window->restore.right > window->restore.left ? window->restore : window->outer;
 			if (is_max)
-				reshape(handle, target);
+				place(target);
 		}
 		window = objects.window(handle);
 	}

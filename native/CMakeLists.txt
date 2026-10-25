@@ -2411,6 +2411,14 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                 add_custom_target(x86_socket_message_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/x86-socket-message-client.exe)
                 add_test(NAME native_socket_messages_x32 COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/x86-socket-message-client.exe)
                 set_tests_properties(native_socket_messages_x32 PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/x86-window-state-client.exe
+                    COMMAND ${RAVEN_MINGW32} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                        -Wl,--entry,_raven_entry,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/x86-window-state-client.exe
+                        ${LOADER_SOURCES}/window_state_client.c -luser32 -lkernel32
+                    DEPENDS ${LOADER_SOURCES}/window_state_client.c VERBATIM)
+                add_custom_target(x86_window_state_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/x86-window-state-client.exe)
+                add_test(NAME native_window_state_x32 COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/x86-window-state-client.exe)
+                set_tests_properties(native_window_state_x32 PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                 add_test(NAME native_x86_threads COMMAND raven --run-process --execution=native
                     ${CMAKE_CURRENT_BINARY_DIR}/x86-thread-client.exe)
                 set_tests_properties(native_x86_threads PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")

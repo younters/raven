@@ -4,7 +4,8 @@
 /* Window state read back right after it changes, including from inside the messages the change sends, whether the runtime or the
    program answers the reads. */
 
-static int size_seen, size_failed;
+static int size_seen, size_failed, position_seen;
+static WPARAM size_kind;
 
 static LRESULT CALLBACK message_filter(int code, WPARAM wparam, LPARAM lparam)
 {
@@ -14,6 +15,7 @@ static LRESULT CALLBACK message_filter(int code, WPARAM wparam, LPARAM lparam)
 static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
 	if (message == WM_SIZE) {
+		size_kind = wparam;
 		RECT client;
 		++size_seen;
 		if (!GetClientRect(window, &client) || client.left || client.top || client.right != LOWORD(lparam) || client.bottom != HIWORD(lparam))
@@ -21,6 +23,7 @@ static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPAR
 		if (GetWindowLongPtrW(window, GWLP_USERDATA) != 0x1234 && GetWindowLongPtrW(window, GWLP_USERDATA) != 0)
 			size_failed = 1;
 	}
+	if (message == WM_WINDOWPOSCHANGED) ++position_seen;
 	return DefWindowProcW(window, message, wparam, lparam);
 }
 
@@ -50,7 +53,7 @@ int raven_entry(void)
 	SetWindowLongPtrW(window, GWLP_USERDATA, 0x1234);
 	/* Indexes past the extra bytes fail as before. */
 	SetLastError(0);
-	if (GetWindowLongPtrW(window, 12) != 0 || GetLastError() != ERROR_INVALID_INDEX)
+	if (GetWindowLongPtrW(window, sizeof(LONG_PTR) == 8 ? 12 : 16) != 0 || GetLastError() != ERROR_INVALID_INDEX)
 		return 5;
 	if ((GetWindowLongW(window, GWL_STYLE) & WS_OVERLAPPEDWINDOW) != WS_OVERLAPPEDWINDOW)
 		return 6;
@@ -74,6 +77,15 @@ int raven_entry(void)
 		return 12;
 	if (!GetClientRect(window, &client) || client.right <= 0 || client.right > 420 || client.bottom <= 0 || client.bottom > 330)
 		return 13;
+	/* Maximize and restore notify clients that cache their geometry from WINDOWPOS. */
+	position_seen = 0;
+	ShowWindow(window, SW_MAXIMIZE);
+	if (!position_seen || size_kind != SIZE_MAXIMIZED || size_failed ||
+		!(GetWindowLongW(window, GWL_STYLE) & WS_MAXIMIZE)) return 42;
+	position_seen = 0;
+	ShowWindow(window, SW_RESTORE);
+	if (!position_seen || size_kind != SIZE_RESTORED || size_failed ||
+		!GetWindowRect(window, &outer) || outer.left != 30 || outer.top != 40 || outer.right != 450 || outer.bottom != 370) return 43;
 	/* Ancestry, focus and resolution. */
 	HWND child = CreateWindowExW(0, L"RavenWindowState", L"child", WS_CHILD, 0, 0, 50, 50, window, NULL, type.hInstance, NULL);
 	HWND grandchild = CreateWindowExW(0, L"RavenWindowState", L"grandchild", WS_CHILD, 0, 0, 10, 10, child, NULL, type.hInstance, NULL);
