@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ensure explicitly shared x86 exports have live handlers, and forwarders have guest targets."""
+"""Ensure explicitly shared x86 exports have live registered handlers."""
 from pathlib import Path
 import os
 import re
