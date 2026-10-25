@@ -450,9 +450,14 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			socket->select_enabled |= fd_accept;
 			const int accepted = ::accept4(socket->descriptor, reinterpret_cast<sockaddr *>(&storage), &length, SOCK_NONBLOCK | SOCK_CLOEXEC);
 			if (accepted >= 0) {
-				const auto made = objects.add_object(std::make_shared<SocketObject>(accepted));
+				const auto child = std::make_shared<SocketObject>(accepted);
+				// Winsock accepts inherit the listener's blocking mode and event selection.
+				child->guest_nonblocking = socket->guest_nonblocking;
+				child->select_event = socket->select_event;
+				child->select_mask = socket->select_mask;
+				child->select_enabled = socket->select_mask;
+				const auto made = objects.add_object(child);
 				if (made.status) {
-					::close(accepted);
 					fail(call, wsaemfile);
 					return;
 				}

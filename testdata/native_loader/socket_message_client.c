@@ -165,6 +165,9 @@ static int selected_events(void)
 		connect(client, (SOCKADDR *)&address, size) || !network_event(listener, event, FD_ACCEPT)) return 40;
 	SOCKET server = accept(listener, NULL, NULL);
 	closesocket(listener);
+	char empty;
+	if (server == INVALID_SOCKET || recv(server, &empty, 1, 0) != SOCKET_ERROR ||
+		WSAGetLastError() != WSAEWOULDBLOCK) return 49;
 	if (server == INVALID_SOCKET || WSAEventSelect(server, event, FD_READ | FD_WRITE | FD_CLOSE) ||
 		!network_event(server, event, FD_WRITE)) return 41;
 	WSANETWORKEVENTS events;
