@@ -1628,8 +1628,12 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			// A copy cannot carry rights the original lacks; asking for them is refused.
 			const uint32_t held = objects.access_of(call[1]);
 			uint32_t wanted = call.u32(4);
-			if (wanted & (0x10000000U | 0x02000000U))
-				wanted = held;
+			// Generic access bits describe object-specific rights, rather than extra rights to compare literally.
+			if (wanted & 0x80000000U) wanted = (wanted & ~0x80000000U) | 0x20005;
+			if (wanted & 0x40000000U) wanted = (wanted & ~0x40000000U) | 0x20002;
+			if (wanted & 0x20000000U) wanted = (wanted & ~0x20000000U) | 0x20008;
+			if (wanted & 0x10000000U) wanted = (wanted & ~0x10000000U) | 0xf001f;
+			if (wanted & 0x02000000U) wanted = held;
 			if (wanted & ~held) {
 				if (std::getenv("RAVEN_TRACE_FAIL"))
 					std::fprintf(stderr, "raven: section handle %llx holds %x, a copy asked for %x\n", (unsigned long long)call[1], held, wanted);

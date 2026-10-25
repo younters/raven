@@ -43,5 +43,15 @@ UINT raven_entry(void)
 	acquire(&lock);
 	release(&lock);
 	if (lock) return 10;
+	HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 4096, NULL), readable;
+	if (!mapping || !DuplicateHandle(GetCurrentProcess(), mapping, GetCurrentProcess(), &readable,
+		GENERIC_READ | FILE_MAP_READ, FALSE, 0)) return 11;
+	void *view = MapViewOfFile(readable, FILE_MAP_READ, 0, 0, 4096);
+	if (!view || !UnmapViewOfFile(view)) return 12;
+	if (MapViewOfFile(readable, FILE_MAP_WRITE, 0, 0, 4096)) return 13;
+	HANDLE writable;
+	if (DuplicateHandle(GetCurrentProcess(), readable, GetCurrentProcess(), &writable, GENERIC_WRITE, FALSE, 0) || GetLastError() != ERROR_ACCESS_DENIED) return 14;
+	CloseHandle(readable);
+	CloseHandle(mapping);
 	return 0;
 }
