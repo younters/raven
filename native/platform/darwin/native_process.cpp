@@ -940,12 +940,14 @@ uint64_t NativeProcess::map_shared(int descriptor, size_t size, uint64_t offset)
 		view->surface = surface;
 		view->host = static_cast<uint8_t *>(IOSurfaceGetBaseAddress(surface));
 		view->size = size;
-		// Reserve through the agent, preserving its low-address and allocation bookkeeping. Remap the
-		// IOSurface pages over that reservation without copying; the guest keeps one stable DIB address.
-		const auto address = map_memory(size, PROT_READ | PROT_WRITE);
+		// Preserve the original shared-view reservation contract: a 64 KiB-aligned guest address,
+		// and enough space for every host page of the IOSurface. A 4 KiB anonymous reservation
+		// can sit beside live guest mappings while the arm64 source has a 16 KiB page extent.
+		const size_t allocation = IOSurfaceGetAllocSize(surface);
+		const auto address = map_file(descriptor, allocation, 0, true);
 		mach_vm_address_t mapped = address;
 		vm_prot_t current = 0, maximum = 0;
-		const auto status = mach_vm_remap(state->child->task, &mapped, size, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
+		const auto status = mach_vm_remap(state->child->task, &mapped, allocation, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
 			mach_task_self(), reinterpret_cast<mach_vm_address_t>(view->host), false, &current, &maximum, VM_INHERIT_NONE);
 		if (status != KERN_SUCCESS || mapped != address) {
 			unmap_memory(address);

@@ -63,6 +63,7 @@ SharedPixels::SharedPixels(size_t size, uint32_t width, uint32_t height) : Share
 	IOSurfaceRef storage = darwin::create_pixel_surface(width, height, size_t(width) * 4, size);
 	if (!storage) return;
 	if (IOSurfaceGetBytesPerRow(storage) != size_t(width) * 4 || IOSurfaceGetAllocSize(storage) < size ||
+		ftruncate(file, off_t(IOSurfaceGetAllocSize(storage))) != 0 ||
 		IOSurfaceLock(storage, 0, nullptr) != kIOReturnSuccess) {
 		CFRelease(storage);
 		return;

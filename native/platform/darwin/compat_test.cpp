@@ -129,6 +129,12 @@ static void guest_memory(const char *bootstrap)
 		check(copy ? !surface : surface && raven::darwin::pixel_surface(pixels.data()) == surface &&
 			IOSurfaceGetBytesPerRow(surface) == size_t(width) * 4, "window IOSurface stride or registry differs");
 		const auto mapped = process.map_shared(pixels.descriptor(), size);
+		check(mapped % 65536 == 0, "window surface lost shared-view allocation alignment");
+		if (surface) {
+			const auto allocation = IOSurfaceGetAllocSize(surface);
+			check(process.read_memory(mapped + allocation - 1, 1)[0] == pixels.data()[allocation - 1],
+				"guest reservation omits part of the IOSurface host page");
+		}
 		pixels.data()[size - 1] = 0x73;
 		check(process.read_memory(mapped + size - 1, 1)[0] == 0x73, "host IOSurface alias is not coherent");
 		// x64: mov byte ptr [rcx], 0x51; movzx eax, byte ptr [rcx]; ret. Execute in the
