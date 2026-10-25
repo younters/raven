@@ -2001,7 +2001,7 @@ bool NativeProcess::drain_queued_calls(bool all)
 
 bool NativeProcess::serve_pending()
 {
-	if (state->unix_pump) {
+	if (state->unix_loaded && state->unix_pump) {
 		// Like a served graphics call, presentation may read guest window pixels while the guest waits on its native buffer pool.
 		const bool was_serving = state->serving;
 		state->serving = true;

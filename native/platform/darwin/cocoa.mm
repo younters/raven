@@ -171,6 +171,9 @@ struct CocoaPresentation::State {
 	};
 
 	bool connected = false;
+	std::chrono::steady_clock::time_point next_pump{};
+	std::optional<std::pair<int32_t, int32_t>> screen_size;
+	id screen_observer = nil;
 	RavenApplicationDelegate *delegate = nil;
 	std::map<uint64_t, std::unique_ptr<Surface>> surfaces;
 	std::map<NSInteger, uint64_t> numbers;
@@ -232,6 +235,8 @@ struct CocoaPresentation::State {
 
 	~State()
 	{
+		if (screen_observer)
+			[NSNotificationCenter.defaultCenter removeObserver:screen_observer];
 		surfaces.clear();
 		if (locked)
 			CGAssociateMouseAndMouseCursorPosition(true);
@@ -276,6 +281,8 @@ struct CocoaPresentation::State {
 		item.submenu = menu;
 		NSApp.mainMenu = bar;
 		[NSApp finishLaunching];
+		screen_observer = [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification
+			object:nil queue:nil usingBlock:^(NSNotification *) { screen_size.reset(); }];
 		[NSApp activateIgnoringOtherApps:YES];
 		if (const char *value = std::getenv("RAVEN_COMMAND_KEY"))
 			command_is_control = std::string_view(value) != "windows";
@@ -863,6 +870,12 @@ struct CocoaPresentation::State {
 
 	void pump(std::chrono::milliseconds budget)
 	{
+		// PeekMessage and scheduler predicates can ask several times per API call. AppKit has no pollable descriptor: bound the
+		// nonblocking checks, while an idle poll still receives its full wait budget.
+		const auto now = std::chrono::steady_clock::now();
+		if (budget.count() == 0 && now < next_pump)
+			return;
+		next_pump = now + std::chrono::milliseconds(4);
 		NSDate *until = budget.count() > 0 ? [NSDate dateWithTimeIntervalSinceNow:double(budget.count()) / 1000] : [NSDate distantPast];
 		for (bool first = true;; first = false) {
 			@autoreleasepool {
@@ -1480,12 +1493,15 @@ DesktopPresentation CocoaPresentation::callbacks()
 	};
 	result.screen_size = [this]() -> std::optional<std::pair<int32_t, int32_t>> {
 		state->connect();
+		if (state->screen_size)
+			return state->screen_size;
 		NSScreen *screen = NSScreen.mainScreen;
 		if (!screen)
 			return std::nullopt;
 		// The area windows may use, below the menu bar and beside the Dock: maximized windows fill it.
-		return std::pair{int32_t(std::lround(screen.visibleFrame.size.width * state->scale)),
+		state->screen_size = std::pair{int32_t(std::lround(screen.visibleFrame.size.width * state->scale)),
 			int32_t(std::lround(screen.visibleFrame.size.height * state->scale))};
+		return state->screen_size;
 	};
 	result.maximize = [this](uint64_t handle, bool wanted) { state->maximize(handle, wanted); };
 	result.frame = [this](uint64_t handle, std::array<int32_t, 4> insets, uint32_t style) { state->frames[handle] = {insets, style}; };
@@ -1502,7 +1518,7 @@ DesktopPresentation CocoaPresentation::callbacks()
 		state->connect();
 		return double(NSScreen.mainScreen.backingScaleFactor ?: 1);
 	};
-	result.render_scale = [this](double scale) { state->scale = scale; };
+	result.render_scale = [this](double scale) { state->scale = scale; state->screen_size.reset(); };
 	result.platform = HostPlatform::metal;
 	return result;
 }
