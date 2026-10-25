@@ -1,0 +1,37 @@
+// The runtime finds its own executable, and the files installed next to it, through /proc/self/exe; macOS has no procfs, so reading that
+// link answers with the running executable instead. Taking string literals, these overloads are preferred to the ones taking a path.
+#pragma once
+#include_next <filesystem>
+#include <string_view>
+#include <system_error>
+
+namespace raven_darwin {
+std::filesystem::path executable_path();
+}
+
+namespace std::filesystem {
+
+template <size_t Length>
+inline path read_symlink(const char (&link)[Length])
+{
+	if (std::string_view(link) == "/proc/self/exe")
+		return raven_darwin::executable_path();
+	return read_symlink(path(link));
+}
+
+template <size_t Length>
+inline path read_symlink(const char (&link)[Length], std::error_code &error) noexcept
+{
+	if (std::string_view(link) == "/proc/self/exe") {
+		error.clear();
+		try {
+			return raven_darwin::executable_path();
+		} catch (const filesystem_error &failure) {
+			error = failure.code();
+			return {};
+		}
+	}
+	return read_symlink(path(link), error);
+}
+
+}

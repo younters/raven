@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(Raven LANGUAGES C CXX)
 
-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT APPLE)
     message(FATAL_ERROR "The native Raven runtime currently requires Linux")
 endif()
 
@@ -37,5 +37,8 @@ execute_process(COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/prov
     --output ${RAVEN_TESTDATA_DIR} ${FIXTURE_ARGUMENTS} RESULT_VARIABLE FIXTURE_RESULT)
 if(NOT FIXTURE_RESULT EQUAL 0)
     message(FATAL_ERROR "Test fixture provisioning failed")
+endif()
+if(APPLE)
+    include(native/platform/darwin/toolchain.cmake)
 endif()
 add_subdirectory(native)

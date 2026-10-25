@@ -314,7 +314,7 @@ int main(int argc, char **argv)
 								const auto file = from / server;
 								if (std::filesystem::exists(file, error))
 									stamp += file.string() + " " + std::to_string(std::filesystem::file_size(file, error)) + " " +
-										std::to_string(std::filesystem::last_write_time(file, error).time_since_epoch().count()) + "\n";
+										std::to_string(static_cast<long long>(std::filesystem::last_write_time(file, error).time_since_epoch().count())) + "\n";
 							}
 						const auto marker = prefix.root() / "drive_c" / "windows" / "raven-registered.txt";
 						std::string recorded;
