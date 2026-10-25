@@ -270,6 +270,9 @@ void NativeWindows::menu_highlight(size_t level, std::optional<size_t> index)
 {
 	if (level >= popups.size())
 		return;
+	// The pointer moving over the item whose submenu is open keeps that submenu.
+	if (popups[level].highlight == index)
+		return;
 	// Deeper levels belong to the previously highlighted item.
 	while (popups.size() > level + 1) {
 		const auto handle = popups.back().handle;

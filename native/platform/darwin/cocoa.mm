@@ -215,6 +215,7 @@ struct CocoaPresentation::State {
 	int resize_steps = 0;
 	double wheel = 0, horizontal_wheel = 0;
 	bool control_click = false;
+	bool host_press = false;
 
 	xkb_context *context = nullptr;
 	xkb_keymap *keymap = nullptr;
@@ -617,7 +618,13 @@ struct CocoaPresentation::State {
 		const bool dragging = event.type == NSEventTypeLeftMouseDragged || event.type == NSEventTypeRightMouseDragged ||
 			event.type == NSEventTypeOtherMouseDragged || event.type == NSEventTypeLeftMouseUp || event.type == NSEventTypeRightMouseUp ||
 			event.type == NSEventTypeOtherMouseUp;
-		uint64_t window = dragging && pointer_window ? pointer_window : handle_of(event.window);
+		// macOS sends pointer motion to the key window, which is the newest popup while a menu is open: the window under the pointer
+		// is the one it is over, so moving back onto a parent menu or the menu bar reaches them.
+		uint64_t window = dragging && pointer_window ? pointer_window : 0;
+		if (!window && event.type == NSEventTypeMouseMoved)
+			window = window_at(screen);
+		if (!window)
+			window = handle_of(event.window);
 		if (!window)
 			window = window_at(screen);
 		if (!dragging)
@@ -625,8 +632,18 @@ struct CocoaPresentation::State {
 		Surface *target = surface(window);
 		if (!target)
 			return true;
-		if (target->native && !dragging && !NSPointInRect(screen, content_of(target->window)))
+		// A press on the title bar or outside the content belongs to macOS, and so do its drag and release: the program never saw it
+		// go down, and moving the window must not look to it like a button held over its client area.
+		if (target->native && !dragging && !NSPointInRect(screen, content_of(target->window))) {
+			if (press)
+				host_press = true;
 			return true;
+		}
+		if (host_press && dragging) {
+			if (event.type == NSEventTypeLeftMouseUp || event.type == NSEventTypeRightMouseUp || event.type == NSEventTypeOtherMouseUp)
+				host_press = false;
+			return true;
+		}
 		constrain(screen);
 		const auto [x, y] = frame_point(target->window, screen);
 		if (event.type != NSEventTypeScrollWheel && (event.deltaX || event.deltaY) && (event.type == NSEventTypeMouseMoved || dragging))
