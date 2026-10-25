@@ -158,8 +158,15 @@ GuestAgent::GuestAgent(const std::string &bootstrap, std::chrono::milliseconds t
 
 		posix_spawn_file_actions_t actions;
 		posix_spawn_file_actions_init(&actions);
-		posix_spawn_file_actions_adddup2(&actions, control_descriptor, RAVEN_GUEST_CONTROL_FD);
-		posix_spawn_file_actions_adddup2(&actions, guest_socket, RAVEN_GUEST_SOCKET_FD);
+		// Darwin's spawn leaves CLOEXEC set for dup2(fd, fd). A host driver can leave the low descriptors free.
+		if (control_descriptor == RAVEN_GUEST_CONTROL_FD)
+			posix_spawn_file_actions_addinherit_np(&actions, control_descriptor);
+		else
+			posix_spawn_file_actions_adddup2(&actions, control_descriptor, RAVEN_GUEST_CONTROL_FD);
+		if (guest_socket == RAVEN_GUEST_SOCKET_FD)
+			posix_spawn_file_actions_addinherit_np(&actions, guest_socket);
+		else
+			posix_spawn_file_actions_adddup2(&actions, guest_socket, RAVEN_GUEST_SOCKET_FD);
 		posix_spawn_file_actions_addinherit_np(&actions, STDERR_FILENO);
 		posix_spawnattr_t attributes;
 		posix_spawnattr_init(&attributes);
