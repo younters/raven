@@ -736,6 +736,8 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		const auto inherited = kernel_objects.inherit_file(launch->standard_fds[i]);
 		if (inherited.status)
 			throw std::runtime_error("cannot inherit native standard file");
+		// A process's standard handles are inheritable, as Windows makes them, so a child can be given them by name.
+		kernel_objects.set_inherit(inherited.value, true);
 		standard_handles[i] = inherited.value;
 	}
 	environment.prepare_parameters(*launch, standard_handles);

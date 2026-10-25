@@ -908,6 +908,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 				call.fail(made.status == 0xc000009aU ? 4 : 87, 0);
 				return;
 			}
+			objects.set_inherit(made.value, inheritable_handle(call, call[0]));
 			call.set_last_error(0);
 			call.ret(made.value);
 			return;
@@ -932,6 +933,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(8, 0);
 			return;
 		}
+		objects.set_inherit(made.value, inheritable_handle(call, call[0]));
 		call.set_last_error(existed ? 183 : 0);
 		call.ret(made.value);
 	});

@@ -299,12 +299,15 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 				const auto object = objects.object(handle);
 				InheritedHandle record;
 				if (listed && !objects.inherit(handle)) {
+					if (std::getenv("RAVEN_TRACE_API"))
+						std::fprintf(stderr, "raven: CreateProcess handle list names %llx, which is not inheritable\n", (unsigned long long)handle);
 					call.fail(87);
 					return;
 				}
 				if (!object || !object->describe(record)) {
 					if (std::getenv("RAVEN_TRACE_API"))
-						std::fprintf(stderr, "raven: handle %llx cannot be inherited\n", static_cast<unsigned long long>(handle));
+						std::fprintf(stderr, "raven: handle %llx (%s) cannot be inherited\n", static_cast<unsigned long long>(handle),
+							object ? to_utf8(std::u16string(object->type_name())).c_str() : "closed");
 					continue;
 				}
 				record.handle = handle;

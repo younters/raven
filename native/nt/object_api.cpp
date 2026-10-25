@@ -39,8 +39,13 @@ bool NativeObjectAPI::dispatch(std::string_view name)
 	if (file_io(name)) return true;
 	const bool nt=name.starts_with("Nt");
 	const bool create=name=="NtCreateEvent" || name=="CreateEventA" || name=="CreateEventW";
-	// An event with a name, whether made or opened, is a shared object that the registry handlers keep.
-	if (!nt && create && process.api_arguments(4)[3]) return false;
+	// An event with a name, whether made or opened, is a shared object that the registry handlers keep; so is one the caller wants
+	// inheritable, which those handlers mark.
+	if (!nt && create) {
+		const auto arguments=process.api_arguments(4);
+		const size_t inherit_at=process.mode()==NativeMode::x86 ? 8 : 16;
+		if (arguments[3] || (arguments[0] && process.read_memory(arguments[0]+inherit_at,4)!=std::vector<uint8_t>(4))) return false;
+	}
 	const bool close=name=="NtClose" || name=="CloseHandle" || name=="_lclose" || name=="LZClose";
 	const bool set=name=="NtSetEvent" || name=="SetEvent" || name=="NtResetEvent" || name=="ResetEvent";
 	const bool query=name=="NtQueryEvent";
