@@ -9,7 +9,7 @@
 static inline uint64_t __rdtsc(void)
 {
 	uint64_t counter;
-	__asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(counter) : : "memory");
+	__asm__ volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(counter) : : "memory");
 	return counter;
 }
 #endif
