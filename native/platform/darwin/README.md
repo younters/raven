@@ -4,6 +4,7 @@ The host runtime is a native arm64 program. Windows code runs in `raven-bootstra
 This tree is a fork that keeps tracking upstream, so the port lives here and changes upstream files as little as possible.
 
 The Cocoa cursor and Retina coordinate contract, current limitations, and tests are documented in [CURSORS_HIDPI.md](CURSORS_HIDPI.md).
+The graphics backend decision, KosmicKrisp qualification, and measured DXMT/DXVK comparison are in [GRAPHICS.md](GRAPHICS.md).
 
 ## Building
 

@@ -1,0 +1,344 @@
+{
+  "command": "/tmp/raven-ctest-lock.sh gfx ctest --test-dir build -j1 --timeout 120 -R <focused graphics regex> --output-on-failure",
+  "date": "2026-10-25",
+  "tests": [
+    {
+      "name": "native_shared_gpu_memory_contract",
+      "passed": true,
+      "seconds": 0.267795
+    },
+    {
+      "name": "native_vulkan_contract",
+      "passed": false,
+      "seconds": 0.844761
+    },
+    {
+      "name": "native_vulkan_cli",
+      "passed": true,
+      "seconds": 8.07127
+    },
+    {
+      "name": "native_vulkan_extensions_x64",
+      "passed": true,
+      "seconds": 0.783832
+    },
+    {
+      "name": "native_vulkan_foreign_present_x64",
+      "passed": false,
+      "seconds": 0.731387
+    },
+    {
+      "name": "native_vulkan_foreign_present_x32",
+      "passed": false,
+      "seconds": 0.911056
+    },
+    {
+      "name": "native_vulkan_extensions_x32",
+      "passed": true,
+      "seconds": 0.965894
+    },
+    {
+      "name": "native_x86_vulkan_compute",
+      "passed": true,
+      "seconds": 0.992262
+    },
+    {
+      "name": "native_d3d12_device",
+      "passed": false,
+      "seconds": 3.49385
+    },
+    {
+      "name": "native_vulkan_cocoa_present",
+      "passed": true,
+      "seconds": 5.74593
+    },
+    {
+      "name": "darwin_dxmt_pacing",
+      "passed": true,
+      "seconds": 5.24558
+    },
+    {
+      "name": "darwin_dxvk_pacing",
+      "passed": false,
+      "seconds": 3.65741
+    },
+    {
+      "name": "darwin_dxmt_triangle",
+      "passed": true,
+      "seconds": 3.33926
+    },
+    {
+      "name": "darwin_dxvk_triangle",
+      "passed": false,
+      "seconds": 3.2215
+    },
+    {
+      "name": "darwin_dxmt_deferred",
+      "passed": true,
+      "seconds": 3.26442
+    },
+    {
+      "name": "darwin_dxvk_deferred",
+      "passed": false,
+      "seconds": 3.18663
+    },
+    {
+      "name": "darwin_dxmt_geometry",
+      "passed": true,
+      "seconds": 3.23735
+    },
+    {
+      "name": "darwin_dxvk_geometry",
+      "passed": false,
+      "seconds": 3.11892
+    },
+    {
+      "name": "darwin_dxmt_tessellation",
+      "passed": false,
+      "seconds": 3.16311
+    },
+    {
+      "name": "darwin_dxvk_tessellation",
+      "passed": false,
+      "seconds": 3.12933
+    },
+    {
+      "name": "darwin_dxmt_textured",
+      "passed": true,
+      "seconds": 3.17093
+    },
+    {
+      "name": "darwin_dxvk_textured",
+      "passed": false,
+      "seconds": 3.1285
+    },
+    {
+      "name": "darwin_dxmt_msaa",
+      "passed": true,
+      "seconds": 3.32537
+    },
+    {
+      "name": "darwin_dxvk_msaa",
+      "passed": false,
+      "seconds": 3.24316
+    },
+    {
+      "name": "darwin_dxmt_compute",
+      "passed": true,
+      "seconds": 3.12798
+    },
+    {
+      "name": "darwin_dxvk_compute",
+      "passed": false,
+      "seconds": 3.39881
+    },
+    {
+      "name": "darwin_dxmt_present_rate",
+      "passed": true,
+      "seconds": 10.9275
+    },
+    {
+      "name": "darwin_dxvk_present_rate",
+      "passed": false,
+      "seconds": 4.07434
+    },
+    {
+      "name": "darwin_dxvk_d3d9_64",
+      "passed": false,
+      "seconds": 3.43706
+    },
+    {
+      "name": "darwin_dxvk_d3d9_32",
+      "passed": false,
+      "seconds": 4.65239
+    },
+    {
+      "name": "darwin_dxvk_d3d11_32",
+      "passed": false,
+      "seconds": 4.46102
+    }
+  ],
+  "measurements": [
+    {
+      "backend": "DXMT",
+      "fixture": "triangle",
+      "exit": 0,
+      "wall_seconds": 3.1147462079970865,
+      "host_guest_cpu_seconds": 3.9597939999999996,
+      "icd": null,
+      "status": "OK"
+    },
+    {
+      "backend": "DXMT",
+      "fixture": "deferred",
+      "exit": 0,
+      "wall_seconds": 3.03705266599718,
+      "host_guest_cpu_seconds": 3.834552,
+      "icd": null,
+      "status": "OK"
+    },
+    {
+      "backend": "DXMT",
+      "fixture": "geometry",
+      "exit": 0,
+      "wall_seconds": 3.0399655410001287,
+      "host_guest_cpu_seconds": 3.799821,
+      "icd": null,
+      "status": "OK"
+    },
+    {
+      "backend": "DXMT",
+      "fixture": "tessellation",
+      "exit": 0,
+      "wall_seconds": 3.045180250002886,
+      "host_guest_cpu_seconds": 3.793301,
+      "icd": null,
+      "status": "OK"
+    },
+    {
+      "backend": "DXMT",
+      "fixture": "textured",
+      "exit": 0,
+      "wall_seconds": 3.0243625410003006,
+      "host_guest_cpu_seconds": 3.781785,
+      "icd": null,
+      "status": "OK"
+    },
+    {
+      "backend": "DXMT",
+      "fixture": "compute",
+      "exit": 0,
+      "wall_seconds": 3.0942156669989345,
+      "host_guest_cpu_seconds": 3.88273,
+      "icd": null,
+      "status": "OK"
+    },
+    {
+      "backend": "DXMT",
+      "fixture": "msaa",
+      "exit": 0,
+      "wall_seconds": 3.052085374998569,
+      "host_guest_cpu_seconds": 3.8035300000000003,
+      "icd": null,
+      "status": "OK"
+    },
+    {
+      "backend": "DXMT",
+      "fixture": "present_rate",
+      "exit": 0,
+      "wall_seconds": 10.892384958002367,
+      "host_guest_cpu_seconds": 8.711503,
+      "icd": null,
+      "status": "2000 6909896"
+    },
+    {
+      "backend": "DXMT",
+      "fixture": "pacing",
+      "exit": 0,
+      "wall_seconds": 5.204157290994772,
+      "host_guest_cpu_seconds": 5.258756999999999,
+      "icd": null,
+      "status": "16 1024427"
+    },
+    {
+      "backend": "DXVK",
+      "fixture": "triangle",
+      "exit": 1,
+      "wall_seconds": 3.176461333001498,
+      "host_guest_cpu_seconds": 3.99838,
+      "icd": "/Users/yount/Documents/Projects/raven-components/kosmickrisp-1.4.363.0/share/vulkan/icd.d/libkosmickrisp_icd.json",
+      "status": "FAIL device hr=80004005"
+    },
+    {
+      "backend": "DXVK",
+      "fixture": "deferred",
+      "exit": 1,
+      "wall_seconds": 3.146293292003975,
+      "host_guest_cpu_seconds": 3.9076839999999997,
+      "icd": "/Users/yount/Documents/Projects/raven-components/kosmickrisp-1.4.363.0/share/vulkan/icd.d/libkosmickrisp_icd.json",
+      "status": "FAIL device hr=80004005"
+    },
+    {
+      "backend": "DXVK",
+      "fixture": "geometry",
+      "exit": 1,
+      "wall_seconds": 3.072441540993168,
+      "host_guest_cpu_seconds": 3.806574,
+      "icd": "/Users/yount/Documents/Projects/raven-components/kosmickrisp-1.4.363.0/share/vulkan/icd.d/libkosmickrisp_icd.json",
+      "status": "FAIL device hr=80004005"
+    },
+    {
+      "backend": "DXVK",
+      "fixture": "tessellation",
+      "exit": 1,
+      "wall_seconds": 3.0904882500035455,
+      "host_guest_cpu_seconds": 3.817904,
+      "icd": "/Users/yount/Documents/Projects/raven-components/kosmickrisp-1.4.363.0/share/vulkan/icd.d/libkosmickrisp_icd.json",
+      "status": "FAIL device hr=80004005"
+    },
+    {
+      "backend": "DXVK",
+      "fixture": "textured",
+      "exit": 1,
+      "wall_seconds": 3.084635209001135,
+      "host_guest_cpu_seconds": 3.8248919999999997,
+      "icd": "/Users/yount/Documents/Projects/raven-components/kosmickrisp-1.4.363.0/share/vulkan/icd.d/libkosmickrisp_icd.json",
+      "status": "FAIL device 80004005"
+    },
+    {
+      "backend": "DXVK",
+      "fixture": "compute",
+      "exit": 1,
+      "wall_seconds": 3.3572787500015693,
+      "host_guest_cpu_seconds": 4.152063,
+      "icd": "/Users/yount/Documents/Projects/raven-components/kosmickrisp-1.4.363.0/share/vulkan/icd.d/libkosmickrisp_icd.json",
+      "status": "FAIL device 80004005"
+    },
+    {
+      "backend": "DXVK",
+      "fixture": "msaa",
+      "exit": 1,
+      "wall_seconds": 3.2009343750032713,
+      "host_guest_cpu_seconds": 3.922847,
+      "icd": "/Users/yount/Documents/Projects/raven-components/kosmickrisp-1.4.363.0/share/vulkan/icd.d/libkosmickrisp_icd.json",
+      "status": "FAIL device hr=80004005"
+    },
+    {
+      "backend": "DXVK",
+      "fixture": "present_rate",
+      "exit": 1,
+      "wall_seconds": 4.023821582995879,
+      "host_guest_cpu_seconds": 4.725947,
+      "icd": "/Users/yount/Documents/Projects/raven-components/kosmickrisp-1.4.363.0/share/vulkan/icd.d/libkosmickrisp_icd.json",
+      "status": "FAIL device and swap chain 80004005"
+    },
+    {
+      "backend": "DXVK",
+      "fixture": "pacing",
+      "exit": 1,
+      "wall_seconds": 3.606880416999047,
+      "host_guest_cpu_seconds": 4.404154,
+      "icd": "/Users/yount/Documents/Projects/raven-components/kosmickrisp-1.4.363.0/share/vulkan/icd.d/libkosmickrisp_icd.json",
+      "status": "missing"
+    }
+  ],
+  "log_diagnostic_replay": {
+    "mode": "saved real PE32 outputs; native subprocess mocked, no Windows/GPU code executed",
+    "checks": [
+      {
+        "fixture": "d3d9",
+        "width": 32,
+        "result": "passed log replay",
+        "native_exit": 3,
+        "diagnostic": "fillModeNonSolid"
+      },
+      {
+        "fixture": "d3d11",
+        "width": 32,
+        "result": "passed log replay",
+        "native_exit": 1,
+        "diagnostic": "fillModeNonSolid"
+      }
+    ]
+  }
+}

@@ -1,5 +1,23 @@
 # macOS adjustments to targets native/CMakeLists.txt defines, applied after it so that file stays as upstream wrote it.
 
+if(RAVEN_KOSMICKRISP_ROOT)
+    file(READ ${RAVEN_DARWIN_DIR}/graphics/kosmickrisp.json RAVEN_KOSMICKRISP_PIN)
+    foreach(component lib/libvulkan_kosmickrisp.dylib share/vulkan/icd.d/libkosmickrisp_icd.json)
+        if(NOT EXISTS "${RAVEN_KOSMICKRISP_ROOT}/${component}")
+            message(FATAL_ERROR "Missing pinned KosmicKrisp file: ${component}; run scripts/provision-kosmickrisp.py")
+        endif()
+        string(JSON expected GET "${RAVEN_KOSMICKRISP_PIN}" files "${component}")
+        file(SHA256 "${RAVEN_KOSMICKRISP_ROOT}/${component}" actual)
+        if(NOT actual STREQUAL expected)
+            message(FATAL_ERROR "KosmicKrisp file differs from SDK pin: ${component}")
+        endif()
+    endforeach()
+endif()
+option(RAVEN_DARWIN_DXVK_TESTS "Register strict DXVK comparison tests, including known unsupported hardware paths" OFF)
+if(RAVEN_DARWIN_DXVK_TESTS AND (NOT RAVEN_DXMT_ROOT OR NOT RAVEN_DXVK_PE64_DIR))
+    message(FATAL_ERROR "DXVK comparisons need RAVEN_DXMT_ROOT and RAVEN_DXVK_PE64_DIR to build/run matching fixtures")
+endif()
+
 # The guest controller: Linux traces an ELF child with ptrace; macOS runs an x86_64 Mach-O agent under Rosetta 2 that the host
 # drives through shared memory. Same NativeProcess interface, different implementation file.
 if(TARGET raven_cpu)
@@ -115,11 +133,54 @@ if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
                 $<TARGET_FILE:raven> ${RAVEN_DXMT_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-${workload} ${workload})
         endif()
         set_tests_properties(darwin_dxmt_${workload} PROPERTIES TIMEOUT 120)
+        if(RAVEN_DARWIN_DXVK_TESTS AND workload MATCHES "^(triangle|deferred|geometry|tessellation|textured|msaa|compute|present_rate|pacing)$")
+            add_test(NAME darwin_dxvk_${workload} COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+                $<TARGET_FILE:raven> ${RAVEN_DXMT_EXE} ${RAVEN_DXVK_PE64_DIR} ${CMAKE_CURRENT_BINARY_DIR}/dxvk-${workload} ${workload} DXVK)
+            set_tests_properties(darwin_dxvk_${workload} PROPERTIES TIMEOUT 120 ENVIRONMENT "VK_DRIVER_FILES=${RAVEN_VULKAN_TEST_ICD}")
+            if(workload STREQUAL "present_rate" OR workload STREQUAL "pacing")
+                set_tests_properties(darwin_dxvk_${workload} PROPERTIES RESOURCE_LOCK raven_compositor)
+            endif()
+        endif()
         if(workload STREQUAL "fullscreen" OR workload STREQUAL "present_rate" OR workload STREQUAL "pacing")
             set_tests_properties(darwin_dxmt_${workload} PROPERTIES RESOURCE_LOCK raven_compositor)
         endif()
     endforeach()
     set_tests_properties(darwin_dxmt_device10 PROPERTIES RESOURCE_LOCK raven_compositor)
+endif()
+
+# These fixtures use PE DXVK and the host Vulkan bridge; no native WoW64 unix-call table is involved.
+if(RAVEN_DARWIN_DXVK_TESTS)
+    foreach(width 64 32)
+        if(RAVEN_MINGW${width} AND RAVEN_DXVK_PE${width}_DIR)
+            foreach(api d3d9 d3d11)
+                if(api STREQUAL "d3d9")
+                    set(source ${PROJECT_SOURCE_DIR}/testdata/d3d9/window.c)
+                    set(entry raven_entry)
+                    set(libraries -lkernel32 -luser32)
+                    set(kind d3d9)
+                elseif(width EQUAL 32)
+                    set(source ${PROJECT_SOURCE_DIR}/testdata/d3d11/triangle.c)
+                    set(entry _entry@0)
+                    set(libraries -ld3d11 -ldxgi -ldxguid -lkernel32 -luser32 -lgcc)
+                    set(kind triangle)
+                else()
+                    continue() # The x64 D3D11 fixture is already registered above.
+                endif()
+                set(exe ${CMAKE_CURRENT_BINARY_DIR}/darwin-dxvk-${api}-${width}.exe)
+                add_custom_command(OUTPUT ${exe}
+                    COMMAND ${RAVEN_MINGW${width}} -O2 -nostdlib -fno-builtin -fno-stack-protector
+                        -Wl,--entry,${entry},--no-insert-timestamp -o ${exe} ${source} ${libraries}
+                    DEPENDS ${source} ${PROJECT_SOURCE_DIR}/testdata/d3d11/tri_shaders.h VERBATIM)
+                add_custom_target(darwin_dxvk_${api}_${width}_fixture ALL DEPENDS ${exe})
+                add_test(NAME darwin_dxvk_${api}_${width} COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+                    $<TARGET_FILE:raven> ${exe} ${RAVEN_DXVK_PE${width}_DIR} ${CMAKE_CURRENT_BINARY_DIR}/dxvk-${api}-${width} ${kind} DXVK)
+                set_tests_properties(darwin_dxvk_${api}_${width} PROPERTIES TIMEOUT 120 ENVIRONMENT "VK_DRIVER_FILES=${RAVEN_VULKAN_TEST_ICD}")
+                if(api STREQUAL "d3d9")
+                    set_tests_properties(darwin_dxvk_${api}_${width} PROPERTIES RESOURCE_LOCK raven_compositor)
+                endif()
+            endforeach()
+        endif()
+    endforeach()
 endif()
 
 # A real PE caller and a tiny Mach-O unixlib exercise the boundary without Wine or a graphics driver.
@@ -186,7 +247,7 @@ endforeach()
 # Use the SDK ICD consistently, including host reference calls made outside the bridge.
 get_property(RAVEN_DARWIN_TESTS DIRECTORY PROPERTY TESTS)
 foreach(test IN LISTS RAVEN_DARWIN_TESTS)
-    if(test MATCHES "^native_(vulkan_|x86_vulkan_|shared_gpu_memory_)")
+    if(test MATCHES "^native_(vulkan_|x86_vulkan_|shared_gpu_memory_|d3d(8|9|11|12)_|x86_d3d)")
         set_property(TEST ${test} APPEND PROPERTY ENVIRONMENT "VK_DRIVER_FILES=${RAVEN_VULKAN_TEST_ICD}")
     endif()
 endforeach()

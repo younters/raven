@@ -1,0 +1,14 @@
+{
+  "sdk_version": "1.4.363.0",
+  "sdk_url": "https://sdk.lunarg.com/sdk/download/1.4.363.0/mac/vulkansdk-macos-1.4.363.0.zip",
+  "sdk_size": 396088200,
+  "sdk_sha256": "163431e0203c8215286a17cf393643ce6b951f77d1b4f74ab30821a1f0beb09b",
+  "source": "https://gitlab.freedesktop.org/aitor/mesa.git",
+  "source_branch": "vulkan-sdk-1.4.363.0",
+  "driver_info": "vulkan-sdk-1.4.363 (git-269a955c89)",
+  "architecture": "arm64",
+  "files": {
+    "lib/libvulkan_kosmickrisp.dylib": "52d7b68364e19d744882533d663d69b898bfd294f4248b3313785ad801e23e58",
+    "share/vulkan/icd.d/libkosmickrisp_icd.json": "f6dced3fc889099bd155fdd8bca28c3465698962f1ceee71ba1c875b467715b7"
+  }
+}
