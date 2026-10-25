@@ -191,7 +191,7 @@ struct CocoaPresentation::State {
 	bool native_frames = true;
 	std::map<uint64_t, std::pair<std::array<int32_t, 4>, uint32_t>> frames;
 	bool presenting = false;
-	// A resize from the window's edges in progress: the window, which edges (left 1, right 2, bottom 4), where it began.
+	// A resize from the window's edges in progress: the window, which edges (left 1, right 2, bottom 4, top 8), where it began.
 	uint64_t resizing = 0;
 	int resize_edges = 0;
 	NSPoint resize_start{};
@@ -403,6 +403,29 @@ struct CocoaPresentation::State {
 		}
 	}
 
+	// Synthesized key events can carry modifiers without separate flagsChanged events.
+	void sync_modifiers(NSEventModifierFlags flags)
+	{
+		const auto sync = [&](NSEventModifierFlags mask, unsigned short left, unsigned short right) {
+			const uint32_t l = translate(left), r = translate(right);
+			if (!(flags & mask)) {
+				key(l, false);
+				key(r, false);
+			} else if (!held.contains(l) && !held.contains(r)) {
+				key(l, true);
+			}
+		};
+		sync(NSEventModifierFlagShift, kVK_Shift, kVK_RightShift);
+		sync(NSEventModifierFlagOption, kVK_Option, kVK_RightOption);
+		if (command_is_control) {
+			sync(NSEventModifierFlagControl | NSEventModifierFlagCommand, kVK_Control, kVK_RightControl);
+		} else {
+			sync(NSEventModifierFlagControl, kVK_Control, kVK_RightControl);
+			sync(NSEventModifierFlagCommand, kVK_Command, kVK_RightCommand);
+		}
+		sync_caps(flags);
+	}
+
 	void focus_changed()
 	{
 		const uint64_t now = handle_of(NSApp.keyWindow);
@@ -461,6 +484,7 @@ struct CocoaPresentation::State {
 			}
 			if (!keyboard_window)
 				focus_changed();
+			sync_modifiers(event.modifierFlags);
 			key(translate(event.keyCode), down, down && event.isARepeat);
 			return false;
 		}
@@ -553,6 +577,8 @@ struct CocoaPresentation::State {
 			frame.size.width = std::max<CGFloat>(120, resize_from.size.width - dx);
 			frame.origin.x = NSMaxX(resize_from) - frame.size.width;
 		}
+		if (resize_edges & 8)
+			frame.size.height = std::max<CGFloat>(80, resize_from.size.height + dy);
 		if (resize_edges & 4) {
 			frame.size.height = std::max<CGFloat>(80, resize_from.size.height - dy);
 			frame.origin.y = NSMaxY(resize_from) - frame.size.height;
@@ -566,8 +592,13 @@ struct CocoaPresentation::State {
 		if (resizing) {
 			if (event.type == NSEventTypeLeftMouseDragged || event.type == NSEventTypeLeftMouseUp) {
 				follow_resize(NSEvent.mouseLocation);
-				if (event.type == NSEventTypeLeftMouseUp)
+				if (event.type == NSEventTypeLeftMouseUp) {
+					if (const auto *target = surface(resizing)) {
+						const auto [x, y] = frame_point(target->window, screen);
+						pointer(DesktopEventKind::pointer_button, resizing, x, y, button_left, 0);
+					}
 					resizing = 0;
+				}
 				return false;
 			}
 			if (event.type != NSEventTypeMouseMoved)
@@ -971,39 +1002,16 @@ struct CocoaPresentation::State {
 			if (last_press && last_press.window == window)
 				[window performWindowDragWithEvent:last_press];
 		} else {
-			const NSPoint start = NSEvent.mouseLocation;
-			const NSRect from = window.frame;
-			const bool top = action == 1 || action == 5 || action == 9, bottom = action == 2 || action == 6 || action == 10;
-			const bool left = action == 4 || action == 5 || action == 6, right = action == 8 || action == 9 || action == 10;
-			for (;;) {
-				@autoreleasepool {
-					NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp
-						untilDate:[NSDate distantFuture] inMode:NSEventTrackingRunLoopMode dequeue:YES];
-					const NSPoint now = NSEvent.mouseLocation;
-					const CGFloat dx = now.x - start.x, dy = now.y - start.y;
-					NSRect frame = from;
-					if (right) frame.size.width = std::max<CGFloat>(64, from.size.width + dx);
-					if (left) {
-						frame.size.width = std::max<CGFloat>(64, from.size.width - dx);
-						frame.origin.x = NSMaxX(from) - frame.size.width;
-					}
-					if (top) frame.size.height = std::max<CGFloat>(32, from.size.height + dy);
-					if (bottom) {
-						frame.size.height = std::max<CGFloat>(32, from.size.height - dy);
-						frame.origin.y = NSMaxY(from) - frame.size.height;
-					}
-					[window setFrame:NSIntegralRect(frame) display:YES];
-					if (event.type == NSEventTypeLeftMouseUp)
-						break;
-				}
-			}
-			const auto [width, height] = frame_size(*target);
-			if (width != target->width || height != target->height) {
-				target->pending_width = width;
-				target->pending_height = height;
-				target->resized = true;
-				target->pending_changed = std::chrono::steady_clock::now();
-			}
+			// Follow guest-initiated resizing through the normal event pump too: a nested
+			// AppKit tracking loop prevents guest frames from being presented until release.
+			resizing = handle;
+			resize_edges = (action == 4 || action == 5 || action == 6 ? 1 : 0) |
+				(action == 8 || action == 9 || action == 10 ? 2 : 0) |
+				(action == 2 || action == 6 || action == 10 ? 4 : 0) |
+				(action == 1 || action == 5 || action == 9 ? 8 : 0);
+			resize_start = NSEvent.mouseLocation;
+			resize_from = window.frame;
+			return;
 		}
 		const auto [x, y] = frame_point(window, NSEvent.mouseLocation);
 		pointer(DesktopEventKind::pointer_motion, handle, x, y);
