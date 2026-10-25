@@ -45,7 +45,9 @@ int raven_entry(void)
 	int lit = 0, position;
 	ID2D1SimplifiedGeometrySink sink = {&sink_vtbl};
 
-	if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, &IID_IDWriteFactory, (IUnknown **)&factory)) || !factory)
+	HMODULE library = LoadLibraryExW(L"dwrite.dll", NULL, 0x800); // LOAD_LIBRARY_SEARCH_SYSTEM32
+	HRESULT (WINAPI *create_factory)(DWRITE_FACTORY_TYPE, REFIID, IUnknown **) = (void *)GetProcAddress(library, "DWriteCreateFactory");
+	if (!library || !create_factory || FAILED(create_factory(DWRITE_FACTORY_TYPE_SHARED, &IID_IDWriteFactory, (IUnknown **)&factory)) || !factory)
 		return 1;
 	if (FAILED(IDWriteFactory_QueryInterface(factory, &IID_IDWriteFactory2, (void **)&factory2)))
 		return 2;

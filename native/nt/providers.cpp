@@ -2618,7 +2618,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				origin = explicit_file->second;
 			} else {
 				const auto system_names = system_library_names();
-				const bool system = std::find(system_names.begin(), system_names.end(), identity) != system_names.end();
+				// COM graphics components have no Win32 import-library export list, but are system libraries too.
+				const bool system = std::find(system_names.begin(), system_names.end(), identity) != system_names.end() ||
+					identity == "dwrite.dll" || identity == "d2d1.dll" || identity == "uianimation.dll";
 				if (!system && !activation_contexts().library_folder(identity)) {
 					if (const auto found = paths.find_library(launch->image_path, from_utf8(identity), true, flags)) {
 						bytes = ModuleBytes::map(found->host);
