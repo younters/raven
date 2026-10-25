@@ -1729,6 +1729,57 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     add_test(NAME native_process_event_x${width} COMMAND raven --run-process --execution=native --timeout-ms=45000 ${event_client})
                     set_tests_properties(native_process_event_x${width} PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
                         ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/event-prefix${width})
+                    set(inherited_client ${CMAKE_CURRENT_BINARY_DIR}/inherited-pipe${width}.exe)
+                    add_custom_command(OUTPUT ${inherited_client}
+                        COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${remote_entry},--no-insert-timestamp
+                            -o ${inherited_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/inherited_pipe_client.c -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/inherited_pipe_client.c VERBATIM)
+                    list(APPEND EVENT_CLIENTS ${inherited_client})
+                    add_test(NAME native_inherited_pipe_x${width} COMMAND raven --run-process --execution=native --timeout-ms=20000 --stdio=inherit ${inherited_client})
+                    set_tests_properties(native_inherited_pipe_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "PASS: inherited listener, process and standard handles"
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/inherited-pipe-prefix${width})
+                    set(com_usage_client ${CMAKE_CURRENT_BINARY_DIR}/com-usage${width}.exe)
+                    add_custom_command(OUTPUT ${com_usage_client}
+                        COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${remote_entry},--no-insert-timestamp
+                            -o ${com_usage_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/com_usage_client.c -lole32 -luuid -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/com_usage_client.c VERBATIM)
+                    list(APPEND EVENT_CLIENTS ${com_usage_client})
+                    add_test(NAME native_com_usage_x${width} COMMAND raven --run-process --execution=native ${com_usage_client})
+                    set_tests_properties(native_com_usage_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(large_manifest ${CMAKE_CURRENT_BINARY_DIR}/large-manifest${width})
+                    list(GET remote_compiler 0 manifest_driver)
+                    string(REGEX REPLACE "gcc$" "windres" manifest_windres ${manifest_driver})
+                    file(MAKE_DIRECTORY ${large_manifest}/Raven.Private.Test)
+                    file(WRITE ${large_manifest}/Raven.Private.Test/Raven.Private.Test.manifest
+                        "<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\"><assemblyIdentity name=\"Raven.Private.Test\" version=\"1.0.0.0\" type=\"win32\"/><file name=\"private.dll\"/></assembly>")
+                    add_custom_command(OUTPUT ${large_manifest}/client.exe
+                        COMMAND ${remote_compiler} -shared -nostdlib -Wl,--entry,0,--no-insert-timestamp,--out-implib,${large_manifest}/libprivate.a
+                            -o ${large_manifest}/Raven.Private.Test/private.dll ${PROJECT_SOURCE_DIR}/testdata/native_loader/private_assembly.c
+                        COMMAND ${Python3_EXECUTABLE} -c "open(r'${large_manifest}/large-resource.bin', 'wb').truncate(17 * 1024 * 1024)"
+                        COMMAND ${manifest_windres} -O coff -I ${large_manifest} -I ${PROJECT_SOURCE_DIR}/testdata/native_loader
+                            -i ${PROJECT_SOURCE_DIR}/testdata/native_loader/large_manifest.rc -o ${large_manifest}/resources.o
+                        COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${remote_entry},--no-insert-timestamp
+                            -o ${large_manifest}/client.exe ${PROJECT_SOURCE_DIR}/testdata/native_loader/large_manifest_client.c
+                            ${large_manifest}/resources.o ${large_manifest}/libprivate.a -ladvapi32 -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/large_manifest_client.c ${PROJECT_SOURCE_DIR}/testdata/native_loader/private_assembly.c
+                            ${PROJECT_SOURCE_DIR}/testdata/native_loader/large_manifest.manifest ${PROJECT_SOURCE_DIR}/testdata/native_loader/large_manifest.rc VERBATIM)
+                    list(APPEND EVENT_CLIENTS ${large_manifest}/client.exe)
+                    add_test(NAME native_large_manifest_x${width} COMMAND raven --run-process --execution=native ${large_manifest}/client.exe)
+                    set_tests_properties(native_large_manifest_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    if((width EQUAL 64 AND RAVEN_INSTALLER_COMPONENT_DIR) OR (width EQUAL 32 AND RAVEN_INSTALLER32_COMPONENT_DIR))
+                        set(fdi_client ${CMAKE_CURRENT_BINARY_DIR}/fdi-notify${width}.exe)
+                        add_custom_command(OUTPUT ${fdi_client}
+                            COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                                -Wl,--entry,${remote_entry},--no-insert-timestamp
+                                -o ${fdi_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/fdi_notify_client.c -lcabinet -lkernel32 -lgcc
+                            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/fdi_notify_client.c VERBATIM)
+                        list(APPEND EVENT_CLIENTS ${fdi_client})
+                        add_test(NAME native_fdi_notification_x${width} COMMAND raven --run-process --execution=native ${fdi_client})
+                        set_tests_properties(native_fdi_notification_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    endif()
                     set(peer_client ${CMAKE_CURRENT_BINARY_DIR}/peer-process${width}.exe)
                     add_custom_command(OUTPUT ${peer_client}
                         COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector

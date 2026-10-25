@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstring>
 #include <map>
+#include <set>
 #include <unistd.h>
 
 namespace raven {
@@ -135,6 +136,8 @@ struct ComState {
 	std::map<uint64_t, Thread> threads;
 	uint64_t main_sta = 0;
 	int mta_threads = 0;
+	uint64_t next_cookie = 1;
+	std::set<uint64_t> mta_cookies;
 };
 
 }
@@ -425,6 +428,26 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("CoInitialize", 1, [initialize](ApiCall &call) { initialize(call, false, false); });
 	registry.add("CoInitializeEx", 2, [initialize](ApiCall &call) { initialize(call, !(call.u32(1) & 2), call.u32(1) & 4); });
+	// Usage cookies keep the MTA alive independently of the apartments individual threads join.
+	registry.add("CoIncrementMTAUsage", 1, [com](ApiCall &call) {
+		if (!call[0]) {
+			call.ret(e_invalidarg);
+			return;
+		}
+		const auto cookie = com->next_cookie++;
+		com->mta_cookies.insert(cookie);
+		++com->mta_threads;
+		call.store_pointer(call[0], cookie);
+		call.ret(s_ok);
+	});
+	registry.add("CoDecrementMTAUsage", 1, [com](ApiCall &call) {
+		if (!com->mta_cookies.erase(call[0])) {
+			call.ret(e_invalidarg);
+			return;
+		}
+		--com->mta_threads;
+		call.ret(s_ok);
+	});
 	registry.add("OleInitialize", 1, [initialize](ApiCall &call) { initialize(call, false, false); });
 	const auto uninitialize = [com, &context, ole_flags](ApiCall &call) {
 		const uint64_t thread = context.environment.teb();

@@ -11,6 +11,10 @@ namespace raven_darwin {
 inline std::vector<std::filesystem::path> font_roots()
 {
 	std::vector<std::filesystem::path> roots{"/usr/share/fonts", "/usr/local/share/fonts", "/System/Library/Fonts", "/Library/Fonts"};
+#ifdef RAVEN_FONT_DIRECTORY
+	// The qualified fonts the build was configured with come first, as Linux finds them in its font directories.
+	roots.insert(roots.begin(), RAVEN_FONT_DIRECTORY);
+#endif
 	if (const char *home = std::getenv("HOME"); home && *home) {
 		roots.emplace_back(std::filesystem::path(home) / "Library/Fonts");
 		roots.emplace_back(std::filesystem::path(home) / ".local/share/fonts");

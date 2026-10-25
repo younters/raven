@@ -1,0 +1,22 @@
+--- a/sdk/include/psdk/fdi.h
++++ b/sdk/include/psdk/fdi.h
+@@ -23,7 +23,9 @@
+ extern "C" {
+ #endif /* defined(__cplusplus) */
+ 
++#ifndef _WIN64
+ #include <pshpack4.h>
++#endif
+ 
+ #ifndef INCLUDED_TYPES_FCI_FDI
+ #define INCLUDED_TYPES_FCI_FDI 1
+@@ -282,7 +284,9 @@
+ 
+ /**********************************************************************/
+ 
++#ifndef _WIN64
+ #include <poppack.h>
++#endif
+ 
+ #ifdef __cplusplus
+ } /* extern "C" */

@@ -312,8 +312,21 @@ void abstract_names()
 	check(::poll(&entry, 1, 1000) == 1 && message(client) == "back", "an accepted connection carries messages");
 	::close(accepted);
 	::close(client);
-	// Closing the listener frees the name.
+	// A listening socket and its name lock can travel to another process; closing the creator's end keeps the name alive.
+	const int inherited = ::fcntl(listener, F_DUPFD_CLOEXEC, 3);
+	const int lock = raven_darwin_unix_binding_lock(listener);
+	check(inherited >= 0 && lock >= 0, "cannot export a listening name");
 	::close(listener);
+	check(raven_darwin_unix_name_bound(name.data(), name.size()), "an inherited listener lost its name");
+	check(!raven_darwin_adopt_unix_binding(inherited, lock), "cannot adopt a listening name");
+	const int reconnect = ::socket(AF_UNIX, SOCK_SEQPACKET, 0);
+	check(!::connect(reconnect, reinterpret_cast<const sockaddr *>(&address), length), "cannot connect after closing the creator's listener");
+	const int reaccepted = ::accept4(inherited, nullptr, nullptr, SOCK_CLOEXEC);
+	check(reaccepted >= 0, "cannot accept through an inherited listener");
+	::close(reaccepted);
+	::close(reconnect);
+	// Closing the last listener frees the name.
+	::close(inherited);
 	check(!raven_darwin_unix_name_bound(name.data(), name.size()), "a closed name is not bound");
 	const int unbound = ::socket(AF_UNIX, SOCK_SEQPACKET, 0);
 	check(::connect(unbound, reinterpret_cast<const sockaddr *>(&address), length) < 0 && errno == ECONNREFUSED, "a free name refuses");

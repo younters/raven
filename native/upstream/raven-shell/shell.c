@@ -632,10 +632,67 @@ static HRESULT make_taskbar_list(REFIID iid, void **out)
 	return result;
 }
 
+/* COM options belong to the process, so separate GlobalOptions objects see the same values. Raven's in-process calls propagate
+ * exceptions directly; COMGLB_EXCEPTION_DONOT_HANDLE is the policy programs use to keep their crash handlers in charge. */
+typedef struct { IGlobalOptions face; LONG refs; } GlobalOptions;
+static ULONG_PTR global_options[6];
+static SRWLOCK global_options_lock = SRWLOCK_INIT;
+static const CLSID global_options_class = {0x0000034b, 0, 0, {0xc0, 0, 0, 0, 0, 0, 0, 0x46}};
+
+static HRESULT STDMETHODCALLTYPE go_query(IGlobalOptions *self, REFIID iid, void **out)
+{
+	if (!out) return E_POINTER;
+	*out = NULL;
+	if (!same_iid(iid, &IID_IUnknown) && !same_iid(iid, &IID_IGlobalOptions)) return E_NOINTERFACE;
+	*out = self;
+	InterlockedIncrement(&((GlobalOptions *)self)->refs);
+	return S_OK;
+}
+static ULONG STDMETHODCALLTYPE go_add_ref(IGlobalOptions *self) { return InterlockedIncrement(&((GlobalOptions *)self)->refs); }
+static ULONG STDMETHODCALLTYPE go_release(IGlobalOptions *self)
+{
+	const LONG refs = InterlockedDecrement(&((GlobalOptions *)self)->refs);
+	if (!refs) HeapFree(GetProcessHeap(), 0, self);
+	return refs;
+}
+static HRESULT STDMETHODCALLTYPE go_set(IGlobalOptions *self, GLOBALOPT_PROPERTIES property, ULONG_PTR value)
+{
+	if (property < COMGLB_EXCEPTION_HANDLING || property > COMGLB_UNMARSHALING_POLICY ||
+		(property == COMGLB_EXCEPTION_HANDLING && value > COMGLB_EXCEPTION_DONOT_HANDLE_ANY) ||
+		(property == COMGLB_RPC_THREADPOOL_SETTING && value != COMGLB_RPC_THREADPOOL_SETTING_PRIVATE_POOL) ||
+		(property == COMGLB_UNMARSHALING_POLICY && value > COMGLB_UNMARSHALING_POLICY_HYBRID)) return E_INVALIDARG;
+	AcquireSRWLockExclusive(&global_options_lock);
+	global_options[property] = value;
+	ReleaseSRWLockExclusive(&global_options_lock);
+	return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE go_get(IGlobalOptions *self, GLOBALOPT_PROPERTIES property, ULONG_PTR *value)
+{
+	if (!value) return E_POINTER;
+	if (property < COMGLB_EXCEPTION_HANDLING || property > COMGLB_UNMARSHALING_POLICY) return E_INVALIDARG;
+	AcquireSRWLockShared(&global_options_lock);
+	*value = global_options[property];
+	ReleaseSRWLockShared(&global_options_lock);
+	return S_OK;
+}
+static IGlobalOptionsVtbl global_options_vtbl = {go_query, go_add_ref, go_release, go_set, go_get};
+static HRESULT make_global_options(REFIID iid, void **out)
+{
+	GlobalOptions *options = HeapAlloc(GetProcessHeap(), 0, sizeof *options);
+	if (!options) return E_OUTOFMEMORY;
+	options->face.lpVtbl = &global_options_vtbl;
+	options->refs = 1;
+	const HRESULT result = go_query(&options->face, iid, out);
+	go_release(&options->face);
+	return result;
+}
+
 /* The classes this component serves itself, which CoCreateInstance makes directly and CoGetClassObject through a class factory. */
 static HRESULT make_builtin(REFCLSID clsid, REFIID iid, void **out, BOOL *served)
 {
 	*served = TRUE;
+	if (same_iid(clsid, &global_options_class))
+		return make_global_options(iid, out);
 	if (same_iid(clsid, &CLSID_FileOpenDialog))
 		return make_dialog(FALSE, iid, out);
 	if (same_iid(clsid, &CLSID_FileSaveDialog))
@@ -687,7 +744,7 @@ static IClassFactoryVtbl builtin_factory_vtbl = {bf_query, bf_add_ref, bf_releas
 
 static BOOL builtin_class(REFCLSID clsid)
 {
-	return same_iid(clsid, &CLSID_FileOpenDialog) || same_iid(clsid, &CLSID_FileSaveDialog) || same_iid(clsid, &CLSID_ShellLink) ||
+	return same_iid(clsid, &global_options_class) || same_iid(clsid, &CLSID_FileOpenDialog) || same_iid(clsid, &CLSID_FileSaveDialog) || same_iid(clsid, &CLSID_ShellLink) ||
 		same_iid(clsid, &CLSID_TaskbarList);
 }
 

@@ -14,7 +14,7 @@ NativeObjects::File::~File()
 	::close(descriptor);
 }
 
-NativeObjectResult NativeObjects::inherit_file(int descriptor)
+NativeObjectResult NativeObjects::inherit_file(int descriptor, uint64_t value)
 {
 	const auto copy=fcntl(descriptor,F_DUPFD_CLOEXEC,3);
 	if (copy<0) return {0,errno==EBADF ? 0xc0000008U : 0xc000009aU};
@@ -28,7 +28,8 @@ NativeObjectResult NativeObjects::inherit_file(int descriptor)
 	catch (...) { ::close(copy);throw; }
 	std::lock_guard lock(mutex);
 	if (handles.size()>=limit || next>UINT32_MAX-4) return {0,0xc000009aU};
-	const auto handle=take();
+	if (value && handles.contains(value)) return {0,0xc000000dU};
+	const auto handle=value ? value : take();
 	handles.emplace(handle,Handle{{},0,std::move(object)});
 	return {handle};
 }

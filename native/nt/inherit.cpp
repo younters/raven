@@ -1,5 +1,6 @@
 #include "inherit.h"
 #include "access_token.h"
+#include "child_process.h"
 #include "event.h"
 #include "mutex.h"
 
@@ -10,7 +11,9 @@
 #include "threads.h"
 
 #include <cstring>
+#include <fcntl.h>
 #include <stdexcept>
+#include <sys/un.h>
 
 namespace raven {
 
@@ -102,6 +105,16 @@ std::vector<InheritedHandle> parse_inherited(std::span<const uint8_t> bytes)
 // The object a description stands for, rebuilt around the descriptor that came with it; null for a kind that cannot travel.
 std::shared_ptr<KernelObject> object_from_record(const InheritedHandle &item)
 {
+	if (item.kind == "process") {
+		if (item.size == uint64_t(::getpid()))
+			return std::make_shared<SelfProcessObject>();
+		auto process = find_child(pid_t(item.size));
+		if (!process) {
+			process = std::make_shared<ProcessObject>(pid_t(item.size), true);
+			process->name = item.text;
+		}
+		return process;
+	}
 	if (item.kind == "mutex")
 		return std::make_shared<MutexObject>(item.descriptor);
 	if (item.kind == "event")
@@ -113,8 +126,16 @@ std::shared_ptr<KernelObject> object_from_record(const InheritedHandle &item)
 		return std::make_shared<FileObject>(item.descriptor, item.access, item.bits & 1, std::filesystem::path(item.path), item.text, item.flags & ~0x04000000U);
 	}
 	if (item.kind == "pipe") {
-		auto pipe = std::make_shared<PipeObject>(item.descriptor, item.access, item.flags);
-		pipe->connected = true;
+		auto pipe = std::make_shared<PipeObject>(item.bits & 4 ? -1 : item.descriptor, item.access, item.flags);
+		pipe->connected = !(item.bits & 4);
+		if (item.bits & 4) {
+			pipe->listener = std::make_shared<PipeListener>();
+			pipe->listener->descriptor = item.descriptor;
+			pipe->listener->maximum = uint32_t(item.size);
+			pipe->listener->instances = 1;
+			pipe->listener->address = item.path;
+			pipe->listener->type = item.bits & 1 ? SOCK_SEQPACKET : SOCK_STREAM;
+		}
 		pipe->message_mode = item.bits & 1;
 		pipe->server = item.bits & 2;
 		pipe->inherit = true;
@@ -138,6 +159,25 @@ std::shared_ptr<KernelObject> object_from_record(const InheritedHandle &item)
 void adopt_inherited(NativeObjects &objects, const std::vector<InheritedHandle> &handles)
 {
 	for (const auto &item : handles) {
+		if (item.descriptor >= 0)
+			::fcntl(item.descriptor, F_SETFD, FD_CLOEXEC);
+#ifdef __APPLE__
+		if (item.kind == "darwin-binding") {
+			if (raven_darwin_adopt_unix_binding(int(item.size), item.descriptor)) {
+				::close(item.descriptor);
+				throw std::runtime_error("cannot adopt inherited pipe name");
+			}
+			continue;
+		}
+#endif
+		if (item.kind == "standard") {
+			const auto made = objects.inherit_file(item.descriptor, item.handle);
+			::close(item.descriptor);
+			if (made.status)
+				throw std::runtime_error("cannot adopt inherited standard handle");
+			objects.set_inherit(item.handle, true);
+			continue;
+		}
 		const auto object = object_from_record(item);
 		if (!object) {
 			::close(item.descriptor);
@@ -145,7 +185,7 @@ void adopt_inherited(NativeObjects &objects, const std::vector<InheritedHandle> 
 		}
 		if (!objects.adopt(item.handle, object, true))
 			throw std::runtime_error("inherited handle value is taken");
-		if (item.handle_access || item.kind == "token" || item.kind == "event" || item.kind == "mutex")
+		if (item.handle_access || item.kind == "token" || item.kind == "event" || item.kind == "mutex" || item.kind == "process")
 			objects.set_access(item.handle, item.handle_access);
 	}
 }

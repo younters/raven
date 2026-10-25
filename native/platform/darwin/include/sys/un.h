@@ -8,6 +8,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+int raven_darwin_unix_binding_lock(int descriptor);
+int raven_darwin_adopt_unix_binding(int descriptor, int lock);
 int raven_darwin_unix_name_bound(const char *name, size_t length);
 #ifdef __cplusplus
 }

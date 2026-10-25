@@ -38,14 +38,18 @@ public:
 	~PipeObject() override;
 	bool describe(InheritedHandle &record) const override
 	{
-		// A server end that no client has opened has no connection to hand over.
-		if (descriptor < 0)
+		// A listening server passes its listener so the child can accept the first connection.
+		if (descriptor < 0 && !listener)
 			return false;
 		record.kind = "pipe";
-		record.descriptor = descriptor;
+		record.descriptor = descriptor >= 0 ? descriptor : listener->descriptor;
 		record.access = access;
 		record.flags = flags;
-		record.bits = (message_mode ? 1U : 0U) | (server ? 2U : 0U);
+		record.bits = (message_mode ? 1U : 0U) | (server ? 2U : 0U) | (descriptor < 0 ? 4U : 0U);
+		if (descriptor < 0) {
+			record.size = listener->maximum;
+			record.path = listener->address;
+		}
 		record.text = name;
 		return true;
 	}

@@ -23,6 +23,13 @@ public:
 	~ProcessObject() override;
 	// Waiting for a process succeeds once it has ended; the host reports that, not another guest thread.
 	int signaled(uint32_t) const override { return exited() ? 1 : 0; }
+	bool describe(InheritedHandle &record) const override
+	{
+		record.kind = "process";
+		record.size = uint64_t(pid);
+		record.text = name;
+		return true;
+	}
 	bool exited() const;
 	// STILL_ACTIVE (259) while the process runs.
 	uint32_t exit_code() const;
@@ -52,6 +59,12 @@ public:
 	std::u16string_view type_name() const override { return u"Process"; }
 	uint32_t default_access() const override { return 0x1fffff; }
 	int signaled(uint32_t) const override { return 0; }
+	bool describe(InheritedHandle &record) const override
+	{
+		record.kind = "process";
+		record.size = uint64_t(::getpid());
+		return true;
+	}
 };
 
 // Whether the process id belongs to a running instance of this runtime, the only processes a guest may name that it did not start.

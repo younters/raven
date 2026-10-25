@@ -72,7 +72,7 @@ public:
 	NativeObjectResult create_named_event(const std::u16string &name, uint32_t access, uint32_t type, bool signaled, bool &existed);
 	// A new handle for the named event; the status is 0xc0000034 when no such event is alive.
 	NativeObjectResult open_named_event(const std::u16string &name, uint32_t access);
-	NativeObjectResult inherit_file(int descriptor);
+	NativeObjectResult inherit_file(int descriptor, uint64_t value = 0);
 	// Reads from an inherited standard handle; the value is the byte count, zero at the end of the input.
 	NativeObjectResult read_file(uint64_t handle,std::span<uint8_t> into);
 	NativeObjectResult file_type(uint64_t handle) const;

@@ -21,6 +21,7 @@
 #include <spawn.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 extern char **environ;
@@ -203,9 +204,22 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 	}
 	std::vector<InheritedHandle> records;
 	for (auto record : launch.inherited) {
-		if (record.descriptor < 0)
-			continue;
-		record.descriptor = pass(record.descriptor);
+		const int source = record.descriptor;
+		if (source >= 0)
+			record.descriptor = pass(source);
+#ifdef __APPLE__
+		if (record.kind == "pipe" && (record.bits & 4)) {
+			const int lock = raven_darwin_unix_binding_lock(source);
+			if (lock >= 0) {
+				owned.push_back(lock);
+				InheritedHandle binding;
+				binding.kind = "darwin-binding";
+				binding.descriptor = pass(lock);
+				binding.size = uint64_t(record.descriptor);
+				records.push_back(std::move(binding));
+			}
+		}
+#endif
 		records.push_back(std::move(record));
 	}
 	if (!records.empty()) {

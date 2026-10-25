@@ -137,7 +137,7 @@ NativeObjectResult HandleChannel::send(NativeObjects &objects, NativeThreads &th
 	if (process_only)
 		return {0, 0xc00000bbU};
 	const int shared = record.descriptor;
-	if (shared < 0)
+	if (shared < 0 && record.kind != "process")
 		return {0, 0xc0000008U};
 	// Exchange uses size for its request number; keep the object's size in the unused source-handle word.
 	record.handle = record.size;
@@ -159,7 +159,7 @@ std::shared_ptr<KernelObject> HandleChannel::fetch(NativeObjects &objects, Nativ
 	request.handle = value;
 	request.flags = close_source ? 1 : 0;
 	const auto answer = exchange(objects, threads, std::move(request));
-	if (!answer || answer->kind.empty() || answer->descriptor < 0)
+	if (!answer || answer->kind.empty() || (answer->descriptor < 0 && answer->kind != "process"))
 		return nullptr;
 	access = answer->handle_access;
 	auto object = object_from_record(*answer);
@@ -241,7 +241,7 @@ void HandleChannel::receive(NativeObjects &objects)
 			answer.kind = answer_prefix + "transfer";
 			answer.handle = record.size;
 			answer.access = 0xc0000008U;
-			if (received >= 0) {
+			if (received >= 0 || record.kind == transfer_prefix + "process") {
 				record.kind.erase(0, transfer_prefix.size());
 				record.size = record.handle;
 				record.descriptor = received;
@@ -298,7 +298,7 @@ void HandleChannel::receive(NativeObjects &objects)
 				answer.handle_access = objects.access_of(record.handle);
 			}
 			send_frame(answer, shared);
-			if (shared >= 0 && (record.flags & 1))
+			if (!answer.kind.empty() && answer.kind != answer_prefix && (record.flags & 1))
 				objects.close(record.handle);
 			continue;
 		}

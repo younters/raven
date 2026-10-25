@@ -485,6 +485,10 @@ void register_pipe_api(ApiRegistry &registry, KernelContext &context)
 {
 	auto &objects = context.objects;
 	const auto pipe_of = [&objects](uint64_t handle) { return objects.object_as<PipeObject>(handle); };
+	// Further instances of an inherited listening pipe use the listener the creator passed, too.
+	for (const auto handle : objects.values())
+		if (const auto pipe = pipe_of(handle); pipe && pipe->listener)
+			context.pipes->listeners[pipe->listener->address] = pipe->listener;
 
 	registry.add("CreateNamedPipeW", 8, [&context, &objects](ApiCall &call) {
 		const auto name = pipe_name_of(call.wide(call[0], 260));

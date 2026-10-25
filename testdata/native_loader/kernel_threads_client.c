@@ -89,6 +89,13 @@ static DWORD WINAPI mutex_owner(LPVOID parameter)
 
 static int critical_options(void)
 {
+	typedef void (WINAPI *stack_limits)(ULONG_PTR *, ULONG_PTR *);
+	stack_limits limits = (stack_limits)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetCurrentThreadStackLimits");
+	ULONG_PTR low = 0, high = 0;
+	if (!limits) return 94;
+	limits(&low, &high);
+	if (low >= (ULONG_PTR)&low || high <= (ULONG_PTR)&low || high - low < 4096) return 95;
+
 	ULONG_PTR peb;
 #ifdef __x86_64__
 	__asm__ volatile("movq %%gs:0x60,%0" : "=r"(peb));
@@ -156,6 +163,16 @@ int raven_entry(void)
 	CHECK(14,TlsGetValue(tls_slot)==(LPVOID)(ULONG_PTR)5);
 	CloseHandle(reader);
 	TlsFree(tls_slot);
+	typedef void *(WINAPI *fls_get_value)(DWORD);
+	fls_get_value get_fls = (fls_get_value)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "FlsGetValue2");
+	DWORD fls = FlsAlloc(NULL);
+	CHECK(90,get_fls && fls != FLS_OUT_OF_INDEXES && FlsSetValue(fls,(void *)(ULONG_PTR)123));
+	SetLastError(456);
+	CHECK(91,get_fls(fls)==(void *)(ULONG_PTR)123 && GetLastError()==456);
+	CHECK(92,FlsSetValue(fls,NULL));
+	SetLastError(789);
+	CHECK(93,get_fls(fls)==NULL && GetLastError()==789);
+	FlsFree(fls);
 
 	InitializeSRWLock(&lock);
 	InitializeConditionVariable(&ready_variable);

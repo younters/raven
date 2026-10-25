@@ -867,8 +867,10 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	});
 	registry.add("GetFileInformationByHandleEx", 4, [&, resolve, missing, file_of](ApiCall &call) {
 		const auto file = file_of(call[0]);
+		const auto pipe = std::dynamic_pointer_cast<PipeObject>(file);
+		const int descriptor = pipe && pipe->descriptor < 0 && pipe->listener ? pipe->listener->descriptor : file ? file->descriptor : -1;
 		struct stat metadata{};
-		if (!file || ::fstat(file->descriptor, &metadata)) {
+		if (!file || ::fstat(descriptor, &metadata)) {
 			call.fail(6);
 			return;
 		}
@@ -892,7 +894,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			break;
 		case 2: {
 			// The name without its drive, as the volume knows it.
-			const auto name = file->dos_path.size() >= 2 && file->dos_path[1] == u':' ? file->dos_path.substr(2) : file->dos_path;
+			const auto name = pipe ? u"\\" + pipe->name : file->dos_path.size() >= 2 && file->dos_path[1] == u':' ? file->dos_path.substr(2) : file->dos_path;
 			bytes.assign(4 + name.size() * 2, 0);
 			put32(bytes, 0, uint32_t(name.size() * 2));
 			std::memcpy(bytes.data() + 4, name.data(), name.size() * 2);

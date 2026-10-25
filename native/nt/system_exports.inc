@@ -747,7 +747,7 @@ static constexpr std::string_view kernel32_exports[]{
 	"VirtualFreeEx","VirtualLock","VirtualProtect","VirtualProtectEx","VirtualQuery","VirtualQueryEx",
 	"VirtualUnlock","WTSGetActiveConsoleSessionId","WaitCommEvent","WaitForDebugEvent","WaitForDebugEventEx","WaitForMultipleObjects",
 	"WaitForMultipleObjectsEx","WaitForSingleObject","WaitForSingleObjectEx","WaitForThreadpoolIoCallbacks","WaitForThreadpoolTimerCallbacks","WaitForThreadpoolWaitCallbacks",
-	"WaitForThreadpoolWorkCallbacks","WaitNamedPipeA","WaitNamedPipeW","WakeAllConditionVariable","WakeConditionVariable","WerGetFlags",
+	"WaitForThreadpoolWorkCallbacks","WaitNamedPipeA","WaitNamedPipeW","WaitOnAddress","WakeAllConditionVariable","WakeByAddressAll","WakeByAddressSingle","WakeConditionVariable","WerGetFlags",
 	"WerGetFlagsWorker","WerRegisterAdditionalProcess","WerRegisterAppLocalDump","WerRegisterCustomMetadata","WerRegisterExcludedMemoryBlock","WerRegisterFile",
 	"WerRegisterFileWorker","WerRegisterMemoryBlock","WerRegisterMemoryBlockWorker","WerRegisterRuntimeExceptionModule","WerRegisterRuntimeExceptionModuleWorker","WerSetFlags",
 	"WerSetFlagsWorker","WerUnregisterAdditionalProcess","WerUnregisterAppLocalDump","WerUnregisterCustomMetadata","WerUnregisterExcludedMemoryBlock","WerUnregisterFile",

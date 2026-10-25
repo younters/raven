@@ -151,6 +151,14 @@ public:
 
 void register_thread_api(ApiRegistry &registry, KernelContext &context)
 {
+	registry.add("GetCurrentThreadStackLimits", 2, [&context](ApiCall &call) {
+		const auto teb = context.environment.teb();
+		const size_t width = call.pointer_width();
+		const auto allocation = call.load_pointer(teb + (width == 4 ? 0xe0c : 0x1478));
+		call.store_pointer(call[0], allocation ? allocation : call.load_pointer(teb + 2 * width));
+		call.store_pointer(call[1], call.load_pointer(teb + width));
+	});
+
 	auto &threads = context.threads;
 	auto &objects = context.objects;
 	// Thread handles are per object; one thread object per guest thread keeps handle identity stable.

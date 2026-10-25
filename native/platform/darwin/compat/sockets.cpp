@@ -469,13 +469,18 @@ bool still_bound(const Binding &binding)
 	return strncmp(address.sun_path, binding.socket.c_str(), sizeof address.sun_path) == 0;
 }
 
+int acquire(const std::string &path, bool create);
+
 void release(const Binding &binding)
 {
-	if (binding.owner == getpid()) {
+	// A child may hold the same listener and lock. Remove the name only after the last copy of the lock closes.
+	system_close(binding.lock);
+	const int lock = acquire(binding.lock_path, false);
+	if (lock >= 0) {
 		unlink(binding.socket.c_str());
 		unlink(binding.lock_path.c_str());
+		system_close(lock);
 	}
-	system_close(binding.lock);
 }
 
 // The lock of a name, held through an open file description of its own; -1 with EADDRINUSE while another one holds it. A bind
@@ -658,6 +663,37 @@ int raven_darwin_listening(int descriptor, int *value, socklen_t *length)
 	}
 	*value = (info.psi.soi_options & SO_ACCEPTCONN) ? 1 : 0;
 	*length = sizeof(int);
+	return 0;
+}
+
+// The lock travels beside a listening socket across exec, then is registered around the child's descriptor numbers.
+int raven_darwin_unix_binding_lock(int descriptor)
+{
+	auto &state = bindings();
+	std::lock_guard guard(state.mutex);
+	for (const auto &binding : state.list)
+		if (binding.descriptor == descriptor && still_bound(binding))
+			return fcntl(binding.lock, F_DUPFD_CLOEXEC, 3);
+	return -1;
+}
+
+int raven_darwin_adopt_unix_binding(int descriptor, int lock)
+{
+	sockaddr_un address{};
+	socklen_t length = sizeof address;
+	if (getsockname(descriptor, reinterpret_cast<sockaddr *>(&address), &length) != 0)
+		return -1;
+	std::string path(address.sun_path);
+	if (path.size() < 2 || (path.substr(path.size() - 2) != ".s" && path.substr(path.size() - 2) != ".p"))
+		return -1;
+	auto &state = bindings();
+	std::lock_guard guard(state.mutex);
+	state.list.push_back({descriptor, getpid(), lock, path, path.substr(0, path.size() - 2) + ".lock"});
+	++state.count;
+	if (!state.exit_registered) {
+		state.exit_registered = true;
+		atexit(release_all);
+	}
 	return 0;
 }
 

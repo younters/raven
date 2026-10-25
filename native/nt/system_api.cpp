@@ -1147,7 +1147,11 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		registry.add(base + "GetValue", 1, get_value);
 		// Newer Windows builds publish the fiber-local read under a second name that the C runtime calls.
 		if (!is_tls)
-			registry.add("FlsGetValue2", 1, get_value);
+			registry.add("FlsGetValue2", 1, [get_value](ApiCall &call) {
+				const auto error = call.environment.last_error();
+				get_value(call);
+				call.set_last_error(error);
+			});
 		registry.add(base + "SetValue", 2, [&environment, slots, mirror_set](ApiCall &call) {
 			const auto index = size_t(call.u32(0));
 			if (index >= slots->used.size() || !slots->used[index]) {

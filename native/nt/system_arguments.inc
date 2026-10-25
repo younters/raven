@@ -719,7 +719,7 @@ static constexpr std::pair<std::string_view, uint8_t> kernel32_words[]{
 	{"VirtualFreeVlm",5},{"VirtualLock",2},{"VirtualProtect",4},{"VirtualProtectEx",5},{"VirtualProtectVlm",6},{"VirtualQuery",3},
 	{"VirtualQueryEx",4},{"VirtualQueryVlm",4},{"VirtualUnlock",2},{"WTSGetActiveConsoleSessionId",0},{"WaitCommEvent",3},{"WaitForDebugEvent",2},
 	{"WaitForDebugEventEx",2},{"WaitForMultipleObjects",4},{"WaitForMultipleObjectsEx",5},{"WaitForSingleObject",2},{"WaitForSingleObjectEx",3},{"WaitForThreadpoolIoCallbacks",2},
-	{"WaitForThreadpoolTimerCallbacks",2},{"WaitForThreadpoolWaitCallbacks",2},{"WaitForThreadpoolWorkCallbacks",2},{"WaitNamedPipeA",2},{"WaitNamedPipeW",2},{"WakeAllConditionVariable",1},
+	{"WaitForThreadpoolTimerCallbacks",2},{"WaitForThreadpoolWaitCallbacks",2},{"WaitForThreadpoolWorkCallbacks",2},{"WaitNamedPipeA",2},{"WaitNamedPipeW",2},{"WaitOnAddress",4},{"WakeAllConditionVariable",1},{"WakeByAddressAll",1},{"WakeByAddressSingle",1},
 	{"WakeConditionVariable",1},{"WerGetFlags",2},{"WerGetFlagsWorker",2},{"WerRegisterAdditionalProcess",2},{"WerRegisterAppLocalDump",1},{"WerRegisterCustomMetadata",2},
 	{"WerRegisterExcludedMemoryBlock",2},{"WerRegisterFile",3},{"WerRegisterFileWorker",3},{"WerRegisterMemoryBlock",2},{"WerRegisterMemoryBlockWorker",2},{"WerRegisterRuntimeExceptionModule",2},
 	{"WerRegisterRuntimeExceptionModuleWorker",2},{"WerSetFlags",1},{"WerSetFlagsWorker",1},{"WerUnregisterAdditionalProcess",1},{"WerUnregisterAppLocalDump",0},{"WerUnregisterCustomMetadata",1},

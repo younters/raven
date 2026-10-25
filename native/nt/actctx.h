@@ -36,8 +36,8 @@ public:
 	// The runtime services the contexts need: guest memory, the prefix's paths and which thread is calling.
 	void attach(KernelContext &kernel);
 	// Before the process exists, as its first libraries are found: the host folder of the side-by-side store's manifests, the
-	// program's width and its own manifest.
-	void prepare(const std::filesystem::path &manifests, bool wide, std::string_view program_manifest);
+	// program's width, its own manifest and its directory for private assemblies.
+	void prepare(const std::filesystem::path &manifests, bool wide, std::string_view program_manifest, const std::filesystem::path &application_directory = {});
 	// The side-by-side folder that serves a library named alone: an assembly the context in effect depends on, directly or through
 	// another, declares the file. The loader looks there before any other place, as Windows redirects it.
 	std::optional<std::filesystem::path> library_folder(std::string_view name) const;
@@ -76,7 +76,7 @@ public:
 
 private:
 	KernelContext *kernel = nullptr;
-	std::filesystem::path manifests;
+	std::filesystem::path manifests, application_directory;
 	std::optional<Assembly> program;
 	std::map<uint64_t, Context> contexts;
 	std::map<uint32_t, std::vector<std::pair<uint64_t, uint64_t>>> stacks;

@@ -158,6 +158,16 @@ std::string format_guest(ApiCall &call, uint64_t format, uint64_t arguments)
 
 void register_process_api(ApiRegistry &registry, KernelContext &context)
 {
+	// The host manages resident pages; trimming a process's working set is only a hint.
+	registry.add("SetProcessWorkingSetSize", 3, [&context](ApiCall &call) {
+		if (call[0] != UINT64_MAX && call[0] != 0xffffffffU && !context.objects.object_as<SelfProcessObject>(call[0]) &&
+			!context.objects.object_as<ProcessObject>(call[0])) {
+			call.fail(6);
+			return;
+		}
+		call.ret(1);
+	});
+
 	registry.add("RtlDllShutdownInProgress", 0, [&context](ApiCall &call) { call.ret(context.shutdown_in_progress); });
 	// _vsnprintf(buffer, count, format, arguments): at most count characters; -1 when the text did not fit, with count of it written.
 	registry.add("_vsnprintf", 4, [](ApiCall &call) {
