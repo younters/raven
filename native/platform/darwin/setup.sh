@@ -66,6 +66,8 @@ provision installer32 provision-installer.py --arch x86 --output "$COMPONENTS/in
 provision roots provision-roots.py --output "$COMPONENTS/roots"
 provision libpng provision-libpng.py --output "$COMPONENTS/libpng"
 provision graphics provision-graphics.py --destination "$COMPONENTS/graphics"
+# Direct3D 10/11 on Metal; its macOS library is built from native/platform/darwin/dxmt against the pinned release.
+provision dxmt provision-dxmt.py --destination "$COMPONENTS"
 
 # Skia for the text of GDI, as native/upstream/skia/README.md qualifies it: CPU only, the custom empty font manager, system FreeType.
 if [ ! -f "$SKIA/out/libskia.a" ]; then
@@ -111,6 +113,7 @@ cmake -S "$SOURCE" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
 	-DRAVEN_CONTROLS_COMPONENT_DIR="$COMPONENTS/controls" -DRAVEN_CONTROLS32_COMPONENT_DIR="$COMPONENTS/controls32" \
 	-DRAVEN_INSTALLER_COMPONENT_DIR="$COMPONENTS/installer" -DRAVEN_INSTALLER32_COMPONENT_DIR="$COMPONENTS/installer32" \
 	-DRAVEN_ROOT_CERTIFICATE_DIRECTORY="$COMPONENTS/roots" \
+	-DRAVEN_DXMT_ROOT="$COMPONENTS/dxmt" \
 	-DRAVEN_DXVK_PE64_DIR="$COMPONENTS/graphics/dxvk/pe64" -DRAVEN_DXVK_PE32_DIR="$COMPONENTS/graphics/dxvk/pe32" \
 	-DRAVEN_VKD3D_PE64_DIR="$COMPONENTS/graphics/vkd3d-proton/pe64" \
 	-DPNG_LIBRARY_RELEASE="$COMPONENTS/libpng/install/lib/libpng16.a" -DPNG_PNG_INCLUDE_DIR="$COMPONENTS/libpng/install/include"
