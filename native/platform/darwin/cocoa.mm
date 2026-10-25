@@ -1172,8 +1172,11 @@ struct CocoaPresentation::State {
 		// The cooperative guest is stopped while its desktop polls. Once CA releases a pool slot,
 		// retry the latest persistent bitmap even if the program sends no further present (caret blink).
 		for (auto &[handle, window] : surfaces)
-			if (const auto pixels = window->presenter.pending_pixels(); !pixels.empty())
-				show(*window, pixels, window->width, window->height);
+			if (const auto pixels = window->presenter.pending_pixels(); !pixels.empty()) {
+				@autoreleasepool {
+					show(*window, pixels, window->width, window->height);
+				}
+			}
 		events.swap(pending);
 		if (trace)
 			for (const auto &event : events)
