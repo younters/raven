@@ -19,6 +19,7 @@ constexpr std::array exported{
 	Export{"kernel32.dll", "SleepConditionVariableSRW", 4}, Export{"kernel32.dll", "WakeConditionVariable", 1},
 	Export{"kernel32.dll", "WakeAllConditionVariable", 1}, Export{"kernel32.dll", "TlsAlloc", 0}, Export{"kernel32.dll", "TlsFree", 1},
 	Export{"kernel32.dll", "WaitOnAddress", 4}, Export{"kernel32.dll", "WakeByAddressSingle", 1}, Export{"kernel32.dll", "WakeByAddressAll", 1},
+	Export{"kernel32.dll", "GetCurrentThreadStackLimits", 2}, Export{"kernel32.dll", "SetProcessWorkingSetSize", 3},
 	Export{"kernel32.dll", "TlsGetValue", 1}, Export{"kernel32.dll", "TlsSetValue", 2}, Export{"kernel32.dll", "CreateSemaphoreA", 4},
 	Export{"kernel32.dll", "CreateSemaphoreW", 4}, Export{"kernel32.dll", "ReleaseSemaphore", 3},
 	Export{"kernel32.dll", "WaitForMultipleObjects", 4},
@@ -229,6 +230,25 @@ bool NativeX86System::dispatch(std::string_view name)
 			else
 				fail(1460);
 		}
+	} else if (name == "GetCurrentThreadStackLimits") {
+		// The whole reservation, from the TEB: DeallocationStack (0xe0c) is its bottom, StackBase (4) its top; StackLimit (8) stands in
+		// for a bottom that was never recorded.
+		const uint64_t teb = process.context().registers.fs_base;
+		const auto word = [&](uint64_t offset) {
+			const auto bytes = process.read_memory(teb + offset, 4);
+			return uint32_t(bytes[0]) | uint32_t(bytes[1]) << 8 | uint32_t(bytes[2]) << 16 | uint32_t(bytes[3]) << 24;
+		};
+		const uint32_t high = word(4), low = word(0xe0c) ? word(0xe0c) : word(8);
+		const auto put = [&](uint64_t address, uint32_t value) {
+			const uint8_t bytes[4] = {uint8_t(value), uint8_t(value >> 8), uint8_t(value >> 16), uint8_t(value >> 24)};
+			process.write_memory(address, bytes);
+		};
+		put(uint32_t(args[0]), low);
+		put(uint32_t(args[1]), high);
+		process.return_api(0);
+	} else if (name == "SetProcessWorkingSetSize") {
+		// A hint to the memory manager, which the host's own paging makes moot.
+		process.return_api(1);
 	} else if (name == "WakeByAddressSingle" || name == "WakeByAddressAll") {
 		process.return_api(0);
 	} else if (name == "TlsAlloc") {

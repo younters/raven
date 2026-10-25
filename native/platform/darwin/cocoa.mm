@@ -178,6 +178,12 @@ struct CocoaPresentation::State {
 	bool native_frames = true;
 	std::map<uint64_t, std::pair<std::array<int32_t, 4>, uint32_t>> frames;
 	bool presenting = false;
+	// A resize from the window's edges in progress: the window, which edges (left 1, right 2, bottom 4), where it began.
+	uint64_t resizing = 0;
+	int resize_edges = 0;
+	NSPoint resize_start{};
+	NSRect resize_from{};
+	bool resize_cursor = false;
 	// RAVEN_TRACE_COCOA=1 reports sizes and events.
 	const bool trace = std::getenv("RAVEN_TRACE_COCOA") != nullptr;
 	double wheel = 0, horizontal_wheel = 0;
@@ -467,9 +473,90 @@ struct CocoaPresentation::State {
 		}
 	}
 
+	// Which edges of a resizable window's content a screen point is close enough to for resizing.
+	int edges_at(const Surface &target, NSPoint screen) const
+	{
+		if (!target.native || !(target.style & 0x40000U) || target.maximized || target.popup)
+			return 0;
+		constexpr CGFloat zone = 5;
+		const NSRect content = content_of(target.window);
+		if (!NSPointInRect(screen, NSInsetRect(content, -1, -1)))
+			return 0;
+		int edges = 0;
+		if (screen.x < NSMinX(content) + zone)
+			edges |= 1;
+		else if (screen.x > NSMaxX(content) - zone)
+			edges |= 2;
+		if (screen.y < NSMinY(content) + zone)
+			edges |= 4;
+		return edges;
+	}
+
+	static NSCursor *resize_cursor_for(int edges)
+	{
+		NSCursorFrameResizePosition position = NSCursorFrameResizePositionBottom;
+		if (edges == 1) position = NSCursorFrameResizePositionLeft;
+		else if (edges == 2) position = NSCursorFrameResizePositionRight;
+		else if (edges == 5) position = NSCursorFrameResizePositionBottomLeft;
+		else if (edges == 6) position = NSCursorFrameResizePositionBottomRight;
+		return [NSCursor frameResizeCursorFromPosition:position inDirections:NSCursorFrameResizeDirectionsAll];
+	}
+
+	// Follows a drag of the edges: each movement resizes the window, and the program, told at once, draws the new size before the next.
+	void follow_resize(NSPoint screen)
+	{
+		Surface *target = surface(resizing);
+		if (!target)
+			return;
+		const CGFloat dx = screen.x - resize_start.x, dy = screen.y - resize_start.y;
+		NSRect frame = resize_from;
+		if (resize_edges & 2)
+			frame.size.width = std::max<CGFloat>(120, resize_from.size.width + dx);
+		if (resize_edges & 1) {
+			frame.size.width = std::max<CGFloat>(120, resize_from.size.width - dx);
+			frame.origin.x = NSMaxX(resize_from) - frame.size.width;
+		}
+		if (resize_edges & 4) {
+			frame.size.height = std::max<CGFloat>(80, resize_from.size.height - dy);
+			frame.origin.y = NSMaxY(resize_from) - frame.size.height;
+		}
+		[target->window setFrame:NSIntegralRect(frame) display:YES];
+	}
+
 	bool mouse(NSEvent *event)
 	{
 		const NSPoint screen = screen_point(event);
+		if (resizing) {
+			if (event.type == NSEventTypeLeftMouseDragged || event.type == NSEventTypeLeftMouseUp) {
+				follow_resize(NSEvent.mouseLocation);
+				if (event.type == NSEventTypeLeftMouseUp)
+					resizing = 0;
+				return false;
+			}
+			if (event.type != NSEventTypeMouseMoved)
+				resizing = 0;
+		}
+		if (Surface *under = surface(handle_of(event.window))) {
+			const int edges = edges_at(*under, NSEvent.mouseLocation);
+			if (event.type == NSEventTypeLeftMouseDown && edges) {
+				resizing = handle_of(event.window);
+				resize_edges = edges;
+				resize_start = NSEvent.mouseLocation;
+				resize_from = under->window.frame;
+				return false;
+			}
+			if (event.type == NSEventTypeMouseMoved) {
+				if (edges) {
+					[resize_cursor_for(edges) set];
+					resize_cursor = true;
+					return false;
+				}
+				if (resize_cursor) {
+					[NSCursor.arrowCursor set];
+					resize_cursor = false;
+				}
+			}
+		}
 		const bool press = event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeRightMouseDown ||
 			event.type == NSEventTypeOtherMouseDown;
 		// A press outside a popup that took the pointer closes it, and goes no further, as a compositor's popup grab does.
@@ -578,8 +665,8 @@ struct CocoaPresentation::State {
 			mask |= NSWindowStyleMaskClosable;
 		if (style & 0x20000U)
 			mask |= NSWindowStyleMaskMiniaturizable;
-		if (style & 0x40000U)
-			mask |= NSWindowStyleMaskResizable;
+		// Not NSWindowStyleMaskResizable: macOS resizes in a loop of its own, during which the program could not draw. The edges are
+		// followed here instead, a frame for each movement (see begin_resize).
 		return mask;
 	}
 
@@ -593,7 +680,7 @@ struct CocoaPresentation::State {
 		window.acceptsMouseMovedEvents = YES;
 		window.hasShadow = YES;
 		window.opaque = YES;
-		window.backgroundColor = NSColor.blackColor;
+		window.backgroundColor = NSColor.windowBackgroundColor;
 		RavenView *view = [[RavenView alloc] initWithFrame:NSMakeRect(0, 0, width, height)];
 		view.wantsLayer = YES;
 		// A layer's own geometry is not flipped: its bottom-left is the window's top-left.
@@ -710,6 +797,7 @@ struct CocoaPresentation::State {
 				const NSRect content = content_of(target->window);
 				presenting = true;
 				target->window.styleMask = style_mask(native, style);
+				[target->window standardWindowButton:NSWindowZoomButton].enabled = (style & 0x10000U) != 0;
 				[target->window setFrame:[target->window frameRectForContentRect:content] display:NO];
 				presenting = false;
 			}
@@ -726,6 +814,7 @@ struct CocoaPresentation::State {
 				created->delegate.state = this;
 				created->delegate.handle = handle;
 				created->window.delegate = created->delegate;
+				[created->window standardWindowButton:NSWindowZoomButton].enabled = (style & 0x10000U) != 0;
 				created->width = width;
 				created->height = height;
 				created->maximized = maximized.contains(handle);
