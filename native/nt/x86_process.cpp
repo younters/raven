@@ -136,7 +136,7 @@ constexpr std::string_view shared_allowed[] = {
 	"RegEnumKeyA", "RegEnumKeyW", "RegEnumKeyExA", "RegEnumKeyExW", "RegEnumValueA", "RegEnumValueW",
 	"GetWindowLongW", "SetWindowLongW", "GetFileVersionInfoA", "GetFileVersionInfoExW", "GetFileVersionInfoSizeA", "GetFileVersionInfoSizeExW",
 	"GetFileVersionInfoSizeW", "GetFileVersionInfoW", "VerQueryValueA", "VerQueryValueW", "GetSystemDirectoryW", "GetSystemDirectoryA", "GetWindowsDirectoryW", "LocalAlloc", "LocalReAlloc", "GlobalReAlloc", "GlobalSize", "GetComputerNameA",
-	"GetComputerNameW", "FileTimeToSystemTime", "SystemTimeToFileTime", "GetTimeZoneInformation", "GetCurrentProcessId", "SetFileAttributesA",
+	"GetComputerNameW", "FileTimeToSystemTime", "SystemTimeToFileTime", "GetTimeZoneInformation", "SetFileAttributesA",
 	"SetFileAttributesW", "GetLongPathNameA", "GetLongPathNameW", "GetShortPathNameA", "GetShortPathNameW", "SearchPathA", "SearchPathW",
 	"GetModuleFileNameA", "IsDBCSLeadByte", "IsDBCSLeadByteEx", "GetCPInfoExA", "GetThreadLocale", "SetThreadLocale", "VerifyVersionInfoW",
 	"GetUserNameA", "GetUserNameW", "FlsAlloc", "FlsFree", "FlsGetValue", "FlsSetValue", "SetDefaultDllDirectories", "AddDllDirectory", "RemoveDllDirectory", "SetSearchPathMode", "GetLargePageMinimum", "ConvertDefaultLocale", "GetMachineTypeAttributes", "GetShellWindow", "PowerCreateRequest", "PowerSetRequest", "PowerClearRequest", "CreateTransaction", "CommitTransaction", "CommitTransactionAsync",
