@@ -51,7 +51,6 @@ int main(int argc, char **argv)
 			process.write_memory(second_teb + 0x30, {reinterpret_cast<const uint8_t *>(&second_teb), sizeof second_teb});
 			const auto second_data = process.map_memory(4096, PROT_READ | PROT_WRITE);
 			unix_call_probe second{process.unix_call_gate(), handle, second_stack, second_stack + 65536, second_teb};
-			process.write_memory(second_data, {reinterpret_cast<const uint8_t *>(&second), sizeof second});
 			second.rendezvous = second_data + sizeof second;
 			process.write_memory(second_data, {reinterpret_cast<const uint8_t *>(&second), sizeof second});
 			probe.rendezvous = second.rendezvous;
