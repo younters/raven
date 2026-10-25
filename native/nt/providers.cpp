@@ -64,13 +64,13 @@ static std::vector<uint8_t> read_host_file(const std::filesystem::path &path)
 }
 
 // PathCchCombineEx and PathCchSkipRoot live in kernelbase.dll on Windows and are not in the import libraries the public lists come from.
-static constexpr std::array<std::string_view, 49> names{
+static constexpr std::array<std::string_view, 50> names{
 	"CloseHandle","CreateEventA","CreateEventW","ExitProcess",
 	"FindResourceA", "FindResourceExA", "FindResourceExW", "FindResourceW", "FreeLibrary",
 	"GetACP", "GetCommandLineA", "GetCommandLineW", "GetCurrentProcessId", "GetCurrentThreadId", "GetFileType", "GetLastError", "GetModuleHandleA",
 	"GetModuleHandleW", "GetProcAddress", "GetProcessHeap", "GetStartupInfoA", "GetStartupInfoW", "GetStdHandle", "HeapAlloc", "HeapCreate", "HeapDestroy", "HeapFree", "HeapReAlloc", "HeapSize",
 	"LoadLibraryA", "LoadLibraryW", "LoadResource", "OpenProcessToken", "OpenThreadToken",
-	"LockResource", "MultiByteToWideChar", "PathCchCombineEx", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
+	"LockResource", "MultiByteToWideChar", "PathCchCanonicalize", "PathCchCombineEx", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
 	"VirtualAlloc", "VirtualFree", "VirtualProtect", "VirtualQuery", "WaitForSingleObject", "WriteFile"
 };
 
@@ -1582,7 +1582,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"RtlRunOnceExecuteOnce", "RtlSetLastWin32Error", "RtlCompareMemory", "RtlMoveMemory", "RtlFillMemory", "RtlZeroMemory",
 		"memcpy", "memmove", "memset", "memcmp", "strlen", "wcslen",
 		// What the runtime's own components import from ntdll, which they need whether a program loads them at start or later.
-		"DbgPrint", "NtCancelIoFile", "NtCreateSection", "NtFsControlFile", "NtReadFile", "RtlCreateUnicodeStringFromAsciiz", "RtlFreeHeap",
+		"DbgPrint", "NtCancelIoFileEx", "NtDeviceIoControlFile", "NtOpenDirectoryObject", "NtQueryDirectoryObject",
+		"RtlDosPathNameToNtPathName_U_WithStatus", "NtCancelIoFile", "NtCreateSection", "NtFsControlFile", "NtReadFile", "RtlCreateUnicodeStringFromAsciiz", "RtlFreeHeap",
 		"RtlFreeUnicodeString", "RtlDllShutdownInProgress", "RtlGetVersion", "RtlGetNtVersionNumbers", "RtlIpv6AddressToStringExW", "RtlIpv6StringToAddressW", "RtlLengthSid", "RtlUnicodeToMultiByteN",
 		"RtlUnicodeToMultiByteSize", "RtlIsTextUnicode", "RtlImageNtHeader", "NtDeleteKey",
 		// The unwinding of 64-bit frames, which libraries built with their own exception handling import.
