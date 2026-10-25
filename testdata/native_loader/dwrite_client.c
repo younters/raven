@@ -80,6 +80,12 @@ int raven_entry(void)
 		void *context;
 		if (FAILED(IDWriteFontFace_TryGetFontTable(face, DWRITE_MAKE_OPENTYPE_TAG('c', 'm', 'a', 'p'), &table, &size, &context, &exists)) || !exists || size < 4)
 			return 13;
+		if (context) return 40;
+		const void *first = table;
+		UINT32 first_size = size;
+		IDWriteFontFace_ReleaseFontTable(face, context);
+		if (FAILED(IDWriteFontFace_TryGetFontTable(face, DWRITE_MAKE_OPENTYPE_TAG('c', 'm', 'a', 'p'), &table, &size, &context, &exists)) ||
+			!exists || context || table != first || size != first_size) return 41;
 		IDWriteFontFace_ReleaseFontTable(face, context);
 	}
 	if (FAILED(IDWriteFontFace_GetGlyphRunOutline(face, 20.0f, glyphs, advances, NULL, 2, FALSE, FALSE, &sink)) || outline_figures < 2 || outline_segments < 8)

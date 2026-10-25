@@ -470,6 +470,12 @@ static void ensure_system(void)
 }
 
 /* ---- font data: one opened face of a font file ---- */
+typedef struct FontTable {
+	struct FontTable *next;
+	UINT32 tag, size;
+	BYTE bytes[];
+} FontTable;
+
 typedef struct FaceData {
 	LONG refs;
 	DWORD host;
@@ -479,11 +485,18 @@ typedef struct FaceData {
 	DWORD index;
 	INT32 info[20];
 	DWORD face_type;
+	SRWLOCK table_lock;
+	FontTable *tables;
 } FaceData;
 
 static void face_data_release(FaceData *data)
 {
 	if (data && InterlockedDecrement(&data->refs) == 0) {
+		while (data->tables) {
+			FontTable *table = data->tables;
+			data->tables = table->next;
+			FREE(table);
+		}
 		RavenFontClose(data->host);
 		if (data->bytes)
 			FREE(data->bytes);
@@ -1141,31 +1154,45 @@ static UINT32 swap_tag(UINT32 tag)
 {
 	return (tag & 0xff) << 24 | (tag & 0xff00) << 8 | (tag >> 8 & 0xff00) | tag >> 24;
 }
+/* Table bytes belong to the face, as for a memory-mapped font file. A null context needs no per-call release. */
 static HRESULT STDMETHODCALLTYPE face_table(IDWriteFontFace *self, UINT32 tag, const void **data, UINT32 *size, void **context, WINBOOL *exists)
 {
-	Face *face = FACE_OF(self);
-	DWORD length = RavenFontTable(face->data->host, swap_tag(tag), 0, NULL, 0);
-	BYTE *copy;
+	FaceData *face = FACE_OF(self)->data;
+	FontTable *table;
+	DWORD length;
 	*data = NULL;
 	*size = 0;
 	*context = NULL;
 	*exists = FALSE;
-	if (length == 0xffffffffU || length == 0)
-		return S_OK;
-	copy = ALLOC(length);
-	if (!copy)
-		return E_OUTOFMEMORY;
-	RavenFontTable(face->data->host, swap_tag(tag), 0, copy, length);
-	*data = copy;
-	*size = length;
-	*context = copy;
+	AcquireSRWLockExclusive(&face->table_lock);
+	for (table = face->tables; table; table = table->next)
+		if (table->tag == tag) break;
+	if (!table) {
+		length = RavenFontTable(face->host, swap_tag(tag), 0, NULL, 0);
+		if (length == 0xffffffffU || length == 0) {
+			ReleaseSRWLockExclusive(&face->table_lock);
+			return S_OK;
+		}
+		table = ALLOC(sizeof(*table) + (size_t)length);
+		if (!table) {
+			ReleaseSRWLockExclusive(&face->table_lock);
+			return E_OUTOFMEMORY;
+		}
+		table->tag = tag;
+		table->size = length;
+		RavenFontTable(face->host, swap_tag(tag), 0, table->bytes, length);
+		table->next = face->tables;
+		face->tables = table;
+	}
+	*data = table->bytes;
+	*size = table->size;
 	*exists = TRUE;
+	ReleaseSRWLockExclusive(&face->table_lock);
 	return S_OK;
 }
 static void STDMETHODCALLTYPE face_release_table(IDWriteFontFace *self, void *context)
 {
-	if (context)
-		FREE(context);
+	/* Every table stays valid until the last reference to its face is released. */
 }
 
 /* Glyph outlines go to the geometry sink with y downward from the baseline, in units of the em size. */
