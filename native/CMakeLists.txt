@@ -1680,6 +1680,15 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     list(APPEND DYNAMIC_DIALOG_CLIENTS ${gamma_client})
                     add_test(NAME native_gamma_x${width} COMMAND raven --run-process --execution=native ${gamma_client})
                     set_tests_properties(native_gamma_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(contract_client ${CMAKE_CURRENT_BINARY_DIR}/api-contract${width}.exe)
+                    add_custom_command(OUTPUT ${contract_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${contract_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/api_contract_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/api_contract_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${contract_client})
+                    add_test(NAME native_api_contract_x${width} COMMAND raven --run-process --execution=native ${contract_client})
+                    set_tests_properties(native_api_contract_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                     set(bitmap_client ${CMAKE_CURRENT_BINARY_DIR}/bitmap-file${width}.exe)
                     set(bitmap_defines)
                     if((width EQUAL 64 AND RAVEN_INSTALLER_COMPONENT_DIR) OR (width EQUAL 32 AND RAVEN_INSTALLER32_COMPONENT_DIR))

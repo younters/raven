@@ -464,7 +464,8 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// A guest component that implements part of a system library receives those calls directly, as for 64-bit programs.
 	const auto overlay = [&](PEModule &provider, std::string_view library) {
 		struct Rule { const char *library, *component, *prefix; };
-		static constexpr Rule rules[] = {{"user32.dll", "raven-user32.dll", "raven-user32."}, {"comdlg32.dll", "raven-shell.dll", "raven-shell."},
+		static constexpr Rule rules[] = {{"ntdll.dll", "ucrtbase.dll", "ucrtbase."},
+			{"user32.dll", "raven-user32.dll", "raven-user32."}, {"comdlg32.dll", "raven-shell.dll", "raven-shell."},
 			{"ole32.dll", "raven-shell.dll", "raven-shell."}, {"shell32.dll", "raven-shell.dll", "raven-shell."}, {"msvcrt.dll", "ucrtbase.dll", "ucrtbase."}, {"shlwapi.dll", "raven-shell.dll", "raven-shell."}, {"setupapi.dll", "raven-setupapi.dll", "raven-setupapi."},
 			{"ole32.dll", "raven-storage.dll", "raven-storage."}, {"combase.dll", "raven-shell.dll", "raven-shell."},
 			{"uiautomationcore.dll", "raven-shell.dll", "raven-shell."}};

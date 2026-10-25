@@ -64,12 +64,12 @@ static std::vector<uint8_t> read_host_file(const std::filesystem::path &path)
 }
 
 // PathCchCombineEx and PathCchSkipRoot live in kernelbase.dll on Windows and are not in the import libraries the public lists come from.
-static constexpr std::array<std::string_view, 47> names{
+static constexpr std::array<std::string_view, 49> names{
 	"CloseHandle","CreateEventA","CreateEventW","ExitProcess",
 	"FindResourceA", "FindResourceExA", "FindResourceExW", "FindResourceW", "FreeLibrary",
 	"GetACP", "GetCommandLineA", "GetCommandLineW", "GetCurrentProcessId", "GetCurrentThreadId", "GetFileType", "GetLastError", "GetModuleHandleA",
 	"GetModuleHandleW", "GetProcAddress", "GetProcessHeap", "GetStartupInfoA", "GetStartupInfoW", "GetStdHandle", "HeapAlloc", "HeapCreate", "HeapDestroy", "HeapFree", "HeapReAlloc", "HeapSize",
-	"LoadLibraryA", "LoadLibraryW", "LoadResource",
+	"LoadLibraryA", "LoadLibraryW", "LoadResource", "OpenProcessToken", "OpenThreadToken",
 	"LockResource", "MultiByteToWideChar", "PathCchCombineEx", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
 	"VirtualAlloc", "VirtualFree", "VirtualProtect", "VirtualQuery", "WaitForSingleObject", "WriteFile"
 };
@@ -1578,7 +1578,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	for (const auto name : {"NtSetInformationThread", "NtOpenThreadToken", "NtOpenThreadTokenEx", "NtOpenThread", "NtOpenProcess", "NtOpenProcessToken", "NtOpenProcessTokenEx", "NtQueryInformationProcess", "NtReadVirtualMemory", "NtWriteVirtualMemory", "NtQuerySection", "NtFlushInstructionCache", "RtlAddGrowableFunctionTable", "RtlGrowFunctionTable", "RtlDeleteGrowableFunctionTable",
 		"NtWriteFile", "NtQueryDirectoryFile", "ZwQueryDirectoryFile", "RtlNtStatusToDosError", "NtQueryObject", "NtMapViewOfSection", "NtUnmapViewOfSection",
 		"RtlAcquireSRWLockExclusive", "RtlAcquireSRWLockShared", "RtlWakeConditionVariable", "RtlWakeAllConditionVariable", "RtlWaitOnAddress",
-		"RtlWakeAddressSingle", "RtlWakeAddressAll",
+		"RtlWakeAddressSingle", "RtlWakeAddressAll", "RtlReleaseSRWLockExclusive", "RtlReleaseSRWLockShared",
+		"RtlRunOnceExecuteOnce", "RtlSetLastWin32Error", "RtlCompareMemory", "RtlMoveMemory", "RtlFillMemory", "RtlZeroMemory",
+		"memcpy", "memmove", "memset", "memcmp", "strlen", "wcslen",
 		// What the runtime's own components import from ntdll, which they need whether a program loads them at start or later.
 		"DbgPrint", "NtCancelIoFile", "NtCreateSection", "NtFsControlFile", "NtReadFile", "RtlCreateUnicodeStringFromAsciiz", "RtlFreeHeap",
 		"RtlFreeUnicodeString", "RtlDllShutdownInProgress", "RtlGetVersion", "RtlGetNtVersionNumbers", "RtlIpv6AddressToStringExW", "RtlIpv6StringToAddressW", "RtlLengthSid", "RtlUnicodeToMultiByteN",
@@ -1675,6 +1677,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		if (provider->runtime_api) {
 			struct Overlay { const char *library, *component, *prefix; };
 			static constexpr Overlay overlays[] = {
+				{"ntdll.dll", "ucrtbase.dll", "ucrtbase."},
 				{"user32.dll", "raven-user32.dll", "raven-user32."}, {"comdlg32.dll", "raven-shell.dll", "raven-shell."},
 				{"ole32.dll", "raven-shell.dll", "raven-shell."}, {"shell32.dll", "raven-shell.dll", "raven-shell."},
 				{"shlwapi.dll", "raven-shell.dll", "raven-shell."}, {"setupapi.dll", "raven-setupapi.dll", "raven-setupapi."},

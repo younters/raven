@@ -720,6 +720,13 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	// The native form answers STATUS_REVISION_MISMATCH where the Win32 one fails with ERROR_OLD_WIN_VERSION.
 	registry.add("RtlVerifyVersionInfo", 3, [verify_version](ApiCall &call) { call.ret(verify_version(call, true) ? 0 : 0xc0000059U); });
 	// kernel32's memory exports: moving, filling and clearing a block of the program's memory.
+	registry.add("RtlSetLastWin32Error", 1, [](ApiCall &call) { call.set_last_error(call.u32(0)); });
+	registry.add("RtlCompareMemory", 3, [](ApiCall &call) {
+		const auto first = call.read(call[0], size_t(call[2])), second = call.read(call[1], size_t(call[2]));
+		size_t matched = 0;
+		while (matched < first.size() && first[matched] == second[matched]) ++matched;
+		call.ret(matched);
+	});
 	registry.add("RtlMoveMemory", 3, [](ApiCall &call) {
 		if (call[2])
 			call.write(call[0], call.read(call[1], size_t(call[2])));
