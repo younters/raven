@@ -809,7 +809,7 @@ void NativeWindows::register_theme_api(ApiRegistry &registry)
 	});
 	registry.add("DrawThemeIcon", 7, [](ApiCall &call) { call.ret(e_notimpl); });
 	registry.add("GetThemeTextMetrics", 5, [](ApiCall &call) { call.ret(e_notimpl); });
-	registry.add("GetThemeBackgroundRegion", 5, [](ApiCall &call) { call.ret(e_notimpl); });
+	registry.add("GetThemeBackgroundRegion", 6, [](ApiCall &call) { call.ret(e_notimpl); });
 	registry.add("BufferedPaintInit", 0, [](ApiCall &call) { call.ret(s_ok); });
 	registry.add("BufferedPaintUnInit", 0, [](ApiCall &call) { call.ret(s_ok); });
 }

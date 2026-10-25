@@ -20,6 +20,10 @@ def main():
         hosts = {line.split("\t")[1] for line in snapshot.read_text().splitlines() if line.startswith("host\t")}
         text = source.read_text().split("constexpr std::string_view shared_allowed[] = {", 1)[1].split("};", 1)[0]
         names = set(re.findall(r'"(\w+)"', text))
+        declarations = source.read_text().split("constexpr std::array shared_exports{", 1)[1].split("};", 1)[0]
+        names.update(re.findall(r'Export\{"[^" ]+", "(\w+)"', declarations))
+        wide = source.read_text().split("constexpr WideArgument wide_arguments[] = {", 1)[1].split("};", 1)[0]
+        names.update(re.findall(r'\{"(\w+)"', wide))
         missing = sorted(names - hosts)
         if missing:
             raise RuntimeError("x86 shared export list has no registered handler: " + ", ".join(missing))

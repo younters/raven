@@ -1705,7 +1705,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                         COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
                             -Wl,--entry,${dialog_entry},--no-insert-timestamp
                             -o ${library_parity_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/library_parity_client.c
-                            -lkernel32 -ladvapi32 -lshell32 -lwininet -lws2_32 -lcrypt32 -loleaut32
+                            -lkernel32 -luser32 -ladvapi32 -lshell32 -lwininet -lws2_32 -lcrypt32 -loleaut32
                         DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/library_parity_client.c VERBATIM)
                     list(APPEND DYNAMIC_DIALOG_CLIENTS ${library_parity_client})
                     if((width EQUAL 64 AND RAVEN_CONTROLS_COMPONENT_DIR AND RAVEN_INSTALLER_COMPONENT_DIR) OR

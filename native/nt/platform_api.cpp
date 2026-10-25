@@ -932,7 +932,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	// Without Windows Runtime metadata, a language exception has nowhere to go, and type names and namespaces resolve to nothing.
 	registry.add("RoOriginateLanguageException", 3, [](ApiCall &call) { call.ret(0); });
 	registry.add("RoParseTypeName", 3, [](ApiCall &call) { call.ret(0x80004001U); });
-	registry.add("RoResolveNamespace", 7, [](ApiCall &call) { call.ret(0x80004001U); });
+	registry.add("RoResolveNamespace", 8, [](ApiCall &call) { call.ret(0x80004001U); });
 	registry.add("RoGetParameterizedTypeInstanceIID", 5, [](ApiCall &call) { call.ret(0x80004001U); });
 	// No Windows Runtime class exists here: initialization joins the thread to a COM apartment like CoInitializeEx (RO_INIT_MULTITHREADED
 	// is 1), and every activation reports that the class is not registered.

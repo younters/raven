@@ -147,6 +147,18 @@ constexpr std::string_view shared_allowed[] = {
 	"CreateMutexW", "CreateMutexA", "CreateMutexExW", "OpenMutexW", "OpenMutexA", "ReleaseMutex", "CreateSemaphoreW", "CreateSemaphoreA", "CreateSemaphoreExW", "ReleaseSemaphore",
 };
 
+// One by-value POINT or 64-bit integer occupies two x86 stack words, but one shared-handler argument.
+struct WideArgument {
+	std::string_view name;
+	uint32_t index, words;
+};
+constexpr WideArgument wide_arguments[] = {
+	{"ChildWindowFromPoint", 1, 3}, {"ChildWindowFromPointEx", 1, 4}, {"WindowFromPoint", 0, 2},
+	{"HitTestThemeBackground", 7, 10}, {"StrFormatByteSizeW", 0, 4},
+	{"EventEnabled", 0, 3}, {"EventSetInformation", 0, 5}, {"EventUnregister", 0, 2}, {"EventWriteTransfer", 0, 7},
+	{"TraceEvent", 0, 3}, {"UnregisterTraceGuids", 0, 2},
+};
+
 struct NamedWords {
 	std::string_view name;
 	uint32_t words;
@@ -958,7 +970,28 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				}
 				std::cerr << '\n';
 			}
-			if (api == "VerSetConditionMask" || api == "VerifyVersionInfoW") {
+			if (const auto wide = std::find_if(std::begin(wide_arguments), std::end(wide_arguments),
+				[&](const auto &item) { return item.name == api; }); wide != std::end(wide_arguments)) {
+				auto words = process.api_arguments(wide->words);
+				const auto handler = shared_api.find(api);
+				if (!handler)
+					throw std::runtime_error("missing shared x86 API handler: " + std::string(api));
+				words[wide->index] = uint32_t(words[wide->index]) | words[wide->index + 1] << 32;
+				words.erase(words.begin() + wide->index + 1);
+				ApiCall inner(process, environment, std::move(words));
+				try {
+					handler->second(inner);
+				} catch (const ApiFault &) {
+					inner.fail(998);
+				} catch (const uint32_t &error) {
+					inner.fail(error);
+				}
+				process.return_api(inner.result);
+				budget = remaining();
+				result = process.resume(budget);
+				continue;
+			}
+			if (api == "VerSetConditionMask" || api == "VerifyVersionInfoW" || api == "RtlVerifyVersionInfo") {
 				// The 64-bit condition mask is two words on the stack of a 32-bit program, and the handler takes it whole.
 				const bool set = api == "VerSetConditionMask";
 				const auto words = process.api_arguments(4);

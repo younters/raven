@@ -6,6 +6,11 @@
 #include <commctrl.h>
 #include <shlobj.h>
 
+static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+{
+	return DefWindowProcW(window, message, wparam, lparam);
+}
+
 int raven_entry(void)
 {
 	OSVERSIONINFOEXA version_a = {0};
@@ -88,5 +93,34 @@ int raven_entry(void)
 	if (!create || !destroy || !count) return 20;
 	HIMAGELIST images = create(16, 16, ILC_COLOR32 | ILC_MASK, 1, 1);
 	if (!images || count(images) != 0 || !destroy(images)) return 21;
+	HMODULE shlwapi = LoadLibraryW(L"shlwapi.dll"), theme = LoadLibraryW(L"uxtheme.dll"), script = LoadLibraryW(L"usp10.dll");
+	LPWSTR (WINAPI *format_size)(LONGLONG, LPWSTR, UINT) = (void *)GetProcAddress(shlwapi, "StrFormatByteSizeW");
+	HRESULT (WINAPI *hit_test)(HANDLE, HDC, int, int, DWORD, const RECT *, HRGN, POINT, WORD *) =
+		(void *)GetProcAddress(theme, "HitTestThemeBackground");
+	HRESULT (WINAPI *cp_to_x)(void *, int, BOOL, int *) = (void *)GetProcAddress(script, "ScriptStringCPtoX");
+	HRESULT (WINAPI *x_to_cp)(void *, int, int *, int *) = (void *)GetProcAddress(script, "ScriptStringXtoCP");
+	if (!format_size || !hit_test || !cp_to_x || !x_to_cp || format_size(0x100000000LL, folder, MAX_PATH) != folder ||
+		lstrcmpW(folder, L"4.00 GB")) return 23;
+	RECT bounds = {10, 10, 20, 20};
+	POINT point = {15, 15};
+	struct { WORD code, guard; } hit = {0, 0x1234};
+	if (hit_test(NULL, NULL, 0, 0, 0, &bounds, NULL, point, &hit.code) || hit.code != 1 || hit.guard != 0x1234) return 24;
+	point.x = point.y = -1;
+	if (hit_test(NULL, NULL, 0, 0, 0, &bounds, NULL, point, &hit.code) || hit.code || hit.guard != 0x1234) return 25;
+	int x = 123, character = 123, trailing = 123;
+	if (cp_to_x(NULL, 0, FALSE, &x) >= 0 || x_to_cp(NULL, 0, &character, &trailing) >= 0) return 26;
+	cp_to_x = (void *)GetProcAddress(LoadLibraryW(L"gdi32.dll"), "ScriptStringCPtoX");
+	x_to_cp = (void *)GetProcAddress(LoadLibraryW(L"gdi32.dll"), "ScriptStringXtoCP");
+	if (!cp_to_x || !x_to_cp || cp_to_x(NULL, 0, FALSE, &x) >= 0 || x_to_cp(NULL, 0, &character, &trailing) >= 0) return 29;
+	WNDCLASSW definition = {0};
+	definition.lpfnWndProc = window_proc;
+	definition.hInstance = GetModuleHandleW(NULL);
+	definition.lpszClassName = L"RavenParity";
+	if (!RegisterClassW(&definition)) return 27;
+	HWND parent = CreateWindowExW(0, L"RavenParity", L"", 0, 0, 0, 200, 200, NULL, NULL, definition.hInstance, NULL);
+	HWND child = CreateWindowExW(0, L"RavenParity", L"", WS_CHILD, 20, 30, 40, 50, parent, NULL, definition.hInstance, NULL);
+	point.x = 25; point.y = 35;
+	if (!parent || !child || ChildWindowFromPoint(parent, point) != child || ChildWindowFromPointEx(parent, point, 0) != child) return 28;
+	DestroyWindow(parent);
 	return 0;
 }
