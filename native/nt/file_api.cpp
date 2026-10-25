@@ -595,7 +595,11 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		int target = file->descriptor;
 		if (const int mode = ::fcntl(target, F_GETFL); mode >= 0 && (mode & O_ACCMODE) == O_RDONLY) {
 			if (file->lock_descriptor < 0)
+#ifdef __APPLE__
+				file->lock_descriptor = raven_darwin_reopen(file->descriptor, O_RDWR | O_CLOEXEC);
+#else
 				file->lock_descriptor = ::open(("/proc/self/fd/" + std::to_string(file->descriptor)).c_str(), O_RDWR | O_CLOEXEC);
+#endif
 			if (file->lock_descriptor >= 0)
 				target = file->lock_descriptor;
 			else if (kind == F_WRLCK)

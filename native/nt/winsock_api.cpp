@@ -236,6 +236,9 @@ static uint32_t windows_tcp_state(unsigned host)
 // The sockets of the processes this user runs, by inode: the owner a TCP table names.
 static std::map<uint64_t, uint32_t> socket_owners()
 {
+#ifdef __APPLE__
+	return raven_darwin::socket_owners();
+#endif
 	std::map<uint64_t, uint32_t> owners;
 	std::error_code error;
 	for (const auto &process : std::filesystem::directory_iterator("/proc", error)) {
@@ -260,7 +263,11 @@ static std::map<uint64_t, uint32_t> socket_owners()
 static std::vector<TcpEntry> tcp_entries(bool v6)
 {
 	std::vector<TcpEntry> entries;
+#ifdef __APPLE__
+	auto table = raven_darwin::proc_stream(v6 ? "/proc/net/tcp6" : "/proc/net/tcp");
+#else
 	std::ifstream table(v6 ? "/proc/net/tcp6" : "/proc/net/tcp");
+#endif
 	std::string line;
 	std::getline(table, line);
 	std::map<uint64_t, uint32_t> owners;

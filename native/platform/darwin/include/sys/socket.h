@@ -5,8 +5,9 @@
 // Socket type flags, applied after creation. Every socket the runtime makes also gets SO_NOSIGPIPE, which MSG_NOSIGNAL stands for.
 #define SOCK_NONBLOCK 0x20000000
 #define SOCK_CLOEXEC 0x10000000
+// Taken out of the flags by recvmsg (compat/sockets.cpp), which then makes the descriptors received close-on-exec.
 #ifndef MSG_CMSG_CLOEXEC
-#define MSG_CMSG_CLOEXEC 0
+#define MSG_CMSG_CLOEXEC 0x40000000
 #endif
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
@@ -23,6 +24,9 @@ struct ucred {
 #ifdef __cplusplus
 extern "C" {
 #endif
+// SOCK_SEQPACKET for Unix sockets: a stream socket marked to carry one framed message per send (see compat/sockets.cpp).
+int raven_darwin_frame_socket(int descriptor);
+int raven_darwin_framed_socket(int descriptor);
 int raven_darwin_socket(int domain, int type, int protocol);
 int raven_darwin_socketpair(int domain, int type, int protocol, int descriptors[2]);
 int accept4(int descriptor, struct sockaddr *address, socklen_t *length, int flags);

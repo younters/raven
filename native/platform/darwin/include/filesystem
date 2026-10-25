@@ -2,11 +2,32 @@
 // link answers with the running executable instead. Taking string literals, these overloads are preferred to the ones taking a path.
 #pragma once
 #include_next <filesystem>
+#include <cstdint>
+#include <map>
+#include <sstream>
 #include <string_view>
 #include <system_error>
+#include <sys/types.h>
+#include <vector>
 
 namespace raven_darwin {
 std::filesystem::path executable_path();
+
+// The /proc files the runtime reads as a process API, made from libproc and Mach (compat/procfs.cpp). Where the runtime opens one
+// with an ifstream, the macOS build reads this stream instead: /proc/<pid>/stat and /proc/<pid>/cmdline for any process this user may
+// inspect, /proc/self/statm, and /proc/net/tcp and tcp6 for the sockets of this user's processes. Other paths are read as files.
+std::istringstream proc_stream(const std::filesystem::path &path);
+// One entry of /proc as a directory listing gives it: "/proc/<pid>" for every process.
+struct ProcEntry {
+	std::filesystem::path location;
+	const std::filesystem::path &path() const { return location; }
+};
+std::vector<ProcEntry> proc_directory(std::error_code &error);
+// What readlink of /proc/<pid>/fd/* would give for sockets: the TCP sockets of this user's processes, by the number /proc/net/tcp
+// lists for each in its inode column, and the process that holds it.
+std::map<uint64_t, uint32_t> socket_owners();
+// The process a /proc path names with the file `leaf` under it ("/proc/self/exe" with "exe"), or -1 for any other path.
+pid_t proc_process(std::string_view path, std::string_view leaf);
 }
 
 namespace std::filesystem {

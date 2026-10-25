@@ -308,6 +308,9 @@ bool pipe_exists(KernelContext &context, const std::u16string &name)
 	const auto address = pipe_address(name);
 	if (const auto found = context.pipes->listeners.find(address); found != context.pipes->listeners.end() && !found->second.expired())
 		return true;
+#ifdef __APPLE__
+	return raven_darwin_unix_name_bound(address.data(), address.size());
+#endif
 	std::ifstream list("/proc/net/unix");
 	std::string line;
 	const auto wanted = "@" + address;

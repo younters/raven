@@ -17,7 +17,8 @@ add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:SHELL:-include ${RA
 set(RAVEN_CLANG ${RAVEN_DARWIN_DIR}/bin/raven-clang CACHE FILEPATH "clang for Windows targets")
 
 # The functions behind the shim headers, linked into every host target.
-add_library(raven_darwin STATIC ${RAVEN_DARWIN_DIR}/compat/linux.cpp)
+add_library(raven_darwin STATIC ${RAVEN_DARWIN_DIR}/compat/linux.cpp ${RAVEN_DARWIN_DIR}/compat/procfs.cpp
+    ${RAVEN_DARWIN_DIR}/compat/sockets.cpp)
 target_compile_options(raven_darwin PRIVATE -Wall -Wextra)
 link_libraries(raven_darwin)
 

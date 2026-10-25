@@ -16,5 +16,5 @@ ssize_t raven_darwin_readlink(const char *path, char *buffer, size_t size);
 // Rosetta 2 guest, where Windows memory lives, has 4 KiB ones: sysconf reports the guest's.
 #define sysconf(name) raven_darwin_sysconf(name)
 
-// readlink("/proc/self/exe"): the running executable (see the filesystem shim).
+// readlink("/proc/self/exe"): the running executable (see the filesystem shim); "/proc/<pid>/exe": the program of that process.
 #define readlink(path, buffer, size) raven_darwin_readlink(path, buffer, size)

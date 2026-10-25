@@ -9,6 +9,16 @@
 #define F_SEAL_GROW 0x0004
 #define F_SEAL_WRITE 0x0008
 
+// open("/proc/self/fd/N") on Linux opens the file again, as a new open file description; /dev/fd/N on macOS duplicates the
+// descriptor instead. This opens the file by the path the descriptor has, provided that is still the same file.
+#ifdef __cplusplus
+extern "C" {
+#endif
+int raven_darwin_reopen(int descriptor, int flags);
+#ifdef __cplusplus
+}
+#endif
+
 #ifdef __cplusplus
 inline int fcntl(int descriptor, int command, int argument)
 {

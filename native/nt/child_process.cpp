@@ -65,7 +65,11 @@ bool runtime_process_alive(pid_t pid)
 {
 	if (pid <= 0)
 		return false;
+#ifdef __APPLE__
+	auto stat = raven_darwin::proc_stream("/proc/" + std::to_string(pid) + "/stat");
+#else
 	std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+#endif
 	std::string text;
 	std::getline(stat, text);
 	const auto close = text.rfind(')');

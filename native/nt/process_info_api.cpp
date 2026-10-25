@@ -70,7 +70,11 @@ uint64_t filetime_now()
 // CPU time a running child has used so far, in nanoseconds; 0 once the host no longer lists it.
 static uint64_t child_cpu_nanoseconds(pid_t pid)
 {
+#ifdef __APPLE__
+	auto stat = raven_darwin::proc_stream("/proc/" + std::to_string(pid) + "/stat");
+#else
 	std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+#endif
 	std::string text;
 	std::getline(stat, text);
 	const auto close = text.rfind(')');
@@ -864,7 +868,11 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		uint64_t pages = 0, resident = 0;
+#ifdef __APPLE__
+		auto statm = raven_darwin::proc_stream("/proc/self/statm");
+#else
 		std::ifstream statm("/proc/self/statm");
+#endif
 		statm >> pages >> resident;
 		const size_t width = call.pointer_width(), size = width == 4 ? 40 : 72;
 		std::vector<uint8_t> counters(std::min<size_t>(call.u32(2), size));
@@ -894,7 +902,11 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		if (capacity) {
 			ids.push_back(uint32_t(::getpid()));
 			std::error_code error;
+#ifdef __APPLE__
+			for (const auto &entry : raven_darwin::proc_directory(error)) {
+#else
 			for (const auto &entry : std::filesystem::directory_iterator("/proc", error)) {
+#endif
 				if (ids.size() == capacity) break;
 				const auto name = entry.path().filename().string();
 				if (name.empty() || !std::all_of(name.begin(), name.end(), [](char c) { return c >= '0' && c <= '9'; })) continue;
@@ -970,19 +982,31 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 			const auto image = context.launch.image_path;
 			snapshot->processes.push_back({uint32_t(::getpid()), runtime_process_alive(::getppid()) ? uint32_t(::getppid()) : 0, image.substr(image.find_last_of(u'\\') + 1)});
 			std::error_code error;
+#ifdef __APPLE__
+			for (const auto &entry : raven_darwin::proc_directory(error)) {
+#else
 			for (const auto &entry : std::filesystem::directory_iterator("/proc", error)) {
+#endif
 				const auto name = entry.path().filename().string();
 				if (name.empty() || !std::all_of(name.begin(), name.end(), [](char c) { return c >= '0' && c <= '9'; }))
 					continue;
 				const auto pid = pid_t(std::stol(name));
 				if (pid == ::getpid() || !runtime_process_alive(pid))
 					continue;
+#ifdef __APPLE__
+				auto arguments = raven_darwin::proc_stream(entry.path() / "cmdline");
+#else
 				std::ifstream arguments(entry.path() / "cmdline", std::ios::binary);
+#endif
 				std::string argument, last;
 				while (std::getline(arguments, argument, '\0'))
 					if (!argument.empty())
 						last = argument;
+#ifdef __APPLE__
+				auto stat = raven_darwin::proc_stream(entry.path() / "stat");
+#else
 				std::ifstream stat(entry.path() / "stat");
+#endif
 				std::string text;
 				std::getline(stat, text);
 				pid_t parent = 0;
@@ -1015,7 +1039,11 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 			};
 			append_threads(uint32_t(::getpid()), objects.process_request(request));
 			std::error_code error;
+#ifdef __APPLE__
+			for (const auto &entry : raven_darwin::proc_directory(error)) {
+#else
 			for (const auto &entry : std::filesystem::directory_iterator("/proc", error)) {
+#endif
 				const auto name = entry.path().filename().string();
 				if (name.empty() || !std::all_of(name.begin(), name.end(), [](char c) { return c >= '0' && c <= '9'; }))
 					continue;
@@ -1215,7 +1243,11 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 			break;
 		case 2: {
 			uint64_t pages = 0, resident = 0;
+#ifdef __APPLE__
+			auto statm = raven_darwin::proc_stream("/proc/self/statm");
+#else
 			std::ifstream statm("/proc/self/statm");
+#endif
 			statm >> pages >> resident;
 			info.assign(32, 0);
 			put(0, 8ULL << 30, 8);

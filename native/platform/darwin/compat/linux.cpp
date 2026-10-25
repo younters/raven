@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <ifaddrs.h>
+#include <libproc.h>
 #include <net/if_dl.h>
 #include <linux/futex.h>
 #include <mach/mach.h>
@@ -72,6 +73,12 @@ int no_sigpipe(int descriptor)
 	return descriptor;
 }
 
+// macOS has no SOCK_SEQPACKET for Unix sockets: such a socket is a stream socket that frames its messages (see sockets.cpp).
+bool sequenced_packets(int domain, int type)
+{
+	return domain == AF_UNIX && (type & ~(SOCK_CLOEXEC | SOCK_NONBLOCK)) == SOCK_SEQPACKET;
+}
+
 int fail(int descriptor)
 {
 	const int error = errno;
@@ -132,8 +139,21 @@ extern "C" {
 
 ssize_t raven_darwin_readlink(const char *path, char *buffer, size_t size)
 {
-	if (strcmp(path, "/proc/self/exe") != 0)
+	// /proc/<pid>/exe: the program another process runs, by the same canonical path.
+	const pid_t process = raven_darwin::proc_process(path, "exe");
+	if (process < 0)
 		return (readlink)(path, buffer, size);
+	if (process != getpid()) {
+		char found[PROC_PIDPATHINFO_MAXSIZE], resolved[PATH_MAX];
+		if (proc_pidpath(process, found, sizeof found) <= 0) {
+			errno = ENOENT;
+			return -1;
+		}
+		const char *name = realpath(found, resolved) ? resolved : found;
+		const size_t length = std::min(size, strlen(name));
+		memcpy(buffer, name, length);
+		return ssize_t(length);
+	}
 	try {
 		const auto self = raven_darwin::executable_path().string();
 		const size_t length = std::min(size, self.size());
@@ -312,20 +332,23 @@ int dup3(int from, int to, int flags)
 
 int raven_darwin_socket(int domain, int type, int protocol)
 {
-	const int descriptor = (socket)(domain, type & ~(SOCK_CLOEXEC | SOCK_NONBLOCK), protocol);
+	const bool packets = sequenced_packets(domain, type);
+	const int descriptor = (socket)(domain, packets ? SOCK_STREAM : type & ~(SOCK_CLOEXEC | SOCK_NONBLOCK), protocol);
 	if (descriptor < 0)
 		return -1;
-	if (set_flags(descriptor, type & SOCK_CLOEXEC, type & SOCK_NONBLOCK) != 0)
+	if (set_flags(descriptor, type & SOCK_CLOEXEC, type & SOCK_NONBLOCK) != 0 || (packets && raven_darwin_frame_socket(descriptor) != 0))
 		return fail(descriptor);
 	return no_sigpipe(descriptor);
 }
 
 int raven_darwin_socketpair(int domain, int type, int protocol, int descriptors[2])
 {
-	if ((socketpair)(domain, type & ~(SOCK_CLOEXEC | SOCK_NONBLOCK), protocol, descriptors) != 0)
+	const bool packets = sequenced_packets(domain, type);
+	if ((socketpair)(domain, packets ? SOCK_STREAM : type & ~(SOCK_CLOEXEC | SOCK_NONBLOCK), protocol, descriptors) != 0)
 		return -1;
 	for (int i = 0; i < 2; i++) {
-		if (set_flags(descriptors[i], type & SOCK_CLOEXEC, type & SOCK_NONBLOCK) != 0) {
+		if (set_flags(descriptors[i], type & SOCK_CLOEXEC, type & SOCK_NONBLOCK) != 0 ||
+			(packets && raven_darwin_frame_socket(descriptors[i]) != 0)) {
 			const int error = errno;
 			close(descriptors[0]);
 			close(descriptors[1]);
@@ -342,7 +365,9 @@ int accept4(int descriptor, struct sockaddr *address, socklen_t *length, int fla
 	const int accepted = accept(descriptor, address, length);
 	if (accepted < 0)
 		return -1;
-	if (set_flags(accepted, flags & SOCK_CLOEXEC, flags & SOCK_NONBLOCK) != 0)
+	// A connection takes the listener's send buffer but not its low-water mark, which makes it a sequenced-packet socket.
+	if (set_flags(accepted, flags & SOCK_CLOEXEC, flags & SOCK_NONBLOCK) != 0 ||
+		(raven_darwin_framed_socket(descriptor) && raven_darwin_frame_socket(accepted) != 0))
 		return fail(accepted);
 	return no_sigpipe(accepted);
 }
