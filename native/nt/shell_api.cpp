@@ -361,9 +361,23 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context)
 		if (call[3]) call.store_pointer(call[3], 0);
 		call.ret(0x80070002U);
 	});
-	// The program runs as the host account, which holds administrator rights only when it is root.
-	// The application identity only groups taskbar buttons; there is no taskbar to group them on.
-	registry.add("SetCurrentProcessExplicitAppUserModelID", 1, [](ApiCall &call) { call.ret(0); });
+	// Keep the explicit identity even without a taskbar; callers retrieve an owned copy through the paired getter.
+	auto app_id = std::make_shared<std::u16string>();
+	registry.add("SetCurrentProcessExplicitAppUserModelID", 1, [app_id](ApiCall &call) {
+		if (!call[0]) { call.ret(0x80070057U); return; }
+		*app_id = call.wide(call[0]);
+		call.ret(0);
+	});
+	registry.add("GetCurrentProcessExplicitAppUserModelID", 1, [app_id, &context](ApiCall &call) {
+		if (!call[0]) { call.ret(0x80070057U); return; }
+		call.store_pointer(call[0], 0);
+		if (app_id->empty()) { call.ret(0x80004005U); return; }
+		const auto buffer = context.allocator.allocate((app_id->size() + 1) * 2, true);
+		if (!buffer) { call.ret(0x8007000eU); return; }
+		call.put_wide(buffer, *app_id, app_id->size() + 1);
+		call.store_pointer(call[0], buffer);
+		call.ret(0);
+	});
 	// The account of a prefix is an administrator under User Account Control: the check answers yes only in an elevated process.
 	// Raven does not stand for the privileges of the host account.
 	// There are no default-program associations to ask about: the registration object is not available.

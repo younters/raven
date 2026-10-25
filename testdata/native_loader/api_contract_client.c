@@ -58,6 +58,14 @@ UINT raven_entry(void)
 	if (!device_set || !enum_device || !destroy_set) return 15;
 	HANDLE devices = device_set(NULL, NULL, NULL, 4);
 	if (devices == INVALID_HANDLE_VALUE || enum_device(devices, 0, NULL) || GetLastError() != ERROR_NO_MORE_ITEMS || !destroy_set(devices)) return 16;
+	HMODULE shell = LoadLibraryA("shell32.dll"), ole = LoadLibraryA("ole32.dll");
+	HRESULT (WINAPI *set_id)(const WCHAR *) = (void *)GetProcAddress(shell, "SetCurrentProcessExplicitAppUserModelID");
+	HRESULT (WINAPI *get_id)(WCHAR **) = (void *)GetProcAddress(shell, "GetCurrentProcessExplicitAppUserModelID");
+	void (WINAPI *free_id)(void *) = (void *)GetProcAddress(ole, "CoTaskMemFree");
+	WCHAR *id = (void *)0x100;
+	if (!set_id || !get_id || !free_id || get_id(&id) >= 0 || id) return 17;
+	if (set_id(L"raven.test") || get_id(&id) || !id || id[0] != L'r' || id[9] != L't' || id[10]) return 18;
+	free_id(id);
 	CloseHandle(readable);
 	CloseHandle(mapping);
 	return 0;
