@@ -1357,7 +1357,7 @@ struct CocoaPresentation::State {
 		for (auto &[handle, window] : surfaces)
 			if (const auto pixels = window->presenter.pending_pixels(); !pixels.empty()) {
 				@autoreleasepool {
-					show(*window, pixels, window->width, window->height);
+					show(*window, pixels, window->width, window->height, false);
 				}
 			}
 		events.swap(pending);
