@@ -13,6 +13,8 @@
 
 namespace raven {
 
+struct DesktopIcon;
+
 // pointer_wheel: message carries the signed wheel delta in 1/120 notches (wparam 1 for the horizontal wheel), x and y the pointer position.
 // popup_done: the compositor dismissed a popup (for example by a click outside it).
 // pointer_relative: x and y carry the movement of the mouse itself, unaccelerated and not stopped by the screen edges.
@@ -87,6 +89,11 @@ struct DesktopPresentation {
 	// Minimizes a window to the host's own place for it instead of removing it; the host reports the window's restoration as
 	// WM_SYSCOMMAND SC_RESTORE.
 	std::function<void(uint64_t handle)> minimize;
+	// The effective Windows cursor and visibility count; a custom image is borrowed for this call only. Null handle hides the pointer.
+	std::function<void(uint64_t handle,int show_count,const DesktopIcon *image)> cursor;
+	// Device pixels per host point, and the scale selected by the runtime (one for DPI-unaware programs).
+	std::function<double()> backing_scale;
+	std::function<void(double)> render_scale;
 	HostPlatform platform = default_host_platform;
 };
 

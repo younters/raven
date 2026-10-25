@@ -241,10 +241,12 @@ void NativeWindows::track_pointer(uint64_t window)
 void NativeWindows::register_ext_api(ApiRegistry &registry)
 {
 	// ---- DPI: one 96 dpi screen ----
+#ifndef __APPLE__
 	registry.add("GetDpiForSystem", 0, [](ApiCall &call) { call.ret(96); });
 	registry.add("GetDpiForWindow", 1, [](ApiCall &call) { call.ret(96); });
 	registry.add("GetSystemDpiForProcess", 1, [](ApiCall &call) { call.ret(96); });
 	registry.add("GetSystemMetricsForDpi", 2, [](ApiCall &call) { call.ret(0); });
+#endif
 	registry.add("GetMessagePos", 0, [this](ApiCall &call) { call.ret(uint32_t(uint16_t(cursor_x)) | (uint32_t(uint16_t(cursor_y)) << 16)); });
 	registry.add("mouse_event", 5, [](ApiCall &call) { call.ret(0); });
 	registry.add("DragDetect", 3, [](ApiCall &call) { call.ret(0); });
@@ -986,10 +988,11 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 	registry.add("RegisterHotKey", 4, [](ApiCall &call) { call.ret(1); });
 	registry.add("UnregisterHotKey", 2, [](ApiCall &call) { call.ret(1); });
 	registry.add("SystemParametersInfoA", 4, [](ApiCall &call) { call.ret(1); });
-	registry.add("SystemParametersInfoW", 4, [this](ApiCall &call) {
+	const auto system_parameters = [this](ApiCall &call, uint32_t dpi) {
 		const uint32_t action = call.u32(0), parameter = call.u32(1);
 		const uint64_t pointer = call[2];
 		const auto &screen = objects.nonclient_metrics();
+		const auto scaled = [dpi](int32_t value) { return int32_t((int64_t(value)*dpi+(value<0 ? -48 : 48))/96); };
 		switch (action) {
 		case 0x29: {
 			// NONCLIENTMETRICSW: sizes, then caption, small caption, menu, status and message fonts.
@@ -997,25 +1000,25 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 			std::vector<uint8_t> bytes(std::max<size_t>(size, 504), 0);
 			const auto put32 = [&](size_t at, int32_t value) { std::memcpy(bytes.data() + at, &value, 4); };
 			put32(0, int32_t(size));
-			put32(4, 1);
-			put32(8, 17); put32(12, 17);
-			put32(16, 18); put32(20, 19);
-			write_logfont(bytes, 24, -12, 400);
-			put32(116, 17); put32(120, 19);
-			write_logfont(bytes, 124, -12, 400);
-			put32(216, 18); put32(220, 19);
-			write_logfont(bytes, 224, -12, 400);
-			write_logfont(bytes, 316, -12, 400);
-			write_logfont(bytes, 408, -12, 400);
+			put32(4, scaled(1));
+			put32(8, scaled(17)); put32(12, scaled(17));
+			put32(16, scaled(18)); put32(20, scaled(19));
+			write_logfont(bytes, 24, scaled(-12), 400);
+			put32(116, scaled(17)); put32(120, scaled(19));
+			write_logfont(bytes, 124, scaled(-12), 400);
+			put32(216, scaled(18)); put32(220, scaled(19));
+			write_logfont(bytes, 224, scaled(-12), 400);
+			write_logfont(bytes, 316, scaled(-12), 400);
+			write_logfont(bytes, 408, scaled(-12), 400);
 			if (size > 500)
-				put32(500, 4);
+				put32(500, scaled(4));
 			call.write(pointer, std::span<const uint8_t>(bytes.data(), std::min<size_t>(size, bytes.size())));
 			call.ret(1);
 			return;
 		}
 		case 0x1f: {
 			std::vector<uint8_t> bytes(92, 0);
-			write_logfont(bytes, 0, -12, 400);
+			write_logfont(bytes, 0, scaled(-12), 400);
 			call.write(pointer, bytes);
 			call.ret(1);
 			return;
@@ -1023,9 +1026,9 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 		case 0x2d: {
 			// ICONMETRICS: size, horizontal and vertical spacing, wrap flag, font.
 			std::vector<uint8_t> bytes(108, 0);
-			const int32_t values[] = {108, 75, 75, 1};
+			const int32_t values[] = {108, scaled(75), scaled(75), 1};
 			std::memcpy(bytes.data(), values, 16);
-			write_logfont(bytes, 16, -12, 400);
+			write_logfont(bytes, 16, scaled(-12), 400);
 			call.write(pointer, bytes);
 			call.ret(1);
 			return;
@@ -1057,7 +1060,9 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 		default:
 			call.ret(1);
 		}
-	});
+	};
+	registry.add("SystemParametersInfoW", 4, [this,system_parameters](ApiCall &call) { system_parameters(call,effective_dpi()); });
+	registry.add("SystemParametersInfoForDpi", 5, [system_parameters](ApiCall &call) { system_parameters(call,call.u32(4)); });
 }
 
 }

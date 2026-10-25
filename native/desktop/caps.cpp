@@ -28,8 +28,8 @@ uint32_t device_caps(const DesktopObjects &objects, const DesktopDC &dc, int32_t
 	const bool screen_dc = dc.window != 0;
 	switch (index) {
 	case 2: return screen_dc ? 1 : 0;                          // TECHNOLOGY: DT_RASDISPLAY or DT_RASPRINTER-free memory
-	case 4: return uint32_t(int64_t(screen.screen_x) * 254 / 960);  // HORZSIZE in mm at 96 dpi
-	case 6: return uint32_t(int64_t(screen.screen_y) * 254 / 960);  // VERTSIZE
+	case 4: return uint32_t(int64_t(screen.screen_x) * 254 / (screen.dpi * 10)); // HORZSIZE in mm
+	case 6: return uint32_t(int64_t(screen.screen_y) * 254 / (screen.dpi * 10)); // VERTSIZE
 	case 8: return screen_dc ? uint32_t(screen.screen_x) : bitmap->width;
 	case 10: return screen_dc ? uint32_t(screen.screen_y) : bitmap->height;
 	case 12: return screen_dc ? 32 : bitmap->depth;                // BITSPIXEL
@@ -38,7 +38,7 @@ uint32_t device_caps(const DesktopObjects &objects, const DesktopDC &dc, int32_t
 	case 38: return 0x1 | 0x8 | 0x80 | 0x200;                      // RC_BITBLT | RC_BITMAP64 | RC_DI_BITMAP | RC_DIBTODEV
 	case 40: case 42: return 36;                                   // ASPECTX / ASPECTY
 	case 44: return 51;                                           // ASPECTXY
-	case 88: case 90: return 96;                                  // LOGPIXELSX / LOGPIXELSY
+	case 88: case 90: return screen.dpi;                          // LOGPIXELSX / LOGPIXELSY
 	case 104: return 0;                                           // SIZEPALETTE: no palette device
 	case 106: return 0;                                           // NUMRESERVED
 	case 108: return screen_dc ? 24 : bitmap->depth;               // COLORRES

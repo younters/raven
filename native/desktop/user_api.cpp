@@ -50,6 +50,9 @@ void NativeWindows::register_api(ApiRegistry &registry)
 	register_long_api(registry);
 	register_ansi_api(registry);
 	register_theme_api(registry);
+#ifdef __APPLE__
+	register_dpi_api(registry);
+#endif
 
 	// Rectangle helpers are pure arithmetic on guest RECTs.
 	registry.add("InflateRect", 3, [](ApiCall &call) {
@@ -356,15 +359,21 @@ void NativeWindows::register_api(ApiRegistry &registry)
 	registry.add("ShowCursor", 1, [this](ApiCall &call) {
 		cursor_count += call.u32(0) ? 1 : -1;
 		update_warp_lock(false);
+		sync_cursor();
 		call.ret(uint32_t(cursor_count));
 	});
+	registry.add("GetCursor", 0, [this](ApiCall &call) { call.ret(current_cursor); });
 	registry.add("SetCursor", 1, [this](ApiCall &call) {
 		const auto previous = current_cursor;
-		current_cursor = call[0];
-		update_warp_lock(false);
+		set_cursor(call[0]);
 		call.ret(previous);
 	});
-	registry.add("DestroyCursor", 1, [](ApiCall &call) { call.ret(1); });
+	registry.add("DestroyCursor", 1, [this](ApiCall &call) {
+		if (call[0]>=desktop_stock_cursor && call[0]<desktop_stock_cursor+desktop_stock_cursor_count) { call.ret(1); return; }
+		const auto *image=std::as_const(objects).icon(call[0]);
+		if (!image || !image->cursor) { call.fail(1402); return; }
+		call.ret(image->shared || objects.erase(call[0]));
+	});
 	// Message boxes need the dialog manager; until it exists the text is reported and the first button is chosen.
 	const auto message_box = [](ApiCall &call, bool wide) {
 		const auto text = wide ? call.wide(call[1], 8192) : from_utf8(call.narrow(call[1], 8192));

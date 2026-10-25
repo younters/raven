@@ -506,7 +506,22 @@ static const std::vector<uint8_t> &screen_device_caps_prelude()
 		0xfa, 0x58, 0x74, 0x15, 0x83, 0xfa, 0x5a, 0x74, 0x10, 0x83, 0xfa, 0x0e, 0x74, 0x11, 0x83, 0xfa, 0x78, 0x74, 0x12, 0xeb, 0x1e, 0x8b, 0x40, 0x18,
 		0xc3, 0xb8, 0x60, 0x00, 0x00, 0x00, 0xc3, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x31, 0xc0, 0xc3, 0x89, 0xd0, 0x41, 0x8b, 0x84, 0x82, 0x00, 0x04,
 		0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+#ifdef __APPLE__
+	// Window and memory DCs use the process's effective DPI. Keep other capabilities on the fast path.
+	static const auto scaled=[] {
+		auto result=code;
+		const std::array<uint8_t,6> fixed{0xb8,0x60,0,0,0,0xc3};
+		const auto at=std::search(result.begin(),result.end(),fixed.begin(),fixed.end());
+		if (at==result.end()) throw std::runtime_error("missing fixed DPI prelude");
+		const auto offset=size_t(at-result.begin());
+		std::fill_n(at,6,0x90);
+		result[offset]=0xeb; result[offset+1]=uint8_t(result.size()-5-offset-2);
+		return result;
+	}();
+	return scaled;
+#else
 	return code;
+#endif
 }
 
 // Window state the guest reads from the window table the runtime keeps (see NativeWindows::publish_windows), found through the served
@@ -654,12 +669,14 @@ static const std::vector<uint8_t> &window_child_prelude()
 	return code;
 }
 
+#ifndef __APPLE__
 static const std::vector<uint8_t> &window_dpi_prelude()
 {
 	static const std::vector<uint8_t> code{
 		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0xb8, 0x60, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
 	return code;
 }
+#endif
 
 static const std::vector<uint8_t> &focus_prelude()
 {
@@ -1094,8 +1111,10 @@ static const std::vector<uint8_t> *block_prelude(std::string_view module, std::s
 		return &window_outer_prelude();
 	if (name == "IsChild")
 		return &window_child_prelude();
+#ifndef __APPLE__
 	if (name == "GetDpiForWindow")
 		return &window_dpi_prelude();
+#endif
 	if (name == "GetFocus")
 		return &focus_prelude();
 	if (name == "GetMenuItemCount")
@@ -1553,7 +1572,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"RtlWakeAddressSingle", "RtlWakeAddressAll",
 		// What the runtime's own components import from ntdll, which they need whether a program loads them at start or later.
 		"DbgPrint", "NtCancelIoFile", "NtCreateSection", "NtFsControlFile", "NtReadFile", "RtlCreateUnicodeStringFromAsciiz", "RtlFreeHeap",
-		"RtlFreeUnicodeString", "RtlDllShutdownInProgress", "RtlGetVersion", "RtlIpv6AddressToStringExW", "RtlIpv6StringToAddressW", "RtlLengthSid", "RtlUnicodeToMultiByteN",
+		"RtlFreeUnicodeString", "RtlDllShutdownInProgress", "RtlGetVersion", "RtlGetNtVersionNumbers", "RtlIpv6AddressToStringExW", "RtlIpv6StringToAddressW", "RtlLengthSid", "RtlUnicodeToMultiByteN",
 		"RtlUnicodeToMultiByteSize", "RtlIsTextUnicode", "RtlImageNtHeader", "NtDeleteKey",
 		// The unwinding of 64-bit frames, which libraries built with their own exception handling import.
 		"RtlCaptureContext", "RtlLookupFunctionEntry", "RtlPcToFileHeader", "RtlVirtualUnwind", "RtlUnwindEx",

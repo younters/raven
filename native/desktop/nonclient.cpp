@@ -2,6 +2,16 @@
 
 namespace raven {
 
+DesktopMetrics DesktopMetrics::at_dpi(uint32_t value) const
+{
+	auto result=*this;
+	for (auto *metric : {&result.border_x,&result.border_y,&result.dialog_x,&result.dialog_y,&result.frame_x,&result.frame_y,
+		&result.caption,&result.small_caption,&result.menu,&result.button_x,&result.button_y,&result.small_button_x,&result.small_button_y})
+		*metric=int32_t((int64_t(*metric)*value+dpi/2)/dpi);
+	result.dpi=value;
+	return result;
+}
+
 int32_t DesktopMetrics::get(int32_t index) const
 {
 	switch (index) {
@@ -51,6 +61,12 @@ struct Nonclient {
 
 DesktopRect adjust_window_rect(const DesktopMetrics &metrics,DesktopRect rect,uint32_t style,bool menu,uint32_t ex_style)
 {
+	if (metrics.dpi!=96) {
+		// ReactOS counts border units before multiplying by SM_CXBORDER. Scale the result once, not those units twice.
+		const auto frame=adjust_window_rect(metrics.at_dpi(96),{0,0,0,0},style,menu,ex_style);
+		const auto scale=[&](int32_t value) { return int32_t((int64_t(value)*metrics.dpi+(value<0 ? -48 : 48))/96); };
+		return {rect.left+scale(frame.left),rect.top+scale(frame.top),rect.right+scale(frame.right),rect.bottom+scale(frame.bottom)};
+	}
 	Nonclient component{metrics};
 	Nonclient::RECT result{rect.left,rect.top,rect.right,rect.bottom};
 	component.RealAdjustWindowRectEx(&result,style,menu,ex_style);

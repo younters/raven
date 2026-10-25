@@ -141,6 +141,15 @@ uint64_t NativeDesktop::create(std::span<const uint64_t> args)
 		cursor->cursor = true;
 		cursor->hotspot_x = uint32_t(bytes[0] | bytes[1] << 8);
 		cursor->hotspot_y = uint32_t(bytes[2] | bytes[3] << 8);
+		// Resource hot spots use the source bitmap's coordinates, including when LoadImage requests another size.
+		if (bytes.size()>=20 && bytes[4]==40 && !bytes[5] && !bytes[6] && !bytes[7]) {
+			const auto number=[&](size_t at) { return uint32_t(bytes[at]) | uint32_t(bytes[at+1])<<8 | uint32_t(bytes[at+2])<<16 | uint32_t(bytes[at+3])<<24; };
+			const auto source_width=number(8),source_height=number(12)/2;
+			if (source_width && source_height) {
+				cursor->hotspot_x=uint32_t(uint64_t(cursor->hotspot_x)*cursor->image.color.width/source_width);
+				cursor->hotspot_y=uint32_t(uint64_t(cursor->hotspot_y)*cursor->image.color.height/source_height);
+			}
+		}
 	}
 	return handle;
 }

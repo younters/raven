@@ -189,6 +189,23 @@ std::optional<ActivationContexts::Assembly> ActivationContexts::parse(std::strin
 			}
 		} else if (element == "supportedos" && !closing && attributes.contains("id")) {
 			root.supported_os.push_back(lowered(attributes["id"]));
+		} else if ((element == "dpiaware" || element == "dpiawareness") && !closing && !in_dependency) {
+			const auto end_text=text.find('<',at);
+			auto value=lowered(std::string_view(text).substr(at,end_text-at));
+			value.erase(std::remove_if(value.begin(),value.end(),[](char c) { return c==' ' || c=='\n' || c=='\r' || c=='\t'; }),value.end());
+			// The newer element takes precedence over dpiAware, including an explicit Unaware declaration.
+			if (element=="dpiawareness") {
+				for (size_t start=0;start<value.size();) {
+					const auto comma=value.find(',',start);
+					const auto mode=value.substr(start,comma==value.npos ? value.size()-start : comma-start);
+					if (mode=="permonitorv2" || mode=="permonitor" || mode=="system" || mode=="unaware") {
+						root.dpi_context=mode=="permonitorv2" ? -4 : mode=="permonitor" ? -3 : mode=="system" ? -2 : -1;
+						break;
+					}
+					if (comma==value.npos) break;
+					start=comma+1;
+				}
+			} else if (!root.dpi_context) root.dpi_context=value=="true/pm" ? -3 : value=="true" ? -2 : -1;
 		} else if (element == "windowclass" && !closing && !self_closing && in_file && !in_dependency) {
 			const auto close = text.find('<', at);
 			if (close == text.npos)
@@ -203,7 +220,7 @@ std::optional<ActivationContexts::Assembly> ActivationContexts::parse(std::strin
 		}
 	}
 	// A program's manifest may leave out its own identity and still say which versions of Windows it supports.
-	if (!assembly || (!identified && root.dependencies.empty() && root.supported_os.empty() && root.classes.empty()))
+	if (!assembly || (!identified && root.dependencies.empty() && root.supported_os.empty() && root.classes.empty() && !root.dpi_context))
 		return std::nullopt;
 	return root;
 }

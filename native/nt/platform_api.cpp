@@ -1113,6 +1113,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	// Display scaling: contexts are the small negative values of the Windows API; there is one display scale, so the setting is only remembered.
+#ifndef __APPLE__
 	auto dpi_context = std::make_shared<int64_t>(-1);
 	registry.add("IsValidDpiAwarenessContext", 1, [](ApiCall &call) {
 		const auto value = int64_t(call[0]);
@@ -1129,6 +1130,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(uint64_t(previous));
 	});
 	registry.add("GetThreadDpiAwarenessContext", 0, [dpi_context](ApiCall &call) { call.ret(uint64_t(*dpi_context)); });
+#endif
 	// advapi32 security helpers that need no token or policy database.
 	registry.add("AllocateAndInitializeSid", 11, [&context](ApiCall &call) {
 		const uint8_t count = uint8_t(call[1]);

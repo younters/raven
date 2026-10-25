@@ -10,7 +10,6 @@ namespace raven {
 namespace {
 
 constexpr uint32_t ws_hscroll = 0x100000, ws_vscroll = 0x200000;
-constexpr int32_t arrow_size = 17, minimum_thumb = 8;
 
 // Parts of a scroll bar a pointer can hit.
 enum Part { none = 0, line_up = 1, line_down = 2, page_up = 3, page_down = 4, thumb = 5 };
@@ -29,6 +28,7 @@ bool scrollable(const DesktopScroll &scroll)
 
 NativeWindows::ScrollGeometry NativeWindows::scroll_geometry(const DesktopWindow &window, int bar) const
 {
+	const int32_t arrow_size=int32_t(system_metric(objects.nonclient_metrics(),2)),minimum_thumb=int32_t(8*objects.nonclient_metrics().dpi/96);
 	ScrollGeometry geometry{};
 	const uint32_t flag = bar == 1 ? ws_vscroll : ws_hscroll;
 	if (!(window.style & flag))
@@ -337,7 +337,7 @@ void NativeWindows::register_scroll_api(ApiRegistry &registry)
 		std::memcpy(bytes.data(), &size, 4);
 		const int32_t box[4] = {geometry.bar.left, geometry.bar.top, geometry.bar.right, geometry.bar.bottom};
 		std::memcpy(bytes.data() + 4, box, 16);
-		const int32_t line_button = arrow_size;
+		const int32_t line_button = int32_t(system_metric(objects.nonclient_metrics(),2));
 		std::memcpy(bytes.data() + 20, &line_button, 4);
 		const int32_t thumb_start = geometry.has_thumb ? (geometry.vertical ? geometry.thumb.top - geometry.bar.top : geometry.thumb.left - geometry.bar.left) : 0;
 		const int32_t thumb_end = geometry.has_thumb ? (geometry.vertical ? geometry.thumb.bottom - geometry.bar.top : geometry.thumb.right - geometry.bar.left) : 0;
@@ -355,6 +355,7 @@ void NativeWindows::register_scroll_api(ApiRegistry &registry)
 // Draws the scroll bars of every window of one top-level surface into its bitmap.
 void NativeWindows::paint_scrollbars(uint64_t root)
 {
+	const int32_t arrow_size=int32_t(system_metric(objects.nonclient_metrics(),2));
 	const auto *top = objects.window(root);
 	if (!top || !top->bitmap)
 		return;

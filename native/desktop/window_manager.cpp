@@ -107,6 +107,11 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 	const bool previous = window->visible;
 	if (command > 11)
 		throw uint32_t(87);
+#ifdef __APPLE__
+	if (command) initialize_window_dpi(handle);
+	window=objects.window(handle);
+	if (!window) return previous;
+#endif
 	const bool hide = command == 0;
 	const bool minimize = command == 2 || command == 6 || command == 7 || command == 11;
 	const bool maximize = command == 3;
@@ -782,7 +787,10 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			return;
 		}
 		const bool minimized = window->style & ws_minimize, maximized = window->style & ws_maximize;
-		const DesktopRect normal = (minimized || maximized) && window->restore.right > window->restore.left ? window->restore : window->outer;
+		DesktopRect normal = (minimized || maximized) && window->restore.right > window->restore.left ? window->restore : window->outer;
+#ifdef __APPLE__
+		normal=placement_rect(normal,false);
+#endif
 		std::vector<uint8_t> bytes(44);
 		const uint32_t fields[11] = {44, 0, uint32_t(minimized ? 2 : maximized ? 3 : window->visible ? 1 : 0), UINT32_MAX, UINT32_MAX, UINT32_MAX,
 			UINT32_MAX, uint32_t(normal.left), uint32_t(normal.top), uint32_t(normal.right), uint32_t(normal.bottom)};
@@ -804,7 +812,10 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			return;
 		}
 		try {
-			const DesktopRect normal{int32_t(fields[7]), int32_t(fields[8]), int32_t(fields[9]), int32_t(fields[10])};
+			DesktopRect normal{int32_t(fields[7]), int32_t(fields[8]), int32_t(fields[9]), int32_t(fields[10])};
+#ifdef __APPLE__
+			normal=placement_rect(normal,true);
+#endif
 			objects.window(call[0])->restore = normal;
 			// The window becomes visible before it is sized, so its size notifications reach a window that is already shown.
 			if (fields[2] != 0)
@@ -1099,9 +1110,11 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	registry.add("EnumDisplayDevicesA", 4, [=](ApiCall &call) { display_device(call, false); });
 	registry.add("EnumDisplayDevicesW", 4, [=](ApiCall &call) { display_device(call, true); });
 	// Programs declare how they handle scaling; the host's windows are not scaled by a second layer, so every declaration is accepted.
+#ifndef __APPLE__
 	registry.add("SetProcessDPIAware", 0, [](ApiCall &call) { call.ret(1); });
 	registry.add("IsProcessDPIAware", 0, [](ApiCall &call) { call.ret(1); });
 	registry.add("SetProcessDpiAwarenessContext", 1, [](ApiCall &call) { call.ret(1); });
+#endif
 	// There is no display topology to report: callers fall back to their single-monitor behavior.
 	registry.add("GetDisplayConfigBufferSizes", 3, [](ApiCall &call) {
 		if (call[1]) call.store<uint32_t>(call[1], 0);

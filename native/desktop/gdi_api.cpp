@@ -2,6 +2,7 @@
 #include "gdi.h"
 #include "nt/api.h"
 #include "nt/text.h"
+#include "graphics/stretch.h"
 #include <sys/mman.h>
 
 #include <algorithm>
@@ -1657,15 +1658,26 @@ void NativeDesktop::register_image_api(ApiRegistry &registry)
 				return;
 			}
 			const auto name = wide_name(call, call[1], ansi);
-			if (type == 0)
-				call.ret(bitmap_resource(call, call[0], name, (flags & 0x2000) != 0));
+			if (type == 0) {
+				const auto handle=bitmap_resource(call,call[0],name,(flags & 0x2000)!=0);
+				auto *bitmap=objects.bitmap(handle);
+				if ((cx && cx!=bitmap->width) || (cy && cy!=bitmap->height)) {
+					const auto width=cx ? cx : bitmap->width,height=cy ? cy : bitmap->height;
+					if (width>8192 || height>8192 || uint64_t(width)*height>16*1024*1024) { objects.erase(handle); throw uint32_t(87); }
+					auto pixels=stretch_blackonwhite(bitmap->pixels(),bitmap->width,bitmap->height,4,width,height);
+					const auto resized=allocate_bitmap(width,height,32,false,true);
+					if (!resized) { objects.erase(handle); throw uint32_t(8); }
+					std::copy(pixels.begin(),pixels.end(),objects.bitmap(resized)->pixels().begin());
+					objects.erase(handle);
+					call.ret(resized);
+				} else call.ret(handle);
+			}
 			else if (type == 1)
 				call.ret(icon_resource(call, call[0], name, cx, cy));
 			else if (call[0] == 0 && name >= 32512 && name < 32512 + desktop_stock_cursor_count)
 				call.ret(desktop_stock_cursor + (name - 32512));
 			else
-				// Module cursors are not rendered by the host; callers receive the arrow.
-				call.ret(desktop_stock_cursor);
+				call.ret(load_cursor(call[0],name,cx,cy,(flags & 0x8000)!=0));
 		});
 	};
 	registry.add("LoadImageW", 6, [=](ApiCall &call) { load_image(call, false); });
@@ -1683,10 +1695,7 @@ void NativeDesktop::register_image_api(ApiRegistry &registry)
 		});
 	});
 	registry.add("LoadCursorA", 2, [=, this](ApiCall &call) {
-		if (!call[0] && call[1] >= 32512 && call[1] < 32512 + desktop_stock_cursor_count)
-			call.ret(desktop_stock_cursor + (call[1] - 32512));
-		else
-			call.ret(desktop_stock_cursor);
+		guarded(call,0,[&] { call.ret(load_cursor(call[0],wide_name(call,call[1],true))); });
 	});
 	registry.add("LoadStringA", 4, [=, this](ApiCall &call) {
 		guarded(call, 0, [&] {
@@ -1754,6 +1763,32 @@ void NativeDesktop::register_image_api(ApiRegistry &registry)
 			}
 		});
 	});
+	registry.add("CreateCursor", 7, [=, this](ApiCall &call) {
+		guarded(call, 0, [&] {
+			const uint32_t width=call.u32(3),height=call.u32(4);
+			if (!width || !height || width>1024 || height>1024 || call.u32(1)>=width || call.u32(2)>=height || !call[5] || !call[6])
+				throw uint32_t(87);
+			const size_t stride=((size_t(width)+15)/16)*2;
+			const auto and_bits=call.read(call[5],stride*height),xor_bits=call.read(call[6],stride*height);
+			DesktopIcon icon{};
+			icon.cursor=true; icon.monochrome=true; icon.hotspot_x=call.u32(1); icon.hotspot_y=call.u32(2);
+			auto &image=icon.image;
+			image.color={width,height,std::vector<uint8_t>(size_t(width)*height*4)};
+			image.and_mask.resize(size_t(width)*height); image.xor_mask.resize(size_t(width)*height);
+			for (uint32_t y=0;y<height;++y)
+				for (uint32_t x=0;x<width;++x) {
+					const size_t at=size_t(y)*width+x;
+					image.and_mask[at]=(and_bits[y*stride+x/8]>>(7-x%8)) & 1;
+					image.xor_mask[at]=(xor_bits[y*stride+x/8]>>(7-x%8)) & 1;
+					image.color.rgba[at*4]=image.color.rgba[at*4+1]=image.color.rgba[at*4+2]=image.xor_mask[at] ? 255 : 0;
+					image.color.rgba[at*4+3]=image.and_mask[at] ? 0 : 255;
+				}
+			image.has_alpha=false;
+			const auto handle=objects.add(std::move(icon));
+			if (!handle) throw uint32_t(8);
+			call.ret(handle);
+		});
+	});
 	// CreateIcon(instance, width, height, planes, bits per pixel, AND bits, XOR bits): a monochrome mask whose rows are padded to words,
 	// and the color image in the same top-down rows, at 32 bits per pixel or as a second monochrome plane.
 	registry.add("CreateIcon", 7, [=, this](ApiCall &call) {
@@ -1808,6 +1843,32 @@ void NativeDesktop::register_image_api(ApiRegistry &registry)
 			const auto mask_handle = call.load_pointer(call[0] + (width == 8 ? 16 : 12)), color_handle = call.load_pointer(call[0] + (width == 8 ? 24 : 16));
 			const auto *mask = objects.bitmap(mask_handle);
 			const auto *color = objects.bitmap(color_handle);
+			if (mask && !color_handle && mask->depth==1 && mask->height && !(mask->height & 1)) {
+				DesktopIcon icon{};
+				icon.cursor=!is_icon; icon.monochrome=true;
+				icon.hotspot_x=call.load<uint32_t>(call[0]+4); icon.hotspot_y=call.load<uint32_t>(call[0]+8);
+				auto &image=icon.image;
+				const auto w=mask->width,h=mask->height/2;
+				image.color={w,h,std::vector<uint8_t>(size_t(w)*h*4)};
+				image.and_mask.resize(size_t(w)*h); image.xor_mask.resize(size_t(w)*h);
+				const auto bits=mask->pixels();
+				const size_t stride=((size_t(w)+15)/16)*2;
+				const auto bit=[&](uint32_t x,uint32_t y) {
+					const size_t row=mask->top_down ? y : mask->height-1-y;
+					return uint8_t((bits[row*stride+x/8]>>(7-x%8)) & 1);
+				};
+				for (uint32_t y=0;y<h;++y) for (uint32_t x=0;x<w;++x) {
+					const size_t at=size_t(y)*w+x;
+					image.and_mask[at]=bit(x,y); image.xor_mask[at]=bit(x,y+h);
+					image.color.rgba[at*4]=image.color.rgba[at*4+1]=image.color.rgba[at*4+2]=image.xor_mask[at] ? 255 : 0;
+					image.color.rgba[at*4+3]=image.and_mask[at] ? 0 : 255;
+				}
+				image.has_alpha=false;
+				const auto handle=objects.add(std::move(icon));
+				if (!handle) throw uint32_t(8);
+				call.ret(handle);
+				return;
+			}
 			if (!mask || !color || color->depth != 32)
 				throw uint32_t(120);
 			DesktopIcon icon{};

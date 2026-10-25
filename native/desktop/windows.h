@@ -411,6 +411,36 @@ private:
 	uint64_t next_raw_report=0x1000;
 	void raw_mouse_input(int64_t dx,int64_t dy,uint32_t button_flags,int16_t wheel);
 	uint64_t current_cursor=0;
+	void set_cursor(uint64_t handle);
+	void sync_cursor();
+#ifdef __APPLE__
+	int64_t dpi_context=-2;
+	bool dpi_declared=false;
+	double display_scale=1;
+	std::map<uint32_t,int64_t> thread_dpi_contexts;
+	void initialize_dpi();
+	void apply_dpi();
+	void register_dpi_api(ApiRegistry &registry);
+	std::set<uint64_t> initialized_dpi_windows;
+	void initialize_window_dpi(uint64_t handle);
+	DesktopRect placement_rect(DesktopRect rect,bool to_device) const;
+#endif
+	uint32_t effective_dpi() const
+	{
+#ifdef __APPLE__
+		if (const auto found=thread_dpi_contexts.find(environment.thread_id()); found!=thread_dpi_contexts.end() &&
+			(found->second==-1 || found->second==-5)) return 96;
+#endif
+		return objects.nonclient_metrics().dpi;
+	}
+#ifdef __APPLE__
+#ifdef RAVEN_SKIA
+	std::array<uint8_t,92> interface_font() const;
+	int32_t text_width(TextRenderer &renderer,std::u16string_view text) const;
+	int32_t draw_text(TextRenderer &renderer,paint::Canvas &canvas,std::u16string_view text,int32_t x,int32_t y,uint32_t color,
+		std::optional<size_t> underline=std::nullopt,int32_t limit=INT32_MAX) const;
+#endif
+#endif
 	// Mouse capture and timers belong to the initial guest thread's input state.
 	uint64_t capture=0;
 	struct Timer { uint64_t window,id,procedure; uint32_t interval; std::chrono::steady_clock::time_point due; bool system=false; uint32_t thread=0; };

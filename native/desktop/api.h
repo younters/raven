@@ -52,6 +52,8 @@ private:
 	uint64_t text_output(std::span<const uint64_t> arguments);
 #endif
 	uint64_t load_icon(std::span<const uint64_t> arguments);
+	uint64_t load_cursor(uint64_t instance,uint64_t name,uint32_t width=0,uint32_t height=0,bool shared=true);
+	std::map<std::array<uint64_t,3>,uint64_t> shared_cursors;
 	uint64_t load_string(std::span<const uint64_t> arguments);
 	bool menu_dispatch(std::string_view name);
 	bool color_dispatch(std::string_view name);

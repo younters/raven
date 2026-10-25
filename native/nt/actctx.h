@@ -26,6 +26,7 @@ public:
 		std::vector<std::string> supported_os;
 		// The assembly's folder in the side-by-side store, named like its manifest there; empty for a program's own manifest.
 		std::string folder;
+		std::optional<int64_t> dpi_context;
 	};
 	struct Context {
 		Assembly root;
@@ -38,6 +39,7 @@ public:
 	// Before the process exists, as its first libraries are found: the host folder of the side-by-side store's manifests, the
 	// program's width, its own manifest and its directory for private assemblies.
 	void prepare(const std::filesystem::path &manifests, bool wide, std::string_view program_manifest, const std::filesystem::path &application_directory = {});
+	std::optional<int64_t> process_dpi_context() const { return program ? program->dpi_context : std::nullopt; }
 	// The side-by-side folder that serves a library named alone: an assembly the context in effect depends on, directly or through
 	// another, declares the file. The loader looks there before any other place, as Windows redirects it.
 	std::optional<std::filesystem::path> library_folder(std::string_view name) const;

@@ -889,6 +889,7 @@
 {"RtlFormatCurrentUserKeyPath", 1},
 {"RtlFreeUnicodeString", 1},
 {"RtlGetLastNtStatus", 0},
+{"RtlGetNtVersionNumbers", 3},
 {"RtlGrowFunctionTable", 2},
 {"RtlInitUnicodeString", 2},
 {"RtlInstallFunctionTableCallback", 6},

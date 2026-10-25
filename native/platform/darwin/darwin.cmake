@@ -10,6 +10,7 @@ if(TARGET raven_cpu)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/shared_pixels.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/system_api.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/desktop_idle.cpp)
+    list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/dpi.cpp)
     set_property(TARGET raven_cpu PROPERTY SOURCES ${RAVEN_CPU_SOURCES})
     # GNU ld only; ld64 keeps every library it is given.
     get_target_property(RAVEN_CPU_LINK_OPTIONS raven_cpu INTERFACE_LINK_OPTIONS)
@@ -134,4 +135,38 @@ if(TARGET native_cpu_test)
         set_tests_properties(native_darwin_system_api PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
             ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-system-prefix")
     endif()
+endif()
+
+if(TARGET raven_cpu AND RAVEN_MINGW64)
+    set(CURSOR_DPI_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-aware.exe)
+    set(CURSOR_UNAWARE_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-unaware.exe)
+    set(CURSOR_PM_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-per-monitor.exe)
+    set(CURSOR_RESOURCES ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-resources/resources.o)
+    set(CURSOR_PM_RESOURCES ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-resources/manifest.o)
+    add_custom_command(OUTPUT ${CURSOR_RESOURCES} ${CURSOR_PM_RESOURCES}
+        COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/cursor_dpi_resources.py ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-resources
+        COMMAND ${RAVEN_WINDRES} ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-resources/resources.rc ${CURSOR_RESOURCES}
+        COMMAND ${RAVEN_WINDRES} -DPER_MONITOR_MANIFEST ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-resources/resources.rc ${CURSOR_PM_RESOURCES}
+        DEPENDS ${RAVEN_DARWIN_DIR}/cursor_dpi_resources.py VERBATIM)
+    foreach(mode IN ITEMS aware unaware per-monitor)
+        set(dpi_definitions)
+        set(dpi_resources ${CURSOR_RESOURCES})
+        if(mode STREQUAL "aware")
+            set(dpi_definitions -DAWARE)
+        endif()
+        if(mode STREQUAL "per-monitor")
+            set(dpi_definitions -DAWARE -DPER_MONITOR_MANIFEST)
+            set(dpi_resources ${CURSOR_PM_RESOURCES})
+        endif()
+        add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-${mode}.exe
+            COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector ${dpi_definitions}
+                -Wl,--entry,mainCRTStartup -o ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-${mode}.exe
+                ${RAVEN_DARWIN_DIR}/cursor_dpi_fixture.c ${dpi_resources} -lkernel32 -luser32 -lgdi32
+            DEPENDS ${RAVEN_DARWIN_DIR}/cursor_dpi_fixture.c ${dpi_resources} VERBATIM)
+    endforeach()
+    add_custom_target(cursor_dpi_fixtures ALL DEPENDS ${CURSOR_DPI_FIXTURE} ${CURSOR_UNAWARE_FIXTURE} ${CURSOR_PM_FIXTURE})
+    add_executable(cursor_dpi_test ${RAVEN_DARWIN_DIR}/cursor_dpi_test.cpp)
+    target_link_libraries(cursor_dpi_test PRIVATE raven_cpu)
+    add_dependencies(cursor_dpi_test cursor_dpi_fixtures raven-bootstrap)
+    add_test(NAME native_darwin_cursor_dpi COMMAND cursor_dpi_test $<TARGET_FILE:raven-bootstrap> ${CURSOR_DPI_FIXTURE} ${CURSOR_UNAWARE_FIXTURE} ${CURSOR_PM_FIXTURE})
 endif()

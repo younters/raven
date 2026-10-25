@@ -368,6 +368,7 @@ public:
 #endif
 	const DesktopMetrics &nonclient_metrics() const;
 	bool set_screen_size(int32_t width,int32_t height);
+	void set_dpi(uint32_t dpi);
 
 private:
 	TouchedHandles windows_touched{}, menus_touched{}, bitmaps_touched{}, dcs_touched{}, icons_touched{};

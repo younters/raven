@@ -21,6 +21,8 @@
 #include <thread>
 #include <vector>
 
+#include "cocoa_cursor.h"
+
 namespace {
 
 // Linux input codes of the mouse buttons.
@@ -190,6 +192,9 @@ struct CocoaPresentation::State {
 	NSPoint resize_start{};
 	NSRect resize_from{};
 	bool resize_cursor = false;
+	CocoaCursor cursor;
+	// Guest frame coordinates are device pixels for aware programs and 96-DPI pixels for unaware ones.
+	double scale = 1;
 	// RAVEN_TRACE_COCOA=1 reports sizes and events.
 	const bool trace = std::getenv("RAVEN_TRACE_COCOA") != nullptr;
 	// Diagnostics: RAVEN_COCOA_DUMP=<directory> writes each frame presented as a PPM image; RAVEN_COCOA_RESIZE_TEST=1 resizes the first
@@ -321,14 +326,14 @@ struct CocoaPresentation::State {
 				left = surface->insets[0];
 				top = surface->insets[1];
 			}
-		return {int32_t(std::floor(screen.x - content.origin.x)) + left, int32_t(std::floor(NSMaxY(content) - screen.y)) + top};
+		return {int32_t(std::floor((screen.x - content.origin.x) * scale)) + left, int32_t(std::floor((NSMaxY(content) - screen.y) * scale)) + top};
 	}
 
 	// The screen point of a point of a window's frame.
-	static NSPoint screen_of(const Surface &surface, int32_t x, int32_t y)
+	NSPoint screen_of(const Surface &surface, int32_t x, int32_t y) const
 	{
 		const NSRect content = content_of(surface.window);
-		return NSMakePoint(content.origin.x + x - surface.insets[0], NSMaxY(content) - (y - surface.insets[1]));
+		return NSMakePoint(content.origin.x + (x - surface.insets[0]) / scale, NSMaxY(content) - (y - surface.insets[1]) / scale);
 	}
 
 	static NSPoint screen_point(NSEvent *event)
@@ -428,7 +433,7 @@ struct CocoaPresentation::State {
 			return;
 		const NSPoint point = screen_of(*target, cx, cy);
 		const CGFloat top = NSMaxY(NSScreen.screens.firstObject.frame);
-		CGWarpMouseCursorPosition(CGPointMake(point.x + 0.5, top - point.y + 0.5));
+		CGWarpMouseCursorPosition(CGPointMake(point.x + 0.5 / scale, top - point.y + 0.5 / scale));
 	}
 
 	// Returns whether AppKit should still see the event.
@@ -513,6 +518,15 @@ struct CocoaPresentation::State {
 		else if (edges == 5) position = NSCursorFrameResizePositionBottomLeft;
 		else if (edges == 6) position = NSCursorFrameResizePositionBottomRight;
 		return [NSCursor frameResizeCursorFromPosition:position inDirections:NSCursorFrameResizeDirectionsAll];
+	}
+
+	void update_cursor()
+	{
+		const NSPoint point = NSEvent.mouseLocation;
+		Surface *target = surface(window_at(point));
+		const bool client = NSApp.active && target && NSPointInRect(point, content_of(target->window));
+		const int edges = client ? edges_at(*target, point) : 0;
+		cursor.apply(client, edges ? resize_cursor_for(edges) : nil);
 	}
 
 	// Follows a drag of the edges: each movement resizes the window, and the program, told at once, draws the new size before the next.
@@ -601,10 +615,12 @@ struct CocoaPresentation::State {
 		Surface *target = surface(window);
 		if (!target)
 			return true;
+		if (target->native && !dragging && !NSPointInRect(screen, content_of(target->window)))
+			return true;
 		constrain(screen);
 		const auto [x, y] = frame_point(target->window, screen);
 		if (event.type != NSEventTypeScrollWheel && (event.deltaX || event.deltaY) && (event.type == NSEventTypeMouseMoved || dragging))
-			push({window, 0, 0, 0, DesktopEventKind::pointer_relative, int32_t(std::lround(event.deltaX)), int32_t(std::lround(event.deltaY))});
+			push({window, 0, 0, 0, DesktopEventKind::pointer_relative, int32_t(std::lround(event.deltaX * scale)), int32_t(std::lround(event.deltaY * scale))});
 		pointer(DesktopEventKind::pointer_motion, window, x, y);
 		switch (event.type) {
 		case NSEventTypeLeftMouseDown:
@@ -667,6 +683,7 @@ struct CocoaPresentation::State {
 		}
 		[NSApp updateWindows];
 		focus_changed();
+		update_cursor();
 	}
 
 	static NSWindowStyleMask style_mask(bool native, uint32_t style)
@@ -686,7 +703,7 @@ struct CocoaPresentation::State {
 	RavenWindow *make_window(uint32_t width, uint32_t height, bool keyboard, NSWindowStyleMask mask = NSWindowStyleMaskBorderless |
 		NSWindowStyleMaskMiniaturizable)
 	{
-		RavenWindow *window = [[RavenWindow alloc] initWithContentRect:NSMakeRect(0, 0, width, height)
+		RavenWindow *window = [[RavenWindow alloc] initWithContentRect:NSMakeRect(0, 0, width / scale, height / scale)
 			styleMask:mask backing:NSBackingStoreBuffered defer:NO];
 		window.takesKeyboard = keyboard;
 		window.releasedWhenClosed = NO;
@@ -694,12 +711,12 @@ struct CocoaPresentation::State {
 		window.hasShadow = YES;
 		window.opaque = YES;
 		window.backgroundColor = NSColor.windowBackgroundColor;
-		RavenView *view = [[RavenView alloc] initWithFrame:NSMakeRect(0, 0, width, height)];
+		RavenView *view = [[RavenView alloc] initWithFrame:NSMakeRect(0, 0, width / scale, height / scale)];
 		view.wantsLayer = YES;
 		// A layer's own geometry is not flipped: its bottom-left is the window's top-left.
 		view.layer.contentsGravity = kCAGravityBottomLeft;
 		view.layer.magnificationFilter = kCAFilterNearest;
-		view.layer.contentsScale = 1;
+		view.layer.contentsScale = scale;
 		view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 		window.contentView = view;
 		return window;
@@ -719,6 +736,7 @@ struct CocoaPresentation::State {
 			shown = CGImageCreateWithImageInRect(image, CGRectMake(inset[0], inset[1], width - inset[0] - inset[2], height - inset[1] - inset[3]));
 		[CATransaction begin];
 		[CATransaction setDisableActions:YES];
+		target.view.layer.contentsScale = scale;
 		target.view.layer.contents = (__bridge id)shown;
 		[CATransaction commit];
 		if (shown != image)
@@ -734,8 +752,8 @@ struct CocoaPresentation::State {
 	void set_size(Surface &target, uint32_t width, uint32_t height)
 	{
 		const auto &inset = target.insets;
-		const NSSize size = NSMakeSize(std::max<int32_t>(int32_t(width) - inset[0] - inset[2], 1),
-			std::max<int32_t>(int32_t(height) - inset[1] - inset[3], 1));
+		const NSSize size = NSMakeSize(std::max<int32_t>(int32_t(width) - inset[0] - inset[2], 1) / scale,
+			std::max<int32_t>(int32_t(height) - inset[1] - inset[3], 1) / scale);
 		NSRect content = content_of(target.window);
 		if (content.size.width == size.width && content.size.height == size.height)
 			return;
@@ -751,8 +769,8 @@ struct CocoaPresentation::State {
 	std::pair<uint32_t, uint32_t> frame_size(const Surface &target) const
 	{
 		const NSRect content = content_of(target.window);
-		return {uint32_t(content.size.width) + uint32_t(target.insets[0] + target.insets[2]),
-			uint32_t(content.size.height) + uint32_t(target.insets[1] + target.insets[3])};
+		return {uint32_t(std::lround(content.size.width * scale)) + uint32_t(target.insets[0] + target.insets[2]),
+			uint32_t(std::lround(content.size.height * scale)) + uint32_t(target.insets[1] + target.insets[3])};
 	}
 
 	// macOS changed the window's size (its edges, zoom, full screen): the program is told its new frame size.
@@ -906,7 +924,7 @@ struct CocoaPresentation::State {
 			target->width = width;
 			target->height = height;
 			const NSPoint corner = screen_of(*owner, x, y);
-			[target->window setFrame:NSMakeRect(corner.x, corner.y - height, width, height) display:NO];
+			[target->window setFrame:NSMakeRect(corner.x, corner.y - height / scale, width / scale, height / scale) display:NO];
 			show(*target, pixels, width, height);
 			if (!target->window.parentWindow)
 				[owner->window addChildWindow:target->window ordered:NSWindowAbove];
@@ -954,10 +972,10 @@ struct CocoaPresentation::State {
 						break;
 				}
 			}
-			const NSSize size = window.frame.size;
-			if (uint32_t(size.width) != target->width || uint32_t(size.height) != target->height) {
-				target->pending_width = uint32_t(size.width);
-				target->pending_height = uint32_t(size.height);
+			const auto [width, height] = frame_size(*target);
+			if (width != target->width || height != target->height) {
+				target->pending_width = width;
+				target->pending_height = height;
 				target->resized = true;
 			}
 		}
@@ -1002,9 +1020,11 @@ struct CocoaPresentation::State {
 			target->child.wantsLayer = YES;
 			[target->view addSubview:target->child];
 		}
-		target->child.frame = NSMakeRect(x - target->insets[0], y - target->insets[1], std::max<uint32_t>(width, 1), std::max<uint32_t>(height, 1));
+		target->child.frame = NSMakeRect((x - target->insets[0]) / scale, (y - target->insets[1]) / scale,
+			std::max<uint32_t>(width, 1) / scale, std::max<uint32_t>(height, 1) / scale);
 		CAMetalLayer *layer = (CAMetalLayer *)target->child.layer;
-		layer.contentsScale = 1;
+		layer.contentsScale = scale;
+		layer.drawableSize = CGSizeMake(width, height);
 		layer.magnificationFilter = kCAFilterNearest;
 		HostSurface result{};
 		result.surface = (__bridge void *)layer;
@@ -1223,7 +1243,8 @@ DesktopPresentation CocoaPresentation::callbacks()
 		if (!screen)
 			return std::nullopt;
 		// The area windows may use, below the menu bar and beside the Dock: maximized windows fill it.
-		return std::pair{int32_t(screen.visibleFrame.size.width), int32_t(screen.visibleFrame.size.height)};
+		return std::pair{int32_t(std::lround(screen.visibleFrame.size.width * state->scale)),
+			int32_t(std::lround(screen.visibleFrame.size.height * state->scale))};
 	};
 	result.maximize = [this](uint64_t handle, bool wanted) { state->maximize(handle, wanted); };
 	result.frame = [this](uint64_t handle, std::array<int32_t, 4> insets, uint32_t style) { state->frames[handle] = {insets, style}; };
@@ -1231,6 +1252,16 @@ DesktopPresentation CocoaPresentation::callbacks()
 		if (auto *target = state->surface(handle); target && !target->window.miniaturized)
 			[target->window miniaturize:nil];
 	};
+	result.cursor = [this](uint64_t handle, int count, const DesktopIcon *image) {
+		if (state->trace) std::fprintf(stderr,"cocoa: cursor %llx count %d custom %d\n",(unsigned long long)handle,count,image!=nullptr);
+		state->cursor.set(handle, count, image, state->scale);
+		state->update_cursor();
+	};
+	result.backing_scale = [this] {
+		state->connect();
+		return double(NSScreen.mainScreen.backingScaleFactor ?: 1);
+	};
+	result.render_scale = [this](double scale) { state->scale = scale; };
 	result.platform = HostPlatform::metal;
 	return result;
 }

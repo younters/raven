@@ -68,6 +68,9 @@ void NativeWindows::set_call(std::function<NativeResult(uint64_t,std::span<const
 void NativeWindows::set_presentation(DesktopPresentation backend)
 {
 	presentation=std::move(backend);
+#ifdef __APPLE__
+	initialize_dpi();
+#endif
 	refresh_screen();
 	if (presentation.poll) {
 		auto poll=presentation.poll;
@@ -77,6 +80,19 @@ void NativeWindows::set_presentation(DesktopPresentation backend)
 			return events;
 		};
 	}
+}
+
+void NativeWindows::sync_cursor()
+{
+	if (presentation.cursor) presentation.cursor(current_cursor,cursor_count,std::as_const(objects).icon(current_cursor));
+}
+
+void NativeWindows::set_cursor(uint64_t handle)
+{
+	if (current_cursor==handle) return;
+	current_cursor=handle;
+	update_warp_lock(false);
+	sync_cursor();
 }
 
 void NativeWindows::refresh_screen()
@@ -962,6 +978,12 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 		fprintf(stderr,"button %x target %llx hit %llx visible %d\n",message,(unsigned long long)target,(unsigned long long)hit,
 			window && objects.window_visible(target) ? 1 : 0);
 	if (!window || !objects.window_visible(target) || !hit) return;
+	// Windows leaves the cursor to the capturing window until capture is released.
+	if (message==0x200 && !capture) {
+		send(target,0x20,target,uint16_t(hit) | (uint64_t(0x200)<<16));
+		window=objects.window(target);
+		if (!window || !objects.window_visible(target)) return;
+	}
 	// Scroll bars and the frame may run a loop of their own that waits for the release, so what was held goes in first.
 	if (hit!=1 && placing_press) release_held_input();
 	if ((hit==6 || hit==7) && scroll_pointer(target,hit,message,int32_t(x),int32_t(y))) return;
@@ -1398,8 +1420,8 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 		for (size_t index=0;index<4;++index)
 			put(rect,index*4,uint32_t(int32_t(read(rect,index*4,4))-edges[index]),4);
 		// Scroll bars sit between the edge and the client area on the right and bottom.
-		if (window->style & 0x200000U) put(rect,8,uint32_t(int32_t(read(rect,8,4))-17),4);
-		if (window->style & 0x100000U) put(rect,12,uint32_t(int32_t(read(rect,12,4))-17),4);
+		if (window->style & 0x200000U) put(rect,8,uint32_t(int32_t(read(rect,8,4))-int32_t(system_metric(objects.nonclient_metrics(),2))),4);
+		if (window->style & 0x100000U) put(rect,12,uint32_t(int32_t(read(rect,12,4))-int32_t(system_metric(objects.nonclient_metrics(),3))),4);
 		process.write_memory(args[3],rect);
 		return 0;
 	}
@@ -1437,9 +1459,29 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 	if (message==0x21) return 1;
 	if (message==0x11) return 1;
 	if (!message || message==1 || message==2 || message==3 || message==5 || message==0x82 || message==0x18) return 0;
-	// Messages whose Windows default is "no action, result 0": cursor, activation notices, window-position notices,
+	if (message==0x20) {
+		// Parents can override a child's cursor; their default procedure must leave that child's class cursor alone.
+		const auto parent=window->parent;
+		if (parent && objects.window(parent) && send(parent,0x20,args[2],args[3])) return 1;
+		window=objects.window(args[0]);
+		if (!window || args[0]!=args[2]) return 0;
+		const auto hit=int16_t(uint16_t(args[3]));
+		if (hit==1) {
+			const auto *klass=objects.window_class(window->class_id);
+			if (klass && klass->cursor) set_cursor(klass->cursor);
+		} else {
+			uint32_t id=32512;
+			if (hit==10 || hit==11) id=32644;
+			else if (hit==12 || hit==15) id=32645;
+			else if (hit==13 || hit==17) id=32642;
+			else if (hit==14 || hit==16) id=32643;
+			set_cursor(desktop_stock_cursor+id-32512);
+		}
+		return 1;
+	}
+	// Messages whose Windows default is "no action, result 0": activation notices, window-position notices,
 	// non-client mouse notices, capture loss, keyboard and timer/command traffic nobody consumed.
-	if (message==0x20 || message==0x16 || message==0x1c || message==0x24 || message==0x46 || message==0x47 || message==0x4e ||
+	if (message==0x16 || message==0x1c || message==0x24 || message==0x46 || message==0x47 || message==0x4e ||
 		message==0x7f || message==0x80 || (message>=0xa0 && message<=0xa9) || message==0x215 || (message>=0x100 && message<=0x109) ||
 		message==0x111 || message==0x113 || (message>=0x116 && message<=0x120) || message==0x211 || message==0x212) return 0;
 	// Every other message has no default action in DefWindowProc and answers zero.
@@ -1581,6 +1623,10 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 		if (!objects.window(handle)) return 0;
 		if (const auto *created=objects.window(handle)) publish_window(handle,uint32_t(std::max(created->width,0)),uint32_t(std::max(created->height,0)));
 		if (effective_style & 0x10000000U) {
+#ifdef __APPLE__
+			initialize_window_dpi(handle);
+			if (!objects.window(handle)) return 0;
+#endif
 			auto *window=objects.window(handle);window->visible=true;objects.update_window_dcs(child ? window->parent : handle);
 			if (objects.window_visible(handle)) present(handle);
 			if (!objects.invalidate(handle,{0,0,window->width,window->height},true)) throw uint32_t(8);

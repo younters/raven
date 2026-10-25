@@ -425,6 +425,12 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// The version as ntdll reports it, Windows 10 unless a compatibility layer says otherwise; the extended block is filled when the
 	// caller sized for it.
+	registry.add("RtlGetNtVersionNumbers", 3, [](ApiCall &call) {
+		const auto version=activation_contexts().system_version();
+		if (call[0]) call.store<uint32_t>(call[0],version.major);
+		if (call[1]) call.store<uint32_t>(call[1],version.minor);
+		if (call[2]) call.store<uint32_t>(call[2],version.build | 0xf0000000U);
+	});
 	registry.add("RtlGetVersion", 1, [](ApiCall &call) {
 		const auto size = call.load<uint32_t>(call[0]);
 		if (size < 276) {
@@ -599,6 +605,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("DiscardVirtualMemory", 2, [](ApiCall &call) { call.ret(0); });
 	// The display is 96 dpi and every process counts as aware of it (IsProcessDPIAware): the awareness a process asks for is kept and
 	// read back, PROCESS_SYSTEM_DPI_AWARE until it asks.
+#ifndef __APPLE__
 	auto dpi_awareness = std::make_shared<uint32_t>(1);
 	registry.add("SetProcessDpiAwareness", 1, [dpi_awareness](ApiCall &call) {
 		if (call.u32(0) > 2) {
@@ -616,6 +623,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.store<uint32_t>(call[1], *dpi_awareness);
 		call.ret(0);
 	});
+#endif
 	registry.add("GetVersionExA", 1, [](ApiCall &call) {
 		const auto size = call.load<uint32_t>(call[0]);
 		if (size != 148 && size != 156) {
@@ -649,6 +657,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	// One display scale: every monitor reports the standard 96 dots per inch.
+#ifndef __APPLE__
 	registry.add("GetDpiForMonitor", 4, [](ApiCall &call) {
 		if (!call[2] || !call[3]) {
 			call.ret(0x80070057U);
@@ -658,6 +667,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.store<uint32_t>(call[3], 96);
 		call.ret(0);
 	});
+#endif
 	registry.add("VerSetConditionMask", 3, [](ApiCall &call) {
 		uint64_t mask = call[0];
 		const uint32_t types = call.u32(1);

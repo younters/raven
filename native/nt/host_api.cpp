@@ -960,10 +960,10 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(int64_t(call[0]) == int64_t(call[1]));
 	});
+#ifndef __APPLE__
 	registry.add("GetWindowDpiAwarenessContext", 1, [](ApiCall &call) { call.ret(uint64_t(-2)); });
+#endif
 	registry.add("GetClassWord", 2, [](ApiCall &call) { call.ret(0); });
-	// The cursor is whatever the program set last; none is shown by the host.
-	registry.add("GetCursor", 0, [](ApiCall &call) { call.ret(0); });
 	// The root of a path's volume: the drive letter and a separator.
 	registry.add("GetVolumePathNameW", 3, [](ApiCall &call) {
 		if (!call[0] || !call[1]) {

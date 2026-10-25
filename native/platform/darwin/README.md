@@ -3,6 +3,8 @@
 The host runtime is a native arm64 program. Windows code runs in `raven-bootstrap`, an x86_64 Mach-O that Rosetta 2 translates.
 This tree is a fork that keeps tracking upstream, so the port lives here and changes upstream files as little as possible.
 
+The Cocoa cursor and Retina coordinate contract, current limitations, and tests are documented in [CURSORS_HIDPI.md](CURSORS_HIDPI.md).
+
 ## Building
 
 ```sh

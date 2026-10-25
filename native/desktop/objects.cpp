@@ -2,6 +2,7 @@
 #include "foreign_surface.h"
 
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
 #include <stdexcept>
 
@@ -60,6 +61,22 @@ DesktopObjects::DesktopObjects(size_t limit, IconDisplay display,DesktopMetrics 
 }
 
 const DesktopMetrics &DesktopObjects::nonclient_metrics() const { return window_metrics; }
+
+void DesktopObjects::set_dpi(uint32_t dpi)
+{
+	if (dpi<96 || dpi>384) throw std::runtime_error("invalid desktop DPI");
+	const auto previous=window_metrics.dpi;
+	if (previous==dpi) return;
+	const auto scale=[=](int32_t value) { return int32_t((int64_t(value)*dpi+(value<0 ? -int64_t(previous)/2 : previous/2))/previous); };
+	window_metrics=window_metrics.at_dpi(dpi);
+	for (auto *font : {&system_font,&gui_font,&fixed_font})
+		for (size_t at : {size_t(0),size_t(4)}) {
+			int32_t value=0; std::memcpy(&value,font->definition.data()+at,4);
+			value=scale(value); std::memcpy(font->definition.data()+at,&value,4);
+		}
+	icon_display.width=uint32_t(scale(int32_t(icon_display.width)));
+	icon_display.height=uint32_t(scale(int32_t(icon_display.height)));
+}
 
 bool DesktopObjects::set_screen_size(int32_t width,int32_t height)
 {

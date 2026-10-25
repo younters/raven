@@ -96,10 +96,10 @@ inline uint32_t rgb(uint32_t colorref)
 }
 
 // Fonts of the nonclient area: the qualified sans face at the classic 8 point size.
-inline std::array<uint8_t, 92> interface_font()
+inline std::array<uint8_t, 92> interface_font(uint32_t dpi = 96)
 {
 	std::array<uint8_t, 92> definition{};
-	const int32_t height = -11;
+	const int32_t height = -int32_t((11*dpi+48)/96);
 	for (size_t byte = 0; byte < 4; ++byte)
 		definition[byte] = uint8_t(uint32_t(height) >> (byte * 8));
 	definition[16] = 0x90;
@@ -135,26 +135,26 @@ inline bool needs_fallback(std::u16string_view text)
 }
 
 // Pixel width of one line of interface text, using fallback faces for characters the interface face lacks.
-inline int32_t text_width(TextRenderer &renderer, std::u16string_view text)
+inline int32_t text_width(TextRenderer &renderer, std::u16string_view text, uint32_t dpi = 96)
 {
 	if (text.empty())
 		return 0;
 	if (needs_fallback(text)) {
 		const std::vector<uint16_t> units(text.begin(), text.end());
-		const auto advances = renderer.logical_advances(interface_font(), units);
+		const auto advances = renderer.logical_advances(interface_font(dpi), units);
 		return advances.empty() ? 0 : advances.back();
 	}
-	return renderer.extent(interface_font(), printable(text)).width;
+	return renderer.extent(interface_font(dpi), printable(text)).width;
 }
 
 // Draws one line of text and returns its pixel width; underline marks a mnemonic character index.
 inline int32_t draw_text(TextRenderer &renderer, Canvas &canvas, std::u16string_view text, int32_t x, int32_t y, uint32_t color,
-	std::optional<size_t> underline = std::nullopt, int32_t limit = INT32_MAX)
+	std::optional<size_t> underline = std::nullopt, int32_t limit = INT32_MAX, uint32_t dpi = 96)
 {
-	const auto font = interface_font();
+	const auto font = interface_font(dpi);
 	if (needs_fallback(text) && limit == INT32_MAX) {
 		const std::vector<uint16_t> units(text.begin(), text.end());
-		const auto width = text_width(renderer, text);
+		const auto width = text_width(renderer, text, dpi);
 		const auto metrics = renderer.logical_metrics(font);
 		const uint32_t box_width = uint32_t(width + 2), box_height = uint32_t(metrics.height);
 		const auto coverage = renderer.render(font, units, box_width, box_height, 0, 0);
