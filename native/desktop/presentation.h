@@ -30,10 +30,10 @@ struct DesktopEvent {
 };
 
 // The window system the presentation talks to, which decides the surface type a graphics driver is given.
-enum class HostPlatform { wayland, xcb };
+enum class HostPlatform { wayland, xcb, metal };
 
 // A host surface a graphics driver can present into, over a window's client area: on Wayland the display connection and a surface, on X11
-// the XCB connection and a child window with its visual.
+// the XCB connection and a child window with its visual, on macOS a CAMetalLayer as the surface.
 struct HostSurface {
 	void *display = nullptr;
 	void *surface = nullptr;

@@ -6,6 +6,9 @@
 #include <xcb/xcb.h>
 #include <vulkan/vulkan_xcb.h>
 #endif
+#ifdef __APPLE__
+#include <vulkan/vulkan_metal.h>
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -123,6 +126,13 @@ bool VulkanBridge::dispatch_hand(std::string_view name)
 				VkXcbSurfaceCreateInfoKHR info{VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR, nullptr, 0,
 					static_cast<xcb_connection_t *>(host->display), host->window};
 				created = marshal.proc<PFN_vkCreateXcbSurfaceKHR>("vkCreateXcbSurfaceKHR")(marshal.host_instance, &info, nullptr, &surface);
+			}
+#endif
+#ifdef __APPLE__
+			else if (host->platform == HostPlatform::metal) {
+				VkMetalSurfaceCreateInfoEXT info{VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT, nullptr, 0,
+					static_cast<const CAMetalLayer *>(host->surface)};
+				created = marshal.proc<PFN_vkCreateMetalSurfaceEXT>("vkCreateMetalSurfaceEXT")(marshal.host_instance, &info, nullptr, &surface);
 			}
 #endif
 			status = static_cast<uint32_t>(created);

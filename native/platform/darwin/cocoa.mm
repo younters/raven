@@ -1,0 +1,914 @@
+// The macOS desktop presentation (see cocoa.h). It reports input the way a Wayland compositor does, which is what the runtime reads:
+// pointer positions on the window's frame, Linux input codes for buttons and keys, and an XKB keymap with its modifier state.
+
+#include "cocoa.h"
+
+#import <AppKit/AppKit.h>
+#import <Carbon/Carbon.h>
+#import <QuartzCore/QuartzCore.h>
+
+#include <xkbcommon/xkbcommon.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <map>
+#include <set>
+#include <stdexcept>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace {
+
+// Linux input codes of the mouse buttons.
+constexpr uint32_t button_left = 0x110, button_right = 0x111, button_middle = 0x112, button_side = 0x113, button_extra = 0x114;
+
+// The Linux (evdev) code of each macOS virtual key code; zero where the key has none.
+constexpr uint16_t evdev_codes[128] = {
+	30, 31, 32, 33, 35, 34, 44, 45, 46, 47, 86, 48, 16, 17, 18, 19,         // 0x00 A S D F H G Z X C V § B Q W E R
+	21, 20, 2, 3, 4, 5, 7, 6, 13, 10, 8, 12, 9, 11, 27, 24,                 // 0x10 Y T 1 2 3 4 6 5 = 9 7 - 8 0 ] O
+	22, 26, 23, 25, 28, 38, 36, 40, 37, 39, 43, 51, 53, 49, 50, 52,         // 0x20 U [ I P Return L J ' K ; \ , / N M .
+	15, 57, 41, 14, 0, 1, 126, 125, 42, 58, 56, 29, 54, 100, 97, 0,         // 0x30 Tab Space ` Delete - Esc RCmd Cmd Shift Caps Opt Ctrl RShift ROpt RCtrl Fn
+	187, 83, 0, 55, 0, 78, 0, 69, 115, 114, 113, 98, 96, 0, 74, 188,       // 0x40 F17 KP. - KP* - KP+ - Clear VolUp VolDown Mute KP/ KPEnter - KP- F18
+	189, 117, 82, 79, 80, 81, 75, 76, 77, 71, 190, 72, 73, 124, 89, 95,    // 0x50 F19 KP= KP0..KP7 F20 KP8 KP9 Yen Underscore KP,
+	63, 64, 65, 61, 66, 67, 85, 87, 90, 183, 186, 184, 0, 68, 0, 88,       // 0x60 F5 F6 F7 F3 F8 F9 Eisu F11 Kana F13 F16 F14 - F10 - F12
+	0, 185, 110, 102, 104, 111, 62, 107, 60, 109, 59, 105, 106, 108, 103, 0 // 0x70 - F15 Help Home PgUp Del F4 End F2 PgDn F1 Left Right Down Up
+};
+
+constexpr uint32_t evdev_left_ctrl = 29, evdev_right_ctrl = 97, evdev_left_meta = 125, evdev_right_meta = 126, evdev_caps = 58;
+
+// The XKB layout of the current macOS keyboard input source; RAVEN_XKB_LAYOUT ("de" or "us(dvorak)") overrides it.
+std::pair<std::string, std::string> keyboard_layout()
+{
+	if (const char *wanted = std::getenv("RAVEN_XKB_LAYOUT"); wanted && *wanted) {
+		std::string layout = wanted, variant;
+		if (const auto open = layout.find('('); open != std::string::npos && layout.back() == ')') {
+			variant = layout.substr(open + 1, layout.size() - open - 2);
+			layout.resize(open);
+		}
+		return {layout, variant};
+	}
+	static const std::map<std::string, std::pair<std::string, std::string>> known{
+		{"US", {"us", ""}}, {"ABC", {"us", ""}}, {"USExtended", {"us", "intl"}}, {"USInternational-PC", {"us", "intl"}},
+		{"Dvorak", {"us", "dvorak"}}, {"Colemak", {"us", "colemak"}}, {"British", {"gb", ""}}, {"British-PC", {"gb", ""}},
+		{"Australian", {"us", ""}}, {"Canadian", {"ca", "eng"}}, {"Canadian-CSA", {"ca", ""}}, {"German", {"de", "mac"}},
+		{"Austrian", {"at", "mac"}}, {"SwissGerman", {"ch", "de_mac"}}, {"SwissFrench", {"ch", "fr_mac"}}, {"French", {"fr", "mac"}},
+		{"French-PC", {"fr", ""}}, {"Belgian", {"be", ""}}, {"Spanish", {"es", "mac"}}, {"Spanish-ISO", {"es", "mac"}},
+		{"Italian", {"it", "mac"}}, {"Italian-Pro", {"it", "mac"}}, {"Portuguese", {"pt", "mac"}}, {"Brazilian", {"br", ""}},
+		{"Dutch", {"nl", "mac"}}, {"Swedish", {"se", "mac"}}, {"Swedish-Pro", {"se", "mac"}}, {"Norwegian", {"no", "mac"}},
+		{"Danish", {"dk", "mac"}}, {"Finnish", {"fi", "mac"}}, {"Polish", {"pl", ""}}, {"PolishPro", {"pl", ""}}, {"Czech", {"cz", ""}},
+		{"Hungarian", {"hu", ""}}, {"Russian", {"ru", "mac"}}, {"RussianWin", {"ru", ""}}, {"Ukrainian", {"ua", ""}},
+		{"Turkish", {"tr", ""}}, {"Greek", {"gr", ""}}, {"Hebrew", {"il", ""}}, {"Icelandic", {"is", "mac"}}};
+	std::string name;
+	if (TISInputSourceRef source = TISCopyCurrentKeyboardLayoutInputSource()) {
+		if (auto identifier = static_cast<CFStringRef>(TISGetInputSourceProperty(source, kTISPropertyInputSourceID))) {
+			char buffer[256];
+			if (CFStringGetCString(identifier, buffer, sizeof buffer, kCFStringEncodingUTF8))
+				name = buffer;
+		}
+		CFRelease(source);
+	}
+	constexpr std::string_view prefix = "com.apple.keylayout.";
+	if (name.starts_with(prefix))
+		name.erase(0, prefix.size());
+	const auto found = known.find(name);
+	return found == known.end() ? std::pair<std::string, std::string>{"us", ""} : found->second;
+}
+
+}
+
+// A window that takes the keyboard although it has no title bar.
+@interface RavenWindow : NSWindow
+@property (nonatomic) BOOL takesKeyboard;
+@end
+
+@implementation RavenWindow
+- (BOOL)canBecomeKeyWindow { return self.takesKeyboard; }
+- (BOOL)canBecomeMainWindow { return self.takesKeyboard; }
+@end
+
+// The window's frame: a layer showing the last frame presented, from its top-left corner.
+@interface RavenView : NSView
+@end
+
+@implementation RavenView
+- (BOOL)isFlipped { return YES; }
+- (BOOL)acceptsFirstResponder { return YES; }
+- (BOOL)acceptsFirstMouse:(NSEvent *)event { return YES; }
+- (BOOL)wantsUpdateLayer { return YES; }
+// Input is taken from the event queue before AppKit dispatches it; nothing here may beep or act on it.
+- (void)keyDown:(NSEvent *)event {}
+- (void)keyUp:(NSEvent *)event {}
+- (void)flagsChanged:(NSEvent *)event {}
+- (void)mouseDown:(NSEvent *)event {}
+- (void)rightMouseDown:(NSEvent *)event {}
+- (void)otherMouseDown:(NSEvent *)event {}
+@end
+
+// A graphics driver's surface over part of the client area. Pointer input passes through it to the window.
+@interface RavenMetalView : NSView
+@end
+
+@implementation RavenMetalView
+- (BOOL)isFlipped { return YES; }
+- (BOOL)wantsUpdateLayer { return YES; }
+- (CALayer *)makeBackingLayer { return [CAMetalLayer layer]; }
+- (NSView *)hitTest:(NSPoint)point { return nil; }
+@end
+
+@interface RavenApplicationDelegate : NSObject <NSApplicationDelegate>
+@property (nonatomic) raven::CocoaPresentation::State *state;
+@end
+
+namespace raven {
+
+struct CocoaPresentation::State {
+	struct Surface {
+		RavenWindow *window = nil;
+		RavenView *view = nil;
+		RavenMetalView *child = nil;
+		bool popup = false, grabbed = false, maximized = false, close_posted = false, resized = false;
+		uint64_t parent = 0;
+		int32_t popup_x = 0, popup_y = 0;
+		uint32_t width = 0, height = 0, pending_width = 0, pending_height = 0;
+		NSRect restored{};
+		~Surface()
+		{
+			[child removeFromSuperview];
+			if (NSWindow *owner = window.parentWindow)
+				[owner removeChildWindow:window];
+			[window orderOut:nil];
+			[window close];
+		}
+	};
+
+	bool connected = false;
+	RavenApplicationDelegate *delegate = nil;
+	std::map<uint64_t, std::unique_ptr<Surface>> surfaces;
+	std::map<NSInteger, uint64_t> numbers;
+	std::set<uint64_t> maximized;
+	std::vector<DesktopEvent> pending;
+	uint64_t pointer_window = 0, keyboard_window = 0;
+	bool keyboard_known = false;
+	NSEvent *last_press = nil;
+	NSPoint cascade = NSZeroPoint;
+	// Pointer constraint: the window it applies to, its rectangle on the frame, and whether the pointer is held still.
+	uint64_t constrained = 0;
+	std::array<int32_t, 4> constraint{};
+	bool locked = false;
+	// Command acts as Control unless RAVEN_COMMAND_KEY=windows: Windows programs' shortcuts then sit where a Mac user's fingers expect them.
+	bool command_is_control = true;
+	NSInteger published_change = -1;
+	double wheel = 0, horizontal_wheel = 0;
+
+	xkb_context *context = nullptr;
+	xkb_keymap *keymap = nullptr;
+	xkb_state *keys = nullptr;
+	std::array<uint32_t, 4> modifiers{};
+	std::set<uint32_t> held;
+
+	~State()
+	{
+		surfaces.clear();
+		if (locked)
+			CGAssociateMouseAndMouseCursorPosition(true);
+		if (keys)
+			xkb_state_unref(keys);
+		if (keymap)
+			xkb_keymap_unref(keymap);
+		if (context)
+			xkb_context_unref(context);
+	}
+
+	void push(DesktopEvent event)
+	{
+		if (pending.size() >= 10000)
+			throw std::runtime_error("native input queue exhaustion");
+		pending.push_back(std::move(event));
+	}
+
+	void connect()
+	{
+		if (connected)
+			return;
+		if (![NSThread isMainThread])
+			throw std::runtime_error("the macOS desktop runs on the main thread");
+		[NSApplication sharedApplication];
+		[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+		delegate = [RavenApplicationDelegate new];
+		delegate.state = this;
+		NSApp.delegate = delegate;
+		// The application menu: quitting asks the program's windows to close, as logging off Windows would.
+		NSMenu *bar = [NSMenu new];
+		NSMenuItem *item = [NSMenuItem new];
+		[bar addItem:item];
+		NSMenu *menu = [NSMenu new];
+		[menu addItemWithTitle:@"Hide" action:@selector(hide:) keyEquivalent:@"h"];
+		[menu addItem:[NSMenuItem separatorItem]];
+		[menu addItemWithTitle:@"Quit" action:@selector(terminate:) keyEquivalent:@"q"];
+		item.submenu = menu;
+		NSApp.mainMenu = bar;
+		[NSApp finishLaunching];
+		[NSApp activateIgnoringOtherApps:YES];
+		if (const char *value = std::getenv("RAVEN_COMMAND_KEY"))
+			command_is_control = std::string_view(value) != "windows";
+		connected = true;
+		load_keymap();
+	}
+
+	void load_keymap()
+	{
+		const auto [layout, variant] = keyboard_layout();
+		context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+		if (!context)
+			throw std::runtime_error("cannot create the XKB context");
+		const xkb_rule_names names{"evdev", "pc105", layout.c_str(), variant.c_str(), nullptr};
+		keymap = xkb_keymap_new_from_names(context, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
+		if (!keymap) {
+			const xkb_rule_names fallback{"evdev", "pc105", "us", "", nullptr};
+			keymap = xkb_keymap_new_from_names(context, &fallback, XKB_KEYMAP_COMPILE_NO_FLAGS);
+		}
+		if (!keymap)
+			throw std::runtime_error("cannot compile an XKB keymap (is xkeyboard-config installed?)");
+		keys = xkb_state_new(keymap);
+		char *text = xkb_keymap_get_as_string(keymap, XKB_KEYMAP_FORMAT_TEXT_V1);
+		if (!text || !keys)
+			throw std::runtime_error("cannot describe the XKB keymap");
+		DesktopEvent event{0, 0};
+		event.kind = DesktopEventKind::keymap;
+		event.keymap = text;
+		std::free(text);
+		push(std::move(event));
+	}
+
+	uint64_t handle_of(NSWindow *window) const
+	{
+		if (!window)
+			return 0;
+		const auto found = numbers.find(window.windowNumber);
+		return found == numbers.end() ? 0 : found->second;
+	}
+
+	Surface *surface(uint64_t handle)
+	{
+		const auto found = surfaces.find(handle);
+		return found == surfaces.end() ? nullptr : found->second.get();
+	}
+
+	// The window under a screen point, among the program's.
+	uint64_t window_at(NSPoint screen) const
+	{
+		const NSInteger number = [NSWindow windowNumberAtPoint:screen belowWindowWithWindowNumber:0];
+		const auto found = numbers.find(number);
+		return found == numbers.end() ? 0 : found->second;
+	}
+
+	// A point of a window's frame, from its top-left corner.
+	static std::pair<int32_t, int32_t> frame_point(NSWindow *window, NSPoint screen)
+	{
+		const NSRect frame = window.frame;
+		return {int32_t(std::floor(screen.x - frame.origin.x)), int32_t(std::floor(frame.origin.y + frame.size.height - screen.y))};
+	}
+
+	static NSPoint screen_point(NSEvent *event)
+	{
+		return event.window ? [event.window convertPointToScreen:event.locationInWindow] : event.locationInWindow;
+	}
+
+	void update_modifiers()
+	{
+		const std::array<uint32_t, 4> now{xkb_state_serialize_mods(keys, XKB_STATE_MODS_DEPRESSED),
+			xkb_state_serialize_mods(keys, XKB_STATE_MODS_LATCHED), xkb_state_serialize_mods(keys, XKB_STATE_MODS_LOCKED),
+			xkb_state_serialize_layout(keys, XKB_STATE_LAYOUT_EFFECTIVE)};
+		if (now == modifiers)
+			return;
+		modifiers = now;
+		push({0, now[0], now[1], uint64_t(now[2]) | (uint64_t(now[3]) << 32), DesktopEventKind::modifiers});
+	}
+
+	void key(uint32_t code, bool pressed, bool repeat = false)
+	{
+		if (!code)
+			return;
+		if (!repeat) {
+			if (pressed ? held.contains(code) : !held.contains(code))
+				return;
+			if (pressed)
+				held.insert(code);
+			else
+				held.erase(code);
+			xkb_state_update_key(keys, code + 8, pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
+		}
+		push({keyboard_window, code, pressed ? 1U : 0U, 0, DesktopEventKind::key});
+		update_modifiers();
+	}
+
+	uint32_t translate(unsigned short key_code) const
+	{
+		if (key_code >= 128)
+			return 0;
+		const uint32_t code = evdev_codes[key_code];
+		if (command_is_control && code == evdev_left_meta)
+			return evdev_left_ctrl;
+		if (command_is_control && code == evdev_right_meta)
+			return evdev_right_ctrl;
+		return code;
+	}
+
+	// Caps Lock is a lock on macOS, which reports its state rather than the key: the keymap's lock follows it.
+	void sync_caps(NSEventModifierFlags flags)
+	{
+		const bool on = flags & NSEventModifierFlagCapsLock;
+		const xkb_mod_index_t lock = xkb_keymap_mod_get_index(keymap, XKB_MOD_NAME_CAPS);
+		const bool locked_now = lock != XKB_MOD_INVALID && xkb_state_mod_index_is_active(keys, lock, XKB_STATE_MODS_LOCKED) > 0;
+		if (on != locked_now) {
+			key(evdev_caps, true);
+			key(evdev_caps, false);
+		}
+	}
+
+	void focus_changed()
+	{
+		const uint64_t now = handle_of(NSApp.keyWindow);
+		if (now == keyboard_window && keyboard_known)
+			return;
+		// Keys held when the keyboard went elsewhere are let go there.
+		if (keyboard_window && !now)
+			for (const auto code : std::vector<uint32_t>(held.begin(), held.end()))
+				key(code, false);
+		keyboard_window = now;
+		keyboard_known = true;
+		DesktopEvent event{now, 0, 0, 0, DesktopEventKind::keyboard_focus};
+		event.held_keys.assign(held.begin(), held.end());
+		push(std::move(event));
+		if (now)
+			sync_caps(NSEvent.modifierFlags);
+	}
+
+	void pointer(DesktopEventKind kind, uint64_t window, int32_t x, int32_t y, uint32_t message = 0, uint64_t wparam = 0)
+	{
+		if (!window)
+			return;
+		push({window, message, wparam, 0, kind, x, y});
+	}
+
+	// Holds the pointer to the constraint the program asked for.
+	void constrain(NSPoint screen)
+	{
+		if (!constrained || locked)
+			return;
+		Surface *target = surface(constrained);
+		if (!target)
+			return;
+		const auto [x, y] = frame_point(target->window, screen);
+		const int32_t cx = std::clamp(x, constraint[0], std::max(constraint[0], constraint[2] - 1));
+		const int32_t cy = std::clamp(y, constraint[1], std::max(constraint[1], constraint[3] - 1));
+		if (cx == x && cy == y)
+			return;
+		const NSRect frame = target->window.frame;
+		const CGFloat top = NSMaxY(NSScreen.screens.firstObject.frame);
+		CGWarpMouseCursorPosition(CGPointMake(frame.origin.x + cx + 0.5, top - (frame.origin.y + frame.size.height - cy) + 0.5));
+	}
+
+	// Returns whether AppKit should still see the event.
+	bool input(NSEvent *event)
+	{
+		switch (event.type) {
+		case NSEventTypeKeyDown:
+		case NSEventTypeKeyUp: {
+			const bool down = event.type == NSEventTypeKeyDown;
+			// The application's own shortcuts: Command-Q and Command-H.
+			if (down && (event.modifierFlags & NSEventModifierFlagCommand) && !(event.modifierFlags & NSEventModifierFlagControl)) {
+				NSString *character = event.charactersIgnoringModifiers.lowercaseString;
+				if ([character isEqualToString:@"q"] || [character isEqualToString:@"h"])
+					return true;
+			}
+			if (!keyboard_window)
+				focus_changed();
+			key(translate(event.keyCode), down, down && event.isARepeat);
+			return false;
+		}
+		case NSEventTypeFlagsChanged: {
+			const unsigned short code = event.keyCode;
+			if (code == kVK_CapsLock) {
+				sync_caps(event.modifierFlags);
+				return false;
+			}
+			NSEventModifierFlags mask = 0;
+			switch (code) {
+			case kVK_Shift: case kVK_RightShift: mask = NSEventModifierFlagShift; break;
+			case kVK_Control: case kVK_RightControl: mask = NSEventModifierFlagControl; break;
+			case kVK_Option: case kVK_RightOption: mask = NSEventModifierFlagOption; break;
+			case kVK_Command: case kVK_RightCommand: mask = NSEventModifierFlagCommand; break;
+			default: return false;
+			}
+			const uint32_t evdev = translate(code);
+			// The flags tell whether any key of the kind is down; which one changed is the key code.
+			const bool down = (event.modifierFlags & mask) && !held.contains(evdev);
+			key(evdev, down);
+			return false;
+		}
+		case NSEventTypeLeftMouseDown:
+		case NSEventTypeRightMouseDown:
+		case NSEventTypeOtherMouseDown:
+		case NSEventTypeLeftMouseUp:
+		case NSEventTypeRightMouseUp:
+		case NSEventTypeOtherMouseUp:
+		case NSEventTypeMouseMoved:
+		case NSEventTypeLeftMouseDragged:
+		case NSEventTypeRightMouseDragged:
+		case NSEventTypeOtherMouseDragged:
+		case NSEventTypeScrollWheel:
+			return mouse(event);
+		default:
+			return true;
+		}
+	}
+
+	bool mouse(NSEvent *event)
+	{
+		const NSPoint screen = screen_point(event);
+		const bool press = event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeRightMouseDown ||
+			event.type == NSEventTypeOtherMouseDown;
+		// A press outside a popup that took the pointer closes it, and goes no further, as a compositor's popup grab does.
+		if (press) {
+			for (auto &[handle, window] : surfaces)
+				if (window->popup && window->grabbed && !window->close_posted && handle_of(event.window) != handle) {
+					const uint64_t inside = handle_of(event.window);
+					bool child = false;
+					for (auto &[other, popup] : surfaces)
+						if (other == inside && popup->popup && popup->parent == handle)
+							child = true;
+					if (child)
+						continue;
+					push({handle, 0, 0, 0, DesktopEventKind::popup_done});
+					window->close_posted = true;
+					[window->window orderOut:nil];
+					return false;
+				}
+		}
+		// While a button is held the window it went down on keeps the pointer; otherwise the window under it has it.
+		const bool dragging = event.type == NSEventTypeLeftMouseDragged || event.type == NSEventTypeRightMouseDragged ||
+			event.type == NSEventTypeOtherMouseDragged || event.type == NSEventTypeLeftMouseUp || event.type == NSEventTypeRightMouseUp ||
+			event.type == NSEventTypeOtherMouseUp;
+		uint64_t window = dragging && pointer_window ? pointer_window : handle_of(event.window);
+		if (!window)
+			window = window_at(screen);
+		if (!dragging)
+			pointer_window = window;
+		Surface *target = surface(window);
+		if (!target)
+			return true;
+		constrain(screen);
+		const auto [x, y] = frame_point(target->window, screen);
+		if (event.type != NSEventTypeScrollWheel && (event.deltaX || event.deltaY) && (event.type == NSEventTypeMouseMoved || dragging))
+			push({window, 0, 0, 0, DesktopEventKind::pointer_relative, int32_t(std::lround(event.deltaX)), int32_t(std::lround(event.deltaY))});
+		pointer(DesktopEventKind::pointer_motion, window, x, y);
+		switch (event.type) {
+		case NSEventTypeLeftMouseDown:
+			last_press = event;
+			// Control-click is the Mac's right click.
+			pointer(DesktopEventKind::pointer_button, window, x, y,
+				(event.modifierFlags & NSEventModifierFlagControl) && !command_is_control ? button_right : button_left, 1);
+			break;
+		case NSEventTypeLeftMouseUp:
+			pointer(DesktopEventKind::pointer_button, window, x, y, button_left, 0);
+			break;
+		case NSEventTypeRightMouseDown:
+		case NSEventTypeRightMouseUp:
+			pointer(DesktopEventKind::pointer_button, window, x, y, button_right, event.type == NSEventTypeRightMouseDown);
+			break;
+		case NSEventTypeOtherMouseDown:
+		case NSEventTypeOtherMouseUp: {
+			const NSInteger number = event.buttonNumber;
+			const uint32_t button = number == 2 ? button_middle : number == 3 ? button_side : number == 4 ? button_extra : 0;
+			if (button)
+				pointer(DesktopEventKind::pointer_button, window, x, y, button, event.type == NSEventTypeOtherMouseDown);
+			break;
+		}
+		case NSEventTypeScrollWheel: {
+			// A wheel reports lines, a trackpad points; a notch is 120 to Windows, and about ten points of a trackpad's travel.
+			const double scale = event.hasPreciseScrollingDeltas ? 12.0 : 120.0;
+			wheel += event.scrollingDeltaY * scale;
+			horizontal_wheel -= event.scrollingDeltaX * scale;
+			const auto take = [&](double &remainder, uint64_t horizontal) {
+				const int32_t delta = int32_t(remainder / 120) * 120;
+				if (!delta && !(event.hasPreciseScrollingDeltas == NO && remainder != 0))
+					return;
+				const int32_t sent = delta ? delta : (remainder > 0 ? 120 : -120);
+				remainder -= sent;
+				pointer(DesktopEventKind::pointer_wheel, window, x, y, uint32_t(sent), horizontal);
+			};
+			take(wheel, 0);
+			take(horizontal_wheel, 1);
+			break;
+		}
+		default:
+			break;
+		}
+		return true;
+	}
+
+	void pump(std::chrono::milliseconds budget)
+	{
+		NSDate *until = budget.count() > 0 ? [NSDate dateWithTimeIntervalSinceNow:double(budget.count()) / 1000] : [NSDate distantPast];
+		for (bool first = true;; first = false) {
+			@autoreleasepool {
+				NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:first ? until : [NSDate distantPast]
+					inMode:NSDefaultRunLoopMode dequeue:YES];
+				if (!event)
+					break;
+				if (input(event))
+					[NSApp sendEvent:event];
+				focus_changed();
+			}
+		}
+		[NSApp updateWindows];
+		focus_changed();
+	}
+
+	RavenWindow *make_window(uint32_t width, uint32_t height, bool keyboard)
+	{
+		RavenWindow *window = [[RavenWindow alloc] initWithContentRect:NSMakeRect(0, 0, width, height)
+			styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskMiniaturizable backing:NSBackingStoreBuffered defer:NO];
+		window.takesKeyboard = keyboard;
+		window.releasedWhenClosed = NO;
+		window.acceptsMouseMovedEvents = YES;
+		window.hasShadow = YES;
+		window.opaque = YES;
+		window.backgroundColor = NSColor.blackColor;
+		RavenView *view = [[RavenView alloc] initWithFrame:NSMakeRect(0, 0, width, height)];
+		view.wantsLayer = YES;
+		view.layer.contentsGravity = kCAGravityTopLeft;
+		view.layer.magnificationFilter = kCAFilterNearest;
+		view.layer.contentsScale = 1;
+		view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+		window.contentView = view;
+		return window;
+	}
+
+	void show(Surface &target, std::span<const uint8_t> pixels, uint32_t width, uint32_t height)
+	{
+		CFDataRef data = CFDataCreate(nullptr, pixels.data(), CFIndex(pixels.size()));
+		CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
+		CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+		CGImageRef image = CGImageCreate(width, height, 8, 32, size_t(width) * 4, space,
+			CGBitmapInfo(kCGBitmapByteOrder32Little) | CGBitmapInfo(kCGImageAlphaNoneSkipFirst), provider, nullptr, false, kCGRenderingIntentDefault);
+		[CATransaction begin];
+		[CATransaction setDisableActions:YES];
+		target.view.layer.contents = (__bridge id)image;
+		[CATransaction commit];
+		CGImageRelease(image);
+		CGColorSpaceRelease(space);
+		CGDataProviderRelease(provider);
+		CFRelease(data);
+	}
+
+	// Keeps the top-left corner where it is, as Windows does when a window changes size.
+	static void set_size(NSWindow *window, uint32_t width, uint32_t height)
+	{
+		NSRect frame = window.frame;
+		if (frame.size.width == width && frame.size.height == height)
+			return;
+		const CGFloat top = NSMaxY(frame);
+		frame.size = NSMakeSize(width, height);
+		frame.origin.y = top - height;
+		[window setFrame:frame display:NO];
+	}
+
+	void register_window(uint64_t handle, Surface &target)
+	{
+		numbers[target.window.windowNumber] = handle;
+	}
+
+	void forget(uint64_t handle)
+	{
+		std::erase_if(numbers, [&](const auto &entry) { return entry.second == handle; });
+		std::erase_if(pending, [&](const DesktopEvent &event) { return event.window == handle; });
+		if (pointer_window == handle)
+			pointer_window = 0;
+		if (constrained == handle)
+			release_constraint();
+		surfaces.erase(handle);
+	}
+
+	void present(uint64_t handle, std::string_view title, uint32_t width, uint32_t height, std::span<const uint8_t> pixels)
+	{
+		if (!handle || !width || !height || width > 8192 || height > 8192 || pixels.size() != size_t(width) * height * 4)
+			throw std::runtime_error("invalid native macOS frame");
+		connect();
+		@autoreleasepool {
+			if (Surface *existing = surface(handle); existing && existing->popup)
+				forget(handle);
+			Surface *target = surface(handle);
+			if (!target) {
+				auto created = std::make_unique<Surface>();
+				created->window = make_window(width, height, true);
+				created->view = (RavenView *)created->window.contentView;
+				created->width = width;
+				created->height = height;
+				created->maximized = maximized.contains(handle);
+				if (NSEqualPoints(cascade, NSZeroPoint))
+					[created->window center];
+				cascade = [created->window cascadeTopLeftFromPoint:cascade];
+				target = created.get();
+				surfaces.emplace(handle, std::move(created));
+				[target->window makeKeyAndOrderFront:nil];
+				register_window(handle, *target);
+				if (target->maximized)
+					maximize(handle, true);
+			}
+			target->window.title = [NSString stringWithUTF8String:std::string(title).c_str()] ?: @"";
+			if (target->close_posted)
+				target->close_posted = false;
+			// A maximized window waits for the program to draw it at the size it was told.
+			if (target->maximized && target->pending_width && (target->pending_width != width || target->pending_height != height))
+				return;
+			if (target->pending_width == width && target->pending_height == height)
+				target->resized = false;
+			target->width = width;
+			target->height = height;
+			set_size(target->window, width, height);
+			show(*target, pixels, width, height);
+			if (!target->window.visible)
+				[target->window orderFront:nil];
+		}
+	}
+
+	void popup(uint64_t handle, uint64_t parent, int32_t x, int32_t y, uint32_t width, uint32_t height, std::span<const uint8_t> pixels,
+		bool grab)
+	{
+		if (!handle || !width || !height || width > 4096 || height > 4096 || pixels.size() != size_t(width) * height * 4)
+			throw std::runtime_error("invalid native macOS popup frame");
+		connect();
+		@autoreleasepool {
+			Surface *owner = surface(parent);
+			if (!owner)
+				throw std::runtime_error("macOS popup has no presented parent window");
+			if (Surface *existing = surface(handle); existing && (!existing->popup || existing->parent != parent || existing->close_posted))
+				forget(handle);
+			Surface *target = surface(handle);
+			if (!target) {
+				auto created = std::make_unique<Surface>();
+				created->window = make_window(width, height, grab);
+				created->view = (RavenView *)created->window.contentView;
+				created->popup = true;
+				created->grabbed = grab;
+				created->parent = parent;
+				created->window.level = NSPopUpMenuWindowLevel;
+				target = created.get();
+				surfaces.emplace(handle, std::move(created));
+			}
+			target->popup_x = x;
+			target->popup_y = y;
+			target->width = width;
+			target->height = height;
+			const NSRect parent_frame = owner->window.frame;
+			[target->window setFrame:NSMakeRect(parent_frame.origin.x + x, NSMaxY(parent_frame) - y - height, width, height) display:NO];
+			show(*target, pixels, width, height);
+			if (!target->window.parentWindow)
+				[owner->window addChildWindow:target->window ordered:NSWindowAbove];
+			[target->window orderFront:nil];
+			if (grab)
+				[target->window makeKeyWindow];
+			register_window(handle, *target);
+		}
+	}
+
+	// Follows the pointer for a move or a resize the program handed over, then gives the button back as released.
+	void interactive(uint64_t handle, uint32_t action)
+	{
+		Surface *target = surface(handle);
+		if (!target || target->popup)
+			return;
+		NSWindow *window = target->window;
+		if (action == 0) {
+			if (last_press && last_press.window == window)
+				[window performWindowDragWithEvent:last_press];
+		} else {
+			const NSPoint start = NSEvent.mouseLocation;
+			const NSRect from = window.frame;
+			const bool top = action == 1 || action == 5 || action == 9, bottom = action == 2 || action == 6 || action == 10;
+			const bool left = action == 4 || action == 5 || action == 6, right = action == 8 || action == 9 || action == 10;
+			for (;;) {
+				@autoreleasepool {
+					NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp
+						untilDate:[NSDate distantFuture] inMode:NSEventTrackingRunLoopMode dequeue:YES];
+					const NSPoint now = NSEvent.mouseLocation;
+					const CGFloat dx = now.x - start.x, dy = now.y - start.y;
+					NSRect frame = from;
+					if (right) frame.size.width = std::max<CGFloat>(64, from.size.width + dx);
+					if (left) {
+						frame.size.width = std::max<CGFloat>(64, from.size.width - dx);
+						frame.origin.x = NSMaxX(from) - frame.size.width;
+					}
+					if (top) frame.size.height = std::max<CGFloat>(32, from.size.height + dy);
+					if (bottom) {
+						frame.size.height = std::max<CGFloat>(32, from.size.height - dy);
+						frame.origin.y = NSMaxY(from) - frame.size.height;
+					}
+					[window setFrame:NSIntegralRect(frame) display:YES];
+					if (event.type == NSEventTypeLeftMouseUp)
+						break;
+				}
+			}
+			const NSSize size = window.frame.size;
+			if (uint32_t(size.width) != target->width || uint32_t(size.height) != target->height) {
+				target->pending_width = uint32_t(size.width);
+				target->pending_height = uint32_t(size.height);
+				target->resized = true;
+			}
+		}
+		const auto [x, y] = frame_point(window, NSEvent.mouseLocation);
+		pointer(DesktopEventKind::pointer_motion, handle, x, y);
+		pointer(DesktopEventKind::pointer_button, handle, x, y, button_left, 0);
+	}
+
+	void maximize(uint64_t handle, bool wanted)
+	{
+		if (wanted)
+			maximized.insert(handle);
+		else
+			maximized.erase(handle);
+		Surface *target = surface(handle);
+		if (!target || target->popup || target->maximized == wanted)
+			return;
+		target->maximized = wanted;
+		NSRect frame;
+		if (wanted) {
+			target->restored = target->window.frame;
+			frame = (target->window.screen ?: NSScreen.mainScreen).visibleFrame;
+		} else {
+			frame = target->restored;
+		}
+		[target->window setFrame:frame display:NO];
+		target->pending_width = uint32_t(frame.size.width);
+		target->pending_height = uint32_t(frame.size.height);
+		target->resized = true;
+	}
+
+	std::optional<HostSurface> host_surface(uint64_t handle, int32_t x, int32_t y, uint32_t width, uint32_t height)
+	{
+		Surface *target = surface(handle);
+		if (!target || target->popup)
+			return std::nullopt;
+		if (!target->child) {
+			target->child = [[RavenMetalView alloc] initWithFrame:NSZeroRect];
+			target->child.wantsLayer = YES;
+			[target->view addSubview:target->child];
+		}
+		target->child.frame = NSMakeRect(x, y, std::max<uint32_t>(width, 1), std::max<uint32_t>(height, 1));
+		CAMetalLayer *layer = (CAMetalLayer *)target->child.layer;
+		layer.contentsScale = 1;
+		layer.magnificationFilter = kCAFilterNearest;
+		HostSurface result{};
+		result.surface = (__bridge void *)layer;
+		result.platform = HostPlatform::metal;
+		return result;
+	}
+
+	void release_constraint()
+	{
+		if (locked) {
+			CGAssociateMouseAndMouseCursorPosition(true);
+			[NSCursor unhide];
+		}
+		locked = false;
+		constrained = 0;
+	}
+
+	void confine(uint64_t handle, std::optional<std::array<int32_t, 4>> rectangle)
+	{
+		release_constraint();
+		if (!rectangle || !surface(handle))
+			return;
+		constrained = handle;
+		constraint = *rectangle;
+		if ((*rectangle)[2] - (*rectangle)[0] <= 2 && (*rectangle)[3] - (*rectangle)[1] <= 2) {
+			locked = true;
+			CGAssociateMouseAndMouseCursorPosition(false);
+			[NSCursor hide];
+		}
+	}
+
+	void publish(std::string_view text)
+	{
+		connect();
+		NSPasteboard *board = NSPasteboard.generalPasteboard;
+		[board clearContents];
+		NSString *string = [[NSString alloc] initWithBytes:text.data() length:text.size() encoding:NSUTF8StringEncoding] ?: @"";
+		[board setString:string forType:NSPasteboardTypeString];
+		published_change = board.changeCount;
+	}
+
+	std::optional<std::pair<uint64_t, std::string>> fetch()
+	{
+		NSPasteboard *board = NSPasteboard.generalPasteboard;
+		// The program's own selection is not another client's.
+		if (board.changeCount == published_change)
+			return std::nullopt;
+		NSString *string = [board stringForType:NSPasteboardTypeString];
+		if (!string)
+			return std::nullopt;
+		return std::make_pair(uint64_t(board.changeCount), std::string(string.UTF8String ?: ""));
+	}
+
+	std::vector<DesktopEvent> poll(std::chrono::milliseconds budget)
+	{
+		std::vector<DesktopEvent> events;
+		if (!connected) {
+			if (budget.count() > 0)
+				std::this_thread::sleep_for(budget);
+			return events;
+		}
+		pump(budget);
+		events.swap(pending);
+		for (auto &[handle, window] : surfaces)
+			if (window->resized && !window->popup) {
+				events.push_back({handle, 0, 0, 0, DesktopEventKind::resize, int32_t(window->pending_width), int32_t(window->pending_height)});
+				window->resized = false;
+			}
+		return events;
+	}
+
+	// The application was asked to quit: each window is asked to close (WM_CLOSE), which the program answers as it sees fit.
+	void quit_requested()
+	{
+		for (auto &[handle, window] : surfaces)
+			if (!window->popup)
+				push({handle, 0x10});
+	}
+};
+
+}
+
+@implementation RavenApplicationDelegate
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender
+{
+	if (self.state)
+		self.state->quit_requested();
+	return NSTerminateCancel;
+}
+@end
+
+namespace raven {
+
+CocoaPresentation::CocoaPresentation() : state(std::make_unique<State>()) {}
+
+CocoaPresentation::~CocoaPresentation()
+{
+	if (state->delegate)
+		state->delegate.state = nullptr;
+}
+
+DesktopPresentation CocoaPresentation::callbacks()
+{
+	DesktopPresentation result;
+	result.present = [this](uint64_t handle, std::string_view title, uint32_t width, uint32_t height, std::span<const uint8_t> pixels) {
+		state->present(handle, title, width, height, pixels);
+	};
+	result.remove = [this](uint64_t handle) {
+		state->maximized.erase(handle);
+		@autoreleasepool {
+			state->forget(handle);
+		}
+	};
+	result.poll = [this](std::chrono::milliseconds budget) { return state->poll(budget); };
+	result.popup = [this](uint64_t handle, uint64_t parent, int32_t x, int32_t y, uint32_t width, uint32_t height, std::span<const uint8_t> pixels) {
+		state->popup(handle, parent, x, y, width, height, pixels, true);
+	};
+	result.interactive = [this](uint64_t handle, uint32_t action) { state->interactive(handle, action); };
+	result.clipboard_publish = [this](std::string_view text) { state->publish(text); };
+	result.clipboard_fetch = [this]() { return state->fetch(); };
+	result.host_surface = [this](uint64_t handle, int32_t x, int32_t y, uint32_t width, uint32_t height) {
+		return state->host_surface(handle, x, y, width, height);
+	};
+	result.release_host_surface = [this](uint64_t handle) {
+		if (auto *target = state->surface(handle)) {
+			[target->child removeFromSuperview];
+			target->child = nil;
+		}
+	};
+	result.confine = [this](uint64_t handle, std::optional<std::array<int32_t, 4>> rectangle) { state->confine(handle, rectangle); };
+	result.owned_popup = [this](uint64_t handle, uint64_t owner, int32_t x, int32_t y, uint32_t width, uint32_t height,
+		std::span<const uint8_t> pixels) { state->popup(handle, owner, x, y, width, height, pixels, false); };
+	result.descriptor = [] { return -1; };
+	result.host_display = [this]() -> void * {
+		state->connect();
+		return nullptr;
+	};
+	result.screen_size = [this]() -> std::optional<std::pair<int32_t, int32_t>> {
+		state->connect();
+		NSScreen *screen = NSScreen.mainScreen;
+		if (!screen)
+			return std::nullopt;
+		return std::pair{int32_t(screen.frame.size.width), int32_t(screen.frame.size.height)};
+	};
+	result.maximize = [this](uint64_t handle, bool wanted) { state->maximize(handle, wanted); };
+	result.platform = HostPlatform::metal;
+	return result;
+}
+
+}

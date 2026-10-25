@@ -23,6 +23,9 @@
 #ifdef RAVEN_XCB
 #include "desktop/xcb.h"
 #endif
+#ifdef RAVEN_COCOA
+#include "platform/darwin/cocoa.h"
+#endif
 #endif
 
 #include <set>
@@ -182,7 +185,7 @@ int main(int argc, char **argv)
 	const bool run_process = mode == "--run-process";
 	int first_file=3;
 	auto timeout=std::chrono::milliseconds(5000);
-	bool wayland=false,x11=false;
+	bool wayland=false,x11=false,macos=false;
 	if (run_process && argc>3 && std::string_view(argv[3]).starts_with("--timeout-ms=")) {
 		const std::string_view value=std::string_view(argv[3]).substr(13);
 		uint64_t milliseconds=0;
@@ -198,6 +201,8 @@ int main(int argc, char **argv)
 		wayland=true; ++first_file;
 	} else if (run_process && argc>first_file && std::string_view(argv[first_file])=="--desktop=x11") {
 		x11=true; ++first_file;
+	} else if (run_process && argc>first_file && std::string_view(argv[first_file])=="--desktop=macos") {
+		macos=true; ++first_file;
 	}
 	bool inherited_stdio=false;
 	if (run_process && argc>first_file && std::string_view(argv[first_file])=="--stdio=inherit") {
@@ -234,6 +239,7 @@ int main(int argc, char **argv)
 		std::string options="--timeout-ms="+std::to_string(timeout.count());
 		if (wayland) options+=" --desktop=wayland";
 		if (x11) options+=" --desktop=x11";
+		if (macos) options+=" --desktop=macos";
 		setenv("RAVEN_CHILD_OPTIONS",options.c_str(),1);
 	}
 	const bool bind_imports = mode == "--bind-imports";
@@ -252,7 +258,7 @@ int main(int argc, char **argv)
 			<< "       raven --bind-imports program.exe dependency.dll ...\n"
 			<< "       raven --run-entry --execution=native fixture.exe\n"
 			<< "       raven --run-modules --execution=native fixture.exe dependency.dll ...\n"
-			<< "       raven --run-process --execution=native [--timeout-ms=N] [--desktop=wayland|--desktop=x11] [--stdio=inherit] program.exe [dependency.dll ...] [-- guest-argument ...]\n"
+			<< "       raven --run-process --execution=native [--timeout-ms=N] [--desktop=wayland|--desktop=x11|--desktop=macos] [--stdio=inherit] program.exe [dependency.dll ...] [-- guest-argument ...]\n"
 			<< "Complete Windows process initialization is not implemented yet.\n";
 		return 2;
 	}
@@ -575,6 +581,12 @@ int main(int argc, char **argv)
 					if (x11) presentation=x11_backend.callbacks();
 #else
 					if (x11) throw std::runtime_error("native X11 presentation was not built");
+#endif
+#ifdef RAVEN_COCOA
+					raven::CocoaPresentation macos_backend;
+					if (macos) presentation=macos_backend.callbacks();
+#else
+					if (macos) throw std::runtime_error("native macOS presentation was not built");
 #endif
 					std::optional<raven::NativeLaunch> launch;
 					{

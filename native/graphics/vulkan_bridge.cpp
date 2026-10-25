@@ -310,10 +310,12 @@ bool VulkanBridge::dispatch(std::string_view name)
 			symbol == "vkEnumerateInstanceExtensionProperties" || symbol == "vkEnumerateInstanceLayerProperties";
 		const auto exported = VulkanBridge::exports();
 		const auto instance = arguments[0] ? instances.at(arguments[0]) : VK_NULL_HANDLE;
-		const bool xcb = surface_source.platform == HostPlatform::xcb;
-		const char *host_name = symbol == "vkCreateWin32SurfaceKHR" ? (xcb ? "vkCreateXcbSurfaceKHR" : "vkCreateWaylandSurfaceKHR") :
-			symbol == "vkGetPhysicalDeviceWin32PresentationSupportKHR" ?
-			(xcb ? "vkGetPhysicalDeviceXcbPresentationSupportKHR" : "vkGetPhysicalDeviceWaylandPresentationSupportKHR") : symbol.c_str();
+		const bool xcb = surface_source.platform == HostPlatform::xcb, metal = surface_source.platform == HostPlatform::metal;
+		// Metal has no presentation-support query of its own; any surface support query of the driver stands for it.
+		const char *host_name = symbol == "vkCreateWin32SurfaceKHR" ? (xcb ? "vkCreateXcbSurfaceKHR" : metal ? "vkCreateMetalSurfaceEXT" :
+			"vkCreateWaylandSurfaceKHR") : symbol == "vkGetPhysicalDeviceWin32PresentationSupportKHR" ?
+			(xcb ? "vkGetPhysicalDeviceXcbPresentationSupportKHR" : metal ? "vkGetPhysicalDeviceSurfaceSupportKHR" :
+			"vkGetPhysicalDeviceWaylandPresentationSupportKHR") : symbol.c_str();
 		if ((arguments[0] || global) && std::find(exported.begin(), exported.end(), symbol) != exported.end() &&
 			vkGetInstanceProcAddr(instance, host_name))
 			result = modules.resolve({"vulkan-1.dll", symbol, 0, false, 0});
@@ -355,6 +357,17 @@ bool VulkanBridge::dispatch(std::string_view name)
 			info.pApplicationInfo = &application;
 		}
 		info.ppEnabledLayerNames = nullptr;
+#ifdef __APPLE__
+		// MoltenVK is a portability driver, which the loader lists only to instances that ask for those.
+		uint32_t instance_extension_count = 0;
+		vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, nullptr);
+		std::vector<VkExtensionProperties> instance_extensions(instance_extension_count);
+		vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, instance_extensions.data());
+		if (std::ranges::any_of(instance_extensions, [](const auto &item) { return !std::strcmp(item.extensionName, "VK_KHR_portability_enumeration"); })) {
+			host_pointers.push_back("VK_KHR_portability_enumeration");
+			info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+		}
+#endif
 		info.enabledExtensionCount = uint32_t(host_pointers.size());
 		info.ppEnabledExtensionNames = host_pointers.empty() ? nullptr : host_pointers.data();
 		writable(arguments[2], 8);
@@ -504,6 +517,17 @@ bool VulkanBridge::dispatch(std::string_view name)
 		}
 		info.pQueueCreateInfos = queue_infos.data();
 		info.ppEnabledLayerNames = nullptr;
+#ifdef __APPLE__
+		// A device that implements Vulkan only in part must be created with the extension that says so.
+		{
+			uint32_t count = 0;
+			vkEnumerateDeviceExtensionProperties(found->second.handle, nullptr, &count, nullptr);
+			std::vector<VkExtensionProperties> available(count);
+			vkEnumerateDeviceExtensionProperties(found->second.handle, nullptr, &count, available.data());
+			if (std::ranges::any_of(available, [](const auto &item) { return !std::strcmp(item.extensionName, "VK_KHR_portability_subset"); }))
+				host_pointers.push_back("VK_KHR_portability_subset");
+		}
+#endif
 		info.enabledExtensionCount = uint32_t(host_pointers.size());
 		info.ppEnabledExtensionNames = host_pointers.empty() ? nullptr : host_pointers.data();
 		writable(arguments[3], 8);
