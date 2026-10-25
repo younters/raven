@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #define RAVEN_GUEST_MAGIC 0x52564e47U // "RVNG"
-#define RAVEN_GUEST_VERSION 2U
+#define RAVEN_GUEST_VERSION 3U
 
 // Descriptors the host gives the agent at startup.
 #define RAVEN_GUEST_CONTROL_FD 3
@@ -60,6 +60,8 @@ enum raven_service_command {
 	RAVEN_SERVICE_THREAD_JOIN,
 	// a0 address, a1 expected, a2 desired, a3 operand size (4 or 8): a locked exchange in the guest's memory domain.
 	RAVEN_SERVICE_COMPARE_EXCHANGE,
+	// data area: NUL-terminated host path; a0 function count. Result: __wine_unix_call_funcs table in this process.
+	RAVEN_SERVICE_LOAD_UNIXLIB,
 	RAVEN_SERVICE_EXIT,
 };
 
@@ -107,7 +109,9 @@ struct raven_thread_channel {
 	int32_t code;
 	uint32_t trace;
 	uint64_t fault_address;
-	uint64_t reserved[4];
+	uint32_t unix_active;
+	uint32_t reserved0;
+	uint64_t reserved[3];
 	struct raven_registers registers;
 	uint8_t xstate[RAVEN_XSTATE_SIZE];
 };
@@ -120,7 +124,9 @@ struct raven_control {
 	// Filled in by the agent: where calls return to (an INT3) and its process identity.
 	uint64_t return_gate;
 	uint64_t agent_pid;
-	uint64_t reserved[12];
+	uint64_t unix_call_gate;
+	uint64_t unix_call_gate_end;
+	uint64_t reserved[10];
 	struct raven_service_channel service;
 	uint64_t pad1[2];
 	struct raven_thread_channel threads[RAVEN_GUEST_MAX_THREADS];

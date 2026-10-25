@@ -8,6 +8,7 @@
 #include "protocol.h"
 
 #include <architecture/i386/table.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <i386/user_ldt.h>
@@ -36,6 +37,59 @@ uint64_t raven_agent_tsds[RAVEN_GUEST_MAX_THREADS];
 // The GS base the guest runs with now: its TEB for 64-bit code, the agent's own for 32-bit code, which does not use GS.
 static uint64_t guest_gs_bases[RAVEN_GUEST_MAX_THREADS];
 static pthread_t guest_threads[RAVEN_GUEST_MAX_THREADS];
+// Published before a pthread enters PE code. The gate finds its record with thread_selfid, which needs no Darwin TSD.
+struct unix_thread {
+	uint64_t identity;
+	void *stack_top;
+	uint64_t tsd;
+	uint64_t *guest_gs;
+	uint32_t *active;
+	uint64_t reserved[3];
+};
+struct unix_thread raven_unix_threads[RAVEN_GUEST_MAX_THREADS];
+_Static_assert(sizeof(struct unix_thread) == 64, "unix gate record stride");
+extern void raven_unix_call_gate(void), raven_unix_call_gate_end(void);
+extern void raven_unix_call_native_begin(void), raven_unix_call_native_end(void);
+
+// Only host-provisioned libraries are loaded. Keep them alive until process exit: PE code can retain table and object pointers.
+struct unix_library {
+	void *module;
+	int32_t (**functions)(void *);
+	uint32_t count;
+};
+static struct unix_library unix_libraries[32];
+static uint32_t unix_library_count;
+
+int32_t raven_dispatch_unix_call(uint64_t handle, uint32_t code, void *args)
+{
+	int32_t result = (int32_t)0xc0000008U; // STATUS_INVALID_HANDLE
+	const uint32_t count = __atomic_load_n(&unix_library_count, __ATOMIC_ACQUIRE);
+	for (uint32_t i = 0; i < count; ++i) {
+		const struct unix_library *library = &unix_libraries[i];
+		if ((uint64_t)library->functions != handle)
+			continue;
+		result = (int32_t)0xc000000dU; // STATUS_INVALID_PARAMETER
+		if (code < library->count && library->functions[code])
+			result = library->functions[code](args);
+		break;
+	}
+	return result;
+}
+
+static int inside_unix_call(uint64_t rip, uint32_t index)
+{
+	return __atomic_load_n(&control->threads[index].unix_active, __ATOMIC_ACQUIRE) ||
+		(rip >= (uint64_t)raven_unix_call_gate && rip < (uint64_t)raven_unix_call_gate_end);
+}
+
+static uint64_t interrupted_gs_base(uint64_t rip, uint32_t index)
+{
+	// Rosetta reports zero in __gsbase for native code even after thread_fast_set_cthread_self64. Track both transitions ourselves.
+	if (rip >= (uint64_t)raven_unix_call_gate && rip < (uint64_t)raven_unix_call_gate_end)
+		return rip >= (uint64_t)raven_unix_call_native_begin && rip < (uint64_t)raven_unix_call_native_end ?
+			raven_agent_tsds[index] : guest_gs_bases[index];
+	return __atomic_load_n(&control->threads[index].unix_active, __ATOMIC_ACQUIRE) ? raven_agent_tsds[index] : guest_gs_bases[index];
+}
 // The guest thread's signal stack: Windows code owns its stack, and the handler must run where Windows code cannot reach.
 #define ALTSTACK_SIZE (256 * 1024)
 // Equal-sized stacks let the entry stub find its TSD without calling libc with a Windows GS base.
@@ -502,6 +556,29 @@ static void serve(struct raven_service_channel *service)
 		result = compare_exchange(a[0], a[1], a[2], a[3]);
 		ok = errno == 0;
 		break;
+	case RAVEN_SERVICE_LOAD_UNIXLIB: {
+		if (!a[0] || a[0] > 4096 || unix_library_count == 32 || !memchr(data_area, 0, RAVEN_CONTROL_DATA_SIZE)) {
+			errno = EINVAL;
+			ok = 0;
+			break;
+		}
+		void *module = dlopen((const char *)data_area, RTLD_NOW | RTLD_LOCAL);
+		void *functions = module ? dlsym(module, "__wine_unix_call_funcs") : NULL;
+		if (!functions) {
+			const char *error = dlerror();
+			fprintf(stderr, "raven-bootstrap: unixlib: %s\n", error ? error : "missing function table");
+			if (module)
+				dlclose(module);
+			errno = ENOEXEC;
+			ok = 0;
+			break;
+		}
+		const uint32_t index = unix_library_count;
+		unix_libraries[index] = (struct unix_library){module, functions, (uint32_t)a[0]};
+		__atomic_store_n(&unix_library_count, index + 1, __ATOMIC_RELEASE);
+		result = (uint64_t)functions;
+		break;
+	}
 	case RAVEN_SERVICE_EXIT:
 		_exit(0);
 	default:
@@ -629,7 +706,7 @@ static void save_context(ucontext_t *context, struct raven_thread_channel *threa
 	const uint64_t fs_index = s->__fs >> 3;
 	r->fs_base = compat && fs_index < LDT_ENTRIES ? ldt_bases[fs_index] : 0;
 	r->gs = 0;
-	r->gs_base = compat ? 0 : guest_gs_bases[index];
+	r->gs_base = compat ? 0 : interrupted_gs_base(r->rip, index);
 	r->orig_rax = signal == SIGSYS ? s->__rax : (uint64_t)-1;
 	memcpy(thread->xstate, layout.legacy, 512);
 	memset(thread->xstate + RAVEN_XSTATE_HEADER, 0, 64);
@@ -658,10 +735,12 @@ static void load_context(ucontext_t *context, const struct raven_thread_channel 
 	const int compat = r->cs == 0x23;
 	s->__fs = compat ? mac_fs(r->fs) : 0;
 	s->__gs = 0;
-	guest_gs_bases[index] = compat ? raven_agent_tsds[index] : r->gs_base;
+	const uint64_t restore_gs = compat ? raven_agent_tsds[index] : r->gs_base;
+	if (!inside_unix_call(r->rip, index))
+		guest_gs_bases[index] = restore_gs;
 	// Returning from the handler restores the GS base of a full context: it must be the guest's, not the one it stopped with.
 	if (layout.gs_base)
-		*layout.gs_base = guest_gs_bases[index];
+		*layout.gs_base = restore_gs;
 	// MXCSR_MASK is the processor's, not the program's.
 	uint32_t mask;
 	memcpy(&mask, layout.legacy + 28, 4);
@@ -691,7 +770,11 @@ void raven_agent_stop(int signal, siginfo_t *info, void *raw, uint32_t index)
 	const uint32_t requested = load(&thread->interrupts_requested);
 	if (signal == SIGUSR1 && load(&thread->interrupts_answered) == requested) {
 		// An interrupt asked for while the guest was already stopping: that stop answered it.
-		set_gs_base(guest_gs_bases[index]);
+		const struct context_layout layout = layout_of(context);
+		const uint64_t base = interrupted_gs_base(layout.thread->__rip, index);
+		if (layout.gs_base)
+			*layout.gs_base = base;
+		set_gs_base(base);
 		return;
 	}
 	save_context(context, thread, index, signal);
@@ -710,7 +793,7 @@ void raven_agent_stop(int signal, siginfo_t *info, void *raw, uint32_t index)
 		pthread_exit(NULL);
 	load_context(context, thread, index);
 	__atomic_store_n(&thread->state, RAVEN_THREAD_RUNNING, __ATOMIC_RELEASE);
-	set_gs_base(guest_gs_bases[index]);
+	set_gs_base(thread->registers.cs == 0x23 ? raven_agent_tsds[index] : thread->registers.gs_base);
 }
 
 // The first instructions of every handler: on the guest thread, give macOS code its thread data back before anything else runs.
@@ -744,6 +827,21 @@ static void prepare_guest(uint32_t index)
 {
 	raven_agent_tsds[index] = find_tsd_base();
 	guest_gs_bases[index] = raven_agent_tsds[index];
+	// Reuse the guarded stack when the channel is joined and assigned to a new pthread.
+	struct unix_thread *native = &raven_unix_threads[index];
+	if (!native->stack_top) {
+		const size_t size = 2 * 1024 * 1024;
+		void *stack = mmap(NULL, size + 8192, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
+		if (stack == MAP_FAILED || mprotect((char *)stack + 4096, size, PROT_READ | PROT_WRITE))
+			fail("cannot create the unix-call stack");
+		native->stack_top = (char *)stack + 4096 + size;
+	}
+	native->tsd = raven_agent_tsds[index];
+	native->guest_gs = &guest_gs_bases[index];
+	native->active = &control->threads[index].unix_active;
+	uint64_t identity;
+	pthread_threadid_np(NULL, &identity);
+	__atomic_store_n(&native->identity, identity, __ATOMIC_RELEASE);
 	stack_t alternate = {.ss_sp = raven_agent_altstacks[index], .ss_size = ALTSTACK_SIZE};
 	if (sigaltstack(&alternate, NULL) != 0)
 		fail("cannot set the signal stack");
@@ -839,6 +937,8 @@ int main(int argc, char **argv)
 
 	control->return_gate = (uint64_t)return_gate;
 	control->agent_pid = (uint64_t)getpid();
+	control->unix_call_gate = (uint64_t)raven_unix_call_gate;
+	control->unix_call_gate_end = (uint64_t)raven_unix_call_gate_end;
 	send_task_port(argv[1]);
 	__atomic_store_n(&control->ready, 1, __ATOMIC_RELEASE);
 	// The setup stop. Every context after it is the host's.

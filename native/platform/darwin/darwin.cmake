@@ -55,9 +55,33 @@ if(TARGET vulkan_pe_fixture AND RAVEN_MINGW64)
     endif()
 endif()
 
+# A real PE caller and a tiny Mach-O unixlib exercise the boundary without Wine or a graphics driver.
+if(TARGET raven_cpu AND RAVEN_MINGW64)
+    set(RAVEN_UNIX_CALL_TEST_DIR ${RAVEN_DARWIN_DIR}/tests)
+    set(RAVEN_UNIX_CALL_LIBRARY ${CMAKE_CURRENT_BINARY_DIR}/raven-unix-call-test.so)
+    set(RAVEN_UNIX_CALL_PE ${CMAKE_CURRENT_BINARY_DIR}/raven-unix-call-test.exe)
+    add_custom_command(OUTPUT ${RAVEN_UNIX_CALL_LIBRARY}
+        COMMAND /usr/bin/clang -arch x86_64 -dynamiclib -O2 -Wall -Wextra
+            ${RAVEN_UNIX_CALL_TEST_DIR}/unix_call_library.c -o ${RAVEN_UNIX_CALL_LIBRARY}
+        DEPENDS ${RAVEN_UNIX_CALL_TEST_DIR}/unix_call_library.c ${RAVEN_UNIX_CALL_TEST_DIR}/unix_call_shared.h VERBATIM)
+    add_custom_command(OUTPUT ${RAVEN_UNIX_CALL_PE}
+        COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,mainCRTStartup
+            ${RAVEN_UNIX_CALL_TEST_DIR}/unix_call_pe.c ${RAVEN_UNIX_CALL_TEST_DIR}/unix_call_pe.s -o ${RAVEN_UNIX_CALL_PE}
+        DEPENDS ${RAVEN_UNIX_CALL_TEST_DIR}/unix_call_pe.c ${RAVEN_UNIX_CALL_TEST_DIR}/unix_call_pe.s
+            ${RAVEN_UNIX_CALL_TEST_DIR}/unix_call_shared.h VERBATIM)
+    add_custom_target(darwin_unix_call_fixtures ALL DEPENDS ${RAVEN_UNIX_CALL_LIBRARY} ${RAVEN_UNIX_CALL_PE})
+    add_executable(darwin_unix_call_test ${RAVEN_UNIX_CALL_TEST_DIR}/unix_call_test.cpp)
+    target_link_libraries(darwin_unix_call_test PRIVATE raven_cpu)
+    add_dependencies(darwin_unix_call_test darwin_unix_call_fixtures raven-bootstrap)
+    add_test(NAME darwin_unix_call COMMAND darwin_unix_call_test $<TARGET_FILE:raven-bootstrap>
+        ${RAVEN_UNIX_CALL_PE} ${RAVEN_UNIX_CALL_LIBRARY})
+    set_tests_properties(darwin_unix_call PROPERTIES TIMEOUT 20)
+endif()
+
 # raven-bootstrap keeps its name, so everything that locates it next to raven finds the macOS guest the same way.
 if(TARGET raven-bootstrap)
-    set_property(TARGET raven-bootstrap PROPERTY SOURCES ${RAVEN_DARWIN_DIR}/guest/agent.c ${RAVEN_DARWIN_DIR}/guest/reserve.s)
+    set_property(TARGET raven-bootstrap PROPERTY SOURCES ${RAVEN_DARWIN_DIR}/guest/agent.c ${RAVEN_DARWIN_DIR}/guest/reserve.s
+        ${RAVEN_DARWIN_DIR}/guest/unix_call.s)
     set_property(TARGET raven-bootstrap PROPERTY COMPILE_OPTIONS -O2 -Wall -Wextra -fno-sanitize=all -fno-stack-protector)
     set_property(TARGET raven-bootstrap PROPERTY LINKER_LANGUAGE C)
     set_property(TARGET raven-bootstrap PROPERTY OSX_ARCHITECTURES x86_64)

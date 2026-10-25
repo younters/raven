@@ -1818,6 +1818,11 @@ bool NativeProcess::served_wait_trap(uint64_t address) const
 
 bool NativeProcess::inside_served_stub() const
 {
+	// Darwin libraries run on the one real guest thread with its own stack and TSD. A stopped unix call must resume on that thread.
+	const auto &control = *state->child->control;
+	const uint64_t instruction = state->registers().rip;
+	if (load(&state->child->thread().unix_active) || (instruction >= control.unix_call_gate && instruction < control.unix_call_gate_end))
+		return true;
 	if (state->served_stubs.empty())
 		return false;
 	const uint64_t rip = state->registers().rip;
@@ -1825,6 +1830,21 @@ bool NativeProcess::inside_served_stub() const
 		return false;
 	const auto after = std::upper_bound(state->served_stubs.begin(), state->served_stubs.end(), rip);
 	return after != state->served_stubs.begin() && rip - *(after - 1) < state->served_stub_size;
+}
+
+uint64_t NativeProcess::unix_call_gate() const
+{
+	return state->mode == NativeMode::x64 ? state->child->control->unix_call_gate : 0;
+}
+
+uint64_t NativeProcess::load_unix_library(const std::string &path, uint32_t function_count)
+{
+	state->require_stopped();
+	if (state->mode != NativeMode::x64 || !function_count || function_count > 4096 || path.empty() ||
+		path.find('\0') != path.npos || path.size() >= RAVEN_CONTROL_DATA_SIZE)
+		throw std::runtime_error("invalid x64 unix library request");
+	std::memcpy(state->child->data, path.c_str(), path.size() + 1);
+	return state->service(RAVEN_SERVICE_LOAD_UNIXLIB, {function_count}, "unix library load");
 }
 
 uint64_t NativeProcess::serve_call(uint64_t stub, std::vector<uint64_t> words, std::array<uint64_t, 4> floats, uint64_t stack, bool queued)
