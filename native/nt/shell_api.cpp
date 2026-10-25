@@ -99,6 +99,12 @@ std::vector<std::u16string> file_list(ApiCall &call, uint64_t address, bool ansi
 
 void register_shell_api(ApiRegistry &registry, KernelContext &context)
 {
+	// There are no printers yet: the print and page setup dialogs answer as when the user cancels them (FALSE, with CommDlgExtendedError
+	// still zero), which programs handle as an ordinary choice instead of an error.
+	for (const auto *name : {"PrintDlgW", "PrintDlgA", "PageSetupDlgW", "PageSetupDlgA"})
+		registry.add(name, 1, [](ApiCall &call) { call.ret(0); });
+	for (const auto *name : {"PrintDlgExW", "PrintDlgExA"})
+		registry.add(name, 1, [](ApiCall &call) { call.ret(0x80004001U); });
 	auto &paths = context.paths;
 	registry.add("SHGetFolderPathW", 5, [&paths](ApiCall &call) {
 		const int csidl = call.i32(1);
