@@ -5,6 +5,17 @@
 #include <wincrypt.h>
 #include <commctrl.h>
 #include <shlobj.h>
+#include <stdarg.h>
+
+static int (__cdecl *format_text)(char *, size_t, const char *, va_list);
+static int format(char *buffer, size_t size, const char *text, ...)
+{
+	va_list arguments;
+	va_start(arguments, text);
+	const int result = format_text(buffer, size, text, arguments);
+	va_end(arguments);
+	return result;
+}
 
 static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
 {
@@ -93,6 +104,21 @@ int raven_entry(void)
 	if (!create || !destroy || !count) return 20;
 	HIMAGELIST images = create(16, 16, ILC_COLOR32 | ILC_MASK, 1, 1);
 	if (!images || count(images) != 0 || !destroy(images)) return 21;
+	HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+	char *(__cdecl *copy_text)(char *, const char *, size_t) = (void *)GetProcAddress(nt, "strncpy");
+	format_text = (void *)GetProcAddress(nt, "_vsnprintf");
+	char formatted[32], copied[6] = {1, 1, 1, 1, 1, 42};
+	if (!copy_text || !format_text || copy_text(copied, "hi", 5) != copied || copied[0] != 'h' || copied[1] != 'i' ||
+		copied[2] || copied[3] || copied[4] || copied[5] != 42 || format(formatted, sizeof formatted, "%s %d", "test", 42) != 7 ||
+		lstrcmpA(formatted, "test 42")) return 32;
+	HMODULE base = LoadLibraryW(L"kernelbase.dll");
+	HRESULT (WINAPI *combine_path)(WCHAR *, SIZE_T, const WCHAR *, const WCHAR *, ULONG) = (void *)GetProcAddress(base, "PathCchCombineEx");
+	HRESULT (WINAPI *skip_root)(const WCHAR *, const WCHAR **) = (void *)GetProcAddress(base, "PathCchSkipRoot");
+	DWORD (WINAPI *current_id)(void) = (void *)GetProcAddress(base, "GetCurrentProcessId");
+	struct { const WCHAR *tail; DWORD guard; } root = {NULL, 0xabcdef12};
+	if (!base || !combine_path || !skip_root || !current_id || current_id() != GetCurrentProcessId()) return 30;
+	if (combine_path(folder, MAX_PATH, L"C:\\Windows", L"..\\Program Files", 0) || lstrcmpW(folder, L"C:\\Program Files") ||
+		skip_root(folder, &root.tail) || root.tail != folder + 3 || root.guard != 0xabcdef12) return 31;
 	HMODULE shlwapi = LoadLibraryW(L"shlwapi.dll"), theme = LoadLibraryW(L"uxtheme.dll"), script = LoadLibraryW(L"usp10.dll");
 	LPWSTR (WINAPI *format_size)(LONGLONG, LPWSTR, UINT) = (void *)GetProcAddress(shlwapi, "StrFormatByteSizeW");
 	HRESULT (WINAPI *hit_test)(HANDLE, HDC, int, int, DWORD, const RECT *, HRGN, POINT, WORD *) =

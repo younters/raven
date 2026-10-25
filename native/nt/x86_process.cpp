@@ -50,7 +50,7 @@ namespace raven {
 namespace {
 
 // stdcall argument counts for every API the x86 process runner can dispatch.
-constexpr std::array<std::pair<std::string_view, uint32_t>, 117> kernel32_exports{{
+constexpr std::array<std::pair<std::string_view, uint32_t>, 120> kernel32_exports{{
 	{"OpenProcessToken", 3}, {"OpenThreadToken", 4}, {"CloseHandle", 1}, {"CreateEventA", 4}, {"CreateEventW", 4}, {"CreateThread", 6}, {"DeleteCriticalSection", 1}, {"EnterCriticalSection", 1}, {"ExitProcess", 1}, {"ExitThread", 1}, {"FindResourceA", 3},
 	{"FindResourceExA", 4}, {"FindResourceExW", 4}, {"FindResourceW", 3}, {"FreeLibrary", 1}, {"GetACP", 0},
 	{"GetCommandLineA", 0}, {"GetCommandLineW", 0}, {"GetCurrentProcessId", 0}, {"GetCurrentThreadId", 0}, {"GetExitCodeThread", 2},
@@ -58,6 +58,7 @@ constexpr std::array<std::pair<std::string_view, uint32_t>, 117> kernel32_export
 	{"GetModuleHandleW", 1}, {"GetPrivateProfileIntW", 4}, {"GetPrivateProfileStringW", 6}, {"WritePrivateProfileStringW", 4}, {"LoadLibraryExA", 3}, {"LoadLibraryExW", 3}, {"GetProcAddress", 2}, {"GetProcessHeap", 0}, {"GetStartupInfoA", 1}, {"GetStartupInfoW", 1}, {"GetStdHandle", 1},
 	{"GetTickCount", 0}, {"ProcessIdToSessionId", 2}, {"HeapAlloc", 3}, {"HeapFree", 3}, {"HeapReAlloc", 4}, {"HeapSize", 3}, {"InitializeCriticalSection", 1}, {"LeaveCriticalSection", 1}, {"LoadLibraryA", 1}, {"LoadLibraryW", 1}, {"LoadResource", 2}, {"LockResource", 1},
 	{"OutputDebugStringA", 1}, {"ResetEvent", 1}, {"ResumeThread", 1}, {"SetEvent", 1}, {"SetLastError", 1}, {"SetThreadPriority", 2}, {"SizeofResource", 2}, {"Sleep", 1}, {"SwitchToThread", 0}, {"TryEnterCriticalSection", 1}, {"VirtualAlloc", 4},
+	{"PathCchCanonicalize", 3}, {"PathCchCombineEx", 5}, {"PathCchSkipRoot", 2},
 	// Services of the 32-bit CRT era: legacy file calls, global memory, code pages, environment and version queries.
 	{"_lopen", 2}, {"_lcreat", 2}, {"_lread", 3}, {"_lwrite", 3}, {"_llseek", 3}, {"lstrcpyA", 2}, {"lstrlenA", 1}, {"GetWindowsDirectoryA", 2}, {"GlobalHandle", 1}, {"GetVersionExA", 1}, {"WinExec", 2}, {"GlobalUnlock", 1}, {"GlobalFree", 1}, {"GlobalAlloc", 2}, {"SetErrorMode", 1}, {"GlobalLock", 1}, {"GetCurrentProcess", 0}, {"SetHandleCount", 1}, {"GetOEMCP", 0}, {"GetCPInfo", 2}, {"WideCharToMultiByte", 8}, {"DeleteFileA", 1}, {"GetEnvironmentStrings", 0}, {"FreeEnvironmentStringsW", 1}, {"FreeEnvironmentStringsA", 1}, {"UnhandledExceptionFilter", 1}, {"RtlUnwind", 4}, {"HeapCreate", 3}, {"HeapDestroy", 1}, {"TerminateProcess", 2}, {"GetEnvironmentStringsW", 0}, {"GetVersion", 0}, {"GetFileAttributesA", 1},
 	// File and clock services of the C runtime component: the shared handlers read 32-bit words; a 64-bit offset takes two.
@@ -402,7 +403,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// Libraries the program ships and imports statically join its graph; the runtime's own libraries answer for the system ones.
 	if (source) {
 		// The system's libraries are the runtime's whatever copies the program ships or an installer left in the system directory.
-		std::vector<std::string_view> provided{"kernel32.dll", "user32.dll", "gdi32.dll", "advapi32.dll", "setupapi.dll", "msvcrt.dll", "winmm.dll",
+		std::vector<std::string_view> provided{"kernel32.dll", "kernelbase.dll", "user32.dll", "gdi32.dll", "advapi32.dll", "setupapi.dll", "msvcrt.dll", "winmm.dll",
 			"dsound.dll", "vulkan-1.dll", "shell32.dll", "comctl32.dll", "ntdll.dll", "version.dll", "ole32.dll"};
 		provided.insert(provided.end(), system_library_names().begin(), system_library_names().end());
 		if (!source("d3d9.dll"))
@@ -459,7 +460,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	const auto with_imports = [&](const std::string &library, std::span<const std::string_view> own) {
 		std::vector<std::string_view> merged(own.begin(), own.end());
 		if (library == "ntdll.dll")
-			for (const auto name : {"memcpy", "memmove", "memset", "memcmp", "strlen", "wcslen"})
+			for (const auto name : {"memcpy", "memmove", "memset", "memcmp", "strlen", "wcslen", "strncpy", "_vsnprintf"})
 				merged.push_back(name);
 		// A library loaded later, such as an installer plug-in, imports names the initial graph never named: every public name binds.
 		const auto published = system_export_names(library);
@@ -599,6 +600,20 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			traps.emplace(provider.loaded.base() + symbol.address, std::pair{*stable, words_of(dll, exported, count(exported)) * 4});
 		}
 	};
+	// KernelBase serves the same kernel entry points, including the PathCch functions missing from the public import-library lists.
+	std::vector<std::string_view> kernelbase_names;
+	for (const auto &symbol : modules.all().at("kernel32.dll")->exports)
+		for (const auto &name : symbol.names)
+			kernelbase_names.push_back(name);
+	add_library("kernelbase.dll", kernelbase_names, {}, [](std::string_view name) {
+		const auto words = system_export_words("kernel32.dll", name);
+		if (words != UINT32_MAX)
+			return words;
+		for (const auto &item : kernel32_table())
+			if (item.name == name)
+				return item.words;
+		return registry_words(name) != UINT32_MAX ? registry_words(name) : uint32_t(0);
+	});
 	std::vector<std::string_view> advapi_names;
 	for (const auto &item : host_exports("advapi32.dll"))
 		advapi_names.push_back(item.name);
