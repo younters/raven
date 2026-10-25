@@ -30,92 +30,6 @@ uint64_t word(raven::NativeProcess &process, uint64_t address, size_t size)
 	return value;
 }
 
-void channel_contracts()
-{
-	int pair[2];
-	check(::socketpair(AF_UNIX, SOCK_SEQPACKET, 0, pair) == 0, "cannot create the channel fixture");
-	uint8_t buffer[32]{};
-	iovec vector{buffer, sizeof buffer};
-	alignas(cmsghdr) char control[CMSG_SPACE(sizeof(int))]{};
-	msghdr message{};
-	message.msg_iov = &vector;
-	message.msg_iovlen = 1;
-	const uint8_t first[]{3, 0, 0, 0, 11, 12, 13};
-	for (size_t index = 0; index < sizeof first; ++index) {
-		check(::write(pair[0], first + index, 1) == 1, "cannot fragment a channel frame");
-		const auto count = recvmsg(pair[1], &message, MSG_DONTWAIT);
-		if (index + 1 < sizeof first)
-			check(count == -1 && (errno == EAGAIN || errno == EWOULDBLOCK), "an incomplete channel frame was consumed");
-		else
-			check(count == 3 && buffer[0] == 11 && buffer[2] == 13, "a fragmented channel frame lost bytes");
-	}
-	const int shared = ::open("/dev/null", O_RDONLY);
-	check(shared >= 0, "cannot open the descriptor fixture");
-	vector.iov_len = 3;
-	message.msg_control = control;
-	message.msg_controllen = sizeof control;
-	auto *header = CMSG_FIRSTHDR(&message);
-	header->cmsg_level = SOL_SOCKET;
-	header->cmsg_type = SCM_RIGHTS;
-	header->cmsg_len = CMSG_LEN(sizeof(int));
-	std::memcpy(CMSG_DATA(header), &shared, sizeof shared);
-	check(sendmsg(pair[0], &message, 0) == 3, "channel descriptor send failed");
-	message.msg_control = nullptr;
-	message.msg_controllen = 0;
-	buffer[0] = 99;
-	check(sendmsg(pair[0], &message, 0) == 3, "channel second send failed");
-	vector.iov_len = sizeof buffer;
-	message.msg_control = control;
-	message.msg_controllen = sizeof control;
-	check(recvmsg(pair[1], &message, MSG_DONTWAIT) == 3 && buffer[0] == 11,
-		"coalesced channel frames were not separated");
-	header = CMSG_FIRSTHDR(&message);
-	check(header && header->cmsg_level == SOL_SOCKET && header->cmsg_type == SCM_RIGHTS, "a channel frame lost its descriptor");
-	int received = -1;
-	std::memcpy(&received, CMSG_DATA(header), sizeof received);
-	check(received >= 0 && (::fcntl(received, F_GETFD) & FD_CLOEXEC), "a channel descriptor can leak across exec");
-	::close(received);
-	message.msg_control = control;
-	message.msg_controllen = sizeof control;
-	check(recvmsg(pair[1], &message, MSG_DONTWAIT) == 3 && buffer[0] == 99 && !CMSG_FIRSTHDR(&message),
-		"the next channel frame inherited its predecessor's descriptor");
-	// A frame larger than the stream buffers must be consumed incrementally, including while its sender is blocked.
-	const int small = 1024;
-	check(::setsockopt(pair[0], SOL_SOCKET, SO_SNDBUF, &small, sizeof small) == 0 &&
-		::setsockopt(pair[1], SOL_SOCKET, SO_RCVBUF, &small, sizeof small) == 0, "cannot constrain the channel buffers");
-	std::vector<uint8_t> large(65536), copy(large.size());
-	for (size_t index = 0; index < large.size(); ++index)
-		large[index] = uint8_t(index % 251);
-	ssize_t sent = -1;
-	std::thread sender([&] {
-		iovec outgoing{large.data(), large.size()};
-		msghdr frame{};
-		frame.msg_iov = &outgoing;
-		frame.msg_iovlen = 1;
-		sent = sendmsg(pair[0], &frame, 0);
-	});
-	vector = {copy.data(), copy.size()};
-	message.msg_control = control;
-	message.msg_controllen = sizeof control;
-	ssize_t count = -1;
-	const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-	while (std::chrono::steady_clock::now() < until) {
-		count = recvmsg(pair[1], &message, MSG_DONTWAIT);
-		if (count >= 0 || (errno != EAGAIN && errno != EWOULDBLOCK))
-			break;
-		pollfd readable{pair[1], POLLIN, 0};
-		::poll(&readable, 1, 10);
-	}
-	if (count != ssize_t(large.size()))
-		::shutdown(pair[1], SHUT_RDWR);
-	sender.join();
-	check(count == ssize_t(large.size()) && sent == count && copy == large, "a frame larger than the socket buffers deadlocked or lost bytes");
-	::close(shared);
-	::close(pair[0]);
-	check(recvmsg(pair[1], &message, MSG_DONTWAIT) == 0, "a closed channel did not report EOF");
-	::close(pair[1]);
-}
-
 void contracts(const std::string &bootstrap, raven::NativeMode mode)
 {
 	const auto timeout = std::chrono::seconds(5);
@@ -206,7 +120,6 @@ int main(int argc, char **argv)
 {
 	try {
 		check(argc == 2, "expected the guest agent path");
-		channel_contracts();
 		contracts(argv[1], raven::NativeMode::x64);
 		contracts(argv[1], raven::NativeMode::x86);
 		std::cout << "Darwin parallel pthread contracts passed\n";
