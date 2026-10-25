@@ -188,8 +188,11 @@ extern "C" ssize_t write(int descriptor, const void *buffer, size_t size)
 	return sizeof value;
 }
 
+extern "C" void raven_socket_closing(int descriptor);
+
 extern "C" int close(int descriptor)
 {
+	raven_socket_closing(descriptor);
 	auto &table = events();
 	if (table.count.load(std::memory_order_relaxed)) {
 		std::lock_guard lock(table.mutex);

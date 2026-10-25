@@ -10,18 +10,15 @@ native/platform/darwin/setup.sh          # Homebrew packages, every guest compon
 ctest --test-dir build-macos -j1         # tests share prefixes: one at a time
 RAVEN_PREFIX=~/.local/share/raven/app build-macos/native/raven --run-process --execution=native --timeout-ms=86400000 \
 	--desktop=macos program.exe
-brew install cmake ninja python mingw-w64 lld openssl@3 libpng freetype pixman
-cmake -S . -B build-macos -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
-cmake --build build-macos
-ctest --test-dir build-macos -j1 --timeout 120
 ```
 
 `setup.sh` puts what it downloads and builds beside the checkout (`../raven-components`, `../raven-skia`) and skips what is already
 there. The Vulkan loader, `vk.xml` and MoltenVK come from the LunarG SDK, which installs them under `/usr/local`.
 
-Never run `raven` or `raven-bootstrap` under lldb: debugging a process that starts a Rosetta-translated child can wedge `oahd`, after
-which no x86_64 program starts until `sudo launchctl kickstart -k system/com.apple.oahd`. For a backtrace of the host, send it
-`SIGABRT` and read its report in `~/Library/Logs/DiagnosticReports`.
+Never run `raven`, `raven-bootstrap` or a test under lldb/debugserver: debugging a process that starts a Rosetta-translated child can
+wedge `oahd`, after which no x86_64 program starts until `sudo launchctl kickstart -k system/com.apple.oahd`. For a backtrace of the
+host, send it `SIGABRT` and read its report in `~/Library/Logs/DiagnosticReports`; `sample <host-pid>` profiles the arm64 controller.
+Stop testing if translated children hang at launch in process state `U`.
 
 ## Layout
 
@@ -31,10 +28,14 @@ which no x86_64 program starts until `sudo launchctl kickstart -k system/com.app
 | `darwin.cmake` | Included at the end of `native/CMakeLists.txt`: swaps the guest controller and the bootstrap for the macOS ones |
 | `include/` | Linux headers the runtime includes, on top of the macOS facilities they map to; ahead of the SDK on the include path |
 | `compat/linux.cpp` | The functions behind those headers (`raven_darwin`, linked into every host target) |
-| `compat/sockets.cpp` | `SOCK_SEQPACKET` and abstract names for Unix sockets; defines `send`, `recv`, `sendmsg`, `recvmsg`, `bind`, `connect`, `close` |
+| `compat/sockets.cpp` | `SOCK_SEQPACKET` and abstract names for Unix sockets; defines `send`, `recv`, `sendmsg`, `recvmsg`, `bind`, `connect` |
+| `compat/eventfd.cpp` | `eventfd` counters; defines `read`, `write` and `close`, which also tells the socket shim a descriptor is closing |
 | `compat/procfs.cpp` | The `/proc` files read as a process API, from libproc, sysctl and Mach |
 | `compat/compat_test.cpp` | `darwin_compat_contract`: the interprocess behaviour of the two above |
-| `compat/` | Linux shims, event counters and macOS hardware discovery (`raven_darwin`, linked into every host target) |
+| `compat/system.cpp` | macOS hardware discovery: CPU, memory, SMBIOS, network interfaces, fonts |
+| `compat_test.cpp` | `native_darwin_runtime`: event counters, section offsets, hardware data, the timestamp counter |
+| `system_api.cpp`, `desktop_idle.cpp` | Firmware and registry data from the macOS host; the idle budget for backends without a descriptor |
+| `cocoa.mm` | The `--desktop=macos` presentation backend |
 | `native_process.cpp` | `NativeProcess` for macOS, built instead of `cpu/native_cpu.cpp` |
 | `guest/` | The x86_64 guest agent and the zero-fill segment that keeps the low 4 GiB free for Windows images |
 | `parallel_test.cpp` | x64/x86 pthread progress, contended atomics, stop wakes, channel reuse, and stream framing contracts |
@@ -51,8 +52,9 @@ asks `raven_darwin_unix_name_bound` where Linux reads `/proc/net/unix`, and `nt/
 ## Status
 
 - Phase 1, done: everything builds, and the tests that need no guest process pass.
-- The guest controller catches traps and faults with signal handlers and trades register contexts with the host through shared memory;
-  the host maps and reads guest memory through the agent's task port.
+- The guest controller runs x64 and x86 Windows code. The agent catches its own traps and faults with signal handlers and trades register
+  contexts with the host through shared memory. Images, descriptor views and the main stack have coherent host aliases; anonymous guest
+  heaps and secondary stacks still use the agent's task port. Every host access checks the guest's 4 KiB protections first.
 - The default scheduler swaps Windows contexts on the agent's main thread. `RAVEN_PARALLEL=1` gives each Windows thread its own Rosetta
   pthread, for both x64 and x86 programs.
 
@@ -104,12 +106,6 @@ On the same configuration, the complete `ctest -j1 --timeout 120` run changed fr
 214 passed, 39 failed and one skipped (254 tests, including the new Darwin contract). All 28 tests matching `parallel|queued` passed;
 none of the previously passing tests regressed. The remaining failures were present in the baseline.
 
-Never run the guest, runtime or tests under lldb/debugserver: debugging translated processes has wedged Rosetta's `oahd` on this machine.
-- The guest controller runs x64 and x86 Windows code. The agent catches its own traps and faults with signal handlers and trades register
-  contexts with the host through shared memory. Images, descriptor views and the main stack have coherent host aliases; anonymous guest
-  heaps and secondary stacks still use the agent's task port. Every host access checks the guest's 4 KiB protections first.
-- Native guest threads take turns; parallel execution is a separate workstream.
-
 ## Rosetta 2 facts the design relies on
 
 Measured on macOS 27.2, M4 Pro.
@@ -130,10 +126,6 @@ Measured on macOS 27.2, M4 Pro.
   - From an arm64 task, `mach_vm_read`, `mach_vm_allocate` and `mach_vm_protect` work on the guest.
   - `mach_vm_write` into the guest's executable pages and x86 `thread_get_state` do not.
 - **Trap cost:** one trap round trip (signal, host answer, resume) costs about 23 µs. Calls Raven serves through shared memory avoid it.
-
-Never run Raven, its bootstrap or a test under lldb/debugserver: attaching to a translated child has wedged Rosetta's `oahd` on this
-machine. `sample <host-pid>` is supported for profiling the arm64 controller. For a host crash report, send the host SIGABRT and inspect
-`~/Library/Logs/DiagnosticReports/*.ips`. Stop testing if translated children hang at launch in process state `U`.
 
 ## Host integration
 
@@ -202,7 +194,6 @@ These compile, but do not yet behave as on Linux.
 
 ### Memory, events and waits
 - `SharedPixels` accepts Windows' 4 KiB section offsets through a host-page-aligned macOS mapping.
-- `eventfd` is a FIFO: it wakes like an eventfd, but reading does not return the counter.
 - File seals are accepted and not enforced.
 - `ppoll` waits in milliseconds.
 

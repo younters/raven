@@ -742,11 +742,11 @@ int connect(int descriptor, const struct sockaddr *address, socklen_t length)
 	return result;
 }
 
-int close(int descriptor)
+// close itself belongs to eventfd.cpp, which calls this first.
+void raven_socket_closing(int descriptor)
 {
 	if (bindings().count.load(std::memory_order_relaxed))
 		forget(descriptor);
-	return system_close(descriptor);
 }
 
 }
