@@ -107,7 +107,15 @@ uint32_t wsa_error(int host)
 constexpr uint16_t windows_inet6 = 23;
 
 int host_family(int family) { return family == windows_inet6 ? AF_INET6 : family; }
-int windows_family(int family) { return family == AF_INET6 ? windows_inet6 : family; }
+int windows_family(int family)
+{
+#ifdef __APPLE__
+	// The first two bytes of a macOS sockaddr: its length, then the family.
+	if (family > 0xff)
+		family >>= 8;
+#endif
+	return family == AF_INET6 ? windows_inet6 : family;
+}
 
 // A sockaddr as the host wants it: the family number is the only difference from the Windows layout.
 std::vector<uint8_t> host_address(ApiCall &call, uint64_t address, size_t length)
@@ -117,6 +125,10 @@ std::vector<uint8_t> host_address(ApiCall &call, uint64_t address, size_t length
 		uint16_t family;
 		std::memcpy(&family, bytes.data(), 2);
 		family = uint16_t(host_family(family));
+#ifdef __APPLE__
+		// macOS keeps the length in the first byte, which the kernel fills in, and the family in the second.
+		family = uint16_t(family << 8);
+#endif
 		std::memcpy(bytes.data(), &family, 2);
 	}
 	return bytes;

@@ -18,6 +18,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <libproc.h>
 #include <limits.h>
 #include <poll.h>
 #include <sched.h>
@@ -641,6 +642,23 @@ int raven_darwin_frame_socket(int descriptor)
 int raven_darwin_framed_socket(int descriptor)
 {
 	return framed(descriptor);
+}
+
+int raven_darwin_listening(int descriptor, int *value, socklen_t *length)
+{
+	if (!value || !length || *length < sizeof(int)) {
+		errno = EINVAL;
+		return -1;
+	}
+	socket_fdinfo info{};
+	if (proc_pidfdinfo(getpid(), descriptor, PROC_PIDFDSOCKETINFO, &info, sizeof info) != int(sizeof info)) {
+		if (errno != EBADF)
+			errno = ENOTSOCK;
+		return -1;
+	}
+	*value = (info.psi.soi_options & SO_ACCEPTCONN) ? 1 : 0;
+	*length = sizeof(int);
+	return 0;
 }
 
 int raven_darwin_unix_name_bound(const char *name, size_t length)

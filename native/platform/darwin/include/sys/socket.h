@@ -31,6 +31,8 @@ int raven_darwin_socket(int domain, int type, int protocol);
 int raven_darwin_socketpair(int domain, int type, int protocol, int descriptors[2]);
 int accept4(int descriptor, struct sockaddr *address, socklen_t *length, int flags);
 int raven_darwin_peer_credentials(int descriptor, struct ucred *credentials, socklen_t *length);
+// SO_ACCEPTCONN, which macOS sets but does not report through getsockopt.
+int raven_darwin_listening(int descriptor, int *value, socklen_t *length);
 #ifdef __cplusplus
 }
 inline int getsockopt(int descriptor, int level, int name, ucred *credentials, socklen_t *length)
@@ -38,6 +40,12 @@ inline int getsockopt(int descriptor, int level, int name, ucred *credentials, s
 	if (level == SOL_SOCKET && name == SO_PEERCRED)
 		return raven_darwin_peer_credentials(descriptor, credentials, length);
 	return ::getsockopt(descriptor, level, name, static_cast<void *>(credentials), length);
+}
+inline int getsockopt(int descriptor, int level, int name, int *value, socklen_t *length)
+{
+	if (level == SOL_SOCKET && name == SO_ACCEPTCONN)
+		return raven_darwin_listening(descriptor, value, length);
+	return ::getsockopt(descriptor, level, name, static_cast<void *>(value), length);
 }
 #endif
 
