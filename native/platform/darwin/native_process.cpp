@@ -1614,9 +1614,9 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 				const auto spin_until = std::min(until, std::chrono::steady_clock::now() + std::chrono::microseconds(5));
 				while (!ready() && std::chrono::steady_clock::now() < spin_until) {}
 				if (!ready())
-					state->execution_wait(ready, state->unix_pump ?
+					state->execution_wait(ready, state->unix_loaded && state->unix_pump ?
 						std::min(until, std::chrono::steady_clock::now() + std::chrono::milliseconds(1)) : until);
-				if (command() || queued() || state->unix_pump)
+				if (command() || queued() || (state->unix_loaded && state->unix_pump))
 					serve_pending();
 			}
 			status = load(&thread.state) == RAVEN_THREAD_STOPPED ? 1 : sampling && until < execution_deadline ? -2 : -1;

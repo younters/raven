@@ -20,7 +20,8 @@ native pthread/TLS access, stack separation, GS restoration, all Win64 nonvolati
 NTSTATUS results and rejection of unknown handles and function indices. It also checks that a unixlib allocation is readable by host
 APIs and that repeated native interrupts do not restart a call's deadline. `darwin_unix_call_parallel` additionally rendezvous two
 Windows pthreads inside native calls, checks distinct stacks/TSD and preserved state on both, and sends SIGUSR1 to native workers.
-The host pumps frames and completion events at most 1 ms apart while parallel guest channels run, as well as during Windows waits.
+After a unixlib is loaded, the host requests 1 ms wakeups to pump frames and completion events while parallel guest channels run,
+as well as pumping during Windows waits. Programs without a unixlib retain the ordinary scheduler wait budget.
 IOSurface child layers inherit the existing Cocoa graphics layer's contentsScale; Cocoa retains control of DPI and resize pacing.
 
 ## Selected driver and presentation design
