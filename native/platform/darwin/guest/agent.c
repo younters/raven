@@ -10,6 +10,7 @@
 #include <architecture/i386/table.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <execinfo.h>
 #include <fcntl.h>
 #include <i386/user_ldt.h>
 #include <mach/mach.h>
@@ -790,6 +791,15 @@ void raven_agent_stop(int signal, siginfo_t *info, void *raw, uint32_t index)
 		return;
 	}
 	save_context(context, thread, index, signal);
+	if (inside_unix_call(thread->registers.rip, index) && (signal == SIGSEGV || signal == SIGBUS || signal == SIGILL)) {
+		Dl_info image = {0};
+		dladdr((void *)thread->registers.rip, &image);
+		fprintf(stderr, "raven-bootstrap: native fault %d in %s+0x%llx (%s) at %p\n", signal,
+			image.dli_fname ? image.dli_fname : "unknown", thread->registers.rip - (uint64_t)image.dli_fbase,
+			image.dli_sname ? image.dli_sname : "unknown", info->si_addr);
+		void *frames[32];
+		backtrace_symbols_fd(frames, backtrace(frames, 32), STDERR_FILENO);
+	}
 	thread->signal = signal == SIGUSR1 ? RAVEN_STOP_INTERRUPT : signal;
 	thread->code = info->si_code;
 	thread->fault_address = (uint64_t)info->si_addr;

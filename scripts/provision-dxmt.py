@@ -46,6 +46,15 @@ def provision(destination):
     subprocess.run(["/usr/bin/install_name_tool", "-change", "@rpath/winemac.so", "@loader_path/raven-dxmt.dylib",
                     "-change", "@rpath/ntdll.so", "@loader_path/raven-dxmt.dylib", str(library)], check=True)
     subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", str(library)], check=True)
+    compiler = shutil.which("x86_64-w64-mingw32-gcc")
+    if not compiler:
+        raise RuntimeError("DXMT's Raven D3D10 entry points need mingw-w64 (brew install mingw-w64)")
+    for name in ("d3d10", "d3d10_1"):
+        subprocess.run([compiler, "-shared", "-nostdlib", "-O2", "-Wall", "-Wextra", "-Wl,--entry,0",
+                        *(["-DRAVEN_D3D10_1=1"] if name == "d3d10_1" else []),
+                        str(source.with_name("d3d10.c")), str(source.with_name(f"{name}.def")),
+                        "-o", str(root / "pe64" / f"{name}.dll"), f"-Wl,--out-implib,{root / 'pe64' / ('lib' + name + '.a')}",
+                        "-ldxgi", "-ldxguid", "-lkernel32", "-lgcc"], check=True)
     provenance = repository / "native/upstream/dxmt"
     shutil.copytree(provenance, root / "licenses", dirs_exist_ok=True)
     installed = {"version": package["version"], "commit": package["commit"], "archive_sha256": package["sha256"],

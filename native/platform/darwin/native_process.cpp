@@ -242,8 +242,13 @@ GuestAgent::GuestAgent(const std::string &bootstrap, std::chrono::milliseconds t
 		std::string path = bootstrap;
 		char *arguments[] = {path.data(), const_cast<char *>(name.c_str()), nullptr};
 		char avx[] = "ROSETTA_ADVERTISE_AVX=1";
-		char *environment[] = {avx, nullptr};
-		const int spawned = posix_spawn(&pid, path.c_str(), &actions, &attributes, arguments, environment);
+		std::vector<std::string> native_environment{avx};
+		for (const char *key : {"MTL_DEBUG_LAYER", "MTL_SHADER_VALIDATION", "MTL_CAPTURE_ENABLED"})
+			if (const char *value = std::getenv(key)) native_environment.emplace_back(std::string(key) + "=" + value);
+		std::vector<char *> environment;
+		for (auto &value : native_environment) environment.push_back(value.data());
+		environment.push_back(nullptr);
+		const int spawned = posix_spawn(&pid, path.c_str(), &actions, &attributes, arguments, environment.data());
 		posix_spawn_file_actions_destroy(&actions);
 		posix_spawnattr_destroy(&attributes);
 		close(guest_socket);

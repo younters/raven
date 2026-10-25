@@ -1,4 +1,5 @@
 #include "unix_calls.h"
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -22,7 +23,8 @@ std::filesystem::path dxmt_root()
 std::optional<ModuleBytes> darwin_graphics_module(std::string_view name, bool x64)
 {
 	const auto root = dxmt_root();
-	if (!x64 || root.empty() || (name != "d3d11.dll" && name != "dxgi.dll" && name != "d3d10core.dll" && name != "winemetal.dll"))
+	if (!x64 || root.empty() || (name != "d3d11.dll" && name != "dxgi.dll" && name != "d3d10core.dll" && name != "winemetal.dll" &&
+		name != "d3d10.dll" && name != "d3d10_1.dll"))
 		return std::nullopt;
 	const auto path = root / "pe64" / name;
 	if (auto bytes = ModuleBytes::map(path))
@@ -46,6 +48,21 @@ DarwinUnixCalls::DarwinUnixCalls(NativeProcess &process, const ModuleSet &module
 
 bool DarwinUnixCalls::dispatch(std::string_view name)
 {
+	if (name == "__wine_dbg_output") {
+		uint64_t address = process.api_arguments(1)[0];
+		std::string text;
+		while (text.size() < 65536) {
+			const size_t count = std::min<size_t>(256, 4096 - address % 4096);
+			const auto bytes = process.read_memory(address, count);
+			const auto end = std::find(bytes.begin(), bytes.end(), 0);
+			text.append(bytes.begin(), end);
+			if (end != bytes.end()) break;
+			address += count;
+		}
+		std::cerr << text;
+		process.return_api(text.size());
+		return true;
+	}
 	if (name != "NtQueryVirtualMemory" && name != "ZwQueryVirtualMemory")
 		return false;
 	const auto args = process.api_arguments(6);

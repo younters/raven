@@ -1,5 +1,5 @@
 // The x86 intrinsics the host runtime itself uses, on an Apple silicon host. Rosetta 2 answers a guest's RDTSC with the ARM generic
-// timer, so the host reads the same counter to relate the guest's time stamps to its own clocks.
+// timer in 1 GHz units, so the host reads the same counter when calibrating guest time stamps.
 #pragma once
 #if defined(__x86_64__) || defined(__i386__)
 #include_next <x86intrin.h>

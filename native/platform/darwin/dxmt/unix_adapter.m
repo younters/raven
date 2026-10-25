@@ -9,6 +9,33 @@
 static struct raven_control *control;
 extern void raven_dxmt_wrap_presentation(void **table);
 
+// Windows threads share the agent's one pthread. Their autorelease scopes can overlap without nesting, so draining an actual pool
+// for one Windows thread would also drain another thread's newer pool. Keep native temporaries until every overlapping scope ends.
+static NSAutoreleasePool *shared_pool;
+static unsigned pool_scopes;
+
+@interface RavenDXMTPool : NSObject
+@end
+@implementation RavenDXMTPool
+- (void)dealloc
+{
+	if (--pool_scopes == 0) {
+		NSAutoreleasePool *pool = shared_pool;
+		shared_pool = nil;
+		[pool drain];
+	}
+	[super dealloc];
+}
+@end
+
+static int32_t create_pool(void *args)
+{
+	if (pool_scopes++ == 0)
+		shared_pool = [[NSAutoreleasePool alloc] init];
+	*(uint64_t *)args = (uint64_t)[[RavenDXMTPool alloc] init];
+	return 0;
+}
+
 struct raven_control *raven_dxmt_control(void)
 {
 	return __atomic_load_n(&control, __ATOMIC_ACQUIRE);
@@ -77,6 +104,7 @@ void *raven_unixlib_wrap_table(void *original, uint32_t count)
 	if (!table)
 		return NULL;
 	memcpy(table, original, count * sizeof(*table));
+	table[10] = create_pool;
 	table[104] = notify_event;
 	table[108] = create_listener;
 	table[109] = start_listener;

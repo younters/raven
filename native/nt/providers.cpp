@@ -1558,7 +1558,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	std::map<uint32_t, std::string> generated_services;
 	std::vector<std::string_view> nt_names(NativeMemory::nt_exports().begin(),NativeMemory::nt_exports().end());
 #ifdef __APPLE__
+	nt_names.push_back("__wine_dbg_output");
 	nt_names.push_back("__wine_unix_call_dispatcher");
+	nt_names.push_back("strncpy"); // winemetal.dll can be loaded after ntdll's export table was built.
 #endif
 	nt_names.insert(nt_names.end(),NativeEnvironment::nt_exports().begin(),NativeEnvironment::nt_exports().end());
 	nt_names.insert(nt_names.end(),NativeObjectAPI::nt_exports().begin(),NativeObjectAPI::nt_exports().end());

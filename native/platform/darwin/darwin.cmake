@@ -60,6 +60,15 @@ if(TARGET vulkan_pe_fixture AND RAVEN_MINGW64)
 endif()
 
 if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
+    set(RAVEN_DXMT_DEVICE10 ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-device10.exe)
+    add_custom_command(OUTPUT ${RAVEN_DXMT_DEVICE10}
+        COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/dxmt_device10.c
+            -o ${RAVEN_DXMT_DEVICE10} -L${RAVEN_DXMT_ROOT}/pe64 -ld3d10 -ld3d10_1 -ldxgi -ldxguid -lkernel32 -luser32 -lgcc
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/dxmt_device10.c VERBATIM)
+    add_custom_target(darwin_dxmt_device10_fixture ALL DEPENDS ${RAVEN_DXMT_DEVICE10})
+    add_test(NAME darwin_dxmt_device10 COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+        $<TARGET_FILE:raven> ${RAVEN_DXMT_DEVICE10} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-device10 device10)
+    set_tests_properties(darwin_dxmt_device10 PROPERTIES TIMEOUT 120)
     set(RAVEN_DXMT_IMAGE_PYTHON "")
     foreach(candidate ${Python3_EXECUTABLE} /opt/homebrew/bin/python3 /usr/bin/python3)
         if(NOT RAVEN_DXMT_IMAGE_PYTHON AND EXISTS ${candidate})
@@ -78,9 +87,13 @@ if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
             -o ${RAVEN_DXMT_WINDOW_INFO}
         DEPENDS ${RAVEN_DARWIN_DIR}/tests/window_info.m VERBATIM)
     add_custom_target(darwin_dxmt_window_info ALL DEPENDS ${RAVEN_DXMT_WINDOW_INFO})
-    foreach(workload device triangle window)
+    foreach(workload device pool pacing triangle window deferred geometry tessellation textured msaa compute features fullscreen present_rate)
         if(workload STREQUAL "device")
             set(RAVEN_DXMT_FIXTURE ${RAVEN_DARWIN_DIR}/tests/dxmt_device.c)
+        elseif(workload STREQUAL "pool")
+            set(RAVEN_DXMT_FIXTURE ${RAVEN_DARWIN_DIR}/tests/dxmt_pool.c)
+        elseif(workload STREQUAL "pacing")
+            set(RAVEN_DXMT_FIXTURE ${RAVEN_DARWIN_DIR}/tests/dxmt_pacing.c)
         else()
             set(RAVEN_DXMT_FIXTURE ${PROJECT_SOURCE_DIR}/testdata/d3d11/${workload}.c)
         endif()
@@ -88,7 +101,10 @@ if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
         add_custom_command(OUTPUT ${RAVEN_DXMT_EXE}
             COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DXMT_FIXTURE}
                 -o ${RAVEN_DXMT_EXE} -ld3d11 -ldxgi -ldxguid -lkernel32 -luser32 -lgcc
-            DEPENDS ${RAVEN_DXMT_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/d3d11/tri_shaders.h VERBATIM)
+            DEPENDS ${RAVEN_DXMT_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/d3d11/tri_shaders.h
+                ${PROJECT_SOURCE_DIR}/testdata/d3d11/gs_shaders.h ${PROJECT_SOURCE_DIR}/testdata/d3d11/tess_shaders.h
+                ${PROJECT_SOURCE_DIR}/testdata/d3d11/tex_shaders.h ${PROJECT_SOURCE_DIR}/testdata/d3d11/features_shaders.h
+                ${PROJECT_SOURCE_DIR}/testdata/d3d11/compute_shader.h VERBATIM)
         add_custom_target(darwin_dxmt_${workload}_fixture ALL DEPENDS ${RAVEN_DXMT_EXE})
         if(workload STREQUAL "window")
             add_test(NAME darwin_dxmt_window COMMAND ${RAVEN_DXMT_IMAGE_PYTHON} ${RAVEN_DARWIN_DIR}/tests/run_present.py
@@ -99,7 +115,11 @@ if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
                 $<TARGET_FILE:raven> ${RAVEN_DXMT_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-${workload} ${workload})
         endif()
         set_tests_properties(darwin_dxmt_${workload} PROPERTIES TIMEOUT 120)
+        if(workload STREQUAL "fullscreen" OR workload STREQUAL "present_rate" OR workload STREQUAL "pacing")
+            set_tests_properties(darwin_dxmt_${workload} PROPERTIES RESOURCE_LOCK raven_compositor)
+        endif()
     endforeach()
+    set_tests_properties(darwin_dxmt_device10 PROPERTIES RESOURCE_LOCK raven_compositor)
 endif()
 
 # A real PE caller and a tiny Mach-O unixlib exercise the boundary without Wine or a graphics driver.

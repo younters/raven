@@ -13,6 +13,11 @@ and its x86_64 Mach-O `winemetal.so`. It builds Raven's own adapter and rewrites
 to that adapter, then ad-hoc signs the changed Mach-O. The installed manifest records both the archive pin and each resulting file
 hash. No DXMT implementation source is copied into Raven. Raven's adapter is an altered environment, not an upstream DXMT build.
 
+The provisioner also builds Raven's own PE `d3d10.dll` and `d3d10_1.dll` creation shims and their import libraries with MinGW-w64.
+They call the pinned `d3d10core.dll` and DXGI; they contain no Wine implementation source. Native adapter table replacements cover
+completion listeners, overlapping autorelease scopes and public IOSurface presentation. The archive's original DLLs remain pinned;
+the resulting native dependency changes and Raven-built outputs are identified separately by their installed hashes.
+
 The v0.80 root `LICENSE` is MIT (`DXMT.LICENSE`), copyright Feifan He. The release notes identify v0.80 as the last MIT release;
 later releases use LGPL. Its DXVK-derived utility code retains the zlib/libpng notice (`src/util/dxvk.LICENSE`, `DXVK.LICENSE` here).
 Microsoft DXBC parser headers carry MIT notices. Keep their notices when rebuilding or distributing source.

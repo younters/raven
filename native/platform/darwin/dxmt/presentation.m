@@ -10,6 +10,7 @@
 #import <Metal/Metal.h>
 
 extern struct raven_control *raven_dxmt_control(void);
+@class RavenDXMTLayer;
 
 // v0.80 WMTLayerProps, pack(8). The fields are ABI, not a dependency on Wine's window-driver structures.
 struct layer_props {
@@ -25,6 +26,7 @@ _Static_assert(sizeof(struct layer_props) == 40, "DXMT v0.80 layer ABI");
 	IOSurfaceRef surface;
 	id<MTLTexture> texture;
 	int slot;
+	RavenDXMTLayer *owner; // Non-owning; used only while the swap chain is encoding a present.
 }
 - (instancetype)initWithDevice:(id<MTLDevice>)device window:(uint64_t)window properties:(const struct layer_props *)props;
 @end
@@ -34,6 +36,7 @@ _Static_assert(sizeof(struct layer_props) == 40, "DXMT v0.80 layer ABI");
 	uint64_t window;
 	struct layer_props props;
 	NSMutableArray *frames;
+	CFAbsoluteTime next_presentation;
 }
 @end
 
@@ -166,6 +169,7 @@ static int32_t next_drawable(void *args)
 			window:layer->window properties:&layer->props];
 		if (!frame) return (int32_t)0xc00000bbU;
 		[layer->frames addObject:frame];
+		frame->owner = layer;
 		[frame release];
 	}
 	const CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 5;
@@ -198,7 +202,7 @@ static int32_t drawable_texture(void *args)
 	return 0;
 }
 
-static int32_t present(void *args)
+static int32_t present_common(void *args, double minimum_duration)
 {
 	const uint64_t *p = args;
 	id<MTLCommandBuffer> command = (id<MTLCommandBuffer>)p[0];
@@ -208,6 +212,9 @@ static int32_t present(void *args)
 	struct raven_surface_frame *frame = &shared->surfaces[drawable->slot];
 	static uint64_t sequence;
 	frame->sequence = __atomic_add_fetch(&sequence, 1, __ATOMIC_RELAXED);
+	const CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+	const CFAbsoluteTime due = minimum_duration > 0 ? fmax(now, drawable->owner->next_presentation) + minimum_duration : now;
+	drawable->owner->next_presentation = due;
 	[command addCompletedHandler:^(id<MTLCommandBuffer> completed) {
 		// Capturing the drawable retains its texture/IOSurface until all GPU writes have finished.
 		struct raven_surface_frame *frame = &shared->surfaces[drawable->slot];
@@ -215,11 +222,27 @@ static int32_t present(void *args)
 			__atomic_fetch_add(&shared->surface_errors, 1, __ATOMIC_RELAXED);
 			__atomic_store_n(&frame->state, RAVEN_SURFACE_AVAILABLE, __ATOMIC_RELEASE);
 		} else {
-			frame->port = IOSurfaceCreateMachPort(drawable->surface);
-			__atomic_store_n(&frame->state, RAVEN_SURFACE_READY, __ATOMIC_RELEASE);
+			void (^publish)(void) = ^{
+				struct raven_surface_frame *ready = &shared->surfaces[drawable->slot];
+				ready->port = IOSurfaceCreateMachPort(drawable->surface);
+				__atomic_store_n(&ready->state, RAVEN_SURFACE_READY, __ATOMIC_RELEASE);
+			};
+			const double delay = due - CFAbsoluteTimeGetCurrent();
+			if (delay > 0)
+				dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)),
+					dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), publish);
+			else publish();
 		}
 	}];
 	return 0;
+}
+
+static int32_t present(void *args) { return present_common(args, 0); }
+static int32_t present_after(void *args)
+{
+	const double duration = ((double *)args)[2];
+	if (!isfinite(duration) || duration < 0 || duration > 1) return (int32_t)0xc000000dU;
+	return present_common(args, duration);
 }
 
 static int32_t set_colorspace(void *args)
@@ -247,7 +270,7 @@ static int32_t display_setting(void *args)
 void raven_dxmt_wrap_presentation(void **table)
 {
 	table[47] = present;
-	table[48] = present; // Minimum-duration pacing is not yet implemented by this transport.
+	table[48] = present_after;
 	table[66] = drawable_texture;
 	table[67] = next_drawable;
 	table[70] = set_props;
