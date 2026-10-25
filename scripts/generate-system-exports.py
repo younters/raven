@@ -36,6 +36,8 @@ EXTRA_WORDS["loadperf"] = {"LoadPerfCounterTextStringsA": 2, "LoadPerfCounterTex
                            "UnloadPerfCounterTextStringsW": 2, "InstallPerfDllA": 3, "InstallPerfDllW": 3, "UpdatePerfNameFilesA": 4,
                            "UpdatePerfNameFilesW": 4, "SetServiceAsTrustedA": 2, "SetServiceAsTrustedW": 2, "BackupPerfRegistryToFileW": 2,
                            "RestorePerfRegistryFromFileW": 2}
+# These public prototypes have four arguments; some import libraries decorate the GDI aliases with five.
+WORD_OVERRIDES = {library: {"ScriptStringCPtoX": 4, "ScriptStringXtoCP": 4} for library in ("gdi32", "usp10")}
 # Libraries whose file does not end in .dll.
 FILE_NAMES = {"winspool": "winspool.drv"}
 DIRECTORY = Path("/usr/x86_64-w64-mingw32/lib")
@@ -93,6 +95,7 @@ def stdcall_words(library):
                 words[match.group(1)] = int(match.group(2)) // 4
     for name, count in EXTRA_WORDS.get(library, {}).items():
         words.setdefault(name, count)
+    words.update(WORD_OVERRIDES.get(library, {}))
     return words
 
 

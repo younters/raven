@@ -22,7 +22,9 @@ size_t fast_stub_trap_offset(std::string_view module, std::string_view name);
 uint64_t api_trap_address(const PEModule &provider, std::string_view module, std::string_view name, uint32_t address);
 // Device information sets belong to the runtime; the installer component handles INF files and queues.
 bool host_device_export(std::string_view library, std::string_view name);
-// Runs a PE32 process in host compatibility mode; only the API providers listed in x86_process.cpp exist so far.
+// RAVEN_API_INVENTORY names a TSV file recording the actual host registries, guest exports and provider forwarders of this graph.
+void write_native_api_inventory(const ModuleSet &modules, std::initializer_list<const class ApiRegistry *> registries);
+// Runs a PE32 process in host compatibility mode with the shared services and 32-bit guest components.
 // A source of libraries shipped beside the program lets a program import them statically: they are loaded with it, and their entry points run
 // before the program's.
 NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,

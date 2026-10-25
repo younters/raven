@@ -9,12 +9,12 @@ namespace raven {
 
 namespace {
 
-constexpr std::array<std::pair<std::string_view, uint32_t>, 28> compat_exports{{
+constexpr std::array<std::pair<std::string_view, uint32_t>, 25> compat_exports{{
 	{"GetProcessHeap", 0}, {"HeapAlloc", 3}, {"HeapFree", 3}, {"HeapReAlloc", 4}, {"HeapSize", 3},
 	{"CreateWindowExA", 12}, {"DispatchMessageA", 1}, {"GetMessageA", 4}, {"PeekMessageA", 5},
 	{"RegisterClassA", 1}, {"RegisterClassExA", 1}, {"UnregisterClassA", 2}, {"GetClassInfoA", 3}, {"GetClassInfoExA", 3},
-	{"GlobalHandle", 1}, {"GetVersionExA", 1}, {"WinExec", 2}, {"GetCurrentProcess", 0}, {"SetHandleCount", 1}, {"GetEnvironmentStrings", 0},
-	{"FreeEnvironmentStringsA", 1}, {"UnhandledExceptionFilter", 1}, {"RtlUnwind", 4}, {"HeapCreate", 3}, {"HeapDestroy", 1},
+	{"GlobalHandle", 1}, {"WinExec", 2}, {"GetCurrentProcess", 0}, {"SetHandleCount", 1},
+	{"UnhandledExceptionFilter", 1}, {"RtlUnwind", 4}, {"HeapCreate", 3}, {"HeapDestroy", 1},
 	{"ExitWindowsEx", 2}, {"RealizePalette", 1}, {"CreatePalette", 1},
 }};
 
@@ -186,7 +186,7 @@ bool NativeX86Compat::dispatch(std::string_view name)
 		// Every heap shares the process heap's arena, except those whose blocks must run code.
 		const auto args = process.api_arguments(3);
 		process.return_api(args[0] & 0x40000 ? executable_heap_handle : process_heap_handle);
-	} else if (name == "HeapDestroy" || name == "FreeEnvironmentStringsA") {
+	} else if (name == "HeapDestroy") {
 		process.api_arguments(1);
 		process.return_api(1);
 	} else if (name == "UnhandledExceptionFilter") {
@@ -211,28 +211,6 @@ bool NativeX86Compat::dispatch(std::string_view name)
 	} else if (name == "RtlUnwind") {
 		process.api_arguments(4);
 		process.return_api(0);
-	} else if (name == "GetEnvironmentStrings") {
-		process.api_arguments(0);
-		// An empty block: two terminators. The environment is not exposed to 32-bit programs.
-		if (!environment_block) {
-			environment_block = heap_alloc(16, true);
-		}
-		process.return_api(environment_block);
-	} else if (name == "GetVersionExA") {
-		const auto args = process.api_arguments(1);
-		const auto size = read_word(process.read_memory(args[0], 4), 0);
-		if (size != 148 && size != 156) {
-			environment.set_last_error(122);
-			process.return_api(0);
-			return true;
-		}
-		std::vector<uint8_t> info(size);
-		write_word(info, 0, size);
-		write_word(info, 4, 10);
-		write_word(info, 12, 19045);
-		write_word(info, 16, 2);
-		process.write_memory(args[0], info);
-		process.return_api(1);
 	} else if (name == "RegisterClassA" || name == "RegisterClassExA") {
 		const bool extended = name == "RegisterClassExA";
 		auto args = process.api_arguments(1);

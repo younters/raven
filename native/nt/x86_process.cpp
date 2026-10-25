@@ -50,7 +50,7 @@ namespace raven {
 namespace {
 
 // stdcall argument counts for every API the x86 process runner can dispatch.
-constexpr std::array<std::pair<std::string_view, uint32_t>, 117> kernel32_exports{{
+constexpr std::array<std::pair<std::string_view, uint32_t>, 120> kernel32_exports{{
 	{"OpenProcessToken", 3}, {"OpenThreadToken", 4}, {"CloseHandle", 1}, {"CreateEventA", 4}, {"CreateEventW", 4}, {"CreateThread", 6}, {"DeleteCriticalSection", 1}, {"EnterCriticalSection", 1}, {"ExitProcess", 1}, {"ExitThread", 1}, {"FindResourceA", 3},
 	{"FindResourceExA", 4}, {"FindResourceExW", 4}, {"FindResourceW", 3}, {"FreeLibrary", 1}, {"GetACP", 0},
 	{"GetCommandLineA", 0}, {"GetCommandLineW", 0}, {"GetCurrentProcessId", 0}, {"GetCurrentThreadId", 0}, {"GetExitCodeThread", 2},
@@ -58,6 +58,7 @@ constexpr std::array<std::pair<std::string_view, uint32_t>, 117> kernel32_export
 	{"GetModuleHandleW", 1}, {"GetPrivateProfileIntW", 4}, {"GetPrivateProfileStringW", 6}, {"WritePrivateProfileStringW", 4}, {"LoadLibraryExA", 3}, {"LoadLibraryExW", 3}, {"GetProcAddress", 2}, {"GetProcessHeap", 0}, {"GetStartupInfoA", 1}, {"GetStartupInfoW", 1}, {"GetStdHandle", 1},
 	{"GetTickCount", 0}, {"ProcessIdToSessionId", 2}, {"HeapAlloc", 3}, {"HeapFree", 3}, {"HeapReAlloc", 4}, {"HeapSize", 3}, {"InitializeCriticalSection", 1}, {"LeaveCriticalSection", 1}, {"LoadLibraryA", 1}, {"LoadLibraryW", 1}, {"LoadResource", 2}, {"LockResource", 1},
 	{"OutputDebugStringA", 1}, {"ResetEvent", 1}, {"ResumeThread", 1}, {"SetEvent", 1}, {"SetLastError", 1}, {"SetThreadPriority", 2}, {"SizeofResource", 2}, {"Sleep", 1}, {"SwitchToThread", 0}, {"TryEnterCriticalSection", 1}, {"VirtualAlloc", 4},
+	{"PathCchCanonicalize", 3}, {"PathCchCombineEx", 5}, {"PathCchSkipRoot", 2},
 	// Services of the 32-bit CRT era: legacy file calls, global memory, code pages, environment and version queries.
 	{"_lopen", 2}, {"_lcreat", 2}, {"_lread", 3}, {"_lwrite", 3}, {"_llseek", 3}, {"lstrcpyA", 2}, {"lstrlenA", 1}, {"GetWindowsDirectoryA", 2}, {"GlobalHandle", 1}, {"GetVersionExA", 1}, {"WinExec", 2}, {"GlobalUnlock", 1}, {"GlobalFree", 1}, {"GlobalAlloc", 2}, {"SetErrorMode", 1}, {"GlobalLock", 1}, {"GetCurrentProcess", 0}, {"SetHandleCount", 1}, {"GetOEMCP", 0}, {"GetCPInfo", 2}, {"WideCharToMultiByte", 8}, {"DeleteFileA", 1}, {"GetEnvironmentStrings", 0}, {"FreeEnvironmentStringsW", 1}, {"FreeEnvironmentStringsA", 1}, {"UnhandledExceptionFilter", 1}, {"RtlUnwind", 4}, {"HeapCreate", 3}, {"HeapDestroy", 1}, {"TerminateProcess", 2}, {"GetEnvironmentStringsW", 0}, {"GetVersion", 0}, {"GetFileAttributesA", 1},
 	// File and clock services of the C runtime component: the shared handlers read 32-bit words; a 64-bit offset takes two.
@@ -136,7 +137,7 @@ constexpr std::string_view shared_allowed[] = {
 	"RegEnumKeyA", "RegEnumKeyW", "RegEnumKeyExA", "RegEnumKeyExW", "RegEnumValueA", "RegEnumValueW",
 	"GetWindowLongW", "SetWindowLongW", "GetFileVersionInfoA", "GetFileVersionInfoExW", "GetFileVersionInfoSizeA", "GetFileVersionInfoSizeExW",
 	"GetFileVersionInfoSizeW", "GetFileVersionInfoW", "VerQueryValueA", "VerQueryValueW", "GetSystemDirectoryW", "GetSystemDirectoryA", "GetWindowsDirectoryW", "LocalAlloc", "LocalReAlloc", "GlobalReAlloc", "GlobalSize", "GetComputerNameA",
-	"GetComputerNameW", "FileTimeToSystemTime", "SystemTimeToFileTime", "GetTimeZoneInformation", "GetCurrentProcessId", "SetFileAttributesA",
+	"GetComputerNameW", "FileTimeToSystemTime", "SystemTimeToFileTime", "GetTimeZoneInformation", "SetFileAttributesA",
 	"SetFileAttributesW", "GetLongPathNameA", "GetLongPathNameW", "GetShortPathNameA", "GetShortPathNameW", "SearchPathA", "SearchPathW",
 	"GetModuleFileNameA", "IsDBCSLeadByte", "IsDBCSLeadByteEx", "GetCPInfoExA", "GetThreadLocale", "SetThreadLocale", "VerifyVersionInfoW",
 	"GetUserNameA", "GetUserNameW", "FlsAlloc", "FlsFree", "FlsGetValue", "FlsSetValue", "SetDefaultDllDirectories", "AddDllDirectory", "RemoveDllDirectory", "SetSearchPathMode", "GetLargePageMinimum", "ConvertDefaultLocale", "GetMachineTypeAttributes", "GetShellWindow", "PowerCreateRequest", "PowerSetRequest", "PowerClearRequest", "CreateTransaction", "CommitTransaction", "CommitTransactionAsync",
@@ -145,6 +146,18 @@ constexpr std::string_view shared_allowed[] = {
 	"UnrealizeObject", "EnableNonClientDpiScaling", "EnumFontsW", "DisableProcessWindowsGhosting", "ShutdownBlockReasonCreate", "ShutdownBlockReasonDestroy", "WNetOpenEnumW", "WNetOpenEnumA", "WNetEnumResourceW", "WNetEnumResourceA", "WNetCloseEnum", "WNetGetConnectionW",
 	"WNetGetConnectionA", "WNetGetUniversalNameW", "WNetGetUniversalNameA", "SetSearchPathMode",
 	"CreateMutexW", "CreateMutexA", "CreateMutexExW", "OpenMutexW", "OpenMutexA", "ReleaseMutex", "CreateSemaphoreW", "CreateSemaphoreA", "CreateSemaphoreExW", "ReleaseSemaphore",
+};
+
+// One by-value POINT or 64-bit integer occupies two x86 stack words, but one shared-handler argument.
+struct WideArgument {
+	std::string_view name;
+	uint32_t index, words;
+};
+constexpr WideArgument wide_arguments[] = {
+	{"ChildWindowFromPoint", 1, 3}, {"ChildWindowFromPointEx", 1, 4}, {"WindowFromPoint", 0, 2},
+	{"HitTestThemeBackground", 7, 10}, {"StrFormatByteSizeW", 0, 4},
+	{"EventEnabled", 0, 3}, {"EventSetInformation", 0, 5}, {"EventUnregister", 0, 2}, {"EventWriteTransfer", 0, 7},
+	{"TraceEvent", 0, 3}, {"UnregisterTraceGuids", 0, 2},
 };
 
 struct NamedWords {
@@ -390,7 +403,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// Libraries the program ships and imports statically join its graph; the runtime's own libraries answer for the system ones.
 	if (source) {
 		// The system's libraries are the runtime's whatever copies the program ships or an installer left in the system directory.
-		std::vector<std::string_view> provided{"kernel32.dll", "user32.dll", "gdi32.dll", "advapi32.dll", "setupapi.dll", "msvcrt.dll", "winmm.dll",
+		std::vector<std::string_view> provided{"kernel32.dll", "kernelbase.dll", "user32.dll", "gdi32.dll", "advapi32.dll", "setupapi.dll", "msvcrt.dll", "winmm.dll",
 			"dsound.dll", "vulkan-1.dll", "shell32.dll", "comctl32.dll", "ntdll.dll", "version.dll", "ole32.dll"};
 		provided.insert(provided.end(), system_library_names().begin(), system_library_names().end());
 		if (!source("d3d9.dll"))
@@ -447,7 +460,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	const auto with_imports = [&](const std::string &library, std::span<const std::string_view> own) {
 		std::vector<std::string_view> merged(own.begin(), own.end());
 		if (library == "ntdll.dll")
-			for (const auto name : {"memcpy", "memmove", "memset", "memcmp", "strlen", "wcslen"})
+			for (const auto name : {"memcpy", "memmove", "memset", "memcmp", "strlen", "wcslen", "strncpy", "_vsnprintf"})
 				merged.push_back(name);
 		// A library loaded later, such as an installer plug-in, imports names the initial graph never named: every public name binds.
 		const auto published = system_export_names(library);
@@ -587,6 +600,20 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			traps.emplace(provider.loaded.base() + symbol.address, std::pair{*stable, words_of(dll, exported, count(exported)) * 4});
 		}
 	};
+	// KernelBase serves the same kernel entry points, including the PathCch functions missing from the public import-library lists.
+	std::vector<std::string_view> kernelbase_names;
+	for (const auto &symbol : modules.all().at("kernel32.dll")->exports)
+		for (const auto &name : symbol.names)
+			kernelbase_names.push_back(name);
+	add_library("kernelbase.dll", kernelbase_names, {}, [](std::string_view name) {
+		const auto words = system_export_words("kernel32.dll", name);
+		if (words != UINT32_MAX)
+			return words;
+		for (const auto &item : kernel32_table())
+			if (item.name == name)
+				return item.words;
+		return registry_words(name) != UINT32_MAX ? registry_words(name) : uint32_t(0);
+	});
 	std::vector<std::string_view> advapi_names;
 	for (const auto &item : host_exports("advapi32.dll"))
 		advapi_names.push_back(item.name);
@@ -674,7 +701,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				return item.words;
 		return uint32_t(4);
 	});
-	// The common controls come from the common controls component once it is built for 32 bits; until then these names resolve and fail when called.
+	// The provisioned common controls component is loaded by the launcher; these are fallback names when it is absent.
 	static constexpr std::array<std::string_view, 5> controls_names{"ImageList_AddMasked", "ImageList_Create", "ImageList_Destroy", "InitCommonControls", "InitCommonControlsEx"};
 	static constexpr std::array<std::pair<std::string_view, uint16_t>, 1> controls_ordinals{{{"InitCommonControls", 17}}};
 	add_library("comctl32.dll", controls_names, {}, [](std::string_view name) {
@@ -958,7 +985,28 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				}
 				std::cerr << '\n';
 			}
-			if (api == "VerSetConditionMask" || api == "VerifyVersionInfoW") {
+			if (const auto wide = std::find_if(std::begin(wide_arguments), std::end(wide_arguments),
+				[&](const auto &item) { return item.name == api; }); wide != std::end(wide_arguments)) {
+				auto words = process.api_arguments(wide->words);
+				const auto handler = shared_api.find(api);
+				if (!handler)
+					throw std::runtime_error("missing shared x86 API handler: " + std::string(api));
+				words[wide->index] = uint32_t(words[wide->index]) | words[wide->index + 1] << 32;
+				words.erase(words.begin() + wide->index + 1);
+				ApiCall inner(process, environment, std::move(words));
+				try {
+					handler->second(inner);
+				} catch (const ApiFault &) {
+					inner.fail(998);
+				} catch (const uint32_t &error) {
+					inner.fail(error);
+				}
+				process.return_api(inner.result);
+				budget = remaining();
+				result = process.resume(budget);
+				continue;
+			}
+			if (api == "VerSetConditionMask" || api == "VerifyVersionInfoW" || api == "RtlVerifyVersionInfo") {
 				// The 64-bit condition mask is two words on the stack of a 32-bit program, and the handler takes it whole.
 				const bool set = api == "VerSetConditionMask";
 				const auto words = process.api_arguments(4);
@@ -1194,6 +1242,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_platform_api(shared_api, kernel);
 	register_actctx_api(shared_api, kernel);
 	register_mmio_api(shared_api, kernel);
+	register_wave_api(shared_api, kernel);
 	register_process_api(shared_api, kernel);
 	register_thread_api(shared_api, kernel);
 	register_sync_api(shared_api, kernel);
@@ -1206,6 +1255,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_crypt32_api(shared_api, kernel);
 	register_process_info_api(shared_api, kernel);
 	register_font_service(shared_api, kernel);
+	register_canvas_service(shared_api, kernel);
 	// A 32-bit program runs under WOW64 on the 64-bit system Raven presents, its System32 being SysWOW64 until it switches redirection
 	// off. The value it keeps for the switch back is 1 when redirection was on.
 	shared_api.add("Wow64DisableWow64FsRedirection", 1, [&paths](ApiCall &call) {
@@ -1223,14 +1273,10 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		paths.redirect((call.u32(0) & 0xff) != 0);
 		call.ret(1);
 	});
-	// Waveform audio for 32-bit programs has no device yet: they hear that none exists, as on a machine without sound, and go on silent.
-	shared_api.add("waveOutGetNumDevs", 0, [](ApiCall &call) { call.ret(0); });
-	shared_api.add("waveInGetNumDevs", 0, [](ApiCall &call) { call.ret(0); });
-	for (const auto *name : {"waveOutGetDevCapsW", "waveOutGetDevCapsA", "waveInGetDevCapsW", "waveInGetDevCapsA"})
-		shared_api.add(name, 3, [](ApiCall &call) { call.ret(2); });
 	register_profile_api(shared_api, profile);
 	register_ansi_adapters(shared_api);
 	register_legacy_file_api(shared_api);
+	write_native_api_inventory(modules, {&shared_api});
 	windows.set_message_wait([&guest_threads](std::function<bool()> ready,std::chrono::steady_clock::time_point until) {
 		HostWait waiting;
 		guest_threads.block(std::move(ready),until);

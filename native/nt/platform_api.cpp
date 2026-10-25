@@ -366,8 +366,9 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		const auto extra = extra_at == rest.npos ? std::u16string() : rest.substr(extra_at);
 		// URL_COMPONENTSW: size, scheme ptr/len, scheme id, host ptr/len, port, user ptr/len, password ptr/len, path ptr/len, extra ptr/len.
 		const uint64_t components = call[3];
+		const bool x86 = call.pointer_width() == 4;
 		const auto fill = [&](uint64_t pointer_at, uint64_t length_at, const std::u16string &value) {
-			const uint64_t buffer = call.load<uint64_t>(components + pointer_at);
+			const uint64_t buffer = call.load_pointer(components + pointer_at);
 			const uint32_t capacity = call.load<uint32_t>(components + length_at);
 			if (buffer) {
 				if (capacity <= value.size()) {
@@ -376,17 +377,19 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 				}
 				call.put_wide(buffer, value, capacity);
 			} else if (value.empty()) {
-				call.store<uint64_t>(components + pointer_at, 0);
+				call.store_pointer(components + pointer_at, 0);
 			} else {
-				call.store<uint64_t>(components + pointer_at, call[0] + (url.size() - (url.size() - url.find(value))) * 2);
+				call.store_pointer(components + pointer_at, call[0] + (url.size() - (url.size() - url.find(value))) * 2);
 			}
 			call.store<uint32_t>(components + length_at, uint32_t(value.size()));
 			return true;
 		};
-		if (!fill(8, 16, scheme) || !fill(24, 32, host) || !fill(48, 56, user) || !fill(64, 72, password) || !fill(80, 88, path) || !fill(96, 104, extra))
+		if (!fill(x86 ? 4 : 8, x86 ? 8 : 16, scheme) || !fill(x86 ? 16 : 24, x86 ? 20 : 32, host) ||
+			!fill(x86 ? 28 : 40, x86 ? 32 : 48, user) || !fill(x86 ? 36 : 56, x86 ? 40 : 64, password) ||
+			!fill(x86 ? 44 : 72, x86 ? 48 : 80, path) || !fill(x86 ? 52 : 88, x86 ? 56 : 96, extra))
 			return;
-		call.store<uint32_t>(components + 20, scheme == u"https" ? 2 : scheme == u"http" ? 3 : scheme == u"ftp" ? 1 : 0);
-		call.store<uint32_t>(components + 40, port & 0xffff);
+		call.store<uint32_t>(components + (x86 ? 12 : 20), scheme == u"https" ? 4 : scheme == u"http" ? 3 : scheme == u"ftp" ? 1 : 0);
+		call.store<uint16_t>(components + (x86 ? 24 : 36), uint16_t(port));
 		call.ret(1);
 	});
 
@@ -929,7 +932,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	// Without Windows Runtime metadata, a language exception has nowhere to go, and type names and namespaces resolve to nothing.
 	registry.add("RoOriginateLanguageException", 3, [](ApiCall &call) { call.ret(0); });
 	registry.add("RoParseTypeName", 3, [](ApiCall &call) { call.ret(0x80004001U); });
-	registry.add("RoResolveNamespace", 7, [](ApiCall &call) { call.ret(0x80004001U); });
+	registry.add("RoResolveNamespace", 8, [](ApiCall &call) { call.ret(0x80004001U); });
 	registry.add("RoGetParameterizedTypeInstanceIID", 5, [](ApiCall &call) { call.ret(0x80004001U); });
 	// No Windows Runtime class exists here: initialization joins the thread to a COM apartment like CoInitializeEx (RO_INIT_MULTITHREADED
 	// is 1), and every activation reports that the class is not registered.

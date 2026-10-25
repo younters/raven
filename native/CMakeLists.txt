@@ -1543,6 +1543,12 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RAVEN_CONTROLS32_COMPONENT_DIR}/raven-shell.dll $<TARGET_FILE_DIR:raven>/x86/raven-shell.dll
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RAVEN_CONTROLS32_COMPONENT_DIR}/control.exe $<TARGET_FILE_DIR:raven>/x86/control.exe
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RAVEN_CONTROLS32_COMPONENT_DIR}/regedit.exe $<TARGET_FILE_DIR:raven>/x86/regedit.exe)
+            foreach(component raven-dwrite.dll raven-d2d1.dll raven-uianimation.dll)
+                if(EXISTS "${RAVEN_CONTROLS32_COMPONENT_DIR}/${component}")
+                    add_custom_command(TARGET raven POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${RAVEN_CONTROLS32_COMPONENT_DIR}/${component} $<TARGET_FILE_DIR:raven>/x86/${component})
+                endif()
+            endforeach()
         endif()
         if(RAVEN_CONTROLS_COMPONENT_DIR)
             if(NOT EXISTS "${RAVEN_CONTROLS_COMPONENT_DIR}/comctl32.dll")
@@ -1637,6 +1643,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
             endforeach()
             add_custom_target(etw_controller_fixtures ALL DEPENDS ${ETW_CLIENTS})
             add_custom_target(process_enum_fixtures ALL DEPENDS ${PROCESS_ENUM_CLIENTS})
+            add_executable(folder_browser_test desktop/folder_browser_test.cpp)
+            target_link_libraries(folder_browser_test PRIVATE raven_cpu)
             # System APIs discovered after startup still use the guest dialog manager and task allocator, at either pointer width.
             set(DYNAMIC_DIALOG_CLIENTS)
             foreach(width 64 32)
@@ -1680,6 +1688,49 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     list(APPEND DYNAMIC_DIALOG_CLIENTS ${gamma_client})
                     add_test(NAME native_gamma_x${width} COMMAND raven --run-process --execution=native ${gamma_client})
                     set_tests_properties(native_gamma_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(graphics_parity_client ${CMAKE_CURRENT_BINARY_DIR}/graphics-parity${width}.exe)
+                    add_custom_command(OUTPUT ${graphics_parity_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${graphics_parity_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/graphics_parity_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/graphics_parity_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${graphics_parity_client})
+                    if((width EQUAL 64 AND EXISTS "${RAVEN_CONTROLS_COMPONENT_DIR}/raven-d2d1.dll") OR
+                        (width EQUAL 32 AND EXISTS "${RAVEN_CONTROLS32_COMPONENT_DIR}/raven-d2d1.dll"))
+                        add_test(NAME native_graphics_parity_x${width} COMMAND raven --run-process --execution=native --timeout-ms=30000 ${graphics_parity_client})
+                        set_tests_properties(native_graphics_parity_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    endif()
+                    set(library_parity_client ${CMAKE_CURRENT_BINARY_DIR}/library-parity${width}.exe)
+                    add_custom_command(OUTPUT ${library_parity_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${library_parity_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/library_parity_client.c
+                            -lkernel32 -luser32 -ladvapi32 -lshell32 -lwininet -lws2_32 -lcrypt32 -loleaut32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/library_parity_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${library_parity_client})
+                    if((width EQUAL 64 AND RAVEN_CONTROLS_COMPONENT_DIR AND RAVEN_INSTALLER_COMPONENT_DIR) OR
+                        (width EQUAL 32 AND RAVEN_CONTROLS32_COMPONENT_DIR AND RAVEN_INSTALLER32_COMPONENT_DIR))
+                        add_test(NAME native_library_parity_x${width} COMMAND raven --run-process --execution=native --timeout-ms=30000 ${library_parity_client})
+                        set_tests_properties(native_library_parity_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                            ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/library-parity-prefix${width})
+                    endif()
+                    set(folder_browser_client ${CMAKE_CURRENT_BINARY_DIR}/folder-browser${width}.exe)
+                    add_custom_command(OUTPUT ${folder_browser_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${folder_browser_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/folder_browser_client.c -lkernel32 -luser32 -lgdi32 -lshell32 -lole32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/folder_browser_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${folder_browser_client})
+                    if((width EQUAL 64 AND RAVEN_CONTROLS_COMPONENT_DIR) OR (width EQUAL 32 AND RAVEN_CONTROLS32_COMPONENT_DIR))
+                        set(folder_components $<TARGET_FILE_DIR:raven>)
+                        if(width EQUAL 32)
+                            set(folder_components $<TARGET_FILE_DIR:raven>/x86)
+                        endif()
+                        add_test(NAME native_folder_browser_x${width} COMMAND folder_browser_test
+                            $<TARGET_FILE:raven-bootstrap> ${folder_browser_client} ${folder_components})
+                        set_tests_properties(native_folder_browser_x${width} PROPERTIES TIMEOUT 30
+                            ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/folder-browser-prefix${width})
+                    endif()
                     set(contract_client ${CMAKE_CURRENT_BINARY_DIR}/api-contract${width}.exe)
                     add_custom_command(OUTPUT ${contract_client}
                         COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
@@ -2532,6 +2583,23 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                 add_test(NAME native_x86_d3d9_objects COMMAND raven --run-process --execution=native
                     ${CMAKE_CURRENT_BINARY_DIR}/x86-d3d9-client.exe)
                 set_tests_properties(native_x86_d3d9_objects PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                foreach(component_client dwrite)
+                    if(EXISTS "${RAVEN_CONTROLS32_COMPONENT_DIR}/raven-${component_client}.dll")
+                        add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${component_client}-client32.exe
+                            COMMAND ${RAVEN_MINGW32} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                                -Wl,--entry,_raven_entry,--no-insert-timestamp
+                                -o ${CMAKE_CURRENT_BINARY_DIR}/${component_client}-client32.exe ${LOADER_SOURCES}/${component_client}_client.c -lkernel32 -lgcc
+                            DEPENDS ${LOADER_SOURCES}/${component_client}_client.c VERBATIM)
+                        add_custom_target(${component_client}_fixture32 ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${component_client}-client32.exe)
+                        add_test(NAME native_x86_${component_client} COMMAND raven --run-process --execution=native --timeout-ms=20000
+                            ${CMAKE_CURRENT_BINARY_DIR}/${component_client}-client32.exe)
+                        set_tests_properties(native_x86_${component_client} PROPERTIES TIMEOUT 40 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    endif()
+                endforeach()
+                add_test(NAME native_x86_shared_export_handlers COMMAND ${Python3_EXECUTABLE}
+                    ${PROJECT_SOURCE_DIR}/scripts/native-api-inventory-test.py $<TARGET_FILE:raven>
+                    ${CMAKE_CURRENT_BINARY_DIR}/x86-kernel-client.exe ${PROJECT_SOURCE_DIR}/native/nt/x86_process.cpp)
+                set_tests_properties(native_x86_shared_export_handlers PROPERTIES TIMEOUT 40)
                 add_test(NAME native_x86_kernel_cli COMMAND raven --run-process --execution=native
                     ${CMAKE_CURRENT_BINARY_DIR}/x86-kernel-client.exe)
                 set_tests_properties(native_x86_kernel_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")

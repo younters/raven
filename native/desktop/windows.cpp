@@ -584,6 +584,37 @@ DesktopRect NativeWindows::update_rect(uint64_t handle,uint64_t address)
 	return rect;
 }
 
+void NativeWindows::finish_paint(uint64_t handle)
+{
+	auto *window=objects.window(handle);
+	// A parent without WS_CLIPCHILDREN, or with WS_EX_COMPOSITED, may have drawn over its children: they draw again on top, as the
+	// children on Windows show.
+	std::optional<DesktopRect> painted;
+	if (!(window->style & 0x02000000U) || (window->ex_style & 0x02000000U))
+		if (const auto *device=objects.dc(window->dc); device && device->clip) painted=device->clip->bounds();
+	objects.finish_paint(handle);
+	if (painted)
+		if (const auto *owner=objects.window(handle))
+			for (const auto child : objects.child_windows(handle)) {
+				const auto *inner=objects.window(child);
+				if (!inner || !inner->visible) continue;
+				const DesktopRect inside{std::max(painted->left+owner->x,inner->x)-inner->x,std::max(painted->top+owner->y,inner->y)-inner->y,
+					std::min(painted->right+owner->x,inner->x+inner->width)-inner->x,std::min(painted->bottom+owner->y,inner->y+inner->height)-inner->y};
+				if (inside.left<inside.right && inside.top<inside.bottom) objects.invalidate(child,inside,true);
+			}
+	// WS_EX_COMPOSITED paints the whole tree in one pass, from the bottom up: the children it covered paint now, before the frame
+	// is shown, so that no frame shows the parent over unpainted children.
+	if (painted && (window=objects.window(handle)) && (window->ex_style & 0x02000000U)) {
+		const auto me=environment.thread_id();
+		for (const auto child : objects.child_windows(handle)) {
+			const auto *inner=objects.window(child);
+			if (inner && inner->visible && !inner->update.empty() && !inner->painting && (!inner->thread || inner->thread==me))
+				send(child,0x0f,0,0);
+		}
+	}
+	if (objects.window_visible(handle)) present(handle);
+}
+
 NativeWindows::PaintStart NativeWindows::start_paint(uint64_t handle)
 {
 	const auto dc=surface_dc(handle);
@@ -1417,8 +1448,7 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 	if (message==0x0f && args[2]) return 0;
 	if (message==0x0f) {
 		if (window->painting) throw uint32_t(170);
-		start_paint(args[0]); objects.finish_paint(args[0]);
-		if (objects.window(args[0])->visible) present(args[0]);
+		start_paint(args[0]); finish_paint(args[0]);
 		return 0;
 	}
 	if (message==0x83) {
@@ -2456,32 +2486,7 @@ bool NativeWindows::dispatch(std::string_view name)
 			const bool narrow=process.mode()==NativeMode::x86;
 			const auto paint=process.read_memory(args[1],narrow ? 64 : 72);
 			if (!window->painting || read(paint,0,narrow ? 4 : 8)!=window->dc) throw uint32_t(87);
-			// A parent without WS_CLIPCHILDREN, or with WS_EX_COMPOSITED, may have drawn over its children: they draw again on top, as the
-			// children on Windows show.
-			std::optional<DesktopRect> painted;
-			if (!(window->style & 0x02000000U) || (window->ex_style & 0x02000000U))
-				if (const auto *device=objects.dc(window->dc); device && device->clip) painted=device->clip->bounds();
-			objects.finish_paint(args[0]);
-			if (painted)
-				if (const auto *owner=objects.window(args[0]))
-					for (const auto child : objects.child_windows(args[0])) {
-						const auto *inner=objects.window(child);
-						if (!inner || !inner->visible) continue;
-						const DesktopRect inside{std::max(painted->left+owner->x,inner->x)-inner->x,std::max(painted->top+owner->y,inner->y)-inner->y,
-							std::min(painted->right+owner->x,inner->x+inner->width)-inner->x,std::min(painted->bottom+owner->y,inner->y+inner->height)-inner->y};
-						if (inside.left<inside.right && inside.top<inside.bottom) objects.invalidate(child,inside,true);
-					}
-			// WS_EX_COMPOSITED paints the whole tree in one pass, from the bottom up: the children it covered paint now, before the frame
-			// is shown, so that no frame shows the parent over unpainted children.
-			if (painted && (window=objects.window(args[0])) && (window->ex_style & 0x02000000U)) {
-				const auto me=environment.thread_id();
-				for (const auto child : objects.child_windows(args[0])) {
-					const auto *inner=objects.window(child);
-					if (inner && inner->visible && !inner->update.empty() && !inner->painting && (!inner->thread || inner->thread==me))
-						send(child,0x0f,0,0);
-				}
-			}
-			if (objects.window_visible(args[0])) present(args[0]);
+			finish_paint(args[0]);
 			result=1;
 		}
 		else if (name=="ReleaseDC") {

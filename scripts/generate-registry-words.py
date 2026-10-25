@@ -14,6 +14,9 @@ pattern = re.compile(r'registry\.add\(\s*"(\w+)"\s*,\s*(\d+)\s*,')
 # Handlers registered once per character set: registry.add("Name" + suffix, N, ...) inside a loop over "W" and "A".
 suffixed = re.compile(r'registry\.add\(\s*"(\w+)"\s*\+\s*suffix\s*,\s*(\d+)\s*,')
 
+# The ANSI and wide variants also register through a conditional expression.
+conditional = re.compile(r'registry\.add\(\s*\w+\s*\?\s*"(\w+)"\s*:\s*"(\w+)"\s*,\s*(\d+)\s*,')
+
 
 def main():
     words = {}
@@ -21,6 +24,9 @@ def main():
         text = open(path).read()
         for name, count in pattern.findall(text):
             words.setdefault(name, count)
+        for first, second, count in conditional.findall(text):
+            words.setdefault(first, count)
+            words.setdefault(second, count)
         for name, count in suffixed.findall(text):
             for suffix in ("A", "W"):
                 words.setdefault(name + suffix, count)

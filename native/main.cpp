@@ -442,8 +442,8 @@ int main(int argc, char **argv)
 								return read_module(component.c_str());
 						}
 						// DirectWrite, Direct2D and Windows Animation are the runtime's own components too: the library names resolve to them.
-						if (!selected && (name=="dwrite.dll" || name=="d2d1.dll" || name=="uianimation.dll") && entry->image.is_64) {
-							const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() /
+						if (!selected && (name=="dwrite.dll" || name=="d2d1.dll" || name=="uianimation.dll")) {
+							const auto component = component_directory /
 								(name=="dwrite.dll" ? "raven-dwrite.dll" : name=="d2d1.dll" ? "raven-d2d1.dll" : "raven-uianimation.dll");
 							if (std::filesystem::exists(component))
 								return read_module(component.c_str());

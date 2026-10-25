@@ -74,6 +74,8 @@ using ApiHandler = std::function<void(ApiCall &)>;
 class ApiRegistry {
 public:
 	void add(std::string_view name, uint32_t arguments, ApiHandler handler);
+	// Registered names and argument counts, for the optional native API inventory.
+	std::vector<std::pair<std::string, uint32_t>> exports() const;
 	bool has(std::string_view name) const { return entries.contains(std::string(name)); }
 	// The handler and word count registered under a name, for adapters that reuse it.
 	std::optional<std::pair<uint32_t,ApiHandler>> find(std::string_view name) const;

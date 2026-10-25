@@ -58,6 +58,15 @@ std::optional<std::vector<uint8_t>> NativeX86Loader::read_library(const std::str
 			return read_all(component);
 		}
 	}
+	// The graphics and animation components have Windows library names, just as their 64-bit builds do.
+	if (name == "dwrite.dll" || name == "d2d1.dll" || name == "uianimation.dll") {
+		const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "x86" /
+			(name == "dwrite.dll" ? "raven-dwrite.dll" : name == "d2d1.dll" ? "raven-d2d1.dll" : "raven-uianimation.dll");
+		if (std::filesystem::exists(component)) {
+			identity = name;
+			return read_all(component);
+		}
+	}
 	// The C runtime comes from the runtime's own directory, in its 32-bit build.
 	if (name == "ucrtbase.dll") {
 		const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "ucrtbase32.dll";
