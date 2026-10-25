@@ -6,12 +6,14 @@ Read [VULKAN.md](VULKAN.md) and [DXMT.md](DXMT.md) for the established transport
 
 ## Decision
 
-Keep a mixed backend strategy. A direct Metal translator is useful, but the number of translation layers alone does not prove
-better performance. The experiment below establishes a correctness/availability difference; it cannot establish a DXMT/DXVK
+Keep a mixed backend strategy. The common Vulkan stack is a convergence target because both guest widths can use one native
+arm64 driver through the existing bridge, without a native WoW64 unix-call table. DXMT's guest unixlib remains architecture-specific.
+A direct Metal translator is useful, but the number of translation layers alone does not prove better performance. The experiment below establishes a correctness/availability difference; it cannot establish a DXMT/DXVK
 speed ratio because DXVK cannot create a device on either tested ICD.
 
 | Windows API | Recommended long-term route | Current decision / gate |
 |---|---|---|
+| D3D1–7 / DirectDraw | WineD3D Vulkan, after qualifying its PE dependencies and old fixed-function behavior | Future experiment; no verified backend in Raven on macOS |
 | D3D8/9 | Upstream DXVK PE → Raven Vulkan bridge → KosmicKrisp → Metal, once its mandatory features work | Blocked: pinned DXVK rejects KosmicKrisp; WineD3D Vulkan is a separate possible experiment, not an implemented fallback |
 | D3D10/10.1/11 | DXMT PE + guest x86_64 unixlib → Metal | Keep default; existing IOSurface transport works. Tessellation remains broken. Qualify DXVK per program after driver gates pass |
 | D3D12 | vkd3d-proton PE + compatible DXGI → host Vulkan bridge → KosmicKrisp; reassess DXMT D3D12 when released | Experimental candidates only; no working D3D12 backend established here |
@@ -65,14 +67,21 @@ ninja -C build -j6
 ```
 
 Use the SDK pin for reproducible experiments. A source build was unnecessary for this verification.
+The pinned [shader compiler source](https://gitlab.freedesktop.org/aitor/mesa/-/blob/vulkan-sdk-1.4.363.0/src/kosmickrisp/vulkan/kk_shader.c)
+(accessed 2026-10-25) lowers vertex/tessellation-control stages to compute and tessellation-evaluation to a vertex stage, using
+Mesa poly emulation. This is a distinct compiler path from DXMT. Geometry emulation is not exposed by the tested driver; comments
+about geometry or populated geometry limits are not proof of support. No successful Raven tessellation draw was established here.
+
 [Mesa licensing](https://docs.mesa3d.org/license.html) requires per-component/source-file notices; most code is MIT, not every
 file. Driver source has MIT SPDX identifiers. Retain dependency notices when packaging a rebuilt binary; this work provisions
 locally and does not redistribute a driver, SDK installer, or Apple software.
 
 Modern MoltenVK must not be confused with the installed 1.2.11 baseline: SDK 1.4.363.0 includes MoltenVK 1.4.2.
 Its [runtime guide](https://github.com/KhronosGroup/MoltenVK/blob/v1.4.2/Docs/MoltenVK_Runtime_UserGuide.md)
-still documents portability limitations. A newer Vulkan version alone does not close the geometry/stream-output gap.
-Only the installed 1.2.11 and isolated KosmicKrisp were run here; no result for 1.4.2 is inferred.
+still documents portability limitations. Its [pinned feature implementation](https://github.com/KhronosGroup/MoltenVK/blob/v1.4.2/MoltenVK/MoltenVK/GPUObjects/MVKDevice.mm)
+(accessed 2026-10-25) sets non-solid fill true, but explicitly returns false for `robustBufferAccess2` and `nullDescriptor`.
+Thus its advertised robustness2 extension alone still does not satisfy DXVK/vkd3d requirements. This is source inspection,
+not a new hardware result. Only installed 1.2.11 and isolated KosmicKrisp were run here; no execution result for 1.4.2 is inferred.
 
 ## Direct3D choices and requirements
 
@@ -186,22 +195,22 @@ Nine existing Vulkan checks: **6 passed, 3 failed** in 19.53 s:
 - FAIL: foreign presentation x64/x32: `Foreign presentation returned 2`, no frame. KosmicKrisp does not advertise headless surfaces;
   the exact failure site remains to be isolated. Real Cocoa Metal WSI succeeds.
 
-D3D11 comparison: same PE fixtures (compiled from `testdata/d3d11`, plus the Darwin pacing fixture), default scheduler, one serial
-sample per backend, separate fresh prefixes and local DXVK DLLs. Host+guest CPU is the `RUSAGE_CHILDREN` user+system delta around
+D3D11 comparison (final locked run): same PE fixtures (compiled from `testdata/d3d11`, plus the Darwin pacing fixture), default scheduler, one serial
+sample per backend, separate fresh prefixes and local DXVK DLLs. An earlier exploratory sample is retained separately. Host+guest CPU is the `RUSAGE_CHILDREN` user+system delta around
 only the runtime invocation (including its reaped agent); wall time includes startup and any shader-cache effects. Other delegates
 were active on the host, so these are observations, not stable performance benchmarks. `OK` alone was not accepted for pixel tests.
 
 | Fixture | DXMT correctness | DXMT wall / CPU seconds | DXVK + KosmicKrisp | DXVK wall / CPU seconds (failed startup only) |
 |---|---|---|---|---|
-| triangle | pixel reference passed | 3.544 / 4.168 | device rejected | 3.238 / 3.988 |
-| deferred | pixel reference passed | 3.546 / 4.260 | device rejected | 3.254 / 4.153 |
-| geometry | pixel reference passed | 3.171 / 4.011 | device rejected | 3.179 / 4.016 |
-| tessellation | **pixel reference failed, clear only** | 3.063 / 3.906 | device rejected | 3.258 / 4.072 |
-| textured | pixel reference passed | 3.238 / 3.946 | device rejected | 3.169 / 3.944 |
-| compute | all 256 values matched | 3.076 / 3.874 | device rejected | 3.219 / 4.030 |
-| MSAA | pixel reference passed | 3.080 / 3.886 | device rejected | 3.150 / 3.936 |
-| present rate | 2,000 timed presents / 9.406192 s = **212.6 presents/s** | 13.151 / 9.211 | device rejected; no rate | 3.648 / 4.269 |
-| interval-4 pacing | 16 completed presents / **1.016328 s** | 4.432 / 4.766 | device rejected; no pacing | 3.577 / 4.322 |
+| triangle | pixel reference passed | 3.115 / 3.960 | device rejected | 3.176 / 3.998 |
+| deferred | pixel reference passed | 3.037 / 3.835 | device rejected | 3.146 / 3.908 |
+| geometry | pixel reference passed | 3.040 / 3.800 | device rejected | 3.072 / 3.807 |
+| tessellation | **pixel reference failed, clear only** | 3.045 / 3.793 | device rejected | 3.090 / 3.818 |
+| textured | pixel reference passed | 3.024 / 3.782 | device rejected | 3.085 / 3.825 |
+| compute | all 256 values matched | 3.094 / 3.883 | device rejected | 3.357 / 4.152 |
+| MSAA | pixel reference passed | 3.052 / 3.804 | device rejected | 3.201 / 3.923 |
+| present rate | 2,000 timed presents / 6.909896 s = **289.4 presents/s** | 10.892 / 8.712 | device rejected; no rate | 4.024 / 4.726 |
+| interval-4 pacing | 16 completed presents / **1.024427 s** | 5.204 / 5.259 | device rejected; no pacing | 3.607 / 4.404 |
 
 All nine DXVK logs identify v3.1.1 and KosmicKrisp, then report `Device does not support required feature 'fillModeNonSolid'`.
 Device HRESULT is `80004005` (pacing exits before writing status). Geometry is independently absent and also mandatory. DXVK does
@@ -227,4 +236,64 @@ Committed evidence records below are small summaries; screenshots, prefixes and 
    not an API-version inference. Do not add an Apple backend until its precise applicable license and guest ABI are resolved.
 
 Machine-readable first-run timings: [comparison-2026-10-25.json](graphics/comparison-2026-10-25.json).
+Measured driver features/extensions: [capabilities-2026-10-25.json](graphics/capabilities-2026-10-25.json).
 These are single samples with the limitations above; failed startup timings are not graphics performance results.
+
+## Provisioning and reproducing the comparison
+
+Import an SDK's already-obtained `macOS` files without installing globally:
+
+```sh
+python3 scripts/provision-kosmickrisp.py --sdk /external/sdk/macOS \
+  --destination /Users/yount/Documents/Projects/raven-components/kosmickrisp-1.4.363.0
+cmake -S . -B build \
+  -DRAVEN_KOSMICKRISP_ROOT=/Users/yount/Documents/Projects/raven-components/kosmickrisp-1.4.363.0 \
+  -DRAVEN_DARWIN_DXVK_TESTS=ON -DRAVEN_DARWIN_PRESENT_TEST=ON
+cmake --build build -j6
+/tmp/raven-ctest-lock.sh gfx ctest --test-dir build -j1 --timeout 120 \
+  -R '^darwin_(dxvk_|dxmt_(triangle|deferred|geometry|tessellation|textured|compute|msaa|present_rate|pacing)$)' \
+  --output-on-failure
+```
+
+The ordinary build inputs/component roots from README/DXMT.md remain required. `RAVEN_KOSMICKRISP_ROOT` selects **tests** and
+validates the two pinned files at configure time; it does not change the installed runtime's default ICD. For an explicit manual
+runtime experiment set `VK_DRIVER_FILES=<root>/share/vulkan/icd.d/libkosmickrisp_icd.json`. `RAVEN_VULKAN_TEST_ICD` continues to
+support an arbitrary explicit ICD when the KosmicKrisp root option is empty. Its selection now also reaches existing native
+D3D8/9/11/12 tests rather than only Vulkan-named tests. No bridge or upstream runtime code was changed.
+
+The opt-in DXVK tests are strict and currently **expected to fail**; they are not successful-support or expected-failure tests.
+They reuse the same D3D11 executables and pixel/compute checks as DXMT, including the present-rate and interval-four fixtures.
+Additional PE32 D3D11 and PE32/PE64 D3D9 tests exercise real DLL loading and readback. The D3D9 test checks completed presents
+and GPU first/last-frame pixels, not captured screen pixels. The common runner records `metrics.json`, stdout and stderr beside
+each isolated prefix even when device creation fails. CPU accounting excludes Python pixel-checker work.
+
+The opt-in test flag defaults off, and no unsupported driver is silently substituted for DXMT or MoltenVK. Disable the root
+option and explicitly choose the MoltenVK test ICD to restore that test configuration.
+
+
+## Final verification and implementation boundary
+
+The final shared-lock batch ran **31 tests in 104.34 seconds: 14 passed, 17 failed**. Vulkan repeated its six passes and three
+failures. DXMT passed eight of the nine selected D3D11 tests; tessellation failed its strict pixel check. All nine corresponding
+x64 DXVK D3D11 tests failed adapter creation. The existing vkd3d-proton D3D12 device test also failed (`hr=80004005`) through
+DXVK DXGI's non-solid-fill rejection. No D3D12 device/command execution is claimed.
+
+The new x64 D3D9 test reaches DXVK, then adapter rejection and an unhandled guest C++ exception (`20474343`). The x86 D3D9 test
+exits 3 after the same rejection; x86 D3D11 returns `FAIL device hr=80004005`. Their Windows-side DXVK logs identify v3.1.1,
+KosmicKrisp and missing `fillModeNonSolid`. The first runner checked stderr only and therefore reported missing backend identity
+for these two tests. It now collects PE32 log files too. The updated runner was verified against both saved real PE32 outputs, mocking only the
+native subprocess: it retained backend identity, the feature rejection and failure exit codes. No additional native run or new
+performance sample is claimed by this diagnostic replay. The redundant queued hardware reruns were canceled before acquiring
+the shared test lock. These results establish
+that real PE32 DXVK loads and reaches Raven's Vulkan bridge, **not working WoW64 Direct3D**.
+
+Final timings and test outcomes: [verification-2026-10-25.json](graphics/verification-2026-10-25.json). Complete local JUnit and
+logs are `/tmp/raven-graphics-final.{xml,log}`; diagnostic replay results are `build/native/graphics-research/log-replay.json`. Each common
+runner directory contains `metrics.json`; these measurements exclude checker CPU. No speed ratio is computed against failed DXVK.
+
+The implemented milestone is the reproducible driver qualification path: pinned external ICD import, configure-time checksum
+validation, consistent ICD selection for graphics tests, and opt-in strict paired D3D11 / PE32 / D3D9 tests with CPU/wall metrics.
+Provisioning was checked twice for idempotent verification; invalid SDK, in-tree/overlapping destinations and unknown existing roots
+were rejected without modifying their contents. The supplied build completed with `-j6`; Python compilation and `git diff --check`
+passed. Upstream runtime/bridge files and `cocoa.mm` have **zero changed lines**. No new D3D9/OpenGL rendering backend was enabled: those
+paths stopped at the measured capability gates. Defaults remain DXMT and MoltenVK. No Apple software was used or redistributed.
