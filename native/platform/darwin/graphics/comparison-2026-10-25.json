@@ -1,0 +1,146 @@
+[
+  {
+    "backend": "dxvk",
+    "kind": "triangle",
+    "exit": 1,
+    "wall_s": 3.2375,
+    "cpu_s": 3.9883,
+    "status": "FAIL device hr=80004005"
+  },
+  {
+    "backend": "dxvk",
+    "kind": "deferred",
+    "exit": 1,
+    "wall_s": 3.2537,
+    "cpu_s": 4.1531,
+    "status": "FAIL device hr=80004005"
+  },
+  {
+    "backend": "dxvk",
+    "kind": "geometry",
+    "exit": 1,
+    "wall_s": 3.179,
+    "cpu_s": 4.0158,
+    "status": "FAIL device hr=80004005"
+  },
+  {
+    "backend": "dxvk",
+    "kind": "tessellation",
+    "exit": 1,
+    "wall_s": 3.2582,
+    "cpu_s": 4.0723,
+    "status": "FAIL device hr=80004005"
+  },
+  {
+    "backend": "dxvk",
+    "kind": "textured",
+    "exit": 1,
+    "wall_s": 3.1685,
+    "cpu_s": 3.9444,
+    "status": "FAIL device 80004005"
+  },
+  {
+    "backend": "dxvk",
+    "kind": "compute",
+    "exit": 1,
+    "wall_s": 3.2193,
+    "cpu_s": 4.0302,
+    "status": "FAIL device 80004005"
+  },
+  {
+    "backend": "dxvk",
+    "kind": "msaa",
+    "exit": 1,
+    "wall_s": 3.1501,
+    "cpu_s": 3.9361,
+    "status": "FAIL device hr=80004005"
+  },
+  {
+    "backend": "dxvk",
+    "kind": "present_rate",
+    "exit": 1,
+    "wall_s": 3.6484,
+    "cpu_s": 4.2688,
+    "status": "FAIL device and swap chain 80004005"
+  },
+  {
+    "backend": "dxvk",
+    "kind": "pacing",
+    "exit": 1,
+    "wall_s": 3.5768,
+    "cpu_s": 4.3219,
+    "status": "missing"
+  },
+  {
+    "backend": "dxmt",
+    "kind": "triangle",
+    "exit": 0,
+    "wall_s": 3.5437,
+    "cpu_s": 4.1678,
+    "status": "OK"
+  },
+  {
+    "backend": "dxmt",
+    "kind": "deferred",
+    "exit": 0,
+    "wall_s": 3.5457,
+    "cpu_s": 4.2596,
+    "status": "OK"
+  },
+  {
+    "backend": "dxmt",
+    "kind": "geometry",
+    "exit": 0,
+    "wall_s": 3.1712,
+    "cpu_s": 4.0109,
+    "status": "OK"
+  },
+  {
+    "backend": "dxmt",
+    "kind": "tessellation",
+    "exit": 0,
+    "wall_s": 3.0634,
+    "cpu_s": 3.9055,
+    "status": "OK"
+  },
+  {
+    "backend": "dxmt",
+    "kind": "textured",
+    "exit": 0,
+    "wall_s": 3.2377,
+    "cpu_s": 3.9456,
+    "status": "OK"
+  },
+  {
+    "backend": "dxmt",
+    "kind": "compute",
+    "exit": 0,
+    "wall_s": 3.0762,
+    "cpu_s": 3.874,
+    "status": "OK"
+  },
+  {
+    "backend": "dxmt",
+    "kind": "msaa",
+    "exit": 0,
+    "wall_s": 3.0798,
+    "cpu_s": 3.8861,
+    "status": "OK"
+  },
+  {
+    "backend": "dxmt",
+    "kind": "present_rate",
+    "exit": 0,
+    "wall_s": 13.1507,
+    "cpu_s": 9.2113,
+    "status": "2000 9406192"
+  },
+  {
+    "backend": "dxmt",
+    "kind": "pacing",
+    "exit": 0,
+    "wall_s": 4.4324,
+    "cpu_s": 4.7655,
+    "status": "16 1016328"
+  }
+]
