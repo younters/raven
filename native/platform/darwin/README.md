@@ -14,6 +14,14 @@ RAVEN_PREFIX=~/.local/share/raven/app build-macos/native/raven --run-process --e
 	--desktop=macos program.exe
 ```
 
+`install-launcher.sh` then installs `~/Applications/Raven.app` and makes it the default application for `.exe` files: Finder opens a
+program in its own prefix, `~/.local/share/raven/<program name>`, from the program's folder, with its output in
+`~/Library/Logs/Raven/<program name>.log`. `--no-default` installs the launcher without taking over `.exe` files.
+
+Live resizing waits for the program to draw each size about as long as it usually takes (10-100 ms), sends the last size of a drag as
+soon as the edge stops, and crossfades frames of a new size. `RAVEN_COCOA_RESIZE_MS=<n>` fixes the wait at n ms and
+`RAVEN_COCOA_RESIZE_BLEND=<seconds>` sets the crossfade (`0` turns it off).
+
 `setup.sh` puts what it downloads and builds beside the checkout (`../raven-components`, `../raven-skia`) and skips what is already
 there. The Vulkan loader, `vk.xml` and MoltenVK come from the LunarG SDK, which installs them under `/usr/local`.
 
