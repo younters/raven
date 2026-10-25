@@ -783,6 +783,8 @@ void raven_agent_stop(int signal, siginfo_t *info, void *raw, uint32_t index)
 		fprintf(stderr, "raven-bootstrap: service fault %d at %p\n", signal, info->si_addr);
 		_exit(124);
 	}
+	// Scheduler handshakes can set errno while interrupting a native library on this pthread.
+	const int saved_errno = errno;
 	ucontext_t *context = raw;
 	struct raven_thread_channel *thread = &control->threads[index];
 	const uint32_t requested = load(&thread->interrupts_requested);
@@ -792,6 +794,7 @@ void raven_agent_stop(int signal, siginfo_t *info, void *raw, uint32_t index)
 		const uint64_t base = interrupted_gs_base(layout.thread->__rip, index);
 		if (layout.gs_base)
 			*layout.gs_base = base;
+		errno = saved_errno;
 		set_gs_base(base);
 		return;
 	}
@@ -820,6 +823,7 @@ void raven_agent_stop(int signal, siginfo_t *info, void *raw, uint32_t index)
 		pthread_exit(NULL);
 	load_context(context, thread, index);
 	__atomic_store_n(&thread->state, RAVEN_THREAD_RUNNING, __ATOMIC_RELEASE);
+	errno = saved_errno;
 	set_gs_base(thread->registers.cs == 0x23 ? raven_agent_tsds[index] : thread->registers.gs_base);
 }
 

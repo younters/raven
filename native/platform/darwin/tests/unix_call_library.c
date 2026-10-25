@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdio.h>
 #include <time.h>
 #include <string.h>
 #include <unistd.h>
@@ -10,9 +11,8 @@ static void *native_worker(void *args)
 {
 	(void)args;
 	const pthread_t self = pthread_self();
-	errno = EDOM;
-	raise(SIGUSR1);
-	return (void *)(uintptr_t)(pthread_self() == self && errno == EDOM);
+	const int result = pthread_kill(self, SIGUSR1);
+	return (void *)(uintptr_t)(result == 0 && pthread_self() == self);
 }
 
 static int32_t probe(void *args)
@@ -23,8 +23,12 @@ static int32_t probe(void *args)
 	if (!p->calls) {
 		pthread_t worker;
 		void *result = NULL;
-		if (pthread_create(&worker, NULL, native_worker, NULL) || pthread_join(worker, &result) || result != (void *)1)
+		int created = pthread_create(&worker, NULL, native_worker, NULL);
+		int joined = created ? -1 : pthread_join(worker, &result);
+		if (created || joined || result != (void *)1) {
+			fprintf(stderr, "native worker: create %d join %d result %p errno %d\n", created, joined, result, errno);
 			return (int32_t)0xc0000001;
+		}
 	}
 	// Both native calls must enter before either returns: a serialized gate fails this rendezvous.
 	if (!p->calls && p->rendezvous) {
@@ -49,9 +53,14 @@ static int32_t probe(void *args)
 	struct timespec start, now;
 	clock_gettime(CLOCK_MONOTONIC, &start);
 	do {
+		// No libc calls in this interval: only the signal handler can change this pthread's errno.
 		errno = EDOM;
+		for (unsigned spin = 0; spin < 100000; ++spin)
+			__asm__ volatile("" ::: "memory");
+		if (errno != EDOM)
+			return (int32_t)0xc0000001;
 		usleep(1000);
-		if (pthread_self() != (pthread_t)p->native_thread || (errno != EDOM && errno != EINTR))
+		if (pthread_self() != (pthread_t)p->native_thread)
 			return (int32_t)0xc0000001;
 		clock_gettime(CLOCK_MONOTONIC, &now);
 	} while ((now.tv_sec - start.tv_sec) * 1000000000LL + now.tv_nsec - start.tv_nsec < 50000000);
