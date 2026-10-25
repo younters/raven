@@ -22,6 +22,53 @@ static ID2D1SimplifiedGeometrySinkVtbl sink_vtbl = {
 	{sink_query, sink_ref, sink_ref}, sink_fill, sink_flags, sink_begin, sink_lines, sink_beziers, sink_end, sink_close,
 };
 
+static int caption_symbols(IDWriteFactory *factory, IDWriteFontCollection *collection)
+{
+	const WCHAR *families[] = {L"Segoe MDL2 Assets", L"Segoe Fluent Icons"};
+	const UINT32 points[] = {0xe921, 0xe922, 0xe923, 0xe8bb};
+	ID2D1SimplifiedGeometrySink sink = {&sink_vtbl};
+	for (unsigned name = 0; name < 2; ++name) {
+		IDWriteFontFamily *family;
+		IDWriteFont *font;
+		IDWriteFontFace *face;
+		UINT32 index;
+		UINT16 glyphs[4];
+		WINBOOL exists;
+		if (FAILED(IDWriteFontCollection_FindFamilyName(collection, families[name], &index, &exists)) || !exists ||
+			FAILED(IDWriteFontCollection_GetFontFamily(collection, index, &family)) ||
+			FAILED(IDWriteFontFamily_GetFirstMatchingFont(family, DWRITE_FONT_WEIGHT_REGULAR,
+				DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, &font)) ||
+			FAILED(IDWriteFont_CreateFontFace(font, &face)) ||
+			FAILED(IDWriteFontFace_GetGlyphIndices(face, points, 4, glyphs))) return 50;
+		for (unsigned index = 0; index < 4; ++index) {
+			outline_figures = outline_segments = 0;
+			if (!glyphs[index] || FAILED(IDWriteFontFace_GetGlyphRunOutline(face, 16.0f, glyphs + index,
+				NULL, NULL, 1, FALSE, FALSE, &sink)) || outline_figures < 1 || outline_segments < 4) return 51;
+		}
+		IDWriteFontFile *file, *reopened;
+		IDWriteFontFileLoader *loader;
+		IDWriteLocalFontFileLoader *local;
+		const void *key;
+		UINT32 key_size, files = 1;
+		FILETIME time;
+		if (FAILED(IDWriteFontFace_GetFiles(face, &files, &file)) || files != 1 ||
+			FAILED(IDWriteFontFile_GetReferenceKey(file, &key, &key_size)) ||
+			FAILED(IDWriteFontFile_GetLoader(file, &loader)) ||
+			FAILED(IDWriteFontFileLoader_QueryInterface(loader, &IID_IDWriteLocalFontFileLoader, (void **)&local)) ||
+			FAILED(IDWriteLocalFontFileLoader_GetLastWriteTimeFromKey(local, key, key_size, &time)) ||
+			FAILED(IDWriteFactory_CreateFontFileReference(factory, key, &time, &reopened))) return 52;
+		IDWriteFontFile_Release(reopened);
+		IDWriteLocalFontFileLoader_Release(local);
+		IDWriteFontFileLoader_Release(loader);
+		IDWriteFontFile_Release(file);
+		IDWriteFontFace_Release(face);
+		IDWriteFont_Release(font);
+		IDWriteFontFamily_Release(family);
+	}
+	outline_figures = outline_segments = 0;
+	return 0;
+}
+
 int raven_entry(void)
 {
 	IDWriteFactory *factory = NULL;
@@ -54,6 +101,8 @@ int raven_entry(void)
 	IDWriteFactory2_Release(factory2);
 	if (FAILED(IDWriteFactory_GetSystemFontCollection(factory, &collection, FALSE)) || IDWriteFontCollection_GetFontFamilyCount(collection) == 0)
 		return 3;
+	int caption_result = caption_symbols(factory, collection);
+	if (caption_result) return caption_result;
 	if (FAILED(IDWriteFontCollection_FindFamilyName(collection, L"Arial", &index, &exists)) || !exists)
 		return 4;
 	if (FAILED(IDWriteFontCollection_GetFontFamily(collection, index, &family)))

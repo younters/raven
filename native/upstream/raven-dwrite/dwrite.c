@@ -20,6 +20,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include "caption_font.h"
 
 #define ALLOC(size) HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (size))
 #define FREE(block) HeapFree(GetProcessHeap(), 0, (block))
@@ -362,6 +363,7 @@ static const WCHAR *aliases[][2] = {
 	{L"Calibri", L"Noto Sans"}, {L"Consolas", L"DejaVu Sans Mono"}, {L"Lucida Console", L"DejaVu Sans Mono"}, {L"Georgia", L"DejaVu Serif"},
 	{L"Trebuchet MS", L"Noto Sans"}, {L"Segoe UI Emoji", L"Noto Sans"}, {L"Segoe UI Symbol", L"DejaVu Sans"}, {L"Cambria", L"DejaVu Serif"},
 	{L"Palatino Linotype", L"DejaVu Serif"}, {L"Symbol", L"DejaVu Sans"}, {L"MS Gothic", L"DejaVu Sans Mono"},
+	{L"Segoe MDL2 Assets", L"Raven UI Symbols"}, {L"Segoe Fluent Icons", L"Raven UI Symbols"},
 };
 
 static BOOL CALLBACK build_system(PINIT_ONCE once, PVOID parameter, PVOID *context)
@@ -381,7 +383,7 @@ static BOOL CALLBACK build_system(PINIT_ONCE once, PVOID parameter, PVOID *conte
 				++count;
 				walk += record;
 			}
-			font_entries = ALLOC(count * sizeof(FontEntry));
+			font_entries = ALLOC((count + 1) * sizeof(FontEntry));
 			for (walk = 0; walk + 4 <= size && font_count < count;) {
 				DWORD record = *(DWORD *)(records + walk);
 				const char *strings = (const char *)records + walk + 24;
@@ -431,6 +433,24 @@ static BOOL CALLBACK build_system(PINIT_ONCE once, PVOID parameter, PVOID *conte
 		}
 		if (records)
 			FREE(records);
+	}
+	/* Supply caption symbols even on hosts without the Windows icon fonts. The
+	 * embedded sfnt also supplies cmap/outlines to clients that shape the font. */
+	if (!font_entries)
+		font_entries = ALLOC(sizeof(FontEntry));
+	if (font_entries) {
+		FontEntry *entry = &font_entries[font_count++];
+		FamilyEntry *family;
+		entry->path = wdup(L"raven:ui-symbols");
+		entry->family = wdup(L"Raven UI Symbols");
+		entry->face = wdup(L"Regular");
+		entry->full = wdup(L"Raven UI Symbols Regular");
+		entry->postscript = wdup(L"RavenUISymbols-Regular");
+		entry->weight = 400;
+		entry->stretch = 5;
+		family = add_family(entry->family);
+		if (family)
+			family_add(family, entry);
 	}
 	/* Families are listed in name order, as DirectWrite does. */
 	{
@@ -530,6 +550,14 @@ static FaceData *face_data_create(BYTE *bytes, DWORD size, DWORD index, const WC
 
 static BYTE *read_file(const WCHAR *path, DWORD *size)
 {
+	if (wequal_fold(path, L"raven:ui-symbols")) {
+		BYTE *bytes = ALLOC(sizeof(caption_font));
+		if (bytes) {
+			memcpy(bytes, caption_font, sizeof(caption_font));
+			*size = sizeof(caption_font);
+		}
+		return bytes;
+	}
 	HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	BYTE *bytes = NULL;
 	DWORD length, done = 0;
@@ -852,6 +880,11 @@ static HRESULT STDMETHODCALLTYPE loader_write_time(IDWriteLocalFontFileLoader *s
 	if (!path)
 		return E_OUTOFMEMORY;
 	memcpy(path, key, length * sizeof(WCHAR));
+	if (wequal_fold(path, L"raven:ui-symbols")) {
+		time->dwLowDateTime = time->dwHighDateTime = 0;
+		FREE(path);
+		return S_OK;
+	}
 	found = GetFileAttributesExW(path, GetFileExInfoStandard, &attributes);
 	FREE(path);
 	if (!found)
@@ -2595,7 +2628,7 @@ static HRESULT STDMETHODCALLTYPE factory_file_reference(IDWriteFactory2 *self, c
 	if (!path)
 		return E_INVALIDARG;
 	length = wlen(path);
-	if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES)
+	if (!wequal_fold(path, L"raven:ui-symbols") && GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES)
 		return DWRITE_E_FILENOTFOUND;
 	*file = make_file(path, (UINT32)((length + 1) * sizeof(WCHAR)), get_system_loader());
 	return *file ? S_OK : E_OUTOFMEMORY;
