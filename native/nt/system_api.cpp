@@ -296,6 +296,22 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("GetTimeZoneInformation", 1, [zone_information](ApiCall &call) { zone_information(call, false); });
 	registry.add("GetDynamicTimeZoneInformation", 1, [zone_information](ApiCall &call) { zone_information(call, true); });
+	// A prefix has no per-year Dynamic DST registry overrides; use the supplied recurring rules, or the local zone when omitted.
+	registry.add("GetTimeZoneInformationForYear", 3, [zone_information](ApiCall &call) {
+		if (!call.u32(0) || !call[2]) { call.fail(87); return; }
+		if (call[1]) {
+			auto bytes = call.read(call[1], 172);
+			if (call.load<uint8_t>(call[1] + 428)) {
+				std::fill(bytes.begin() + 68, bytes.begin() + 84, 0);
+				std::fill(bytes.begin() + 152, bytes.end(), 0);
+			}
+			call.write(call[2], bytes);
+		} else {
+			ApiCall local(call.process, call.environment, {call[2]});
+			zone_information(local, false);
+		}
+		call.ret(1);
+	});
 	// The reverse of the call below: a local time becomes UTC by taking the zone's offset off.
 	registry.add("TzSpecificLocalTimeToSystemTime", 3, [](ApiCall &call) {
 		const auto ticks = ticks_from(call.read(call[1], 16));

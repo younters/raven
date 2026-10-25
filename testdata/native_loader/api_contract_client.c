@@ -66,6 +66,19 @@ UINT raven_entry(void)
 	if (!set_id || !get_id || !free_id || get_id(&id) >= 0 || id) return 17;
 	if (set_id(L"raven.test") || get_id(&id) || !id || id[0] != L'r' || id[9] != L't' || id[10]) return 18;
 	free_id(id);
+	BOOL (WINAPI *year_zone)(USHORT, const DYNAMIC_TIME_ZONE_INFORMATION *, TIME_ZONE_INFORMATION *) =
+		(void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetTimeZoneInformationForYear");
+	DYNAMIC_TIME_ZONE_INFORMATION rules = {0};
+	TIME_ZONE_INFORMATION zone;
+	rules.Bias = 300;
+	rules.StandardBias = 0;
+	rules.DaylightBias = -60;
+	rules.DaylightDate.wMonth = 3;
+	rules.StandardDate.wMonth = 11;
+	if (!year_zone || !year_zone(2026, &rules, &zone) || zone.Bias != 300 || zone.DaylightDate.wMonth != 3) return 19;
+	rules.DynamicDaylightTimeDisabled = TRUE;
+	if (!year_zone(2026, &rules, &zone) || zone.DaylightDate.wMonth || zone.StandardDate.wMonth || zone.DaylightBias) return 20;
+	if (!year_zone(2026, NULL, &zone) || year_zone(0, &rules, &zone) || GetLastError() != ERROR_INVALID_PARAMETER) return 21;
 	CloseHandle(readable);
 	CloseHandle(mapping);
 	return 0;
