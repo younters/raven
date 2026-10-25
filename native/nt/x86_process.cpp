@@ -50,8 +50,8 @@ namespace raven {
 namespace {
 
 // stdcall argument counts for every API the x86 process runner can dispatch.
-constexpr std::array<std::pair<std::string_view, uint32_t>, 115> kernel32_exports{{
-	{"CloseHandle", 1}, {"CreateEventA", 4}, {"CreateEventW", 4}, {"CreateThread", 6}, {"DeleteCriticalSection", 1}, {"EnterCriticalSection", 1}, {"ExitProcess", 1}, {"ExitThread", 1}, {"FindResourceA", 3},
+constexpr std::array<std::pair<std::string_view, uint32_t>, 117> kernel32_exports{{
+	{"OpenProcessToken", 3}, {"OpenThreadToken", 4}, {"CloseHandle", 1}, {"CreateEventA", 4}, {"CreateEventW", 4}, {"CreateThread", 6}, {"DeleteCriticalSection", 1}, {"EnterCriticalSection", 1}, {"ExitProcess", 1}, {"ExitThread", 1}, {"FindResourceA", 3},
 	{"FindResourceExA", 4}, {"FindResourceExW", 4}, {"FindResourceW", 3}, {"FreeLibrary", 1}, {"GetACP", 0},
 	{"GetCommandLineA", 0}, {"GetCommandLineW", 0}, {"GetCurrentProcessId", 0}, {"GetCurrentThreadId", 0}, {"GetExitCodeThread", 2},
 	{"GetFileType", 1}, {"GetLastError", 0}, {"GetModuleFileNameA", 3}, {"GetModuleHandleA", 1},
@@ -70,6 +70,7 @@ constexpr std::array<std::pair<std::string_view, uint32_t>, 115> kernel32_export
 
 // Shared-registry handlers that serve 32-bit programs as they are: every argument is one 32-bit word and no structure holds a pointer.
 constexpr std::array shared_exports{
+	NativeX86System::Export{"setupapi.dll", "SetupDiEnumDeviceInterfaces", 5}, NativeX86System::Export{"setupapi.dll", "SetupDiGetClassDevsW", 4},
 	// A trace identifier occupies two stack words; its controller adapter combines them before shared dispatch.
 	NativeX86System::Export{"advapi32.dll", "StopTraceA", 4}, NativeX86System::Export{"advapi32.dll", "StopTraceW", 4},
 	NativeX86System::Export{"advapi32.dll", "ControlTraceA", 5}, NativeX86System::Export{"advapi32.dll", "ControlTraceW", 5},
@@ -103,7 +104,8 @@ constexpr std::array shared_exports{
 // More shared handlers a 32-bit program may use as they are; their words come from the registry and their library from the public
 // export lists. Anything with a pointer-width structure, a 64-bit argument or a callback into x64 conventions is not here.
 constexpr std::string_view shared_allowed[] = {
-	"WaitForSingleObjectEx",
+	"WaitForSingleObjectEx", "OpenThreadToken", "RtlCompareMemory", "RtlSetLastWin32Error", "RtlRunOnceExecuteOnce",
+	"RtlAcquireSRWLockExclusive", "RtlReleaseSRWLockExclusive", "RtlAcquireSRWLockShared", "RtlReleaseSRWLockShared",
 	"EnumProcesses", "K32EnumProcesses",
 	"QueryFullProcessImageNameW", "QueryFullProcessImageNameA",
 	"NtQueryInformationProcess", "NtReadVirtualMemory", "NtWriteVirtualMemory", "ReadProcessMemory", "WriteProcessMemory", "OpenProcess",
@@ -444,6 +446,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// A library's own list of names together with the ones the graph imports from it.
 	const auto with_imports = [&](const std::string &library, std::span<const std::string_view> own) {
 		std::vector<std::string_view> merged(own.begin(), own.end());
+		if (library == "ntdll.dll")
+			for (const auto name : {"memcpy", "memmove", "memset", "memcmp", "strlen", "wcslen"})
+				merged.push_back(name);
 		// A library loaded later, such as an installer plug-in, imports names the initial graph never named: every public name binds.
 		const auto published = system_export_names(library);
 		merged.insert(merged.end(), published.begin(), published.end());
@@ -478,7 +483,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			// The startup and exception entry points of msvcrt.dll stay with the runtime, which knows the process.
 			const auto host_crt = std::string_view(rule.library) == "msvcrt.dll" ? NativeCRT::exports() : std::span<const std::string_view>{};
 			for (auto &symbol : provider.exports)
-				if (!symbol.names.empty() && std::find(host_crt.begin(), host_crt.end(), symbol.names.front()) == host_crt.end() &&
+				if (!symbol.names.empty() && !host_device_export(library, symbol.names.front()) && std::find(host_crt.begin(), host_crt.end(), symbol.names.front()) == host_crt.end() &&
 					std::any_of(component->second->exports.begin(), component->second->exports.end(), [&](const auto &candidate) {
 						return candidate.forwarder.empty() && std::find(candidate.names.begin(), candidate.names.end(), symbol.names.front()) != candidate.names.end();
 					}))

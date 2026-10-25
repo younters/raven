@@ -74,6 +74,12 @@ static constexpr std::array<std::string_view, 50> names{
 	"VirtualAlloc", "VirtualFree", "VirtualProtect", "VirtualQuery", "WaitForSingleObject", "WriteFile"
 };
 
+bool host_device_export(std::string_view library, std::string_view name)
+{
+	return library == "setupapi.dll" && (name == "SetupDiGetClassDevsA" || name == "SetupDiGetClassDevsW" ||
+		name == "SetupDiEnumDeviceInfo" || name == "SetupDiEnumDeviceInterfaces" || name == "SetupDiDestroyDeviceInfoList");
+}
+
 std::vector<uint8_t> environment_provider(std::string_view name, uint64_t base)
 {
 	if (name != "kernel32.dll" && name != "kernelbase.dll")
@@ -1693,7 +1699,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				if (overlay == modules.all().end() || overlay->second->runtime_api)
 					continue;
 				for (auto &symbol : provider->exports)
-					if (!symbol.names.empty() && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
+					if (!symbol.names.empty() && !host_device_export(name, symbol.names.at(0)) && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
 							return candidate.forwarder.empty() && std::find(candidate.names.begin(), candidate.names.end(), symbol.names.at(0)) != candidate.names.end();
 						}))
 						symbol.forwarder = overlay_rule.prefix + symbol.names.at(0);

@@ -51,6 +51,13 @@ UINT raven_entry(void)
 	if (MapViewOfFile(readable, FILE_MAP_WRITE, 0, 0, 4096)) return 13;
 	HANDLE writable;
 	if (DuplicateHandle(GetCurrentProcess(), readable, GetCurrentProcess(), &writable, GENERIC_WRITE, FALSE, 0) || GetLastError() != ERROR_ACCESS_DENIED) return 14;
+	HMODULE setup = LoadLibraryA("setupapi.dll");
+	HANDLE (WINAPI *device_set)(const void *, const WCHAR *, HWND, DWORD) = (void *)GetProcAddress(setup, "SetupDiGetClassDevsW");
+	BOOL (WINAPI *enum_device)(HANDLE, DWORD, void *) = (void *)GetProcAddress(setup, "SetupDiEnumDeviceInfo");
+	BOOL (WINAPI *destroy_set)(HANDLE) = (void *)GetProcAddress(setup, "SetupDiDestroyDeviceInfoList");
+	if (!device_set || !enum_device || !destroy_set) return 15;
+	HANDLE devices = device_set(NULL, NULL, NULL, 4);
+	if (devices == INVALID_HANDLE_VALUE || enum_device(devices, 0, NULL) || GetLastError() != ERROR_NO_MORE_ITEMS || !destroy_set(devices)) return 16;
 	CloseHandle(readable);
 	CloseHandle(mapping);
 	return 0;
