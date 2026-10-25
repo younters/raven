@@ -153,6 +153,11 @@ struct CocoaPresentation::State {
 		std::chrono::steady_clock::time_point told{}, last_present{};
 		// Whether a frame of the size told has arrived: the next size waits for the program to stop drawing after it.
 		bool told_answered = false;
+		// When the size asked for last changed, and how long the program usually takes to draw a size it is told: the pacing waits
+		// about that long, and sends the final size at once when the edge stops moving.
+		std::chrono::steady_clock::time_point pending_changed{};
+		std::chrono::duration<double, std::milli> answer{16};
+		uint32_t shown_width = 0, shown_height = 0;
 		NSRect restored{};
 		~Surface()
 		{
@@ -202,6 +207,10 @@ struct CocoaPresentation::State {
 	const char *dump_directory = std::getenv("RAVEN_COCOA_DUMP");
 	unsigned dumped = 0;
 	const bool resize_test = std::getenv("RAVEN_COCOA_RESIZE_TEST") != nullptr;
+	// Resize tuning: RAVEN_COCOA_RESIZE_MS=<n> waits at most n ms for the program to draw a size (default: twice its usual time,
+	// 10-100 ms); RAVEN_COCOA_RESIZE_BLEND=<seconds> is the crossfade between frames of different sizes (default 0.06, 0 for none).
+	const double resize_patience = std::getenv("RAVEN_COCOA_RESIZE_MS") ? std::atof(std::getenv("RAVEN_COCOA_RESIZE_MS")) : 0;
+	const double resize_blend = std::getenv("RAVEN_COCOA_RESIZE_BLEND") ? std::atof(std::getenv("RAVEN_COCOA_RESIZE_BLEND")) : 0.06;
 	std::chrono::steady_clock::time_point first_shown{}, last_step{};
 	int resize_steps = 0;
 	double wheel = 0, horizontal_wheel = 0;
@@ -736,6 +745,16 @@ struct CocoaPresentation::State {
 			shown = CGImageCreateWithImageInRect(image, CGRectMake(inset[0], inset[1], width - inset[0] - inset[2], height - inset[1] - inset[3]));
 		[CATransaction begin];
 		[CATransaction setDisableActions:YES];
+		// A frame of another size during a resize blends into the one before it rather than snapping.
+		if (resize_blend > 0 && target.shown_width && (target.shown_width != width || target.shown_height != height) &&
+			std::chrono::steady_clock::now() - target.pending_changed < std::chrono::milliseconds(300)) {
+			CATransition *blend = [CATransition animation];
+			blend.type = kCATransitionFade;
+			blend.duration = resize_blend;
+			[target.view.layer addAnimation:blend forKey:@"raven.resize"];
+		}
+		target.shown_width = width;
+		target.shown_height = height;
 		target.view.layer.contentsScale = scale;
 		target.view.layer.contents = (__bridge id)shown;
 		[CATransaction commit];
@@ -785,6 +804,7 @@ struct CocoaPresentation::State {
 		target->pending_width = width;
 		target->pending_height = height;
 		target->resized = true;
+		target->pending_changed = std::chrono::steady_clock::now();
 		if (trace)
 			std::fprintf(stderr, "cocoa: host resized %llx to frame %ux%u\n", (unsigned long long)handle, width, height);
 	}
@@ -868,8 +888,10 @@ struct CocoaPresentation::State {
 			if (target->pending_width == width && target->pending_height == height)
 				target->resized = false;
 			target->last_present = std::chrono::steady_clock::now();
-			if (target->told_width == width && target->told_height == height)
+			if (target->told_width == width && target->told_height == height && !target->told_answered) {
 				target->told_answered = true;
+				target->answer = target->answer * 0.75 + (target->last_present - target->told) * 0.25;
+			}
 			target->width = width;
 			target->height = height;
 			set_size(*target, width, height);
@@ -977,6 +999,7 @@ struct CocoaPresentation::State {
 				target->pending_width = width;
 				target->pending_height = height;
 				target->resized = true;
+				target->pending_changed = std::chrono::steady_clock::now();
 			}
 		}
 		const auto [x, y] = frame_point(window, NSEvent.mouseLocation);
@@ -1008,6 +1031,7 @@ struct CocoaPresentation::State {
 		target->pending_width = width;
 		target->pending_height = height;
 		target->resized = true;
+		target->pending_changed = std::chrono::steady_clock::now();
 	}
 
 	std::optional<HostSurface> host_surface(uint64_t handle, int32_t x, int32_t y, uint32_t width, uint32_t height)
@@ -1110,9 +1134,15 @@ struct CocoaPresentation::State {
 		const auto now = std::chrono::steady_clock::now();
 		for (auto &[handle, window] : surfaces)
 			if (window->resized && !window->popup) {
-				// Still waiting for the program to draw the size it was told last, unless it settled on another one meanwhile.
-				const bool settled = window->told_answered && now - window->last_present > std::chrono::milliseconds(12);
-				if (window->told_width && !settled && now - window->told < std::chrono::milliseconds(250))
+				// Still waiting for the program to draw the size it was told last, unless it settled on another one meanwhile, the edge
+				// stopped moving (that size is the last), or the program is taking well over its usual time.
+				using milliseconds = std::chrono::duration<double, std::milli>;
+				const double usual = window->answer.count();
+				const milliseconds quiet{std::clamp(usual / 4, 2.0, 12.0)};
+				const milliseconds patience{resize_patience > 0 ? resize_patience : std::clamp(usual * 2, 10.0, 100.0)};
+				const bool settled = window->told_answered && now - window->last_present > quiet;
+				const bool stopped = now - window->pending_changed > std::chrono::milliseconds(16);
+				if (window->told_width && !settled && !stopped && now - window->told < patience)
 					continue;
 				events.push_back({handle, 0, 0, 0, DesktopEventKind::resize, int32_t(window->pending_width), int32_t(window->pending_height)});
 				window->resized = false;
