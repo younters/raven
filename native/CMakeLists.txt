@@ -3414,7 +3414,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
         add_custom_command(OUTPUT ${DYNAMIC_FIXTURES}/tlsprobe.dll ${DYNAMIC_FIXTURES}/tlsprobe.a
             COMMAND ${CMAKE_COMMAND} -E make_directory ${DYNAMIC_FIXTURES}
             COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -shared -fno-stack-protector
-                -DRAVEN_TLS_DLL -DRAVEN_TLS_DYNAMIC -Wl,--entry,DllMain,--image-base,0x190000000
+                -DRAVEN_TLS_DLL -DRAVEN_TLS_DYNAMIC -Wl,--entry,DllMain,--image-base,0x240000000
                 -Wl,--out-implib,${DYNAMIC_FIXTURES}/tlsprobe.a
                 -o ${DYNAMIC_FIXTURES}/tlsprobe.dll ${LOADER_SOURCES}/tls_client.c -lkernel32
             DEPENDS ${LOADER_SOURCES}/tls_client.c VERBATIM)
@@ -3433,7 +3433,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
             endif()
             add_custom_command(OUTPUT ${DYNAMIC_FIXTURES}/${DYNAMIC_DLL}.dll
                 COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -shared -fno-stack-protector ${DYNAMIC_OPTIONS}
-                    -Wl,--entry,DllMain,--image-base,0x190000000
+                    -Wl,--entry,DllMain,--image-base,0x240000000
                     -o ${DYNAMIC_FIXTURES}/${DYNAMIC_DLL}.dll ${LOADER_SOURCES}/dynamic_parent.c
                     ${DYNAMIC_FIXTURES}/tlsprobe.a -lkernel32
                 DEPENDS ${LOADER_SOURCES}/dynamic_parent.c ${DYNAMIC_FIXTURES}/tlsprobe.a VERBATIM)
