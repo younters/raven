@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "cocoa_cursor.h"
+#include "gdi_presenter.h"
 
 namespace {
 
@@ -159,6 +160,7 @@ struct CocoaPresentation::State {
 		std::chrono::duration<double, std::milli> answer{16};
 		uint32_t shown_width = 0, shown_height = 0;
 		NSRect restored{};
+		darwin::GDIPresenter presenter;
 		~Surface()
 		{
 			[child removeFromSuperview];
@@ -918,6 +920,7 @@ struct CocoaPresentation::State {
 		view.layer.contentsGravity = kCAGravityBottomLeft;
 		view.layer.magnificationFilter = kCAFilterNearest;
 		view.layer.contentsScale = scale;
+		view.layer.opaque = YES;
 		view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 		window.contentView = view;
 		return window;
@@ -930,17 +933,37 @@ struct CocoaPresentation::State {
 		target.view.layer.opaque = !alpha;
 		const auto &inset = target.insets;
 		const bool cropped = inset[0] || inset[1] || inset[2] || inset[3];
-		CFDataRef data = CFDataCreate(nullptr, pixels.data(), CFIndex(pixels.size()));
-		CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
-		CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-		CGImageRef image = CGImageCreate(width, height, 8, 32, size_t(width) * 4, space,
-			CGBitmapInfo(kCGBitmapByteOrder32Little) | CGBitmapInfo(alpha ? kCGImageAlphaPremultipliedFirst : kCGImageAlphaNoneSkipFirst),
-			provider, nullptr, false, kCGRenderingIntentDefault);
-		CGImageRef shown = image;
-		if (cropped && uint32_t(inset[0] + inset[2]) < width && uint32_t(inset[1] + inset[3]) < height)
-			shown = CGImageCreateWithImageInRect(image, CGRectMake(inset[0], inset[1], width - inset[0] - inset[2], height - inset[1] - inset[3]));
+		// Metal presents opaque frames; a window with per-pixel alpha (Firefox's rounded popups) keeps the premultiplied CGImage.
+		IOSurfaceRef surface = alpha ? nullptr : static_cast<IOSurfaceRef>(target.presenter.frame(pixels, width, height));
+		if (surface && target.view.layer.contents == (__bridge id)surface && target.shown_width == width && target.shown_height == height)
+			return;
+		CFDataRef data = nullptr;
+		CGDataProviderRef provider = nullptr;
+		CGColorSpaceRef space = nullptr;
+		CGImageRef image = nullptr, shown = nullptr;
+		if (!surface) {
+			data = CFDataCreate(nullptr, pixels.data(), CFIndex(pixels.size()));
+			provider = CGDataProviderCreateWithCFData(data);
+			space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+			image = CGImageCreate(width, height, 8, 32, size_t(width) * 4, space,
+				CGBitmapInfo(kCGBitmapByteOrder32Little) | CGBitmapInfo(alpha ? kCGImageAlphaPremultipliedFirst : kCGImageAlphaNoneSkipFirst),
+				provider, nullptr, false, kCGRenderingIntentDefault);
+			shown = image;
+			if (cropped && uint32_t(inset[0] + inset[2]) < width && uint32_t(inset[1] + inset[3]) < height)
+				shown = CGImageCreateWithImageInRect(image, CGRectMake(inset[0], inset[1], width - inset[0] - inset[2], height - inset[1] - inset[3]));
+		}
 		[CATransaction begin];
 		[CATransaction setDisableActions:YES];
+		if (surface) {
+			// Protect a submitted surface even before the render server has acquired it. CA completion
+			// releases this reservation; IsInUse then covers WindowServer and animation readers.
+			CFRetain(surface);
+			IOSurfaceIncrementUseCount(surface);
+			[CATransaction setCompletionBlock:^{
+				IOSurfaceDecrementUseCount(surface);
+				CFRelease(surface);
+			}];
+		}
 		// A frame of another size during a resize blends into the one before it rather than snapping.
 		if (resize_blend > 0 && target.shown_width && (target.shown_width != width || target.shown_height != height) &&
 			std::chrono::steady_clock::now() - target.pending_changed < std::chrono::milliseconds(300)) {
@@ -952,16 +975,18 @@ struct CocoaPresentation::State {
 		target.shown_width = width;
 		target.shown_height = height;
 		target.view.layer.contentsScale = scale;
-		target.view.layer.contents = (__bridge id)shown;
+		target.view.layer.contentsRect = surface && cropped ? CGRectMake(double(inset[0]) / width, double(inset[1]) / height,
+			double(width - inset[0] - inset[2]) / width, double(height - inset[1] - inset[3]) / height) : CGRectMake(0, 0, 1, 1);
+		target.view.layer.contents = surface ? (__bridge id)surface : (__bridge id)shown;
 		[CATransaction commit];
 		if (alpha)
 			[target.window invalidateShadow];
 		if (shown != image)
 			CGImageRelease(shown);
-		CGImageRelease(image);
-		CGColorSpaceRelease(space);
-		CGDataProviderRelease(provider);
-		CFRelease(data);
+		if (image) CGImageRelease(image);
+		if (space) CGColorSpaceRelease(space);
+		if (provider) CGDataProviderRelease(provider);
+		if (data) CFRelease(data);
 	}
 
 	// Gives the window the content size that shows a frame of this size, keeping its top-left corner where it is, as Windows does when a
@@ -1327,6 +1352,14 @@ struct CocoaPresentation::State {
 				last_step = now;
 			}
 		}
+		// The cooperative guest is stopped while its desktop polls. Once CA releases a pool slot,
+		// retry the latest persistent bitmap even if the program sends no further present (caret blink).
+		for (auto &[handle, window] : surfaces)
+			if (const auto pixels = window->presenter.pending_pixels(); !pixels.empty()) {
+				@autoreleasepool {
+					show(*window, pixels, window->width, window->height);
+				}
+			}
 		events.swap(pending);
 		if (trace)
 			for (const auto &event : events)

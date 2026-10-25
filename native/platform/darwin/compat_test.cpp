@@ -1,4 +1,5 @@
 #include "desktop/shared_pixels.h"
+#include "shared_surface.h"
 #include "nt/firmware.h"
 #include "nt/memory.h"
 #include "nt/providers.h"
@@ -119,6 +120,34 @@ static void guest_memory(const char *bootstrap)
 	const auto changed = process.call(code, {}, std::chrono::seconds(1));
 	check(changed.stop == raven::NativeStop::returned && changed.value == 43, "shared executable write retained a stale Rosetta translation");
 	process.unmap_memory(code);
+	// Odd widths exercise the tight GDI stride, including a 4 KiB tail on a 16 KiB host.
+	for (uint32_t width : {1U, 17U, 801U}) {
+		const size_t size = (size_t(width) * 7 * 4 + 4095) & ~size_t(4095);
+		raven::SharedPixels pixels(size, width, 7);
+		const auto surface = raven::darwin::pixel_surface(pixels.descriptor());
+		const bool copy = std::getenv("RAVEN_COCOA_PRESENT") && std::string_view(std::getenv("RAVEN_COCOA_PRESENT")) == "copy";
+		check(copy ? !surface : surface && raven::darwin::pixel_surface(pixels.data()) == surface &&
+			IOSurfaceGetBytesPerRow(surface) == size_t(width) * 4, "window IOSurface stride or registry differs");
+		const auto mapped = process.map_shared(pixels.descriptor(), size);
+		check(mapped % 65536 == 0, "window surface lost shared-view allocation alignment");
+		if (surface) {
+			const auto allocation = IOSurfaceGetAllocSize(surface);
+			check(process.read_memory(mapped + allocation - 1, 1)[0] == pixels.data()[allocation - 1],
+				"guest reservation omits part of the IOSurface host page");
+		}
+		pixels.data()[size - 1] = 0x73;
+		check(process.read_memory(mapped + size - 1, 1)[0] == 0x73, "host IOSurface alias is not coherent");
+		// x64: mov byte ptr [rcx], 0x51; movzx eax, byte ptr [rcx]; ret. Execute in the
+		// guest so a host alias accidentally pointing at the original file cannot pass.
+		const auto writer = process.map_memory(4096, PROT_READ | PROT_WRITE | PROT_EXEC);
+		const std::array<uint8_t, 7> write{0xc6, 0x01, 0x51, 0x0f, 0xb6, 0x01, 0xc3};
+		process.write_memory(writer, write);
+		const std::array<uint64_t, 1> args{mapped + size - 1};
+		check(process.call(writer, args, std::chrono::seconds(1)).value == 0x51 && pixels.data()[size - 1] == 0x51,
+			"guest did not write directly into the IOSurface");
+		process.unmap_memory(writer);
+		process.unmap_memory(mapped);
+	}
 }
 
 int main(int argc, char **argv)

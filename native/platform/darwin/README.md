@@ -5,6 +5,7 @@ This tree is a fork that keeps tracking upstream, so the port lives here and cha
 
 The Cocoa cursor and Retina coordinate contract, current limitations, and tests are documented in [CURSORS_HIDPI.md](CURSORS_HIDPI.md).
 The graphics backend decision, KosmicKrisp qualification, and measured DXMT/DXVK comparison are in [GRAPHICS.md](GRAPHICS.md).
+GDI window storage, Metal presentation, buffering and comparison controls are documented in [GDI_PRESENTATION.md](GDI_PRESENTATION.md).
 
 ## Building
 

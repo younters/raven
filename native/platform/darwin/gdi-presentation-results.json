@@ -1,0 +1,862 @@
+{
+  "date": "2026-10-25",
+  "baseline_commit": "5bb6e76",
+  "tested_implementation_commit": "a7d4e06",
+  "hardware": "Apple M4 Pro, Mac16,8, native arm64",
+  "os": "macOS 27.2 build 26B5091g",
+  "method": {
+    "slot": "/tmp/raven-ctest-lock.sh; one script per full-suite comparison and one script for all benchmark pairs",
+    "order": "copy, Metal, repeated five times per scenario; idle then scroll then resize",
+    "sampling_s": 10,
+    "cpu": "Per-PID proc_pid_rusage user+system counter deltas; one core = 100%. Both raven host and its direct raven-bootstrap guest measured. top -l 11 captured alongside sample host for 8 seconds.",
+    "counter_conversion": "On this host counter deltas are Mach absolute ticks. Raw run.py results incorrectly label ticks as ns; all CPU values here multiply raw values by mach_timebase_info numer/denom = 125/3, verified against top. Memory byte counters are unchanged.",
+    "startup": "Fresh writable Notepad++ copy per run, shared dedicated prefix; first frame plus 3 seconds warmup for idle/scroll, 1 second for resize. Startup excluded.",
+    "idle": "Focused empty editor, blinking caret.",
+    "scroll": "Identical 880000-byte, 10000-line text file; 60 PageDown events, each held 100 ms via native UI automation during the measurement. Final viewport/line count checked.",
+    "resize": "RAVEN_COCOA_RESIZE_TEST=1: existing 16-step sequence beginning 4 seconds after first frame, >=120 ms between steps, +37 points for eight steps then -29 for eight. Entire sequence plus idle tails inside 10-second measurement.",
+    "background": "User Steam Raven session and other Raven guests left untouched. Per-run aggregate background Raven CPU measured separately; medians are not background-subtracted. Background CPU ranged widely, particularly idle. sample and top add identical measurement overhead in both modes.",
+    "exclusions": "One idle pair 3 restarted in full after its Metal launch expired while waiting for UI-ready measurement; both original halves excluded. See raw excluded-attempts.json.",
+    "energy": "powermetrics without sudo reports: powermetrics must be invoked as the superuser. No joules, watts or energy reduction claimed. top POWER captured as a relative score only."
+  },
+  "summary": {
+    "idle": {
+      "medians": {
+        "copy": {
+          "host_cpu_percent": 3.848955,
+          "guest_cpu_percent": 0.294817,
+          "combined_cpu_percent": 4.143772,
+          "background_raven_cpu_percent": 142.273222
+        },
+        "metal": {
+          "host_cpu_percent": 2.598027,
+          "guest_cpu_percent": 0.330798,
+          "combined_cpu_percent": 2.928825,
+          "background_raven_cpu_percent": 133.100044
+        }
+      },
+      "median_paired_delta_percentage_points": {
+        "host_cpu_percent": -1.042407,
+        "guest_cpu_percent": 0.035981,
+        "combined_cpu_percent": -0.977854
+      },
+      "pairs": [
+        {
+          "pair": 1,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -0.439241,
+            "guest_cpu_percent": -0.004103,
+            "combined_cpu_percent": -0.443344
+          },
+          "background_raven_cpu_percent": {
+            "copy": 107.119232,
+            "metal": 96.105847
+          }
+        },
+        {
+          "pair": 2,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -1.250928,
+            "guest_cpu_percent": 0.035981,
+            "combined_cpu_percent": -1.214947
+          },
+          "background_raven_cpu_percent": {
+            "copy": 111.052408,
+            "metal": 269.310979
+          }
+        },
+        {
+          "pair": 3,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": 1.500219,
+            "guest_cpu_percent": 0.687634,
+            "combined_cpu_percent": 2.187853
+          },
+          "background_raven_cpu_percent": {
+            "copy": 156.519488,
+            "metal": 98.236471
+          }
+        },
+        {
+          "pair": 4,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -1.77138,
+            "guest_cpu_percent": -0.316472,
+            "combined_cpu_percent": -2.087852
+          },
+          "background_raven_cpu_percent": {
+            "copy": 282.330849,
+            "metal": 237.338348
+          }
+        },
+        {
+          "pair": 5,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -1.042407,
+            "guest_cpu_percent": 0.064554,
+            "combined_cpu_percent": -0.977854
+          },
+          "background_raven_cpu_percent": {
+            "copy": 142.273222,
+            "metal": 133.100044
+          }
+        }
+      ],
+      "median_host_footprint_mib": {
+        "copy": 133.019,
+        "metal": 240.284
+      }
+    },
+    "scroll": {
+      "medians": {
+        "copy": {
+          "host_cpu_percent": 45.571136,
+          "guest_cpu_percent": 14.933555,
+          "combined_cpu_percent": 60.324921,
+          "background_raven_cpu_percent": 100.099304
+        },
+        "metal": {
+          "host_cpu_percent": 32.657587,
+          "guest_cpu_percent": 14.748875,
+          "combined_cpu_percent": 47.406462,
+          "background_raven_cpu_percent": 100.80048
+        }
+      },
+      "median_paired_delta_percentage_points": {
+        "host_cpu_percent": -13.237179,
+        "guest_cpu_percent": -0.231628,
+        "combined_cpu_percent": -13.468807
+      },
+      "pairs": [
+        {
+          "pair": 1,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -8.454457,
+            "guest_cpu_percent": 1.293798,
+            "combined_cpu_percent": -7.160659
+          },
+          "background_raven_cpu_percent": {
+            "copy": 151.418904,
+            "metal": 95.844743
+          }
+        },
+        {
+          "pair": 2,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -19.2159,
+            "guest_cpu_percent": -3.360246,
+            "combined_cpu_percent": -22.576146
+          },
+          "background_raven_cpu_percent": {
+            "copy": 105.082253,
+            "metal": 102.23729
+          }
+        },
+        {
+          "pair": 3,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -15.114908,
+            "guest_cpu_percent": -1.051539,
+            "combined_cpu_percent": -16.166446
+          },
+          "background_raven_cpu_percent": {
+            "copy": 100.099304,
+            "metal": 100.80048
+          }
+        },
+        {
+          "pair": 4,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -13.237179,
+            "guest_cpu_percent": -0.231628,
+            "combined_cpu_percent": -13.468807
+          },
+          "background_raven_cpu_percent": {
+            "copy": 99.845801,
+            "metal": 100.885528
+          }
+        },
+        {
+          "pair": 5,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -12.199155,
+            "guest_cpu_percent": 0.106351,
+            "combined_cpu_percent": -12.092804
+          },
+          "background_raven_cpu_percent": {
+            "copy": 99.979421,
+            "metal": 100.738403
+          }
+        }
+      ],
+      "median_host_footprint_mib": {
+        "copy": 132.097,
+        "metal": 249.05
+      }
+    },
+    "resize": {
+      "medians": {
+        "copy": {
+          "host_cpu_percent": 25.682741,
+          "guest_cpu_percent": 3.139087,
+          "combined_cpu_percent": 28.978407,
+          "background_raven_cpu_percent": 102.059351
+        },
+        "metal": {
+          "host_cpu_percent": 21.95402,
+          "guest_cpu_percent": 3.263363,
+          "combined_cpu_percent": 25.201107,
+          "background_raven_cpu_percent": 102.819529
+        }
+      },
+      "median_paired_delta_percentage_points": {
+        "host_cpu_percent": -3.728721,
+        "guest_cpu_percent": 0.116609,
+        "combined_cpu_percent": -3.761024
+      },
+      "pairs": [
+        {
+          "pair": 1,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -4.651108,
+            "guest_cpu_percent": -0.127597,
+            "combined_cpu_percent": -4.778706
+          },
+          "background_raven_cpu_percent": {
+            "copy": 101.219423,
+            "metal": 103.457108
+          }
+        },
+        {
+          "pair": 2,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -3.728721,
+            "guest_cpu_percent": -0.032303,
+            "combined_cpu_percent": -3.761024
+          },
+          "background_raven_cpu_percent": {
+            "copy": 102.059351,
+            "metal": 102.819529
+          }
+        },
+        {
+          "pair": 3,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -3.085305,
+            "guest_cpu_percent": 0.571486,
+            "combined_cpu_percent": -2.513819
+          },
+          "background_raven_cpu_percent": {
+            "copy": 81.860281,
+            "metal": 102.53259
+          }
+        },
+        {
+          "pair": 4,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -5.15366,
+            "guest_cpu_percent": 0.461937,
+            "combined_cpu_percent": -4.691723
+          },
+          "background_raven_cpu_percent": {
+            "copy": 103.18036,
+            "metal": 103.450212
+          }
+        },
+        {
+          "pair": 5,
+          "metal_minus_copy_percentage_points": {
+            "host_cpu_percent": -1.424391,
+            "guest_cpu_percent": 0.116609,
+            "combined_cpu_percent": -1.307781
+          },
+          "background_raven_cpu_percent": {
+            "copy": 102.991991,
+            "metal": 102.355557
+          }
+        }
+      ],
+      "median_host_footprint_mib": {
+        "copy": 196.441,
+        "metal": 296.05
+      }
+    }
+  },
+  "runs": [
+    {
+      "stage": "idle-1-copy",
+      "scenario": "idle",
+      "pair": 1,
+      "mode": "copy",
+      "elapsed_s": 10.053518125,
+      "host_pid": 64538,
+      "guest_pid": 64542,
+      "host_cpu_percent": 3.28908,
+      "guest_cpu_percent": 0.219199,
+      "combined_cpu_percent": 3.508279,
+      "background_raven_cpu_percent": 107.119232,
+      "host_rss_bytes": 317259776,
+      "host_footprint_bytes": 138759504,
+      "present_attempts": 74
+    },
+    {
+      "stage": "idle-1-metal",
+      "scenario": "idle",
+      "pair": 1,
+      "mode": "metal",
+      "elapsed_s": 10.01399425,
+      "host_pid": 66121,
+      "guest_pid": 66135,
+      "host_cpu_percent": 2.849839,
+      "guest_cpu_percent": 0.215096,
+      "combined_cpu_percent": 3.064935,
+      "background_raven_cpu_percent": 96.105847,
+      "host_rss_bytes": 269533184,
+      "host_footprint_bytes": 141544712,
+      "present_attempts": 46
+    },
+    {
+      "stage": "idle-2-copy",
+      "scenario": "idle",
+      "pair": 2,
+      "mode": "copy",
+      "elapsed_s": 10.040609541,
+      "host_pid": 69774,
+      "guest_pid": 69776,
+      "host_cpu_percent": 3.848955,
+      "guest_cpu_percent": 0.294817,
+      "combined_cpu_percent": 4.143772,
+      "background_raven_cpu_percent": 111.052408,
+      "host_rss_bytes": 433340416,
+      "host_footprint_bytes": 250842400,
+      "present_attempts": 270
+    },
+    {
+      "stage": "idle-2-metal",
+      "scenario": "idle",
+      "pair": 2,
+      "mode": "metal",
+      "elapsed_s": 10.058286667,
+      "host_pid": 71592,
+      "guest_pid": 71593,
+      "host_cpu_percent": 2.598027,
+      "guest_cpu_percent": 0.330798,
+      "combined_cpu_percent": 2.928825,
+      "background_raven_cpu_percent": 269.310979,
+      "host_rss_bytes": 241582080,
+      "host_footprint_bytes": 251890928,
+      "present_attempts": 72
+    },
+    {
+      "stage": "idle-3-copy",
+      "scenario": "idle",
+      "pair": 3,
+      "mode": "copy",
+      "elapsed_s": 10.033478209,
+      "host_pid": 74391,
+      "guest_pid": 74392,
+      "host_cpu_percent": 5.40185,
+      "guest_cpu_percent": 0.621419,
+      "combined_cpu_percent": 6.023269,
+      "background_raven_cpu_percent": 156.519488,
+      "host_rss_bytes": 320323584,
+      "host_footprint_bytes": 134597824,
+      "present_attempts": 472
+    },
+    {
+      "stage": "idle-3-metal",
+      "scenario": "idle",
+      "pair": 3,
+      "mode": "metal",
+      "elapsed_s": 10.021711166,
+      "host_pid": 74826,
+      "guest_pid": 74827,
+      "host_cpu_percent": 6.902069,
+      "guest_cpu_percent": 1.309053,
+      "combined_cpu_percent": 8.211122,
+      "background_raven_cpu_percent": 98.236471,
+      "host_rss_bytes": 237731840,
+      "host_footprint_bytes": 251956536,
+      "present_attempts": 57
+    },
+    {
+      "stage": "idle-4-copy",
+      "scenario": "idle",
+      "pair": 4,
+      "mode": "copy",
+      "elapsed_s": 10.048034208,
+      "host_pid": 75625,
+      "guest_pid": 75626,
+      "host_cpu_percent": 4.335977,
+      "guest_cpu_percent": 0.611718,
+      "combined_cpu_percent": 4.947695,
+      "background_raven_cpu_percent": 282.330849,
+      "host_rss_bytes": 318291968,
+      "host_footprint_bytes": 139660528,
+      "present_attempts": 69
+    },
+    {
+      "stage": "idle-4-metal",
+      "scenario": "idle",
+      "pair": 4,
+      "mode": "metal",
+      "elapsed_s": 10.051266959,
+      "host_pid": 76475,
+      "guest_pid": 76476,
+      "host_cpu_percent": 2.564597,
+      "guest_cpu_percent": 0.295246,
+      "combined_cpu_percent": 2.859843,
+      "background_raven_cpu_percent": 237.338348,
+      "host_rss_bytes": 267304960,
+      "host_footprint_bytes": 252579152,
+      "present_attempts": 49
+    },
+    {
+      "stage": "idle-5-copy",
+      "scenario": "idle",
+      "pair": 5,
+      "mode": "copy",
+      "elapsed_s": 10.030361291,
+      "host_pid": 77341,
+      "guest_pid": 77342,
+      "host_cpu_percent": 3.608213,
+      "guest_cpu_percent": 0.283877,
+      "combined_cpu_percent": 3.892091,
+      "background_raven_cpu_percent": 142.273222,
+      "host_rss_bytes": 229244928,
+      "host_footprint_bytes": 139480400,
+      "present_attempts": 90
+    },
+    {
+      "stage": "idle-5-metal",
+      "scenario": "idle",
+      "pair": 5,
+      "mode": "metal",
+      "elapsed_s": 10.041132083,
+      "host_pid": 77792,
+      "guest_pid": 77793,
+      "host_cpu_percent": 2.565806,
+      "guest_cpu_percent": 0.348431,
+      "combined_cpu_percent": 2.914237,
+      "background_raven_cpu_percent": 133.100044,
+      "host_rss_bytes": 264257536,
+      "host_footprint_bytes": 269389088,
+      "present_attempts": 39
+    },
+    {
+      "stage": "scroll-1-copy",
+      "scenario": "scroll",
+      "pair": 1,
+      "mode": "copy",
+      "elapsed_s": 10.028619708,
+      "host_pid": 78090,
+      "guest_pid": 78091,
+      "host_cpu_percent": 42.370649,
+      "guest_cpu_percent": 14.933555,
+      "combined_cpu_percent": 57.304203,
+      "background_raven_cpu_percent": 151.418904,
+      "host_rss_bytes": 258392064,
+      "host_footprint_bytes": 138513768,
+      "present_attempts": 211
+    },
+    {
+      "stage": "scroll-1-metal",
+      "scenario": "scroll",
+      "pair": 1,
+      "mode": "metal",
+      "elapsed_s": 10.045800625,
+      "host_pid": 80726,
+      "guest_pid": 80727,
+      "host_cpu_percent": 33.916192,
+      "guest_cpu_percent": 16.227353,
+      "combined_cpu_percent": 50.143544,
+      "background_raven_cpu_percent": 95.844743,
+      "host_rss_bytes": 257261568,
+      "host_footprint_bytes": 272174416,
+      "present_attempts": 905
+    },
+    {
+      "stage": "scroll-2-copy",
+      "scenario": "scroll",
+      "pair": 2,
+      "mode": "copy",
+      "elapsed_s": 10.047163792,
+      "host_pid": 82595,
+      "guest_pid": 82596,
+      "host_cpu_percent": 45.597099,
+      "guest_cpu_percent": 15.178207,
+      "combined_cpu_percent": 60.775306,
+      "background_raven_cpu_percent": 105.082253,
+      "host_rss_bytes": 315801600,
+      "host_footprint_bytes": 138890576,
+      "present_attempts": 215
+    },
+    {
+      "stage": "scroll-2-metal",
+      "scenario": "scroll",
+      "pair": 2,
+      "mode": "metal",
+      "elapsed_s": 10.016886333,
+      "host_pid": 83825,
+      "guest_pid": 83826,
+      "host_cpu_percent": 26.381199,
+      "guest_cpu_percent": 11.817961,
+      "combined_cpu_percent": 38.19916,
+      "background_raven_cpu_percent": 102.23729,
+      "host_rss_bytes": 269352960,
+      "host_footprint_bytes": 261000408,
+      "present_attempts": 247
+    },
+    {
+      "stage": "scroll-3-copy",
+      "scenario": "scroll",
+      "pair": 3,
+      "mode": "copy",
+      "elapsed_s": 10.043421708,
+      "host_pid": 84093,
+      "guest_pid": 84094,
+      "host_cpu_percent": 45.571136,
+      "guest_cpu_percent": 14.753786,
+      "combined_cpu_percent": 60.324921,
+      "background_raven_cpu_percent": 100.099304,
+      "host_rss_bytes": 313622528,
+      "host_footprint_bytes": 134761640,
+      "present_attempts": 262
+    },
+    {
+      "stage": "scroll-3-metal",
+      "scenario": "scroll",
+      "pair": 3,
+      "mode": "metal",
+      "elapsed_s": 10.060682041,
+      "host_pid": 84471,
+      "guest_pid": 84472,
+      "host_cpu_percent": 30.456228,
+      "guest_cpu_percent": 13.702247,
+      "combined_cpu_percent": 44.158475,
+      "background_raven_cpu_percent": 100.80048,
+      "host_rss_bytes": 269533184,
+      "host_footprint_bytes": 261147816,
+      "present_attempts": 269
+    },
+    {
+      "stage": "scroll-4-copy",
+      "scenario": "scroll",
+      "pair": 4,
+      "mode": "copy",
+      "elapsed_s": 10.0093095,
+      "host_pid": 86027,
+      "guest_pid": 86028,
+      "host_cpu_percent": 45.894766,
+      "guest_cpu_percent": 14.980503,
+      "combined_cpu_percent": 60.875269,
+      "background_raven_cpu_percent": 99.845801,
+      "host_rss_bytes": 311230464,
+      "host_footprint_bytes": 132320496,
+      "present_attempts": 267
+    },
+    {
+      "stage": "scroll-4-metal",
+      "scenario": "scroll",
+      "pair": 4,
+      "mode": "metal",
+      "elapsed_s": 10.047912084,
+      "host_pid": 86577,
+      "guest_pid": 86578,
+      "host_cpu_percent": 32.657587,
+      "guest_cpu_percent": 14.748875,
+      "combined_cpu_percent": 47.406462,
+      "background_raven_cpu_percent": 100.885528,
+      "host_rss_bytes": 269893632,
+      "host_footprint_bytes": 261442680,
+      "present_attempts": 267
+    },
+    {
+      "stage": "scroll-5-copy",
+      "scenario": "scroll",
+      "pair": 5,
+      "mode": "copy",
+      "elapsed_s": 10.046181625,
+      "host_pid": 86940,
+      "guest_pid": 86941,
+      "host_cpu_percent": 44.918324,
+      "guest_cpu_percent": 14.728517,
+      "combined_cpu_percent": 59.646841,
+      "background_raven_cpu_percent": 99.979421,
+      "host_rss_bytes": 318439424,
+      "host_footprint_bytes": 139775240,
+      "present_attempts": 225
+    },
+    {
+      "stage": "scroll-5-metal",
+      "scenario": "scroll",
+      "pair": 5,
+      "mode": "metal",
+      "elapsed_s": 10.012413875,
+      "host_pid": 87645,
+      "guest_pid": 87646,
+      "host_cpu_percent": 32.719169,
+      "guest_cpu_percent": 14.834868,
+      "combined_cpu_percent": 47.554037,
+      "background_raven_cpu_percent": 100.738403,
+      "host_rss_bytes": 270155776,
+      "host_footprint_bytes": 250039584,
+      "present_attempts": 244
+    },
+    {
+      "stage": "resize-1-copy",
+      "scenario": "resize",
+      "pair": 1,
+      "mode": "copy",
+      "elapsed_s": 10.030788958,
+      "host_pid": 88004,
+      "guest_pid": 88005,
+      "host_cpu_percent": 26.72564,
+      "guest_cpu_percent": 3.183445,
+      "combined_cpu_percent": 29.909086,
+      "background_raven_cpu_percent": 101.219423,
+      "host_rss_bytes": 384499712,
+      "host_footprint_bytes": 205655328,
+      "present_attempts": 202
+    },
+    {
+      "stage": "resize-1-metal",
+      "scenario": "resize",
+      "pair": 1,
+      "mode": "metal",
+      "elapsed_s": 10.062231917,
+      "host_pid": 88204,
+      "guest_pid": 88205,
+      "host_cpu_percent": 22.074532,
+      "guest_cpu_percent": 3.055848,
+      "combined_cpu_percent": 25.13038,
+      "background_raven_cpu_percent": 103.457108,
+      "host_rss_bytes": 268861440,
+      "host_footprint_bytes": 293932272,
+      "present_attempts": 203
+    },
+    {
+      "stage": "resize-2-copy",
+      "scenario": "resize",
+      "pair": 2,
+      "mode": "copy",
+      "elapsed_s": 10.028976334,
+      "host_pid": 88677,
+      "guest_pid": 88678,
+      "host_cpu_percent": 25.682741,
+      "guest_cpu_percent": 3.295666,
+      "combined_cpu_percent": 28.978407,
+      "background_raven_cpu_percent": 102.059351,
+      "host_rss_bytes": 384991232,
+      "host_footprint_bytes": 206294256,
+      "present_attempts": 208
+    },
+    {
+      "stage": "resize-2-metal",
+      "scenario": "resize",
+      "pair": 2,
+      "mode": "metal",
+      "elapsed_s": 10.040735666,
+      "host_pid": 88917,
+      "guest_pid": 88918,
+      "host_cpu_percent": 21.95402,
+      "guest_cpu_percent": 3.263363,
+      "combined_cpu_percent": 25.217383,
+      "background_raven_cpu_percent": 102.819529,
+      "host_rss_bytes": 286228480,
+      "host_footprint_bytes": 311332104,
+      "present_attempts": 208
+    },
+    {
+      "stage": "resize-3-copy",
+      "scenario": "resize",
+      "pair": 3,
+      "mode": "copy",
+      "elapsed_s": 10.04844625,
+      "host_pid": 89256,
+      "guest_pid": 89257,
+      "host_cpu_percent": 24.892381,
+      "guest_cpu_percent": 2.822545,
+      "combined_cpu_percent": 27.714926,
+      "background_raven_cpu_percent": 81.860281,
+      "host_rss_bytes": 384335872,
+      "host_footprint_bytes": 205475224,
+      "present_attempts": 198
+    },
+    {
+      "stage": "resize-3-metal",
+      "scenario": "resize",
+      "pair": 3,
+      "mode": "metal",
+      "elapsed_s": 10.040038,
+      "host_pid": 90804,
+      "guest_pid": 90805,
+      "host_cpu_percent": 21.807076,
+      "guest_cpu_percent": 3.394031,
+      "combined_cpu_percent": 25.201107,
+      "background_raven_cpu_percent": 102.53259,
+      "host_rss_bytes": 285229056,
+      "host_footprint_bytes": 310447440,
+      "present_attempts": 213
+    },
+    {
+      "stage": "resize-4-copy",
+      "scenario": "resize",
+      "pair": 4,
+      "mode": "copy",
+      "elapsed_s": 10.048810666,
+      "host_pid": 91048,
+      "guest_pid": 91049,
+      "host_cpu_percent": 27.120805,
+      "guest_cpu_percent": 3.139087,
+      "combined_cpu_percent": 30.259892,
+      "background_raven_cpu_percent": 103.18036,
+      "host_rss_bytes": 384794624,
+      "host_footprint_bytes": 205983008,
+      "present_attempts": 203
+    },
+    {
+      "stage": "resize-4-metal",
+      "scenario": "resize",
+      "pair": 4,
+      "mode": "metal",
+      "elapsed_s": 10.014467083,
+      "host_pid": 91262,
+      "guest_pid": 91263,
+      "host_cpu_percent": 21.967145,
+      "guest_cpu_percent": 3.601024,
+      "combined_cpu_percent": 25.568169,
+      "background_raven_cpu_percent": 103.450212,
+      "host_rss_bytes": 285278208,
+      "host_footprint_bytes": 310431008,
+      "present_attempts": 211
+    },
+    {
+      "stage": "resize-5-copy",
+      "scenario": "resize",
+      "pair": 5,
+      "mode": "copy",
+      "elapsed_s": 10.053324959,
+      "host_pid": 91555,
+      "guest_pid": 91560,
+      "host_cpu_percent": 22.361418,
+      "guest_cpu_percent": 2.905648,
+      "combined_cpu_percent": 25.267066,
+      "background_raven_cpu_percent": 102.991991,
+      "host_rss_bytes": 412893184,
+      "host_footprint_bytes": 234048800,
+      "present_attempts": 201
+    },
+    {
+      "stage": "resize-5-metal",
+      "scenario": "resize",
+      "pair": 5,
+      "mode": "metal",
+      "elapsed_s": 10.047705041,
+      "host_pid": 92604,
+      "guest_pid": 92605,
+      "host_cpu_percent": 20.937027,
+      "guest_cpu_percent": 3.022257,
+      "combined_cpu_percent": 23.959285,
+      "background_raven_cpu_percent": 102.355557,
+      "host_rss_bytes": 268189696,
+      "host_footprint_bytes": 293489928,
+      "present_attempts": 201
+    }
+  ],
+  "full_serial_suites": {
+    "copy": {
+      "registered": 284,
+      "passed": 272,
+      "failed": 8,
+      "skipped": 3,
+      "disabled": 1,
+      "duration_s_rounded": 437.0,
+      "failures": [
+        "native_memory_contract",
+        "native_layout_failure_component",
+        "native_coordinate_contract",
+        "native_desktop_icon_contract",
+        "native_string_resource_contract",
+        "native_dynamic_loader_contract",
+        "native_dll_lifecycle",
+        "darwin_dxmt_tessellation"
+      ]
+    },
+    "metal": {
+      "registered": 284,
+      "passed": 272,
+      "failed": 8,
+      "skipped": 3,
+      "disabled": 1,
+      "duration_s_rounded": 276.0,
+      "failures": [
+        "native_memory_contract",
+        "native_layout_failure_component",
+        "native_coordinate_contract",
+        "native_desktop_icon_contract",
+        "native_string_resource_contract",
+        "native_dynamic_loader_contract",
+        "native_dll_lifecycle",
+        "darwin_dxmt_tessellation"
+      ]
+    }
+  },
+  "failure_set_difference": [],
+  "validation": {
+    "contracts": "native_darwin_runtime and native_darwin_gdi_presenter pass; odd-width strides, opaque BGRX, row orientation, sRGB profile, guest write coherence, 64 KiB reservation alignment, full allocation extent, in-use exclusion and deferred latest-frame retry.",
+    "bitmap_regression": "Initially failed only with IOSurface backing. Fixed guest 64 KiB alignment and full host-page reservation in ce2967c; isolated copy and Metal both passed, then both full suites passed native_compatible_bitmap_paint.",
+    "visual": "Notepad++ Retina text, colours, opaque UI, native title crop, scrolling and File menu observed. No obvious tearing in observed frames; no high-speed capture or exhaustive context-menu validation.",
+    "resize_deadlines": "Existing native/desktop/windows.cpp paint coalescing deadline stays 250 ms (2000 ms before initial presentation). Existing Cocoa adaptive 10-100 ms resize pacing, last-size delivery after 16 ms stillness, 60 ms fade unchanged. Metal adds no debounce timer. Deferred output reuse depends on CA/WindowServer releasing a surface; no hard GPU completion bound promised.",
+    "final_resource_fix": "After benchmark/full-suite runs, deferred Cocoa poll retry was enclosed in an autorelease pool; it drains temporary Metal/CA objects like normal presents. Focused validation rerun separately.",
+    "final_focused_run": {
+      "implementation_commit": "42fd37e",
+      "passed": 3,
+      "failed": 0,
+      "duration_s": 3.91,
+      "tests": {
+        "native_compatible_bitmap_paint": 3.77,
+        "native_darwin_runtime": 0.09,
+        "native_darwin_gdi_presenter": 0.05
+      },
+      "slot_released": true
+    }
+  },
+  "profiles": {
+    "copy": "scroll-1-copy sample contains CFDataReplaceBytes, memmove, CGImageCreate and CGImageCreateWithImageInRect in Cocoa snapshot work.",
+    "metal": "scroll-1-metal replaces snapshot work with GDIPresenter::draw / MTLCommandBuffer waitUntilCompleted. NativeWindows paint/composition and guest service work remain. Unrelated memmoves remain elsewhere in Raven.",
+    "evidence": "/tmp/raven-metal-paired/*-sample.txt and *-top.txt"
+  },
+  "limitations": [
+    "Glass-composited Firefox/title-bar spans and synthetic popup buffers remain CGImage snapshots; no claim of zero-copy Firefox chrome.",
+    "Parallel guest mode retains copy fallback until a safe producer fence exists.",
+    "GPU renders whole frames because presentation has no damage rectangle. Persistent GDI source cannot flip directly without preserving unchanged pixels and fencing writes.",
+    "Triple outputs consume extra GPU/WindowServer-visible storage and render synchronization; CPU upload is eliminated, not all memory traffic.",
+    "Measurements were made under variable background load, with only five pairs per scenario; no statistical significance or energy claim.",
+    "Host physical footprint increased: measured median Metal overhead versus copy was approximately 100-117 MiB, including persistent source/output pools and Metal resources. A lower CPU result is not a memory-saving claim. These footprint samples precede the final autorelease-scope correction."
+  ],
+  "upstream_changes": {
+    "native/desktop/shared_pixels.h": {
+      "added": 6,
+      "deleted": 0
+    },
+    "native/desktop/windows.cpp": {
+      "added": 4,
+      "deleted": 0
+    }
+  },
+  "raw_evidence": [
+    "/tmp/raven-metal-paired/results.json",
+    "/tmp/raven-metal-paired/timebase.json",
+    "/tmp/raven-metal-paired/run.py",
+    "/tmp/raven-metal-paired/usage.c",
+    "/tmp/raven-metal-comparison/copy-suite.xml",
+    "/tmp/raven-metal-comparison/metal-suite.xml"
+  ],
+  "implementation_commits": [
+    "8f3390c",
+    "e72e7d1",
+    "ce2967c",
+    "a7d4e06",
+    "42fd37e"
+  ]
+}

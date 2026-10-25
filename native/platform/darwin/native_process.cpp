@@ -12,6 +12,7 @@
 #include "cpu/served_queue.h"
 #include "guest/protocol.h"
 #include "controller_profile.h"
+#include "shared_surface.h"
 
 #include <algorithm>
 #include <atomic>
@@ -519,7 +520,11 @@ struct NativeProcess::State {
 		size_t mapping_size = 0;
 		uint8_t *host = nullptr;
 		size_t size = 0;
-		~SharedView() { if (mapping != MAP_FAILED) munmap(mapping, mapping_size); }
+		IOSurfaceRef surface = nullptr;
+		~SharedView() {
+			if (mapping != MAP_FAILED) munmap(mapping, mapping_size);
+			if (surface) CFRelease(surface);
+		}
 	};
 	static std::unique_ptr<SharedView> host_view(int descriptor, size_t size, uint64_t offset = 0)
 	{
@@ -928,6 +933,30 @@ uint64_t NativeProcess::map_memory(size_t size, int protection, uint64_t address
 
 uint64_t NativeProcess::map_shared(int descriptor, size_t size, uint64_t offset)
 {
+	if (const auto surface = darwin::pixel_surface(descriptor); surface && !offset) {
+		if (size > IOSurfaceGetAllocSize(surface)) throw std::runtime_error("invalid IOSurface mapping size");
+		auto view = std::make_unique<State::SharedView>();
+		CFRetain(surface);
+		view->surface = surface;
+		view->host = static_cast<uint8_t *>(IOSurfaceGetBaseAddress(surface));
+		view->size = size;
+		// Preserve the original shared-view reservation contract: a 64 KiB-aligned guest address,
+		// and enough space for every host page of the IOSurface. A 4 KiB anonymous reservation
+		// can sit beside live guest mappings while the arm64 source has a 16 KiB page extent.
+		const size_t allocation = IOSurfaceGetAllocSize(surface);
+		const auto address = map_file(descriptor, allocation, 0, true);
+		mach_vm_address_t mapped = address;
+		vm_prot_t current = 0, maximum = 0;
+		const auto status = mach_vm_remap(state->child->task, &mapped, allocation, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
+			mach_task_self(), reinterpret_cast<mach_vm_address_t>(view->host), false, &current, &maximum, VM_INHERIT_NONE);
+		if (status != KERN_SUCCESS || mapped != address) {
+			unmap_memory(address);
+			throw std::runtime_error("cannot map IOSurface into native guest: " + std::to_string(status));
+		}
+		try { state->shared_views.emplace(address, std::move(view)); }
+		catch (...) { unmap_memory(address); throw; }
+		return address;
+	}
 	return map_descriptor(descriptor, size, offset);
 }
 
