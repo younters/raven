@@ -49,3 +49,8 @@ if(TARGET raven_cpu)
         message(WARNING "xkbcommon is missing: the macOS desktop needs it for keyboard input (brew install libxkbcommon)")
     endif()
 endif()
+
+# Skia's macOS build always carries its CoreGraphics image generator.
+if(TARGET raven_text)
+    target_link_libraries(raven_text PUBLIC "-framework CoreFoundation" "-framework CoreGraphics" "-framework CoreText" "-framework ImageIO")
+endif()

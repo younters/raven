@@ -74,6 +74,13 @@ struct DesktopPresentation {
 	std::function<std::optional<std::pair<int32_t,int32_t>>()> screen_size;
 	// Requests or leaves maximization while retaining the surface a graphics context renders into.
 	std::function<void(uint64_t,bool)> maximize;
+	// For a host that draws window titles itself: before each frame, where the program's caption and borders lie in it (left, top, right
+	// and bottom insets; the menu bar is not part of them) and the window's style. The host shows the rest and reports pointer positions
+	// on the whole frame as before.
+	std::function<void(uint64_t handle,std::array<int32_t,4> insets,uint32_t style)> frame;
+	// Minimizes a window to the host's own place for it instead of removing it; the host reports the window's restoration as
+	// WM_SYSCOMMAND SC_RESTORE.
+	std::function<void(uint64_t handle)> minimize;
 	HostPlatform platform = HostPlatform::wayland;
 };
 

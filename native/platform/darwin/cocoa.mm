@@ -122,6 +122,12 @@ std::pair<std::string, std::string> keyboard_layout()
 @property (nonatomic) raven::CocoaPresentation::State *state;
 @end
 
+// Turns what the title bar's buttons and macOS do to a window into what Windows would have told the program.
+@interface RavenWindowDelegate : NSObject <NSWindowDelegate>
+@property (nonatomic) raven::CocoaPresentation::State *state;
+@property (nonatomic) uint64_t handle;
+@end
+
 namespace raven {
 
 struct CocoaPresentation::State {
@@ -130,6 +136,11 @@ struct CocoaPresentation::State {
 		RavenView *view = nil;
 		RavenMetalView *child = nil;
 		bool popup = false, grabbed = false, maximized = false, close_posted = false, resized = false;
+		// A window with a caption gets the title bar of macOS: the program's caption and borders, at these insets of its frames, are not shown.
+		bool native = false;
+		std::array<int32_t, 4> insets{};
+		uint32_t style = 0;
+		RavenWindowDelegate *delegate = nil;
 		uint64_t parent = 0;
 		int32_t popup_x = 0, popup_y = 0;
 		uint32_t width = 0, height = 0, pending_width = 0, pending_height = 0;
@@ -139,6 +150,7 @@ struct CocoaPresentation::State {
 			[child removeFromSuperview];
 			if (NSWindow *owner = window.parentWindow)
 				[owner removeChildWindow:window];
+			window.delegate = nil;
 			[window orderOut:nil];
 			[window close];
 		}
@@ -161,6 +173,10 @@ struct CocoaPresentation::State {
 	// Command acts as Control unless RAVEN_COMMAND_KEY=windows: Windows programs' shortcuts then sit where a Mac user's fingers expect them.
 	bool command_is_control = true;
 	NSInteger published_change = -1;
+	// Title bars drawn by macOS unless RAVEN_MACOS_FRAME=windows, and the frame the program described last for each window.
+	bool native_frames = true;
+	std::map<uint64_t, std::pair<std::array<int32_t, 4>, uint32_t>> frames;
+	bool presenting = false;
 	double wheel = 0, horizontal_wheel = 0;
 
 	xkb_context *context = nullptr;
@@ -214,6 +230,8 @@ struct CocoaPresentation::State {
 		[NSApp activateIgnoringOtherApps:YES];
 		if (const char *value = std::getenv("RAVEN_COMMAND_KEY"))
 			command_is_control = std::string_view(value) != "windows";
+		if (const char *value = std::getenv("RAVEN_MACOS_FRAME"))
+			native_frames = std::string_view(value) != "windows";
 		connected = true;
 		load_keymap();
 	}
@@ -265,11 +283,30 @@ struct CocoaPresentation::State {
 		return found == numbers.end() ? 0 : found->second;
 	}
 
-	// A point of a window's frame, from its top-left corner.
-	static std::pair<int32_t, int32_t> frame_point(NSWindow *window, NSPoint screen)
+	// The screen rectangle that shows the program's frame from (left, top) of its insets on.
+	static NSRect content_of(NSWindow *window)
 	{
-		const NSRect frame = window.frame;
-		return {int32_t(std::floor(screen.x - frame.origin.x)), int32_t(std::floor(frame.origin.y + frame.size.height - screen.y))};
+		return [window contentRectForFrameRect:window.frame];
+	}
+
+	// A point of a window's frame as the program draws it, from its top-left corner.
+	std::pair<int32_t, int32_t> frame_point(NSWindow *window, NSPoint screen) const
+	{
+		const NSRect content = content_of(window);
+		int32_t left = 0, top = 0;
+		for (const auto &[handle, surface] : surfaces)
+			if (surface->window == window) {
+				left = surface->insets[0];
+				top = surface->insets[1];
+			}
+		return {int32_t(std::floor(screen.x - content.origin.x)) + left, int32_t(std::floor(NSMaxY(content) - screen.y)) + top};
+	}
+
+	// The screen point of a point of a window's frame.
+	static NSPoint screen_of(const Surface &surface, int32_t x, int32_t y)
+	{
+		const NSRect content = content_of(surface.window);
+		return NSMakePoint(content.origin.x + x - surface.insets[0], NSMaxY(content) - (y - surface.insets[1]));
 	}
 
 	static NSPoint screen_point(NSEvent *event)
@@ -367,9 +404,9 @@ struct CocoaPresentation::State {
 		const int32_t cy = std::clamp(y, constraint[1], std::max(constraint[1], constraint[3] - 1));
 		if (cx == x && cy == y)
 			return;
-		const NSRect frame = target->window.frame;
+		const NSPoint point = screen_of(*target, cx, cy);
 		const CGFloat top = NSMaxY(NSScreen.screens.firstObject.frame);
-		CGWarpMouseCursorPosition(CGPointMake(frame.origin.x + cx + 0.5, top - (frame.origin.y + frame.size.height - cy) + 0.5));
+		CGWarpMouseCursorPosition(CGPointMake(point.x + 0.5, top - point.y + 0.5));
 	}
 
 	// Returns whether AppKit should still see the event.
@@ -529,10 +566,25 @@ struct CocoaPresentation::State {
 		focus_changed();
 	}
 
-	RavenWindow *make_window(uint32_t width, uint32_t height, bool keyboard)
+	static NSWindowStyleMask style_mask(bool native, uint32_t style)
+	{
+		if (!native)
+			return NSWindowStyleMaskBorderless | NSWindowStyleMaskMiniaturizable;
+		NSWindowStyleMask mask = NSWindowStyleMaskTitled;
+		if (style & 0x80000U)
+			mask |= NSWindowStyleMaskClosable;
+		if (style & 0x20000U)
+			mask |= NSWindowStyleMaskMiniaturizable;
+		if (style & 0x40000U)
+			mask |= NSWindowStyleMaskResizable;
+		return mask;
+	}
+
+	RavenWindow *make_window(uint32_t width, uint32_t height, bool keyboard, NSWindowStyleMask mask = NSWindowStyleMaskBorderless |
+		NSWindowStyleMaskMiniaturizable)
 	{
 		RavenWindow *window = [[RavenWindow alloc] initWithContentRect:NSMakeRect(0, 0, width, height)
-			styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskMiniaturizable backing:NSBackingStoreBuffered defer:NO];
+			styleMask:mask backing:NSBackingStoreBuffered defer:NO];
 		window.takesKeyboard = keyboard;
 		window.releasedWhenClosed = NO;
 		window.acceptsMouseMovedEvents = YES;
@@ -551,31 +603,66 @@ struct CocoaPresentation::State {
 
 	void show(Surface &target, std::span<const uint8_t> pixels, uint32_t width, uint32_t height)
 	{
+		const auto &inset = target.insets;
+		const bool cropped = inset[0] || inset[1] || inset[2] || inset[3];
 		CFDataRef data = CFDataCreate(nullptr, pixels.data(), CFIndex(pixels.size()));
 		CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
 		CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
 		CGImageRef image = CGImageCreate(width, height, 8, 32, size_t(width) * 4, space,
 			CGBitmapInfo(kCGBitmapByteOrder32Little) | CGBitmapInfo(kCGImageAlphaNoneSkipFirst), provider, nullptr, false, kCGRenderingIntentDefault);
+		CGImageRef shown = image;
+		if (cropped && uint32_t(inset[0] + inset[2]) < width && uint32_t(inset[1] + inset[3]) < height)
+			shown = CGImageCreateWithImageInRect(image, CGRectMake(inset[0], inset[1], width - inset[0] - inset[2], height - inset[1] - inset[3]));
 		[CATransaction begin];
 		[CATransaction setDisableActions:YES];
-		target.view.layer.contents = (__bridge id)image;
+		target.view.layer.contents = (__bridge id)shown;
 		[CATransaction commit];
+		if (shown != image)
+			CGImageRelease(shown);
 		CGImageRelease(image);
 		CGColorSpaceRelease(space);
 		CGDataProviderRelease(provider);
 		CFRelease(data);
 	}
 
-	// Keeps the top-left corner where it is, as Windows does when a window changes size.
-	static void set_size(NSWindow *window, uint32_t width, uint32_t height)
+	// Gives the window the content size that shows a frame of this size, keeping its top-left corner where it is, as Windows does when a
+	// window changes size.
+	void set_size(Surface &target, uint32_t width, uint32_t height)
 	{
-		NSRect frame = window.frame;
-		if (frame.size.width == width && frame.size.height == height)
+		const auto &inset = target.insets;
+		const NSSize size = NSMakeSize(std::max<int32_t>(int32_t(width) - inset[0] - inset[2], 1),
+			std::max<int32_t>(int32_t(height) - inset[1] - inset[3], 1));
+		NSRect content = content_of(target.window);
+		if (content.size.width == size.width && content.size.height == size.height)
 			return;
-		const CGFloat top = NSMaxY(frame);
-		frame.size = NSMakeSize(width, height);
-		frame.origin.y = top - height;
-		[window setFrame:frame display:NO];
+		const CGFloat top = NSMaxY(content);
+		content.size = size;
+		content.origin.y = top - size.height;
+		presenting = true;
+		[target.window setFrame:[target.window frameRectForContentRect:content] display:NO];
+		presenting = false;
+	}
+
+	// What the program's frame measures for the window's content size now.
+	std::pair<uint32_t, uint32_t> frame_size(const Surface &target) const
+	{
+		const NSRect content = content_of(target.window);
+		return {uint32_t(content.size.width) + uint32_t(target.insets[0] + target.insets[2]),
+			uint32_t(content.size.height) + uint32_t(target.insets[1] + target.insets[3])};
+	}
+
+	// macOS changed the window's size (its edges, zoom, full screen): the program is told its new frame size.
+	void resized_by_host(uint64_t handle)
+	{
+		Surface *target = surface(handle);
+		if (!target || presenting || target->popup)
+			return;
+		const auto [width, height] = frame_size(*target);
+		if (width == target->width && height == target->height)
+			return;
+		target->pending_width = width;
+		target->pending_height = height;
+		target->resized = true;
 	}
 
 	void register_window(uint64_t handle, Surface &target)
@@ -602,11 +689,37 @@ struct CocoaPresentation::State {
 		@autoreleasepool {
 			if (Surface *existing = surface(handle); existing && existing->popup)
 				forget(handle);
+			const auto described = frames.find(handle);
+			const auto insets = described != frames.end() ? described->second.first : std::array<int32_t, 4>{};
+			const uint32_t style = described != frames.end() ? described->second.second : 0;
+			// Windows without a caption (splash screens, the program's own custom frames) stay borderless.
+			const bool native = native_frames && insets[1] > insets[0] && uint32_t(insets[0] + insets[2]) < width &&
+				uint32_t(insets[1] + insets[3]) < height;
 			Surface *target = surface(handle);
+			if (target && (target->native != native || target->insets != (native ? insets : std::array<int32_t, 4>{}) ||
+				target->style != style)) {
+				target->native = native;
+				target->insets = native ? insets : std::array<int32_t, 4>{};
+				target->style = style;
+				const NSRect content = content_of(target->window);
+				presenting = true;
+				target->window.styleMask = style_mask(native, style);
+				[target->window setFrame:[target->window frameRectForContentRect:content] display:NO];
+				presenting = false;
+			}
 			if (!target) {
 				auto created = std::make_unique<Surface>();
-				created->window = make_window(width, height, true);
+				created->native = native;
+				created->insets = native ? insets : std::array<int32_t, 4>{};
+				created->style = style;
+				const auto &inset = created->insets;
+				created->window = make_window(std::max<int32_t>(int32_t(width) - inset[0] - inset[2], 1),
+					std::max<int32_t>(int32_t(height) - inset[1] - inset[3], 1), true, style_mask(native, style));
 				created->view = (RavenView *)created->window.contentView;
+				created->delegate = [RavenWindowDelegate new];
+				created->delegate.state = this;
+				created->delegate.handle = handle;
+				created->window.delegate = created->delegate;
 				created->width = width;
 				created->height = height;
 				created->maximized = maximized.contains(handle);
@@ -630,8 +743,10 @@ struct CocoaPresentation::State {
 				target->resized = false;
 			target->width = width;
 			target->height = height;
-			set_size(target->window, width, height);
+			set_size(*target, width, height);
 			show(*target, pixels, width, height);
+			if (target->window.miniaturized)
+				[target->window deminiaturize:nil];
 			if (!target->window.visible)
 				[target->window orderFront:nil];
 		}
@@ -665,8 +780,8 @@ struct CocoaPresentation::State {
 			target->popup_y = y;
 			target->width = width;
 			target->height = height;
-			const NSRect parent_frame = owner->window.frame;
-			[target->window setFrame:NSMakeRect(parent_frame.origin.x + x, NSMaxY(parent_frame) - y - height, width, height) display:NO];
+			const NSPoint corner = screen_of(*owner, x, y);
+			[target->window setFrame:NSMakeRect(corner.x, corner.y - height, width, height) display:NO];
 			show(*target, pixels, width, height);
 			if (!target->window.parentWindow)
 				[owner->window addChildWindow:target->window ordered:NSWindowAbove];
@@ -743,9 +858,12 @@ struct CocoaPresentation::State {
 		} else {
 			frame = target->restored;
 		}
+		presenting = true;
 		[target->window setFrame:frame display:NO];
-		target->pending_width = uint32_t(frame.size.width);
-		target->pending_height = uint32_t(frame.size.height);
+		presenting = false;
+		const auto [width, height] = frame_size(*target);
+		target->pending_width = width;
+		target->pending_height = height;
 		target->resized = true;
 	}
 
@@ -759,7 +877,7 @@ struct CocoaPresentation::State {
 			target->child.wantsLayer = YES;
 			[target->view addSubview:target->child];
 		}
-		target->child.frame = NSMakeRect(x, y, std::max<uint32_t>(width, 1), std::max<uint32_t>(height, 1));
+		target->child.frame = NSMakeRect(x - target->insets[0], y - target->insets[1], std::max<uint32_t>(width, 1), std::max<uint32_t>(height, 1));
 		CAMetalLayer *layer = (CAMetalLayer *)target->child.layer;
 		layer.contentsScale = 1;
 		layer.magnificationFilter = kCAFilterNearest;
@@ -833,6 +951,14 @@ struct CocoaPresentation::State {
 		return events;
 	}
 
+	// The Dock icon was clicked with every window minimized.
+	void restore_all()
+	{
+		for (auto &[handle, window] : surfaces)
+			if (!window->popup && window->window.miniaturized)
+				[window->window deminiaturize:nil];
+	}
+
 	// The application was asked to quit: each window is asked to close (WM_CLOSE), which the program answers as it sees fit.
 	void quit_requested()
 	{
@@ -844,7 +970,45 @@ struct CocoaPresentation::State {
 
 }
 
+@implementation RavenWindowDelegate
+- (BOOL)windowShouldClose:(NSWindow *)sender
+{
+	if (self.state)
+		self.state->push({self.handle, 0x10});
+	return NO;
+}
+- (void)windowDidResize:(NSNotification *)notification
+{
+	if (self.state)
+		self.state->resized_by_host(self.handle);
+}
+- (void)windowDidMiniaturize:(NSNotification *)notification
+{
+	// WM_SYSCOMMAND SC_MINIMIZE: the program minimizes itself as Windows would have.
+	if (self.state)
+		self.state->push({self.handle, 0x112, 0xf020});
+}
+- (void)windowDidDeminiaturize:(NSNotification *)notification
+{
+	if (self.state)
+		self.state->push({self.handle, 0x112, 0xf120});
+}
+- (BOOL)windowShouldZoom:(NSWindow *)window toFrame:(NSRect)frame
+{
+	// The green button maximizes and restores as the program's own caption button would.
+	if (auto *target = self.state ? self.state->surface(self.handle) : nullptr)
+		self.state->push({self.handle, 0x112, uint64_t(target->maximized ? 0xf120 : 0xf030)});
+	return NO;
+}
+@end
+
 @implementation RavenApplicationDelegate
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)visible
+{
+	if (self.state && !visible)
+		self.state->restore_all();
+	return YES;
+}
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender
 {
 	if (self.state)
@@ -871,6 +1035,7 @@ DesktopPresentation CocoaPresentation::callbacks()
 	};
 	result.remove = [this](uint64_t handle) {
 		state->maximized.erase(handle);
+		state->frames.erase(handle);
 		@autoreleasepool {
 			state->forget(handle);
 		}
@@ -904,9 +1069,15 @@ DesktopPresentation CocoaPresentation::callbacks()
 		NSScreen *screen = NSScreen.mainScreen;
 		if (!screen)
 			return std::nullopt;
-		return std::pair{int32_t(screen.frame.size.width), int32_t(screen.frame.size.height)};
+		// The area windows may use, below the menu bar and beside the Dock: maximized windows fill it.
+		return std::pair{int32_t(screen.visibleFrame.size.width), int32_t(screen.visibleFrame.size.height)};
 	};
 	result.maximize = [this](uint64_t handle, bool wanted) { state->maximize(handle, wanted); };
+	result.frame = [this](uint64_t handle, std::array<int32_t, 4> insets, uint32_t style) { state->frames[handle] = {insets, style}; };
+	result.minimize = [this](uint64_t handle) {
+		if (auto *target = state->surface(handle); target && !target->window.miniaturized)
+			[target->window miniaturize:nil];
+	};
 	result.platform = HostPlatform::metal;
 	return result;
 }

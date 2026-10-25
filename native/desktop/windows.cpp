@@ -232,6 +232,12 @@ void NativeWindows::present(uint64_t handle, bool force)
 	}
 	// Host titles use replacement characters; the guest retains every UTF-16 code unit.
 	if (presentation.maximize) presentation.maximize(handle,(window->style & 0x01000000U)!=0);
+	if (presentation.frame) {
+		// From the client area, which a program that draws its own caption extends over the frame.
+		const int32_t menu=window->menu ? frame_layout(*window).menu_height : 0;
+		presentation.frame(handle,{window->x-window->outer.left,window->y-window->outer.top-menu,window->outer.right-window->x-window->width,
+			window->outer.bottom-window->y-window->height},window->style);
+	}
 	presentation.present(handle,encode_utf8(window->title,true),bitmap->width,bitmap->height,pixels);
 	place_host_surface(handle);
 }
