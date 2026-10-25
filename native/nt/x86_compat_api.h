@@ -37,7 +37,7 @@ private:
 		uint64_t region = 0, region_left = 0;
 	};
 	Arena arenas[2];
-	uint64_t scratch = 0, environment_block = 0;
+	uint64_t scratch = 0;
 	size_t scratch_slot = 0;
 	std::function<uint64_t(uint64_t)> global_size;
 	std::function<bool(uint64_t)> global_release;

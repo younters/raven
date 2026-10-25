@@ -98,7 +98,7 @@ ZoneInfo zone_at(time_t instant)
 	return {int(local.tm_gmtoff / 60), local.tm_isdst > 0, local.tm_zone ? local.tm_zone : "UTC"};
 }
 
-std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_environment(const NativePaths &paths)
+std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_environment(const NativePaths &paths, bool wow64)
 {
 	const auto user = paths.user_name();
 	const auto profile = paths.user_profile();
@@ -116,7 +116,7 @@ std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_envi
 		character = upper_case(character);
 	add(u"ALLUSERSPROFILE", u"C:\\ProgramData");
 	add(u"APPDATA", profile + u"\\AppData\\Roaming");
-	add(u"CommonProgramFiles", u"C:\\Program Files\\Common Files");
+	add(u"CommonProgramFiles", wow64 ? u"C:\\Program Files (x86)\\Common Files" : u"C:\\Program Files\\Common Files");
 	add(u"CommonProgramFiles(x86)", u"C:\\Program Files (x86)\\Common Files");
 	add(u"CommonProgramW6432", u"C:\\Program Files\\Common Files");
 	add(u"COMPUTERNAME", computer.empty() ? u"RAVEN" : computer);
@@ -128,10 +128,12 @@ std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_envi
 	add(u"OS", u"Windows_NT");
 	add(u"Path", u"C:\\Windows\\system32;C:\\Windows;C:\\Windows\\System32\\Wbem");
 	add(u"PATHEXT", u".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC");
-	add(u"PROCESSOR_ARCHITECTURE", u"AMD64");
+	add(u"PROCESSOR_ARCHITECTURE", wow64 ? u"x86" : u"AMD64");
+	if (wow64)
+		add(u"PROCESSOR_ARCHITEW6432", u"AMD64");
 	add(u"PROCESSOR_LEVEL", u"6");
 	add(u"ProgramData", u"C:\\ProgramData");
-	add(u"ProgramFiles", u"C:\\Program Files");
+	add(u"ProgramFiles", wow64 ? u"C:\\Program Files (x86)" : u"C:\\Program Files");
 	add(u"ProgramFiles(x86)", u"C:\\Program Files (x86)");
 	add(u"ProgramW6432", u"C:\\Program Files");
 	add(u"PUBLIC", u"C:\\Users\\Public");
@@ -974,7 +976,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		std::map<std::u16string, std::pair<std::u16string, std::u16string>> values;
 	};
 	auto variables = std::make_shared<Variables>();
-	variables->values = default_environment(paths);
+	variables->values = default_environment(paths, context.process.mode() == NativeMode::x86);
 	// A program started by another one begins with the environment its parent chose.
 	if (context.launch.environment) {
 		variables->values.clear();
@@ -1075,26 +1077,38 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(1);
 	});
-	registry.add("GetEnvironmentStringsW", 0, [&, variables](ApiCall &call) {
-		std::u16string block;
-		for (const auto &[key, entry] : variables->values) {
-			block += entry.first + u"=" + entry.second;
+	for (const auto *name : {"GetEnvironmentStringsW", "GetEnvironmentStringsA", "GetEnvironmentStrings"}) {
+		const bool wide = std::string_view(name) == "GetEnvironmentStringsW";
+		registry.add(name, 0, [&, variables, wide](ApiCall &call) {
+			std::u16string block;
+			for (const auto &[key, entry] : variables->values) {
+				block += entry.first + u"=" + entry.second;
+				block.push_back(0);
+			}
 			block.push_back(0);
-		}
-		block.push_back(0);
-		const auto address = context.allocator.allocate(block.size() * 2);
-		if (!address) {
-			call.fail(8);
-			return;
-		}
-		std::vector<uint8_t> bytes(block.size() * 2);
-		std::memcpy(bytes.data(), block.data(), bytes.size());
-		call.write(address, bytes);
-		call.ret(address);
-	});
-	registry.add("FreeEnvironmentStringsW", 1, [&](ApiCall &call) {
-		call.ret(context.allocator.release(call[0]));
-	});
+			if (variables->values.empty())
+				block.push_back(0);
+			std::vector<uint8_t> bytes;
+			if (wide) {
+				bytes.resize(block.size() * 2);
+				std::memcpy(bytes.data(), block.data(), bytes.size());
+			} else {
+				const auto ansi = to_ansi(block, 0);
+				bytes.assign(ansi.begin(), ansi.end());
+			}
+			const auto address = context.allocator.allocate(bytes.size());
+			if (!address) {
+				call.fail(8);
+				return;
+			}
+			call.write(address, bytes);
+			call.ret(address);
+		});
+	}
+	for (const auto *name : {"FreeEnvironmentStringsW", "FreeEnvironmentStringsA"})
+		registry.add(name, 1, [&](ApiCall &call) {
+			call.ret(context.allocator.release(call[0]));
+		});
 
 	// TLS and FLS indexes are process-wide; values belong to the thread whose TEB asks.
 	struct Slots {
