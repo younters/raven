@@ -653,7 +653,18 @@ static ErrorState *thread_errors(void)
 
 CRT int *_errno(void) { return &thread_errors()->error; }
 CRT unsigned long *__doserrno(void) { return &thread_errors()->dos_error; }
-CRT void _invalid_parameter_noinfo(void) {}
+typedef void (__cdecl *RavenInvalidParameterHandler)(const wchar_t *, const wchar_t *, const wchar_t *, unsigned, uintptr_t);
+static RavenInvalidParameterHandler invalid_parameter_handler;
+CRT RavenInvalidParameterHandler _set_invalid_parameter_handler(RavenInvalidParameterHandler handler)
+{
+	RavenInvalidParameterHandler previous = invalid_parameter_handler;
+	invalid_parameter_handler = handler;
+	return previous;
+}
+CRT void _invalid_parameter_noinfo(void)
+{
+	if (invalid_parameter_handler) invalid_parameter_handler(NULL, NULL, NULL, 0, 0);
+}
 CRT void _invalid_parameter_noinfo_noreturn(void) { ExitProcess(3); }
 
 /* ---- streams ---- */
