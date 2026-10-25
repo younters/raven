@@ -233,9 +233,11 @@ void NativeWindows::track_pointer(uint64_t window)
 	if (window == tracking.window || objects.is_child(tracking.window, window))
 		return;
 	const auto tracked = tracking.window;
+	const bool nonclient = (tracking.flags & 0x10) != 0;
 	tracking = {};
+	// TME_NONCLIENT tracks the frame: leaving the window is WM_NCMOUSELEAVE then.
 	if (objects.window(tracked))
-		post(tracked, 0x2a3, 0, 0);
+		post(tracked, nonclient ? 0x2a2 : 0x2a3, 0, 0);
 }
 
 void NativeWindows::register_ext_api(ApiRegistry &registry)

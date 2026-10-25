@@ -1008,7 +1008,8 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 		int64_t(window->width)!=int64_t(window->outer.right)-window->outer.left ||
 		int64_t(window->height)!=int64_t(window->outer.bottom)-window->outer.top;
 	const bool inside=x>=window->outer.left && y>=window->outer.top && x<window->outer.right && y<window->outer.bottom;
-	const auto hit=!capture && inset && inside ? send(target,0x84,0,uint16_t(x)|(uint64_t(uint16_t(y))<<16)) : 1;
+	// A top-level window whose client covers it draws its own frame, and says where its caption, buttons and edges are.
+	const auto hit=!capture && (inset || !window->parent) && inside ? send(target,0x84,0,uint16_t(x)|(uint64_t(uint16_t(y))<<16)) : 1;
 	window=objects.window(target);
 	if (trace_buttons_enabled() && message!=0x200)
 		fprintf(stderr,"button %x target %llx hit %llx visible %d\n",message,(unsigned long long)target,(unsigned long long)hit,
@@ -1023,6 +1024,19 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 	// Scroll bars and the frame may run a loop of their own that waits for the release, so what was held goes in first.
 	if (hit!=1 && placing_press) release_held_input();
 	if ((hit==6 || hit==7) && scroll_pointer(target,hit,message,int32_t(x),int32_t(y))) return;
+	if (message==0x200 && trace_buttons_enabled() && hit!=traced_frame_hit) {
+		traced_frame_hit=hit;
+		fprintf(stderr,"frame hover %llx hit %llx\n",(unsigned long long)target,(unsigned long long)hit);
+	}
+	if (message==0x200 && tracking.window==target && (hit!=1)!=((tracking.flags & 0x10)!=0)) {
+		// Crossing between the client area and the frame leaves what was tracked: WM_MOUSELEAVE for the client area,
+		// WM_NCMOUSELEAVE for the frame (TME_NONCLIENT).
+		const bool nonclient=(tracking.flags & 0x10)!=0;
+		tracking={};
+		post(target,nonclient ? 0x2a2 : 0x2a3,0,0);
+	}
+	// Over the frame the window hears WM_NCMOUSEMOVE; programs that draw their own caption light its buttons from it.
+	if (message==0x200 && hit!=1 && messages.size()<10000) post(target,0xa0,hit,uint16_t(x)|(uint64_t(uint16_t(y))<<16));
 	if (hit!=1) { nonclient_pointer(target,hit,message,int32_t(event.x),int32_t(event.y)); return; }
 	if ((message==0x201 || message==0x204 || message==0x207) && window->parent && !(window->ex_style & 4)) {
 		for (auto parent=window->parent;parent;) {

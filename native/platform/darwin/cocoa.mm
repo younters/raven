@@ -221,6 +221,7 @@ struct CocoaPresentation::State {
 	uint64_t unmaximizing = 0;
 	NSPoint unmaximize_start{}, unmaximize_offset{};
 	NSEvent *unmaximize_press = nil;
+	bool unmaximize_release = false;
 	bool unmaximize_moved = false;
 
 	xkb_context *context = nullptr;
@@ -634,10 +635,17 @@ struct CocoaPresentation::State {
 			push({unmaximizing, 0x112, 0xf120});
 			// The rest of the drag is the window server's, as smooth as any other title-bar drag; its release belongs to macOS too.
 			if (unmaximize_press) {
+				const uint64_t handle = unmaximizing;
 				[target->window performWindowDragWithEvent:unmaximize_press];
 				unmaximize_press = nil;
 				unmaximizing = 0;
 				host_press = true;
+				// The program saw this press go down on its caption; the window server keeps the release, so it is given here.
+				if (unmaximize_release) {
+					unmaximize_release = false;
+					const auto [x, y] = frame_point(target->window, NSEvent.mouseLocation);
+					pointer(DesktopEventKind::pointer_button, handle, x, y, button_left, 0);
+				}
 			}
 			return;
 		}
@@ -652,8 +660,14 @@ struct CocoaPresentation::State {
 		if (unmaximizing) {
 			if (event.type == NSEventTypeLeftMouseDragged || event.type == NSEventTypeLeftMouseUp) {
 				follow_unmaximize(NSEvent.mouseLocation);
-				if (event.type == NSEventTypeLeftMouseUp)
+				if (event.type == NSEventTypeLeftMouseUp) {
+					if (unmaximize_release && unmaximizing) {
+						const auto [x, y] = frame_point(event.window ?: surface(unmaximizing)->window, NSEvent.mouseLocation);
+						pointer(DesktopEventKind::pointer_button, unmaximizing, x, y, button_left, 0);
+					}
 					unmaximizing = 0;
+					unmaximize_release = false;
+				}
 				return false;
 			}
 			if (event.type != NSEventTypeMouseMoved)
@@ -836,6 +850,14 @@ struct CocoaPresentation::State {
 		default:
 			break;
 		}
+		// AppKit would resize a borderless resizable window from a press near its edge, in a loop the program cannot draw during:
+		// the program has the press, and its own hit test decides whether it sizes the window.
+		if (event.type == NSEventTypeLeftMouseDown && !target->native && (target->style & 0x40000U) &&
+			!NSPointInRect(screen, NSInsetRect(target->window.frame, 6, 6))) {
+			if (!target->window.keyWindow)
+				[target->window makeKeyAndOrderFront:nil];
+			return false;
+		}
 		return true;
 	}
 
@@ -860,8 +882,10 @@ struct CocoaPresentation::State {
 
 	static NSWindowStyleMask style_mask(bool native, uint32_t style)
 	{
+		// A program-drawn frame with sizing borders is resizable too, for window tiling and window managers; its edges are the
+		// program's own (WM_NCHITTEST), and presses near them never reach AppKit's resize loop (see mouse).
 		if (!native)
-			return NSWindowStyleMaskBorderless | NSWindowStyleMaskMiniaturizable;
+			return NSWindowStyleMaskBorderless | NSWindowStyleMaskMiniaturizable | ((style & 0x40000U) ? NSWindowStyleMaskResizable : 0);
 		NSWindowStyleMask mask = NSWindowStyleMaskTitled;
 		if (style & 0x80000U)
 			mask |= NSWindowStyleMaskClosable;
@@ -1099,7 +1123,8 @@ struct CocoaPresentation::State {
 			}
 			if (first_shown == std::chrono::steady_clock::time_point{})
 				first_shown = std::chrono::steady_clock::now();
-			if (target->window.miniaturized)
+			// A minimized program still draws; that brings it back only once Windows no longer has it minimized (WS_MINIMIZE).
+			if (target->window.miniaturized && !(target->style & 0x20000000U))
 				[target->window deminiaturize:nil];
 			if (!target->window.visible)
 				[target->window orderFront:nil];
@@ -1153,6 +1178,15 @@ struct CocoaPresentation::State {
 		if (!target || target->popup)
 			return;
 		NSWindow *window = target->window;
+		if (action == 0 && target->maximized) {
+			// A drag of a maximized program-drawn caption restores it under the pointer, as with the title bar of macOS.
+			unmaximizing = handle;
+			unmaximize_start = NSEvent.mouseLocation;
+			unmaximize_moved = false;
+			unmaximize_press = last_press && last_press.window == window ? last_press : nil;
+			unmaximize_release = true;
+			return;
+		}
 		if (action == 0) {
 			if (last_press && last_press.window == window)
 				[window performWindowDragWithEvent:last_press];

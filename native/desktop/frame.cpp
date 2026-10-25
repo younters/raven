@@ -111,6 +111,16 @@ void NativeWindows::nonclient_pointer(uint64_t handle,uint64_t hit,uint32_t mess
 		return;
 	}
 	if (message==0x201) {
+		// A second press on the caption within the double-click time and distance is WM_NCLBUTTONDBLCLK, which DefWindowProc
+		// answers by maximizing or restoring a window that can be.
+		const auto now=uint32_t(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+		const bool twice=last_frame_press_window==handle && last_frame_press_hit==hit && now-last_frame_press_time<=500 &&
+			std::abs(x-last_frame_press_x)<=4 && std::abs(y-last_frame_press_y)<=4;
+		last_frame_press_window=twice ? 0 : handle; last_frame_press_hit=hit; last_frame_press_x=x; last_frame_press_y=y; last_frame_press_time=now;
+		if (twice && hit==2 && (window->style & 0x10000U)) {
+			send(handle,0x112,(window->style & 0x01000000U) ? 0xf120 : 0xf030,0);
+			return;
+		}
 		pressed_frame_hit=hit; pressed_frame_window=handle;
 		// A drag that starts on the caption or a sizing border continues in the compositor (maximized windows do not move).
 		// A tool window shown on its owner is moved here: the compositor moves only the host windows it places itself.
@@ -118,6 +128,8 @@ void NativeWindows::nonclient_pointer(uint64_t handle,uint64_t hit,uint32_t mess
 			frame_drag={handle,cursor_x,cursor_y,window->outer};
 			return;
 		}
+		// A maximized window's caption drag restores it under the pointer where the host can; its edges do not size it.
+		if (presentation.interactive && hit==2 && (window->style & 0x01000000U)) { presentation.interactive(handle,0); return; }
 		if (presentation.interactive && !(window->style & 0x01000000U)) {
 			// Hit codes 10..17 are the sizing borders: left, right, top, top-left, top-right, bottom, bottom-left, bottom-right.
 			static constexpr uint32_t edges[]{4,8,1,5,9,2,6,10};

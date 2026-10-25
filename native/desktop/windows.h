@@ -281,6 +281,9 @@ private:
 	uint64_t pressed_frame_hit=0,pressed_frame_window=0;
 	// The caption button under the pointer, which the Windows 11 frame lights up.
 	uint64_t hovered_frame_hit=0,hovered_frame_window=0;
+	// The last press on a frame, for the double click on the caption that maximizes: window, hit, place and message time.
+	uint64_t traced_frame_hit=0;
+	uint64_t last_frame_press_window=0,last_frame_press_hit=0; int32_t last_frame_press_x=0,last_frame_press_y=0; uint32_t last_frame_press_time=0;
 	void hover_frame(uint64_t window,uint64_t hit);
 	struct MenuPopup {
 		uint64_t handle,menu,parent;
