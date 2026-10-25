@@ -18,15 +18,15 @@ endif()
 # raven-bootstrap keeps its name, so everything that locates it next to raven finds the macOS guest the same way.
 if(TARGET raven-bootstrap)
     set_property(TARGET raven-bootstrap PROPERTY SOURCES ${RAVEN_DARWIN_DIR}/guest/agent.c ${RAVEN_DARWIN_DIR}/guest/reserve.s)
+    set_property(TARGET raven-bootstrap PROPERTY COMPILE_OPTIONS -O2 -Wall -Wextra -fno-sanitize=all -fno-stack-protector)
     set_property(TARGET raven-bootstrap PROPERTY LINKER_LANGUAGE C)
     set_property(TARGET raven-bootstrap PROPERTY OSX_ARCHITECTURES x86_64)
-    set_property(TARGET raven-bootstrap PROPERTY COMPILE_OPTIONS -fno-sanitize=all -fno-stack-protector)
     # A guest program: none of the host's Linux shims or libraries.
     set_property(TARGET raven-bootstrap PROPERTY INCLUDE_DIRECTORIES "")
     set_property(TARGET raven-bootstrap PROPERTY LINK_LIBRARIES "")
     # Windows images want the low 4 GiB: the agent loads high and a zero-fill segment holds the low range until the host maps it.
     set_property(TARGET raven-bootstrap PROPERTY LINK_OPTIONS -fno-sanitize=all -Wl,-no_pie -Wl,-pagezero_size,0x10000
-        -Wl,-image_base,0x7f0000000000 -Wl,-segaddr,RAVEN_LOW,0x10000 -Wl,-w)
+        -Wl,-image_base,0x700000000000 -Wl,-segaddr,RAVEN_LOW,0x10000 -Wl,-w)
 endif()
 
 # The Vulkan loader of the LunarG SDK names itself @rpath/libvulkan.1.dylib.

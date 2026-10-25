@@ -15,6 +15,9 @@
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <libproc.h>
+#endif
 
 static void check(bool condition, const char *message)
 {
@@ -270,6 +273,14 @@ static void image_mapping_contracts(const std::string &bootstrap)
 		raven::LoadedImage *images[] = {&loaded};
 		{
 			raven::NativeProcess process(images, bootstrap, timeout);
+#ifdef __APPLE__
+			pid_t child = -1;
+			proc_listchildpids(getpid(), &child, sizeof child);
+			const auto descriptors = [&] {
+				return size_t(std::max(0, proc_pidinfo(child, PROC_PIDLISTFDS, 0, nullptr, 0))) / sizeof(proc_fdinfo);
+			};
+			check(child > 0, "cannot inspect owned dynamic image child");
+#else
 			std::ifstream children("/proc/self/task/" + std::to_string(getpid()) + "/children");
 			pid_t child = -1;
 			children >> child;
@@ -299,6 +310,7 @@ static void image_mapping_contracts(const std::string &bootstrap)
 				}
 				return count;
 			};
+#endif
 			const auto descriptor_count = descriptors();
 			if (pending) {
 				process.add_api_trap(image.image_base + 0x1000);
@@ -560,7 +572,12 @@ static void persistent_contracts(const std::string &bootstrap)
 		check(process.context().registers.rip == saved.registers.rip, "invalid XSTATE altered integer context");
 	}
 	no_children();
+#ifdef __APPLE__
+	// macOS gives 64-bit code no FS base; Windows x64 code addresses its TEB through GS alone.
+	for (uint8_t segment : {uint8_t(0x65)}) {
+#else
 	for (uint8_t segment : {uint8_t(0x64), uint8_t(0x65)}) {
+#endif
 		bytes = fixture({segment, 0x48, 0x8b, 0x04, 0x25, 0x30, 0, 0, 0, 0xc3});
 		const raven::PEImage image(bytes);
 		raven::LoadedImage loaded(image, image.image_base);
