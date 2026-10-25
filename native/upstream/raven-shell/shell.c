@@ -14,6 +14,7 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shobjidl.h>
+#include <shlguid.h>
 #include <servprov.h>
 #include <propsys.h>
 #include <shellapi.h>
@@ -822,6 +823,27 @@ HRESULT WINAPI SHCreateItemFromParsingName(PCWSTR path, IBindCtx *context, REFII
 	result = make_item(full, &item);
 	if (SUCCEEDED(result)) {
 		result = IShellItem_QueryInterface(item, iid, out);
+		IShellItem_Release(item);
+	}
+	return result;
+}
+
+/* A file's property store comes from its shell item's handler. Unsupported handlers must fail with no interface, rather than leave
+   callers with a successful HRESULT and a null object. Writable stores need a file handler that can commit their changes. */
+HRESULT WINAPI SHGetPropertyStoreFromParsingName(PCWSTR path, IBindCtx *context, GETPROPERTYSTOREFLAGS flags, REFIID iid, void **out)
+{
+	IShellItem *item;
+	HRESULT result;
+	if (!out)
+		return E_POINTER;
+	*out = NULL;
+	if (!path || !iid)
+		return E_INVALIDARG;
+	if (flags != GPS_DEFAULT)
+		return E_NOTIMPL;
+	result = SHCreateItemFromParsingName(path, context, &IID_IShellItem, (void **)&item);
+	if (SUCCEEDED(result)) {
+		result = IShellItem_BindToHandler(item, context, &BHID_PropertyStore, iid, out);
 		IShellItem_Release(item);
 	}
 	return result;

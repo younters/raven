@@ -1,6 +1,8 @@
 #define COBJMACROS
 #include <windows.h>
 #include <objbase.h>
+#include <propsys.h>
+#include <shobjidl.h>
 
 /* No user32 or ole32 imports: packed programs discover these APIs after startup. */
 static HMODULE user, ole;
@@ -43,6 +45,10 @@ UINT raven_entry(void)
 	IMalloc *allocator = NULL;
 	void *memory;
 	HRESULT (WINAPI *get_malloc)(DWORD, IMalloc **);
+	HRESULT (WINAPI *get_store)(PCWSTR, IBindCtx *, GETPROPERTYSTOREFLAGS, REFIID, void **);
+	HMODULE shell;
+	void *store = (void *)1;
+	const GUID property_store = {0x886d8eeb, 0x8cf2, 0x4446, {0x8d, 0x02, 0xcd, 0xba, 0x1d, 0xbd, 0xcf, 0x99}};
 
 	user = LoadLibraryA("user32.dll");
 	ole = LoadLibraryA("ole32.dll");
@@ -56,6 +62,9 @@ UINT raven_entry(void)
 	check(memory && ((BYTE *)memory)[0] == 42, 4);
 	IMalloc_Free(allocator, memory);
 	IMalloc_Release(allocator);
+	shell = LoadLibraryA("shell32.dll");
+	get_store = (void *)GetProcAddress(shell, "SHGetPropertyStoreFromParsingName");
+	check(get_store && get_store(L"C:\\unsupported.lnk", NULL, GPS_READWRITE, &property_store, &store) == E_NOTIMPL && !store, 5);
 
 	modal = TRUE;
 	check(API(DialogBoxParamW)(instance, MAKEINTRESOURCEW(1), NULL, dialog_proc, -123) == -234, 20);

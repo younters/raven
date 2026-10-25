@@ -240,7 +240,7 @@ def main():
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "stream.c", "-o", shell_objects[4]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "dialog.c", "-o", shell_objects[5]])
     shell_defined = decorated(shell_objects)
-    shell_names = ("CoCreateInstance", "CoGetClassObject", "CoGetMalloc", "SHCreateItemFromParsingName", "SHGetPropertyStoreForWindow", "PropVariantClear", "SHAppBarMessage", "GetOpenFileNameW", "GetSaveFileNameW", "CommDlgExtendedError", "GetFileTitleW", "IUnknown_QueryService", "CLSIDFromProgID",
+    shell_names = ("CoCreateInstance", "CoGetClassObject", "CoGetMalloc", "SHCreateItemFromParsingName", "SHGetPropertyStoreForWindow", "SHGetPropertyStoreFromParsingName", "PropVariantClear", "SHAppBarMessage", "GetOpenFileNameW", "GetSaveFileNameW", "CommDlgExtendedError", "GetFileTitleW", "IUnknown_QueryService", "CLSIDFromProgID",
                    "SHCreateStreamOnFileA", "SHCreateStreamOnFileW", "SHCreateStreamOnFileEx", "PropVariantCopy", "CoGetContextToken", "CoGetObjectContext", "ExtractIconExW", "ExtractIconW", "UiaGetReservedNotSupportedValue", "UiaGetReservedMixedAttributeValue", "SHGetMalloc",
                    "OpenRegStream", "SHOpenRegStreamW", "SHOpenRegStreamA", "SHOpenRegStream2W", "SHOpenRegStream2A")
     (output / "raven-shell.def").write_text("NAME raven-shell.dll\nEXPORTS\n" + "".join(definition_line(name, shell_defined.get(name)) for name in shell_names))
