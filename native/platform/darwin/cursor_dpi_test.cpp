@@ -40,7 +40,9 @@ int main(int argc,char **argv)
 			backend.backing_scale=[] { return 2.0; };
 			backend.render_scale=[&](double value) { scale=value; };
 			backend.screen_size=[&] { return std::optional(std::pair{int32_t(1000*scale),int32_t(800*scale)}); };
-			backend.present=[&](uint64_t handle,std::string_view,uint32_t,uint32_t,std::span<const uint8_t>) { window=handle; };
+			backend.present=[&](uint64_t handle,std::string_view title,uint32_t,uint32_t,std::span<const uint8_t>) {
+				if (title=="cursor DPI test") window=handle;
+			};
 			backend.remove=[](uint64_t) {};
 			backend.cursor=[&](uint64_t handle,int count,const raven::DesktopIcon *image) {
 				if (image) {

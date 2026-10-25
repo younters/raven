@@ -47,8 +47,11 @@ void NativeWindows::initialize_window_dpi(uint64_t handle)
 	const auto dpi=objects.nonclient_metrics().dpi;
 	if (dpi==96) return;
 	// Saved startup bounds are in the desktop's 96-DPI units. Apply the first host scale after the program finishes creating its controls.
-	// Owned dialogs already derive their dimensions from their scaled dialog font; maximized windows use the output's pixel dimensions.
-	if (!window->owner && (window->style & 0xc00000U)==0xc00000U && !(window->style & 0x21000000U)) {
+	// Dialogs, including unowned installer dialogs, already derive their dimensions from their scaled dialog font; maximized windows
+	// use the output's pixel dimensions. Scaling a dialog again enlarges only its frame and leaves its controls in the upper left.
+	const auto *definition=objects.window_class(window->class_id);
+	const bool dialog=definition && definition->name=="#32770";
+	if (!dialog && !window->owner && (window->style & 0xc00000U)==0xc00000U && !(window->style & 0x21000000U)) {
 		const auto rect=window->restore.right>window->restore.left ? window->restore : placement_rect(window->outer,true);
 		if (rect.right-rect.left<=8192 && rect.bottom-rect.top<=8192) reshape(handle,rect);
 	}

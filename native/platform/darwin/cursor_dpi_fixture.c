@@ -129,6 +129,17 @@ void mainCRTStartup(void)
     if (!SetWindowPlacement(parent,&placement)) ExitProcess(25);
     GetWindowRect(parent,&rect);
     if (rect.right-rect.left != (int)(400*dpi/96) || dpi_messages != (dpi == 192)) ExitProcess(26);
+    /* A dialog manager has already converted its template's units with the DPI-scaled font, even when it has no owner. */
+    WNDCLASSW dialog_class = parent_class;
+    dialog_class.lpszClassName = L"#32770";
+    if (!RegisterClassW(&dialog_class)) ExitProcess(27);
+    HWND dialog = CreateWindowExW(0,dialog_class.lpszClassName,L"dialog DPI test",WS_POPUP | WS_CAPTION,
+        0,0,400*dpi/96,200*dpi/96,NULL,NULL,NULL,NULL);
+    if (!dialog) ExitProcess(28);
+    ShowWindow(dialog,SW_SHOW);
+    GetWindowRect(dialog,&rect);
+    if (rect.right-rect.left != (int)(400*dpi/96) || rect.bottom-rect.top != (int)(200*dpi/96)) ExitProcess(29);
+    DestroyWindow(dialog);
     MSG message;
     while (GetMessageW(&message,NULL,0,0) > 0) DispatchMessageW(&message);
     ExitProcess((UINT)message.wParam);
