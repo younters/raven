@@ -8,7 +8,6 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import sys
 import tarfile
 import urllib.request
 
@@ -76,34 +75,8 @@ def main():
         if not shutil.which(tool):
             raise RuntimeError(f"required installer build tool is missing: {tool}")
     records = []
-    # Homebrew's MinGW-w64 defaults to the UCRT, so its libmsvcrt.a imports the api-ms-win-crt DLLs: msvcrt.dll's import library is libmsvcrt-os.a.
-    msvcrt = None
-    if sys.platform == "darwin":
-        msvcrt = output / "msvcrt"
-        msvcrt.mkdir(exist_ok=True)
-        sysroot = subprocess.run([triple + "-gcc", "-print-sysroot"], capture_output=True, text=True, check=True).stdout.strip()
-        shutil.copyfile(Path(sysroot) / triple / "lib/libmsvcrt-os.a", msvcrt / "libmsvcrt.a")
-        # Its OS-neutral wrappers for isprint and isblank call _isctype, and the 32-bit _gmtime64 calls gmtime: the C runtime the programs run
-        # on exports isprint and _gmtime64 itself and lacks both _isctype and gmtime, so import those two directly.
-        wrappers = [name for name in subprocess.run([triple + "-ar", "t", msvcrt / "libmsvcrt.a"], capture_output=True, text=True, check=True).stdout.split()
-                    if name.endswith(("-isprint.o", "-isblank.o")) or (x86 and name.endswith("-_gmtime64.o"))]
-        subprocess.run([triple + "-ar", "d", msvcrt / "libmsvcrt.a", *wrappers], check=True)
-        (msvcrt / "direct.def").write_text("LIBRARY msvcrt.dll\nEXPORTS\n isprint\n" + (" _gmtime64\n" if x86 else ""))
-        subprocess.run([triple + "-dlltool", "-d", msvcrt / "direct.def", "-l", msvcrt / "libdirect.a", "-k"], check=True)
-        subprocess.run([triple + "-ar", "x", "libdirect.a"], cwd=msvcrt, check=True)
-        direct = sorted(msvcrt.glob("*libdirect_a_*.o"))
-        subprocess.run([triple + "-ar", "qs", "libmsvcrt.a", *[path.name for path in direct]], cwd=msvcrt, check=True)
-        for path in direct:
-            path.unlink()
-        if x86:
-            # The 32-bit import library of kernel32 leaves out the LZ functions, which kernel32.dll exports: lz32.dll alone has them there.
-            (msvcrt / "kernel32-lz.def").write_text("LIBRARY kernel32.dll\nEXPORTS\n LZClose@4\n LZOpenFileW@12\n LZRead@12\n LZSeek@12\n")
-            subprocess.run([triple + "-dlltool", "-d", msvcrt / "kernel32-lz.def", "-l", msvcrt / "libkernel32-lz.a", "-k"], check=True)
 
     def run(command, cwd=None):
-        if msvcrt and command[0] == triple + "-gcc":
-            # Newer MinGW libraries keep some msvcrt functions, such as iswctype, in libmingwex, which -nostdlib leaves out.
-            command = [command[0], "-L" + str(msvcrt), *command[1:], *([] if "-c" in command else ["-lmingwex", "-lmsvcrt", "-lkernel32", *(["-lkernel32-lz"] if x86 else [])])]
         result = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
         records.append(dict(command=[str(part) for part in command], returncode=result.returncode))
         if result.returncode:
@@ -177,11 +150,16 @@ def main():
     overlay = source / "sdk/include/reactos/wine"
     shutil.copytree(source / "sdk/include/wine", overlay, dirs_exist_ok=True)
     gcc_include = run([triple + "-gcc", "-print-file-name=include"]).stdout.strip()
+    # A toolchain whose default C runtime is the UCRT gives that library the name msvcrt and keeps the one of msvcrt.dll as msvcrt-os.
+    msvcrt = "-lmsvcrt-os" if Path(run([triple + "-gcc", "-print-file-name=libmsvcrt-os.a"]).stdout.strip()).is_absolute() else "-lmsvcrt"
     includes = [generated, generated / "psdk", source / "sdk/lib/pseh/include", source / "sdk/include/vcruntime", overlay, source / "sdk/include/psdk",
                 source / "sdk/include/crt", source / "sdk/include/ndk", source / "sdk/include", source / "sdk/include/reactos", source / "sdk/include/ddk"]
     # A function the headers do not declare would return a truncated int: none is allowed. The sources use the old CRT names, which the
     # oldnames library supplies upstream.
-    flags = ["-O2", "-nostdinc", "-isystem", gcc_include, "-fgnu89-inline", "-Werror=implicit-function-declaration", "-Werror=int-conversion", "-Wno-incompatible-pointer-types",
+    # GCC 14 and later reject the pointer mismatches the upstream sources still carry, such as an extended version structure passed as its
+    # base; they stay warnings, as with the compilers the sources are built with upstream.
+    flags = ["-O2", "-nostdinc", "-isystem", gcc_include, "-fgnu89-inline", "-Werror=implicit-function-declaration", "-Werror=int-conversion",
+             "-Wno-error=incompatible-pointer-types",
              "-Dwcsdup=_wcsdup", "-Dwcsicmp=_wcsicmp", "-Dwcsnicmp=_wcsnicmp", "-Dwcsupr=_wcsupr", "-Dwcslwr=_wcslwr", "-Dstrdup=_strdup", "-Dstricmp=_stricmp", "-Dstrnicmp=_strnicmp",
              "-D_WIN32_WINNT=0x600", "-DWINVER=0x600", "-D_WIN32_IE=0x0A00", "-D__REACTOS__", "-DUNICODE", "-D_UNICODE",
              "-D_M_IX86" if x86 else "-D_M_AMD64", "-D__WINESRC__", "-D_WINE", *([] if x86 else ["-D__ROS_LONG64__"]),
@@ -198,20 +176,28 @@ def main():
         run([triple + "-gcc", "-c", *flags, *extra, *["-I" + str(path) for path in paths], path, "-o", target])
         return target
 
+    def runtime(libraries):
+        return [msvcrt if library == "-lmsvcrt" else library for library in libraries]
+
     def link(name, base, object_files, definition, libraries, implib=None):
         run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{base:#x},--no-insert-timestamp", *link_extra,
              *([f"-Wl,--out-implib,{implib}"] if implib and not x86 else []), "-o", output / name, *object_files, definition,
-             output / "libcrtassert.a", *libraries])
+             output / "libcrtimports.a", *runtime(libraries)])
         # A 32-bit import library keeps the stdcall decorations its callers link against, for the plain names the library exports.
         if implib and x86:
             stdcall = output / (Path(name).stem + "-import.def")
             stdcall.write_text(re.sub(r"^(\s*)(\w+)=\w+(@\d+)", r"\1\2\3", Path(definition).read_text(), flags=re.M))
             run([triple + "-dlltool", "-d", stdcall, "-l", implib, "-k"])
 
-    # Import the CRT assertion directly; newer MinGW libraries otherwise require the static libmingwex wrapper.
-    assertion = output / "crtassert.def"
-    assertion.write_text("LIBRARY msvcrt.dll\nEXPORTS\n _assert\n")
-    run([triple + "-dlltool", "-d", assertion, "-l", output / "libcrtassert.a"])
+    # Import these CRT functions directly; newer MinGW libraries replace them with static wrappers.
+    imports = output / "crtimports.def"
+    imports.write_text("LIBRARY msvcrt.dll\nEXPORTS\n _assert\n iswctype\n isprint\n _gmtime64\n")
+    run([triple + "-dlltool", "-d", imports, "-l", output / "libcrtimports.a"])
+    # Newer 32-bit MinGW libraries import the LZ expansion functions from lz32, a forwarder; kernel32 exports them.
+    expansion = output / "lzimports.def"
+    expansion.write_text("LIBRARY kernel32.dll\nEXPORTS\n" + "".join(" " + name + ("@" + size if x86 else "") + "\n" for name, size in
+                         (("LZOpenFileW", "12"), ("LZRead", "12"), ("LZSeek", "12"), ("LZClose", "4"))))
+    run([triple + "-dlltool", "-d", expansion, "-l", output / "liblzimports.a", *(["-k"] if x86 else [])])
     debug = compile(repo / "native/upstream/reactos-controls/debug.c", "debug")
     # 32-bit code registers its exception frames on the thread's chain: the frame based PSEH support of ReactOS is built into each component.
     pseh = []
@@ -318,7 +304,7 @@ def main():
          "-D_M_IX86" if x86 else "-D_M_AMD64", "-I" + str(msiexec_root), "-i", msiexec_root / "rsrc.rc", "-o", objects / "msiexec.res.o"])
     run([triple + "-gcc", "-nostdlib", "-mwindows", f"-Wl,--entry,{'_raven_program_entry@0' if x86 else 'raven_program_entry'},--no-insert-timestamp",
          "-o", output / "msiexec.exe", *msiexec, objects / "msiexec.res.o", objects / "installer_support.o", *debug, "-L" + str(output),
-         *[f"-l{library}" for library in ("msi", "user32", "advapi32", "ole32", "comctl32", "msvcrt", "kernel32", "ntdll", "uuid", "gcc")]])
+         *runtime(f"-l{library}" for library in ("msi", "user32", "advapi32", "ole32", "comctl32", "msvcrt", "kernel32", "ntdll", "uuid", "gcc"))])
     # msxml3.dll: the XML document object model installers and their bootstrappers parse their manifests with, on libxml2 and libxslt.
     xml_root = source / "sdk/lib/3rdparty/libxml2"
     iconv_root = source / "sdk/lib/3rdparty/libwin-iconv"
@@ -400,7 +386,7 @@ def main():
     # picture do not load it and the libraries behind it.
     oleaut.append(compile(support / "codecs.c", "oleaut32_codecs"))
     link("oleaut32.dll", bases["oleaut"], [*oleaut, objects / "installer_support.o", *debug], output / "oleaut32.def",
-         ["-L" + str(output), "-lrpcrt4", "-lcrtmath", *[f"-l{library}" for library in ("ole32", "user32", "gdi32", "advapi32", "comctl32", "urlmon",
+         ["-L" + str(output), "-lrpcrt4", "-lcrtmath", "-llzimports", *[f"-l{library}" for library in ("ole32", "user32", "gdi32", "advapi32", "comctl32", "urlmon",
           "msvcrt", "kernel32", "ntdll", "uuid", "gcc", "kernel32", "msvcrt")]])
     # The libraries below follow one pattern: the sources their ReactOS build lists, compiled with its definitions, a definition file from
     # their specification and the libraries they import. Their base addresses count down from below the ones above.
@@ -513,13 +499,15 @@ def main():
     # place of kernel32's private one.
     (generated / "lzexpand").mkdir(exist_ok=True)
     (generated / "lzexpand/k32.h").write_text("#include <stdarg.h>\n#include <string.h>\n#include <ctype.h>\n#include <windef.h>\n#include <winbase.h>\n"
-                                              "#include <winnls.h>\n#include <stdio.h>\n#include <wine/debug.h>\n#include <wine/unicode.h>\nWINE_DEFAULT_DEBUG_CHANNEL(lzexpand);\n")
+                                              "#include <winnls.h>\n#include <stdio.h>\n#include <wine/debug.h>\n#include <wine/unicode.h>\nWINE_DEFAULT_DEBUG_CHANNEL(lzexpand);\n"
+                                              # The channel the source names comes from the private kernel32 debug header.
+                                              "#define DEBUG_CHANNEL(ch) WINE_DECLARE_DEBUG_CHANNEL(ch)\n")
     # It is a ReactOS module, which reaches the native headers rather than Wine's.
     library("raven-setupapi.dll", setupapi_root, ["-U__WINESRC__", "-U_WINE", "-D_SETUPAPI_", "-D_CFGMGR32_", "-D_SETUPAPI_VER=0x0502", "-I" + str(source / "sdk/include/reactos/idl"),
             "-I" + str(generated)], ["rpcrt4", "gdi32", "comctl32", "advapi32", "user32", "version", "comdlg32", "shell32", "wintrust"],
             wine_module=False, sources=[*listed_sources(setupapi_root), generated / "pnp_c.c"], rc=generated / "setupapi.rc",
             objects_more=[compile(support / "printers.c", "setupapi_printers"),
-                          compile(source / "dll/win32/kernel32/wine/lzexpand.c", "setupapi_lzexpand", ["-I" + str(generated / "lzexpand"), "-Wno-error=implicit-int", "-Wno-error=declaration-missing-parameter-type"],
+                          compile(source / "dll/win32/kernel32/wine/lzexpand.c", "setupapi_lzexpand", ["-I" + str(generated / "lzexpand")],
                                   wine_module=False)])
     # regsvr32.exe: registers the classes a library serves, as installers and the runtime's own prefix setup run it.
     regsvr32_root = source / "base/system/regsvr32"
@@ -529,7 +517,7 @@ def main():
          "-D_M_IX86" if x86 else "-D_M_AMD64", "-I" + str(regsvr32_root), "-i", regsvr32_root / "regsvr32.rc", "-o", objects / "regsvr32.res.o"])
     run([triple + "-gcc", "-nostdlib", "-mwindows", f"-Wl,--entry,{'_raven_program_entry@0' if x86 else 'raven_program_entry'},--no-insert-timestamp",
          "-o", output / "regsvr32.exe", *regsvr32, objects / "regsvr32.res.o", *debug,
-         *[f"-l{library}" for library in ("user32", "shell32", "ole32", "msvcrt", "kernel32", "ntdll", "gcc", "kernel32")]])
+         *runtime(f"-l{library}" for library in ("user32", "shell32", "ole32", "msvcrt", "kernel32", "ntdll", "gcc", "kernel32"))])
     result = dict(revision=REVISION, archive_sha256=ARCHIVE_SHA256, arch=args.arch, commands=records,
                   license_notices=preserve_notices(source, output),
                   component_sha256={name: hashlib.sha256((output / name).read_bytes()).hexdigest() for name in COMPONENTS},

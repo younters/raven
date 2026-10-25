@@ -1365,8 +1365,15 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     ENVIRONMENT RAVEN_PREFIX=${fixture}/imaging-prefix)
                 # Messages from the program's own message table, with inserts from a va_list, as installers write their logs.
                 list(GET installer_compiler 0 installer_driver)
-                string(REGEX REPLACE "gcc$" "windmc" message_compiler ${installer_driver})
-                string(REGEX REPLACE "gcc$" "windres" resource_compiler ${installer_driver})
+                # The tools beside the compiler, or on the path when it is reached through a wrapper directory such as ccache's.
+                get_filename_component(installer_bin ${installer_driver} DIRECTORY)
+                get_filename_component(installer_name ${installer_driver} NAME)
+                string(REGEX REPLACE "gcc$" "windmc" message_name ${installer_name})
+                string(REGEX REPLACE "gcc$" "windres" resource_name ${installer_name})
+                find_program(RAVEN_WINDMC_${installer_arch} ${message_name} HINTS ${installer_bin})
+                find_program(RAVEN_WINDRES_${installer_arch} ${resource_name} HINTS ${installer_bin})
+                set(message_compiler ${RAVEN_WINDMC_${installer_arch}})
+                set(resource_compiler ${RAVEN_WINDRES_${installer_arch}})
                 file(MAKE_DIRECTORY ${fixture}/format)
                 add_custom_command(OUTPUT ${fixture}/format.exe
                     COMMAND ${message_compiler} -h ${fixture}/format -r ${fixture}/format ${PROJECT_SOURCE_DIR}/testdata/native_loader/format_messages.mc
@@ -1469,7 +1476,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                         -o ${fixture}/pending.exe ${PROJECT_SOURCE_DIR}/testdata/native_loader/pending_client.c -ladvapi32 -lkernel32
                     DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/pending_client.c VERBATIM)
                 add_custom_target(pending_fixture_${installer_arch} ALL DEPENDS ${fixture}/pending.exe)
-                add_test(NAME native_pending_restart_${installer_arch} COMMAND sh -c "set -e; rm -rf \"$3\"; export RAVEN_PREFIX=\"$3\"; \"$1\" --run-process --execution=native --timeout-ms=60000 \"$2\" -- --schedule | grep -q \"Native entry returned 0 \"; \"$1\" --reboot; \"$1\" --run-process --execution=native --timeout-ms=60000 \"$2\" | grep -q \"Native entry returned 0 \"; echo PASS: delayed moves and RunOnce carried out at the restart" pending $<TARGET_FILE:raven> ${fixture}/pending.exe ${fixture}/pending-prefix)
+                # The restart runs its programs without a window, wherever the tests are started from.
+                add_test(NAME native_pending_restart_${installer_arch} COMMAND sh -c "set -e; unset WAYLAND_DISPLAY; rm -rf \"$3\"; export RAVEN_PREFIX=\"$3\"; \"$1\" --run-process --execution=native --timeout-ms=60000 \"$2\" -- --schedule | grep -q \"Native entry returned 0 \"; \"$1\" --reboot; \"$1\" --run-process --execution=native --timeout-ms=60000 \"$2\" | grep -q \"Native entry returned 0 \"; echo PASS: delayed moves and RunOnce carried out at the restart" pending $<TARGET_FILE:raven> ${fixture}/pending.exe ${fixture}/pending-prefix)
                 set_tests_properties(native_pending_restart_${installer_arch} PROPERTIES TIMEOUT 300 PASS_REGULAR_EXPRESSION "PASS: delayed moves")
                 # Prefix snapshots: an installer runs, the prefix is kept before it, and one command takes the prefix back to it.
                 if(installer_arch STREQUAL x86)
@@ -3287,6 +3295,18 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
             set_tests_properties(native_string_resource_contract PROPERTIES TIMEOUT 15)
             add_test(NAME native_string_resource_cli COMMAND raven --run-process --execution=native ${STRING_FIXTURES}/client.exe)
             set_tests_properties(native_string_resource_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+            if(RAVEN_MINGW32 AND RAVEN_WINDRES32)
+                add_custom_command(OUTPUT ${STRING_FIXTURES}/x86/pointer.exe
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${STRING_FIXTURES}/x86
+                    COMMAND ${RAVEN_WINDRES32} ${LOADER_SOURCES}/string_resources.rc ${STRING_FIXTURES}/x86/strings.o
+                    COMMAND ${RAVEN_MINGW32} -O2 -nostdlib -fno-stack-protector -Wl,--entry,_raven_entry
+                        -o ${STRING_FIXTURES}/x86/pointer.exe ${LOADER_SOURCES}/string_pointer_client.c ${STRING_FIXTURES}/x86/strings.o -luser32
+                    DEPENDS ${LOADER_SOURCES}/string_resources.rc ${LOADER_SOURCES}/string_pointer_client.c VERBATIM)
+                add_custom_target(string_pe32_fixture ALL DEPENDS ${STRING_FIXTURES}/x86/pointer.exe)
+                add_test(NAME native_x86_string_pointer_cli COMMAND raven --run-process --execution=native ${STRING_FIXTURES}/x86/pointer.exe)
+                set_tests_properties(native_x86_string_pointer_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                    ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/x86-prefix)
+            endif()
             set(RESOURCE_FIXTURES ${CMAKE_CURRENT_BINARY_DIR}/resource-fixtures)
             add_custom_command(OUTPUT ${RESOURCE_FIXTURES}/resources.o
                 COMMAND ${CMAKE_COMMAND} -E make_directory ${RESOURCE_FIXTURES}

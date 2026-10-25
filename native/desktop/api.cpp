@@ -430,9 +430,11 @@ uint64_t NativeDesktop::load_string(std::span<const uint64_t> args)
 			offset += size_t(length) * 2;
 	}
 	if (!capacity) {
+		// The buffer holds one pointer as wide as the program's; a wider write overruns the caller's stack.
 		std::array<uint8_t, 8> pointer{};
-		put(pointer, 0, table->address + offset, 8);
-		process.write_memory(args[2], pointer);
+		const size_t width = process.mode() == NativeMode::x86 ? 4 : 8;
+		put(pointer, 0, table->address + offset, width);
+		process.write_memory(args[2], std::span(pointer).first(width));
 		return length;
 	}
 	const size_t count = std::min(size_t(length), size_t(capacity - 1));

@@ -37,9 +37,10 @@ int main(int argc,char **argv)
 			presentation.remove=[&](uint64_t handle) { check(handle==window,"removed wrong surface"); ++removed; };
 			unsigned waits=0;
 			bool closed=false;
-			presentation.poll=[&](std::chrono::milliseconds budget) {
+			// A blocked GetMessage looks at the host without a budget of its own, so the event comes on the first look after the frame.
+			presentation.poll=[&](std::chrono::milliseconds) {
 				std::vector<raven::DesktopEvent> events;
-				if (fixture>=3 && frames==2 && !closed && budget.count()>0) {
+				if (fixture>=3 && frames==2 && !closed) {
 					++waits; closed=true;
 					if (fixture==3) events.push_back({window,0x10});
 					else {

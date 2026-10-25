@@ -13,12 +13,19 @@ import json
 import re
 import subprocess
 import sys
+import shutil
 import tempfile
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("marshal", Path(__file__).with_name("generate-vulkan-marshal.py"))
 marshal = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(marshal)
+
+
+def binutil(compiler, name):
+    """The MinGW tool beside COMPILER, or on the path when the compiler is reached through a wrapper directory such as ccache's."""
+    tool = Path(compiler).with_name(Path(compiler).name.replace("gcc", name))
+    return tool if tool.exists() else shutil.which(tool.name) or tool
 
 
 def compute_layouts(registry, header_text, compiler, include):
@@ -51,7 +58,7 @@ def compute_layouts(registry, header_text, compiler, include):
             sys.stderr.write(result.stderr[-4000:])
             sys.exit(1)
         # The table is the only initialised data of the object that starts with the marker; its bytes are the values in order.
-        subprocess.run([Path(compiler).with_name(Path(compiler).name.replace("gcc", "objcopy")), "-O", "binary", "-j", ".rdata", str(objfile), str(raw)], check=True)
+        subprocess.run([binutil(compiler, "objcopy"), "-O", "binary", "-j", ".rdata", str(objfile), str(raw)], check=True)
         data = raw.read_bytes()
     values = [int.from_bytes(data[at:at + 4], "little") for at in range(0, len(data) - len(data) % 4, 4)]
     values = values[values.index(0xC0FFEE01) + 1:]

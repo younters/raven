@@ -38,9 +38,9 @@ int main(int argc,char **argv)
 			++frames;
 		};
 		presentation.remove=[&](uint64_t handle) { check(handle==window,"removed wrong keyboard surface"); ++removed; };
-		presentation.poll=[&](std::chrono::milliseconds budget) {
+		presentation.poll=[&](std::chrono::milliseconds) {
 			std::vector<raven::DesktopEvent> events;
-			if (budget.count()>0 && frames==2 && !typed) {
+			if (frames==2 && !typed) {
 				typed=true; raven::DesktopEvent layout{0,0}; layout.kind=raven::DesktopEventKind::keymap; layout.keymap=keymap;
 				events.push_back(std::move(layout));
 				raven::DesktopEvent focused{window,0,0,0,raven::DesktopEventKind::keyboard_focus};

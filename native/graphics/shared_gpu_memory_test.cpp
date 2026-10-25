@@ -62,7 +62,9 @@ int main(int argc, char **argv)
 		check(vkCreateInstance(&instance_info, nullptr, &instance) == VK_SUCCESS, "cannot create Vulkan instance");
 		uint32_t count = 1;
 		VkPhysicalDevice physical;
-		check(vkEnumeratePhysicalDevices(instance, &count, &physical) == VK_SUCCESS && count, "cannot select Vulkan device");
+		// The first device serves; with more than one installed the enumeration reports the rest as incomplete.
+		const auto enumerated = vkEnumeratePhysicalDevices(instance, &count, &physical);
+		check((enumerated == VK_SUCCESS || enumerated == VK_INCOMPLETE) && count, "cannot select Vulkan device");
 		VkPhysicalDeviceProperties properties;
 		vkGetPhysicalDeviceProperties(physical, &properties);
 		std::cout << "Actual GPU: " << properties.deviceName << '\n';
