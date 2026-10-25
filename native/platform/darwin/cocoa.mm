@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -177,6 +178,8 @@ struct CocoaPresentation::State {
 	bool native_frames = true;
 	std::map<uint64_t, std::pair<std::array<int32_t, 4>, uint32_t>> frames;
 	bool presenting = false;
+	// RAVEN_TRACE_COCOA=1 reports sizes and events.
+	const bool trace = std::getenv("RAVEN_TRACE_COCOA") != nullptr;
 	double wheel = 0, horizontal_wheel = 0;
 
 	xkb_context *context = nullptr;
@@ -593,7 +596,8 @@ struct CocoaPresentation::State {
 		window.backgroundColor = NSColor.blackColor;
 		RavenView *view = [[RavenView alloc] initWithFrame:NSMakeRect(0, 0, width, height)];
 		view.wantsLayer = YES;
-		view.layer.contentsGravity = kCAGravityTopLeft;
+		// A layer's own geometry is not flipped: its bottom-left is the window's top-left.
+		view.layer.contentsGravity = kCAGravityBottomLeft;
 		view.layer.magnificationFilter = kCAFilterNearest;
 		view.layer.contentsScale = 1;
 		view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
@@ -663,6 +667,8 @@ struct CocoaPresentation::State {
 		target->pending_width = width;
 		target->pending_height = height;
 		target->resized = true;
+		if (trace)
+			std::fprintf(stderr, "cocoa: host resized %llx to frame %ux%u\n", (unsigned long long)handle, width, height);
 	}
 
 	void register_window(uint64_t handle, Surface &target)
@@ -736,9 +742,9 @@ struct CocoaPresentation::State {
 			target->window.title = [NSString stringWithUTF8String:std::string(title).c_str()] ?: @"";
 			if (target->close_posted)
 				target->close_posted = false;
-			// A maximized window waits for the program to draw it at the size it was told.
-			if (target->maximized && target->pending_width && (target->pending_width != width || target->pending_height != height))
-				return;
+			if (trace)
+				std::fprintf(stderr, "cocoa: present %llx %ux%u (asked %ux%u)\n", (unsigned long long)handle, width, height,
+					target->pending_width, target->pending_height);
 			if (target->pending_width == width && target->pending_height == height)
 				target->resized = false;
 			target->width = width;
@@ -943,6 +949,11 @@ struct CocoaPresentation::State {
 		}
 		pump(budget);
 		events.swap(pending);
+		if (trace)
+			for (const auto &event : events)
+				if (event.kind == DesktopEventKind::resize || event.kind == DesktopEventKind::message)
+					std::fprintf(stderr, "cocoa: event %d window %llx message %x x %d y %d\n", int(event.kind),
+						(unsigned long long)event.window, event.message, event.x, event.y);
 		for (auto &[handle, window] : surfaces)
 			if (window->resized && !window->popup) {
 				events.push_back({handle, 0, 0, 0, DesktopEventKind::resize, int32_t(window->pending_width), int32_t(window->pending_height)});

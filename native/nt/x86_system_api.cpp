@@ -18,6 +18,7 @@ constexpr std::array exported{
 	Export{"kernel32.dll", "TryAcquireSRWLockShared", 1}, Export{"kernel32.dll", "InitializeConditionVariable", 1},
 	Export{"kernel32.dll", "SleepConditionVariableSRW", 4}, Export{"kernel32.dll", "WakeConditionVariable", 1},
 	Export{"kernel32.dll", "WakeAllConditionVariable", 1}, Export{"kernel32.dll", "TlsAlloc", 0}, Export{"kernel32.dll", "TlsFree", 1},
+	Export{"kernel32.dll", "WaitOnAddress", 4}, Export{"kernel32.dll", "WakeByAddressSingle", 1}, Export{"kernel32.dll", "WakeByAddressAll", 1},
 	Export{"kernel32.dll", "TlsGetValue", 1}, Export{"kernel32.dll", "TlsSetValue", 2}, Export{"kernel32.dll", "CreateSemaphoreA", 4},
 	Export{"kernel32.dll", "CreateSemaphoreW", 4}, Export{"kernel32.dll", "ReleaseSemaphore", 3},
 	Export{"kernel32.dll", "WaitForMultipleObjects", 4},
@@ -210,6 +211,25 @@ bool NativeX86System::dispatch(std::string_view name)
 			if (!all)
 				break;
 		}
+		process.return_api(0);
+	} else if (name == "WaitOnAddress") {
+		// As for 64-bit programs: a waiting thread looks at the memory itself, so a wake needs no bookkeeping.
+		const size_t size = uint32_t(args[2]);
+		if (size != 1 && size != 2 && size != 4 && size != 8) {
+			fail(87);
+		} else {
+			const uint64_t address = uint32_t(args[0]);
+			const auto expected = process.read_memory(uint32_t(args[1]), size);
+			std::optional<std::chrono::steady_clock::time_point> wake;
+			if (uint32_t(args[3]) != UINT32_MAX)
+				wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(uint32_t(args[3]));
+			auto &memory = process;
+			if (threads.block([&memory, address, size, expected] { return memory.read_memory(address, size) != expected; }, wake))
+				process.return_api(1);
+			else
+				fail(1460);
+		}
+	} else if (name == "WakeByAddressSingle" || name == "WakeByAddressAll") {
 		process.return_api(0);
 	} else if (name == "TlsAlloc") {
 		const auto free = std::find(tls_used.begin(), tls_used.end(), false);
