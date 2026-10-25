@@ -6,13 +6,18 @@ This tree is a fork that keeps tracking upstream, so the port lives here and cha
 ## Building
 
 ```sh
-brew install cmake ninja python mingw-w64 lld openssl@3 libpng freetype pixman
-cmake -S . -B build-macos -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
-cmake --build build-macos
-ctest --test-dir build-macos -j8
+native/platform/darwin/setup.sh          # Homebrew packages, every guest component, Skia and fonts, then configure and build build-macos
+ctest --test-dir build-macos -j1         # tests share prefixes: one at a time
+RAVEN_PREFIX=~/.local/share/raven/app build-macos/native/raven --run-process --execution=native --timeout-ms=86400000 \
+	--desktop=macos program.exe
 ```
 
-The Vulkan loader and `vk.xml` come from the LunarG SDK, which installs them under `/usr/local`.
+`setup.sh` puts what it downloads and builds beside the checkout (`../raven-components`, `../raven-skia`) and skips what is already
+there. The Vulkan loader, `vk.xml` and MoltenVK come from the LunarG SDK, which installs them under `/usr/local`.
+
+Never run `raven` or `raven-bootstrap` under lldb: debugging a process that starts a Rosetta-translated child can wedge `oahd`, after
+which no x86_64 program starts until `sudo launchctl kickstart -k system/com.apple.oahd`. For a backtrace of the host, send it
+`SIGABRT` and read its report in `~/Library/Logs/DiagnosticReports`.
 
 ## Layout
 
