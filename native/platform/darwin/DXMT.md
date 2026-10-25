@@ -144,3 +144,45 @@ only after a library is loaded. The shared-mapping regression test currently fai
 Linux's `/proc/self/fd`; CPU, memory and x86 contracts pass (one CPU cleanup run failed transiently and passed on rerun).
 
 No debugger is needed or supported for these tests. Never launch the runtime or agent under lldb/debugserver on this host.
+
+
+## Parallel integration verification (2026-10-25)
+
+The saved four-part DXMT series and interrupted parallel work were restored, reviewed and rebased onto `macos` at `c2caa26`.
+The WIP commit was replaced with ordinary implementation/test commits. Build and test commands used `-j8` and `ctest -j1
+--timeout 120` respectively. The adapter was rebuilt only in `/tmp/raven-dxmt-parallel-overlay/dxmt`; shared component directories
+were not modified. Configure with `-DRAVEN_DXMT_ROOT=/tmp/raven-dxmt-parallel-overlay/dxmt` to use that overlay. The existing
+DXVK/vkd3d CMake roots were enabled in both comparisons so their unsupported fixtures remained visible.
+
+The untouched macOS build's full baseline registered 290 tests: 257 passed, 29 failed, three skipped and one disabled. This build
+predated the concurrent `_EH_prolog` and context-menu commits. The first complete integrated run, on the `_EH_prolog` base, registered
+307 tests: 273 passed, 30 failed, three skipped and one disabled. No previously passing baseline test regressed in that run.
+The final complete run after rebasing onto `c2caa26` had 272 passes, 31 failures, three skips and one disabled test. Its extra failure
+was `native_dynamic_loader_contract` (generic failure-contract mismatch); it passed in the baseline and first integrated full run.
+That test gives each runtime case a 500 ms deadline. The raw failed run is retained rather than replacing its count with rerun results.
+
+With `RAVEN_PARALLEL=1`, all 23 selected Darwin/CPU/DXMT tests completed: 22 passed and only the already-known DXMT tessellation
+pixel comparison failed. All 14 DXMT workloads that passed on the old branch passed in both modes: D3D10/10.1 device/readback,
+D3D11 device/readback, pool scopes, pacing, triangle, window, deferred, geometry, texturing, MSAA, compute, MRT/mipmap/indirect/query,
+fullscreen and present-rate. Both gate registrations and CPU, Darwin parallel, compatibility, runtime, system API and cursor/DPI
+contracts passed. The expanded pool fixture holds native scopes on two Windows threads and releases the older scope while the
+other thread still owns an autoreleased string.
+
+The window fixture matched imported IOSurface pixels and actual Cocoa screen captures against GPU readback at 256x256 and 320x200.
+Each mode presented all 310 frames with zero presentation errors. Logs, JUnit results and separate screenshots are saved under
+`build/dxmt-validation/{default,final-default,parallel}/`. The final recheck log is saved alongside those directories.
+
+The 29 baseline failures comprise 23 DXVK/vkd3d hardware fixtures and six existing contracts: memory, layout-failure component,
+coordinates, desktop icon, string resources and DLL lifecycle. DXMT tessellation remains strict and enabled with its documented
+clear-only output. Hardware vblank synchronization, HDR, WoW64 and cross-process D3D resource sharing retain the limitations above.
+
+Existing files outside the Darwin platform directory have these final line deltas against `macos`:
+
+- `native/cpu/native_cpu.h`: +12 (Darwin-only declarations).
+- `native/main.cpp`: +8 (Darwin module lookup).
+- `native/nt/providers.cpp`: +31 (Darwin dispatch, events and presentation integration).
+- `native/graphics/backends.json`: +11 (pinned driver manifest).
+- `scripts/provision-graphics.py`: +7/-1 (Darwin provisioner integration).
+
+The new `scripts/provision-dxmt.py` has 78 lines. New DXMT provenance and license files total 861 lines. There is no final diff in
+`cocoa.mm`: IOSurface layer scaling lives entirely in `dxmt/presentation.mm` and inherits the existing graphics layer's contentsScale.
