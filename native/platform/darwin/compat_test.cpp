@@ -125,7 +125,8 @@ static void guest_memory(const char *bootstrap)
 		const size_t size = (size_t(width) * 7 * 4 + 4095) & ~size_t(4095);
 		raven::SharedPixels pixels(size, width, 7);
 		const auto surface = raven::darwin::pixel_surface(pixels.descriptor());
-		check(surface && raven::darwin::pixel_surface(pixels.data()) == surface &&
+		const bool copy = std::getenv("RAVEN_COCOA_PRESENT") && std::string_view(std::getenv("RAVEN_COCOA_PRESENT")) == "copy";
+		check(copy ? !surface : surface && raven::darwin::pixel_surface(pixels.data()) == surface &&
 			IOSurfaceGetBytesPerRow(surface) == size_t(width) * 4, "window IOSurface stride or registry differs");
 		const auto mapped = process.map_shared(pixels.descriptor(), size);
 		pixels.data()[size - 1] = 0x73;
@@ -135,8 +136,8 @@ static void guest_memory(const char *bootstrap)
 		const auto writer = process.map_memory(4096, PROT_READ | PROT_WRITE | PROT_EXEC);
 		const std::array<uint8_t, 7> write{0xc6, 0x01, 0x51, 0x0f, 0xb6, 0x01, 0xc3};
 		process.write_memory(writer, write);
-		const std::array<uint64_t, 1> args{mapped};
-		check(process.call(writer, args, std::chrono::seconds(1)).value == 0x51 && pixels.data()[0] == 0x51,
+		const std::array<uint64_t, 1> args{mapped + size - 1};
+		check(process.call(writer, args, std::chrono::seconds(1)).value == 0x51 && pixels.data()[size - 1] == 0x51,
 			"guest did not write directly into the IOSurface");
 		process.unmap_memory(writer);
 		process.unmap_memory(mapped);
