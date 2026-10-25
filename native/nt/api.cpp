@@ -177,6 +177,14 @@ std::optional<std::pair<uint32_t,ApiHandler>> ApiRegistry::find(std::string_view
 	return std::make_pair(found->second.arguments, found->second.handler);
 }
 
+std::vector<std::pair<std::string, uint32_t>> ApiRegistry::exports() const
+{
+	std::vector<std::pair<std::string, uint32_t>> result;
+	for (const auto &[name, entry] : entries)
+		result.emplace_back(name, entry.arguments);
+	return result;
+}
+
 const char *api_in_progress = "";
 
 bool ApiRegistry::dispatch(NativeProcess &process, NativeEnvironment &environment, std::string_view name, bool widen_handles) const

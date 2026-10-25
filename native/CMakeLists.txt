@@ -1698,6 +1698,20 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                         add_test(NAME native_graphics_parity_x${width} COMMAND raven --run-process --execution=native --timeout-ms=30000 ${graphics_parity_client})
                         set_tests_properties(native_graphics_parity_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                     endif()
+                    set(library_parity_client ${CMAKE_CURRENT_BINARY_DIR}/library-parity${width}.exe)
+                    add_custom_command(OUTPUT ${library_parity_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${library_parity_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/library_parity_client.c
+                            -lkernel32 -ladvapi32 -lshell32 -lwininet -lws2_32 -lcrypt32 -loleaut32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/library_parity_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${library_parity_client})
+                    if((width EQUAL 64 AND RAVEN_CONTROLS_COMPONENT_DIR AND RAVEN_INSTALLER_COMPONENT_DIR) OR
+                        (width EQUAL 32 AND RAVEN_CONTROLS32_COMPONENT_DIR AND RAVEN_INSTALLER32_COMPONENT_DIR))
+                        add_test(NAME native_library_parity_x${width} COMMAND raven --run-process --execution=native --timeout-ms=30000 ${library_parity_client})
+                        set_tests_properties(native_library_parity_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                            ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/library-parity-prefix${width})
+                    endif()
                     set(folder_browser_client ${CMAKE_CURRENT_BINARY_DIR}/folder-browser${width}.exe)
                     add_custom_command(OUTPUT ${folder_browser_client}
                         COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
@@ -2566,6 +2580,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                         set_tests_properties(native_x86_${component_client} PROPERTIES TIMEOUT 40 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                     endif()
                 endforeach()
+                add_test(NAME native_x86_shared_export_handlers COMMAND ${Python3_EXECUTABLE}
+                    ${PROJECT_SOURCE_DIR}/scripts/native-api-inventory-test.py $<TARGET_FILE:raven>
+                    ${CMAKE_CURRENT_BINARY_DIR}/x86-kernel-client.exe ${PROJECT_SOURCE_DIR}/native/nt/x86_process.cpp)
+                set_tests_properties(native_x86_shared_export_handlers PROPERTIES TIMEOUT 40)
                 add_test(NAME native_x86_kernel_cli COMMAND raven --run-process --execution=native
                     ${CMAKE_CURRENT_BINARY_DIR}/x86-kernel-client.exe)
                 set_tests_properties(native_x86_kernel_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")

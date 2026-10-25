@@ -1228,6 +1228,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_profile_api(shared_api, profile);
 	register_ansi_adapters(shared_api);
 	register_legacy_file_api(shared_api);
+	write_native_api_inventory(modules, {&shared_api});
 	windows.set_message_wait([&guest_threads](std::function<bool()> ready,std::chrono::steady_clock::time_point until) {
 		HostWait waiting;
 		guest_threads.block(std::move(ready),until);

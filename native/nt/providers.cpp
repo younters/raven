@@ -1526,6 +1526,29 @@ static uint64_t provider_base(const ModuleSet &modules, uint32_t size)
 	}
 }
 
+void write_native_api_inventory(const ModuleSet &modules, std::initializer_list<const ApiRegistry *> registries)
+{
+	const char *path = std::getenv("RAVEN_API_INVENTORY");
+	if (!path)
+		return;
+	std::ofstream output(path);
+	if (!output)
+		throw std::runtime_error("cannot write native API inventory");
+	for (const auto *registry : registries)
+		for (const auto &[name, words] : registry->exports())
+			output << "host\t" << name << '\t' << words << '\n';
+	for (const auto &[name, module] : modules.all())
+		for (const auto &symbol : module->exports) {
+			if (!symbol.address && symbol.forwarder.empty())
+				continue;
+			const auto kind = module->runtime_api ? "provider\t" : "guest\t";
+			if (symbol.names.empty())
+				output << kind << name << "\t#" << symbol.ordinal << '\t' << symbol.forwarder << '\n';
+			for (const auto &exported : symbol.names)
+				output << kind << name << '\t' << exported << '\t' << symbol.forwarder << '\n';
+		}
+}
+
 NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	const std::string &bootstrap, std::chrono::milliseconds timeout,
 	std::function<std::optional<ModuleBytes>(std::string_view)> source,
@@ -2445,6 +2468,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_profile_api(api_registry, profile);
 	register_ansi_adapters(api_registry);
 	register_legacy_file_api(api_registry);
+	write_native_api_inventory(modules, {&api_registry, &desktop_api});
 	std::vector<const PEModule *> attached;
 	attached.reserve(order.size());
 	const auto notify_tls = [&](const PEModule &module, uint64_t reason) {
