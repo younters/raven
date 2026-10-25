@@ -541,9 +541,9 @@ struct CocoaPresentation::State {
 	{
 		if (!target.native || !(target.style & 0x40000U) || target.maximized || target.popup)
 			return 0;
-		constexpr CGFloat zone = 5;
+		constexpr CGFloat zone = 5, outside = 6;
 		const NSRect frame = target.window.frame;
-		if (!NSPointInRect(screen, NSInsetRect(frame, -1, -1)))
+		if (!NSPointInRect(screen, NSInsetRect(frame, -outside, -outside)))
 			return 0;
 		int edges = 0;
 		if (screen.x < NSMinX(frame) + zone)
@@ -709,10 +709,18 @@ struct CocoaPresentation::State {
 				return false;
 			}
 		}
-		if (Surface *under = surface(handle_of(event.window))) {
+		// A press in the margin just outside a window's edges may come addressed to no window, or to the one behind.
+		uint64_t edge_window = handle_of(event.window);
+		if (event.type == NSEventTypeLeftMouseDown && !(surface(edge_window) && edges_at(*surface(edge_window), NSEvent.mouseLocation)))
+			for (auto &[handle, window] : surfaces)
+				if (window->window.visible && edges_at(*window, NSEvent.mouseLocation)) {
+					edge_window = handle;
+					break;
+				}
+		if (Surface *under = surface(edge_window)) {
 			const int edges = edges_at(*under, NSEvent.mouseLocation);
 			if (event.type == NSEventTypeLeftMouseDown && edges) {
-				resizing = handle_of(event.window);
+				resizing = edge_window;
 				resize_edges = edges;
 				resize_start = NSEvent.mouseLocation;
 				resize_from = under->window.frame;
@@ -859,8 +867,11 @@ struct CocoaPresentation::State {
 			mask |= NSWindowStyleMaskClosable;
 		if (style & 0x20000U)
 			mask |= NSWindowStyleMaskMiniaturizable;
-		// Not NSWindowStyleMaskResizable: macOS resizes in a loop of its own, during which the program could not draw. The edges are
-		// followed here instead, a frame for each movement (see begin_resize).
+		// Resizable, so the zoom button, window tiling and window managers such as Magnet and Rectangle can resize it; those resizes
+		// reach the program like any other. A drag of the edges never starts AppKit's own resize loop, during which the program could
+		// not draw: edges_at claims the edges and the margin AppKit resizes from outside them, and they are followed here instead.
+		if (style & 0x40000U)
+			mask |= NSWindowStyleMaskResizable;
 		return mask;
 	}
 
@@ -871,6 +882,8 @@ struct CocoaPresentation::State {
 			styleMask:mask backing:NSBackingStoreBuffered defer:NO];
 		window.takesKeyboard = keyboard;
 		window.releasedWhenClosed = NO;
+		// The zoom button maximizes, as the program's own would; it does not take the window full screen.
+		window.collectionBehavior = (window.collectionBehavior & ~NSWindowCollectionBehaviorFullScreenPrimary) | NSWindowCollectionBehaviorFullScreenNone;
 		window.acceptsMouseMovedEvents = YES;
 		window.hasShadow = YES;
 		window.opaque = YES;
