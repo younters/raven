@@ -1,12 +1,85 @@
 #include "desktop/shared_pixels.h"
+#include "shared_surface.h"
+
+#include <map>
+#include <mutex>
+#include <cstdlib>
 
 #include <fcntl.h>
 #include <new>
 #include <stdexcept>
+#include <string_view>
 #include <sys/mman.h>
 #include <unistd.h>
 
 namespace raven {
+
+namespace {
+std::mutex surfaces_mutex;
+std::map<int, IOSurfaceRef> surfaces;
+}
+
+IOSurfaceRef darwin::create_pixel_surface(uint32_t width, uint32_t height, size_t stride, size_t size)
+{
+	CFMutableDictionaryRef properties = CFDictionaryCreateMutable(nullptr, 0, &kCFTypeDictionaryKeyCallBacks,
+		&kCFTypeDictionaryValueCallBacks);
+	const auto set = [&](CFStringRef key, int64_t value) {
+		CFNumberRef number = CFNumberCreate(nullptr, kCFNumberSInt64Type, &value);
+		CFDictionarySetValue(properties, key, number);
+		CFRelease(number);
+	};
+	set(kIOSurfaceWidth, width);
+	set(kIOSurfaceHeight, height);
+	set(kIOSurfaceBytesPerElement, 4);
+	set(kIOSurfaceBytesPerRow, stride);
+	set(kIOSurfaceAllocSize, size);
+	set(kIOSurfacePixelFormat, uint32_t('BGRA'));
+	IOSurfaceRef result = IOSurfaceCreate(properties);
+	CFRelease(properties);
+	return result;
+}
+
+IOSurfaceRef darwin::pixel_surface(int descriptor)
+{
+	std::lock_guard lock(surfaces_mutex);
+	const auto found = surfaces.find(descriptor);
+	return found == surfaces.end() ? nullptr : found->second;
+}
+
+IOSurfaceRef darwin::pixel_surface(const uint8_t *address)
+{
+	std::lock_guard lock(surfaces_mutex);
+	for (const auto &[descriptor, surface] : surfaces)
+		if (IOSurfaceGetBaseAddress(surface) == address) return surface;
+	return nullptr;
+}
+
+SharedPixels::SharedPixels(size_t size, uint32_t width, uint32_t height) : SharedPixels(size)
+{
+	// Parallel guest threads can write pixels while the host presents. Until GDI has a producer fence,
+	// retain the existing snapshot path in that mode (and for the explicit comparison backend).
+	const char *present = std::getenv("RAVEN_COCOA_PRESENT");
+	if ((present && std::string_view(present) == "copy") || std::getenv("RAVEN_PARALLEL")) return;
+	IOSurfaceRef storage = darwin::create_pixel_surface(width, height, size_t(width) * 4, size);
+	if (!storage) return;
+	if (IOSurfaceGetBytesPerRow(storage) != size_t(width) * 4 || IOSurfaceGetAllocSize(storage) < size ||
+		IOSurfaceLock(storage, 0, nullptr) != kIOReturnSuccess) {
+		CFRelease(storage);
+		return;
+	}
+	try {
+		std::lock_guard lock(surfaces_mutex);
+		surfaces.emplace(file, storage);
+	} catch (...) {
+		IOSurfaceUnlock(storage, 0, nullptr);
+		CFRelease(storage);
+		throw;
+	}
+	munmap(mapping, length);
+	mapping = static_cast<uint8_t *>(IOSurfaceGetBaseAddress(storage));
+	surface = storage;
+}
+
 
 SharedPixels::SharedPixels(size_t size) : length(size)
 {
@@ -46,7 +119,14 @@ SharedPixels::SharedPixels(int section, uint64_t offset, size_t size) : length(s
 
 SharedPixels::~SharedPixels()
 {
-	if (mapping) {
+	if (surface) {
+		{
+			std::lock_guard lock(surfaces_mutex);
+			surfaces.erase(file);
+		}
+		IOSurfaceUnlock(static_cast<IOSurfaceRef>(surface), 0, nullptr);
+		CFRelease(static_cast<IOSurfaceRef>(surface));
+	} else if (mapping) {
 		const size_t delta = view_offset % size_t((sysconf)(_SC_PAGESIZE));
 		munmap(mapping - delta, length + delta);
 	}

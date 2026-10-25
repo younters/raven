@@ -148,7 +148,11 @@ uint64_t NativeWindows::surface_dc(uint64_t handle)
 		address=spare->second.address;
 		spare_surfaces.erase(spare);
 	} else {
+		#ifdef __APPLE__
+		shared=std::make_shared<SharedPixels>(size,uint32_t(width),uint32_t(height));
+#else
 		shared=std::make_shared<SharedPixels>(size);
+#endif
 		// A resized window shows what it showed before until it draws again, as on Windows, instead of a blank surface.
 		if (const auto spare=spare_surfaces.find(handle); spare!=spare_surfaces.end() && spare->second.pixels && spare->second.width) {
 			const auto &old=spare->second;
