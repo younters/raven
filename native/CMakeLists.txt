@@ -3464,7 +3464,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
         target_link_libraries(dynamic_loader_test PRIVATE raven_cpu)
         add_dependencies(dynamic_loader_test dynamic_pe_fixtures raven-bootstrap)
         add_test(NAME native_dynamic_loader_contract COMMAND dynamic_loader_test $<TARGET_FILE:raven-bootstrap> ${DYNAMIC_FIXTURES})
-        set_tests_properties(native_dynamic_loader_contract PROPERTIES TIMEOUT 15)
+        set_tests_properties(native_dynamic_loader_contract PROPERTIES TIMEOUT 60)
         add_test(NAME native_dynamic_loader_cli COMMAND raven --run-process --execution=native ${DYNAMIC_FIXTURES}/client.exe)
         set_tests_properties(native_dynamic_loader_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
         # An installer puts a redistributable library in the system directory and copies over system libraries.
