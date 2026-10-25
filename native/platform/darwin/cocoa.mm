@@ -857,6 +857,7 @@ struct CocoaPresentation::State {
 
 	void register_window(uint64_t handle, Surface &target)
 	{
+		std::erase_if(numbers, [&](const auto &entry) { return entry.second == handle && entry.first != target.window.windowNumber; });
 		numbers[target.window.windowNumber] = handle;
 	}
 
@@ -897,6 +898,8 @@ struct CocoaPresentation::State {
 				[target->window standardWindowButton:NSWindowZoomButton].enabled = (style & 0x10000U) != 0;
 				[target->window setFrame:[target->window frameRectForContentRect:content] display:NO];
 				presenting = false;
+				// AppKit can replace the backing window number when its style changes.
+				register_window(handle, *target);
 			}
 			if (!target) {
 				auto created = std::make_unique<Surface>();
@@ -914,7 +917,6 @@ struct CocoaPresentation::State {
 				[created->window standardWindowButton:NSWindowZoomButton].enabled = (style & 0x10000U) != 0;
 				created->width = width;
 				created->height = height;
-				created->maximized = maximized.contains(handle);
 				if (NSEqualPoints(cascade, NSZeroPoint))
 					[created->window center];
 				cascade = [created->window cascadeTopLeftFromPoint:cascade];
@@ -922,7 +924,7 @@ struct CocoaPresentation::State {
 				surfaces.emplace(handle, std::move(created));
 				[target->window makeKeyAndOrderFront:nil];
 				register_window(handle, *target);
-				if (target->maximized)
+				if (maximized.contains(handle))
 					maximize(handle, true);
 			}
 			target->window.title = [NSString stringWithUTF8String:std::string(title).c_str()] ?: @"";
@@ -938,9 +940,14 @@ struct CocoaPresentation::State {
 				target->told_answered = true;
 				target->answer = target->answer * 0.75 + (target->last_present - target->told) * 0.25;
 			}
+			// A frame drawn before a host resize (including maximize) must not undo
+			// that geometry while the guest is still drawing its requested size.
+			const bool stale = target->pending_width && (width != target->pending_width || height != target->pending_height) &&
+				width == target->width && height == target->height;
 			target->width = width;
 			target->height = height;
-			set_size(*target, width, height);
+			if (!stale)
+				set_size(*target, width, height);
 			show(*target, pixels, width, height, alpha_windows.contains(handle));
 			if (dump_directory && dumped < 400) {
 				const auto path = std::string(dump_directory) + "/frame-" + std::to_string(dumped++) + "-" + std::to_string(width) + "x" +
