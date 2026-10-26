@@ -1,0 +1,420 @@
+#!/usr/bin/env python3
+"""Finder/LaunchServices integration. No third-party Python modules or guest execution."""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import plistlib
+import re
+import shlex
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+import uuid
+import fcntl
+
+HERE = Path(__file__).resolve().parent
+LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+APPS = Path(os.environ.get('RAVEN_APPS_DIR', '~/Applications/Raven')).expanduser().absolute()
+
+
+def u16(b, p=0):
+    return struct.unpack_from('<H', b, p)[0]
+
+
+def u32(b, p=0):
+    return struct.unpack_from('<I', b, p)[0]
+
+
+def zstr(b, p, wide=False):
+    if not 0 <= p < len(b):
+        raise ValueError('string outside shortcut')
+    end = p
+    step = 2 if wide else 1
+    while end + step <= len(b) and b[end:end+step] != b'\0' * step:
+        end += step
+    if end + step > len(b):
+        raise ValueError('unterminated string')
+    return b[p:end].decode('utf-16le' if wide else 'cp1252', errors='replace')
+
+
+def idlist_path(data):
+    """Filesystem shell items: drive, file entries and their BEEF0004 long names.
+
+    Virtual namespace/network items are deliberately not guessed into host paths.
+    """
+    parts = []
+    pos = 0
+    while pos + 2 <= len(data):
+        size = u16(data, pos)
+        if not size:
+            break
+        if size < 3 or pos + size > len(data):
+            raise ValueError('invalid shell item')
+        item = data[pos:pos+size]
+        kind = item[2]
+        if kind & 0x70 == 0x20:
+            drive = re.search(rb'[A-Za-z]:\\', item[3:])
+            if drive:
+                parts = [drive.group().decode()]
+        elif kind & 0x70 == 0x30 and parts:
+            name = zstr(item, 14, bool(kind & 4))
+            signature = item.find(b'\x04\x00\xef\xbe')
+            if signature >= 4:
+                start = signature - 4
+                version = u16(item, start + 2)
+                offset = 18 if version < 7 else (36 if version == 7 else (42 if version == 8 else 46))
+                if start + offset < len(item):
+                    name = zstr(item, start + offset, True) or name
+            parts.append(name)
+        pos += size
+    return '\\'.join(parts).replace('\\\\', '\\') if parts else ''
+
+
+def parse_link(path):
+    b = path.read_bytes()
+    if len(b) < 76 or u32(b) != 76 or b[4:20] != uuid.UUID('00021401-0000-0000-c000-000000000046').bytes_le:
+        raise ValueError('not an MS-SHLLINK file')
+    flags, pos = u32(b, 20), 76
+    result = {'target': '', 'arguments': '', 'working': '', 'icon': '', 'description': '', 'relative': '',
+              'icon_index': struct.unpack_from('<i', b, 56)[0]}
+    if flags & 1:
+        size = u16(b, pos)
+        result['target'] = idlist_path(b[pos+2:pos+2+size])
+        pos += 2 + size
+    if flags & 2:
+        size = u32(b, pos)
+        info = b[pos:pos+size]
+        if size < 28 or len(info) != size or u32(info, 4) < 28:
+            raise ValueError('invalid LinkInfo')
+        if u32(info, 8) & 1:
+            wide = u32(info, 4) >= 36 and u32(info, 28) != 0
+            base = zstr(info, u32(info, 28 if wide else 16), wide)
+            suffix_offset = u32(info, 32 if wide else 24)
+            suffix = zstr(info, suffix_offset, wide) if suffix_offset else ''
+            result['target'] = base
+            if suffix and not base.lower().endswith(suffix.lower()):
+                result['target'] = base.rstrip('\\') + '\\' + suffix.lstrip('\\')
+        pos += size
+    for flag, key in [(4, 'description'), (8, 'relative'), (16, 'working'), (32, 'arguments'), (64, 'icon')]:
+        if flags & flag:
+            count = u16(b, pos)
+            pos += 2
+            size = count * (2 if flags & 128 else 1)
+            if pos + size > len(b):
+                raise ValueError('truncated StringData')
+            result[key] = b[pos:pos+size].decode('utf-16le' if flags & 128 else 'cp1252')
+            pos += size
+    # EnvironmentVariableDataBlock / IconEnvironmentDataBlock.
+    while pos + 4 <= len(b) and u32(b, pos):
+        size = u32(b, pos)
+        if size < 8 or pos + size > len(b):
+            raise ValueError('invalid ExtraData')
+        block = b[pos:pos+size]
+        signature = u32(block, 4)
+        if signature in (0xa0000001, 0xa0000007) and size >= 788:
+            value = zstr(block, 268, True) or zstr(block, 8)
+            result['target' if signature == 0xa0000001 else 'icon'] = value
+        pos += size
+    return result
+
+
+def host_path(prefix, value, relative=None):
+    value = value.strip().strip('"')
+    env = {'SystemDrive': 'C:', 'SystemRoot': 'C:\\windows', 'windir': 'C:\\windows',
+           'ProgramFiles': 'C:\\Program Files', 'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+           'ProgramData': 'C:\\ProgramData'}
+    value = re.sub(r'%([^%]+)%', lambda m: next((v for k, v in env.items() if k.lower() == m[1].lower()), m[0]), value)
+    if '%' in value or value.startswith('\\\\'):
+        raise ValueError('unsupported environment or network path: ' + value)
+    if re.match(r'^[cC]:[\\/]', value):
+        path = prefix / 'drive_c'
+        components = re.split(r'[\\/]', value[3:])
+    elif re.match(r'^[A-Za-z]:', value):
+        raise ValueError('only drive C is supported')
+    else:
+        path = relative or prefix / 'drive_c'
+        components = re.split(r'[\\/]', value)
+    for component in components:
+        if not component or component == '.':
+            continue
+        if component == '..':
+            path = path.parent
+            continue
+        if path.is_dir():
+            component = next((p.name for p in path.iterdir() if p.name.casefold() == component.casefold()), component)
+        path /= component
+    return path.resolve()
+
+
+def pe_icon(path, index=0):
+    """Extract a complete ICO using RT_GROUP_ICON and language-matched RT_ICON."""
+    b = path.read_bytes()
+    if b[:4] == b'\0\0\1\0':
+        return b
+    if b[:2] != b'MZ':
+        raise ValueError('not PE/ICO')
+    pe = u32(b, 60)
+    if b[pe:pe+4] != b'PE\0\0':
+        raise ValueError('invalid PE')
+    opt = pe + 24
+    directory = opt + (112 if u16(b, opt) == 0x20b else 96)
+    resource_rva = u32(b, directory + 16)
+    sections = opt + u16(b, pe + 20)
+    def rva(value):
+        for i in range(u16(b, pe+6)):
+            s = sections + i*40
+            va, size, raw = u32(b, s+12), u32(b, s+16), u32(b, s+20)
+            if va <= value < va + size:
+                return raw + value - va
+        raise ValueError('resource outside PE sections')
+    root = rva(resource_rva)
+    def entries(offset):
+        p = root + offset
+        return [struct.unpack_from('<II', b, p+16+i*8) for i in range(u16(b,p+12)+u16(b,p+14))]
+    types = dict(entries(0))
+    groups = entries(types[14] & 0x7fffffff)
+    group = next((v for k,v in groups if k == -index), None) if index < 0 else groups[index][1]
+    if group is None:
+        raise ValueError('missing icon group')
+    languages = entries(group & 0x7fffffff)
+    language, leaf = languages[0]
+    def payload(leaf):
+        p = root + leaf
+        offset, size = rva(u32(b, p)), u32(b, p+4)
+        data = b[offset:offset+size]
+        if len(data) != size:
+            raise ValueError('truncated resource')
+        return data
+    group_data = payload(leaf)
+    count = u16(group_data, 4)
+    images, headers, offset = [], [], 6 + count*16
+    icons = dict(entries(types[3] & 0x7fffffff))
+    for i in range(count):
+        p = 6+i*14
+        icon_id = u16(group_data, p+12)
+        choices = dict(entries(icons[icon_id] & 0x7fffffff))
+        image = payload(choices.get(language, next(iter(choices.values()))))
+        headers.append(group_data[p:p+8] + struct.pack('<II', len(image), offset))
+        images.append(image)
+        offset += len(image)
+    return b'\0\0\1\0' + struct.pack('<H', count) + b''.join(headers+images)
+
+
+def make_icon(target, destination, index=0):
+    try:
+        data = pe_icon(target, index)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            ico = tmp/'source.ico'
+            ico.write_bytes(data)
+            iconset = tmp/'app.iconset'
+            iconset.mkdir()
+            for size in (16, 32, 128, 256, 512):
+                for scale in (1, 2):
+                    output = iconset / ('icon_%dx%d%s.png' % (size,size,'@2x' if scale == 2 else ''))
+                    subprocess.run(['/usr/bin/sips', '-s', 'format', 'png', '-z', str(size*scale), str(size*scale), str(ico), '--out', str(output)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            subprocess.run(['/usr/bin/iconutil', '-c', 'icns', str(iconset), '-o', str(destination)], check=True, capture_output=True)
+        return True
+    except (OSError, ValueError, KeyError, IndexError, struct.error, subprocess.CalledProcessError) as e:
+        print('raven-apps: icon unavailable for %s: %s' % (target, e), file=sys.stderr)
+        return False
+
+
+def raven_path():
+    if os.environ.get('RAVEN_BINARY'):
+        path = Path(os.environ['RAVEN_BINARY']).expanduser().resolve()
+    else:
+        path = next((HERE.parents[2]/build/'native/raven' for build in ('build-macos', 'build') if (HERE.parents[2]/build/'native/raven').is_file()), None)
+    if path is None or not os.access(path, os.X_OK):
+        raise ValueError('build Raven first or set RAVEN_BINARY')
+    return path
+
+
+def safe_name(value):
+    return re.sub(r'[/:\x00-\x1f]', '-', value).strip('. ') or 'Program'
+
+
+def bundle(prefix, name, target, arguments='', working='', icon='', icon_index=0, source=''):
+    digest = hashlib.sha256((str(prefix)+'\0'+str(target)+'\0'+arguments).encode()).hexdigest()[:12]
+    identifier = 'org.raven.app.' + re.sub('[^a-z0-9-]', '-', prefix.name.lower()) + '.' + digest
+    # Always qualify collisions by identity; preserve a familiar unsuffixed name when unambiguous.
+    app = APPS / (safe_name(name)+'.app')
+    if app.exists():
+        try:
+            existing = plistlib.loads((app/'Contents/Info.plist').read_bytes())
+        except (OSError, ValueError):
+            existing = {}
+        if existing.get('CFBundleIdentifier') != identifier:
+            app = APPS / (safe_name(name)+' ('+safe_name(prefix.name)+'-'+digest[:6]+').app')
+    metadata = {'prefix': str(prefix), 'target': str(target), 'arguments': arguments,
+                'working': working, 'name': name, 'source': source, 'raven': str(raven_path()),
+                'icon_index': icon_index, 'format': 4,
+                'guest_environment': {k: v for k, v in os.environ.items() if k.startswith('RAVEN_GUEST_')},
+                'logs': os.environ.get('RAVEN_LOG_DIR', str(Path.home()/'Library/Logs/Raven'))}
+    old = app/'Contents/Resources/launch.json'
+    fingerprint = [str(p)+':'+str(p.stat().st_mtime_ns)+':'+str(p.stat().st_size) for p in (target, Path(icon)) if p.is_file()]
+    metadata['fingerprint'] = fingerprint
+    if old.is_file() and json.loads(old.read_text()) == metadata:
+        return app
+    APPS.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.raven-app-', dir=APPS) as tmp:
+        stage = Path(tmp)/(app.name)
+        macos, resources = stage/'Contents/MacOS', stage/'Contents/Resources'
+        macos.mkdir(parents=True)
+        resources.mkdir()
+        (resources/'launch.json').write_text(json.dumps(metadata, indent=2)+'\n')
+        # The shell exec preserves LaunchServices' application ASN and bundle identity.
+        launcher = '#!/bin/sh\nexec '+shlex.quote(sys.executable)+' '+shlex.quote(str(HERE/'raven-apps'))+' run '+shlex.quote(str(app))+'\n'
+        (macos/'launch').write_text(launcher)
+        (macos/'launch').chmod(0o755)
+        info = dict(CFBundleIdentifier=identifier, CFBundleName=name, CFBundleDisplayName=name,
+                    CFBundleExecutable='launch', CFBundlePackageType='APPL', CFBundleVersion='1',
+                    NSHighResolutionCapable=True, RavenManagedPrefix=str(prefix))
+        if not (icon and make_icon(Path(icon), resources/'app.icns', icon_index)):
+            make_icon(target, resources/'app.icns')
+        if (resources/'app.icns').exists():
+            info['CFBundleIconFile'] = 'app.icns'
+        (stage/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
+        # Replace only bundles bearing our ownership marker, never arbitrary user apps.
+        if app.exists():
+            previous = plistlib.loads((app/'Contents/Info.plist').read_bytes())
+            if previous.get('RavenManagedPrefix') != str(prefix):
+                raise ValueError('refusing to replace unmanaged app: '+str(app))
+            shutil.rmtree(app)
+        stage.rename(app)
+    subprocess.run([LSREGISTER, '-f', str(app)], check=True)
+    print(app)
+    return app
+
+
+def sync(prefix):
+    expected, seen, failed = set(), set(), set()
+    roots = [prefix/'drive_c/ProgramData/Microsoft/Windows/Start Menu/Programs']
+    users = prefix/'drive_c/Users'
+    if users.is_dir():
+        for user in users.iterdir():
+            roots.extend([user/'Desktop', user/'AppData/Roaming/Microsoft/Windows/Start Menu/Programs'])
+    for link in sorted({p for root in roots if root.is_dir() for p in root.rglob('*') if p.suffix.lower() == '.lnk'}):
+        try:
+            data = parse_link(link)
+            target = host_path(prefix, data['target'] or data['relative'], link.parent)
+            name = link.stem
+            if target.suffix.lower() != '.exe' or not target.is_file():
+                continue
+            if re.search(r'(?i)(uninstall|unins\d*|readme|\bhelp\b|\bsupport\b)', name+' '+target.stem):
+                continue
+            if (target.stem.lower() in ('rundll32', 'explorer', 'cmd', 'start')
+                    and re.search(r'(?i)(https?://|ftp://|mailto:)', data['arguments'])):
+                continue
+            identity = (str(target), data['arguments'])
+            if identity in seen:
+                continue
+            seen.add(identity)
+            icon = host_path(prefix, data['icon']) if data['icon'] else target
+            working = str(host_path(prefix, data['working'])) if data['working'] else str(target.parent)
+            expected.add(bundle(prefix, name, target, data['arguments'], working, str(icon), data['icon_index'], str(link)))
+        except (OSError, ValueError, IndexError, struct.error) as e:
+            failed.add(str(link))
+            print('raven-apps: skipping %s: %s' % (link, e), file=sys.stderr)
+    for app in APPS.glob('*.app'):
+        try:
+            info = plistlib.loads((app/'Contents/Info.plist').read_bytes())
+            launch = json.loads((app/'Contents/Resources/launch.json').read_text())
+            if (info.get('RavenManagedPrefix') == str(prefix) and app not in expected
+                    and launch.get('source') != 'finder' and launch.get('source') not in failed):
+                subprocess.run([LSREGISTER, '-u', str(app)], check=False)
+                shutil.rmtree(app)
+                print('Removed '+str(app))
+        except (OSError, ValueError):
+            continue
+
+
+def run(app):
+    metadata = json.loads((app/'Contents/Resources/launch.json').read_text())
+    prefix, target = Path(metadata['prefix']), Path(metadata['target'])
+    environment = metadata.get('guest_environment', {}).copy()
+    environment.update(os.environ)  # Current caller overrides the saved guest settings.
+    environment.update(RAVEN_PREFIX=str(prefix), RAVEN_APP_NAME=metadata['name'],
+                       RAVEN_APP_ICON=str(app/'Contents/Resources/app.icns'))
+    info = plistlib.loads((app/'Contents/Info.plist').read_bytes())
+    environment['__CFBundleIdentifier'] = info['CFBundleIdentifier']
+    logs = Path(metadata['logs'])
+    logs.mkdir(parents=True, exist_ok=True)
+    log = os.open(logs/(safe_name(metadata['name'])+'.log'), os.O_WRONLY|os.O_CREAT|os.O_TRUNC, 0o600)
+    os.dup2(log, 1)
+    os.dup2(log, 2)
+    os.close(log)
+    # A detached supervisor syncs AFTER this PID (which execs Raven) exits. It must
+    # not retain LaunchServices' ASN, or create a second Dock application.
+    supervisor_env = environment.copy()
+    supervisor_env['RAVEN_APPS_DIR'] = str(app.parent)
+    supervisor_env['RAVEN_BINARY'] = metadata['raven']
+    supervisor_env['RAVEN_LOG_DIR'] = str(logs)
+    for key in ('__CFBundleIdentifier', '__CF_USER_TEXT_ENCODING', 'RAVEN_APP_NAME', 'RAVEN_APP_ICON'):
+        supervisor_env.pop(key, None)
+    subprocess.Popen([sys.executable, str(HERE/'raven-apps'), 'after', str(os.getpid()), str(prefix)],
+                     env=supervisor_env, stdin=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+    command = [metadata['raven'], '--run-process', '--execution=native', '--timeout-ms=86400000', '--desktop=macos']
+    # Pass the original Windows command line verbatim, avoiding POSIX splitting of backslashes/quotes.
+    def dos(path):
+        return ('C:\\'+str(path.relative_to(prefix/'drive_c')).replace('/', '\\')
+                if path.is_relative_to(prefix/'drive_c') else 'Z:'+str(path).replace('/', '\\'))
+    dos_target = dos(target)
+    if metadata['arguments']:
+        command += ['--command-line="'+dos_target+'" '+metadata['arguments']]
+    working = Path(metadata['working']) if metadata['working'] else target.parent
+    working = working if working.is_dir() else target.parent
+    command += ['--directory='+dos(working)]
+    os.chdir(working)
+    os.execve(command[0], command+[str(target)], environment)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=('sync', 'run', 'open', 'after'))
+    parser.add_argument('paths', nargs='*')
+    args = parser.parse_args()
+    if args.command == 'run':
+        run(Path(args.paths[0]))
+        return
+    if args.command == 'after':
+        import select
+        pid = int(args.paths[0])
+        # A kernel process-exit notification avoids polling and PID reuse races.
+        queue = select.kqueue()
+        try:
+            event = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                                  flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                  fflags=select.KQ_NOTE_EXIT)
+            try:
+                queue.control([event], 1, None)
+            except ProcessLookupError:
+                pass
+        finally:
+            queue.close()
+        args.paths = args.paths[1:]
+    APPS.mkdir(parents=True, exist_ok=True)
+    with (APPS/'.sync.lock').open('w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if args.command == 'open':
+            target = Path(args.paths[0]).expanduser().resolve()
+            name = target.stem
+            prefix = Path(os.environ.get('RAVEN_PREFIX', str(Path.home()/'.local/share/raven'/re.sub(r'[^A-Za-z0-9._-]', '-', name)))).expanduser().resolve()
+            app = bundle(prefix, name, target, working=str(target.parent), source='finder')
+            subprocess.run(['/usr/bin/open', '-n', str(app)], check=True)
+        else:
+            prefixes = [Path(p).expanduser().resolve() for p in args.paths] if args.paths else sorted((Path.home()/'.local/share/raven').glob('*'))
+            for prefix in prefixes:
+                if (prefix/'drive_c').is_dir():
+                    sync(prefix)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        sys.exit('raven-apps: '+str(error))

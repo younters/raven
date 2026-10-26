@@ -28,13 +28,7 @@ trap 'rm -rf "$work"' EXIT
 cat > "$work/launcher.applescript" <<EOF
 on launch_program(program)
 	set programPath to POSIX path of program
-	set command to "program=" & quoted form of programPath & "; " & ¬
-		"name=\$(basename \"\$program\" | sed -e 's/\\\\.[^.]*\$//' -e 's/[^A-Za-z0-9._-]/-/g'); " & ¬
-		"mkdir -p \"\$HOME/Library/Logs/Raven\" \"\$HOME/.local/share/raven\"; " & ¬
-		"cd \"\$(dirname \"\$program\")\" && " & ¬
-		"RAVEN_PREFIX=\"\${RAVEN_PREFIX:-\$HOME/.local/share/raven/\$name}\" nohup " & quoted form of "$RAVEN" & ¬
-		" --run-process --execution=native --timeout-ms=86400000 --desktop=macos \"\$program\" " & ¬
-		"> \"\$HOME/Library/Logs/Raven/\$name.log\" 2>&1 &"
+	set command to "RAVEN_BINARY=" & quoted form of "$RAVEN" & " " & quoted form of "$SOURCE/native/platform/darwin/raven-apps" & " open " & quoted form of programPath
 	do shell script command
 end launch_program
 

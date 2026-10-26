@@ -215,3 +215,48 @@ These compile, but do not yet behave as on Linux.
 - **Desktop:** Cocoa lives in `cocoa.mm`; graphics bridge work is separate from the controller.
 - **OpenGL:** the bridge uses EGL.
 - **Audio:** uses PulseAudio.
+
+## Installed Windows apps in Finder and the Dock
+
+```sh
+native/platform/darwin/raven-apps sync                       # all ~/.local/share/raven prefixes
+native/platform/darwin/raven-apps sync ~/.local/share/raven/Steam
+RAVEN_BINARY="$PWD/build/native/raven" native/platform/darwin/raven-apps sync /path/to/prefix
+```
+
+`raven-apps` uses Python 3's standard library, `sips`, `iconutil`, and LaunchServices; it needs no Wine, guest execution, or Python
+packages. It reads Start Menu shortcuts from ProgramData and each user's roaming profile, plus each user's Desktop (including
+Public). It creates normal, Dock-pinnable application bundles under `~/Applications/Raven`, registers them with LaunchServices for
+Finder/Spotlight/Launchpad, and removes its own generated shortcut apps when their shortcuts disappear. Duplicate Desktop/Start Menu
+entries for the same target and arguments produce one app. Names come from shortcut filenames (the link's NameString is usually a
+long description). Same-name apps from different prefixes receive a suffix. Existing unrelated apps are never replaced or deleted.
+Re-running an unchanged sync leaves bundles and their modification times alone.
+
+The parser handles Unicode/ANSI StringData, local LinkInfo (including Unicode paths), filesystem LinkTargetIDLists, relative targets,
+working directories, raw Windows arguments, icon indices, and environment target/icon blocks. Drive C maps into `drive_c`, with
+case-insensitive component lookup. Uninstallers, help/readme/support entries, URL/non-executable targets, unsupported virtual/network
+shell items, other drive letters, and unresolved environment variables are skipped with diagnostics where applicable. It extracts
+RT_GROUP_ICON/RT_ICON directly from PE resources (or reads an ICO), then builds an ICNS. Missing icons do not prevent app generation.
+Unknown Windows shell extensions, MSI advertised shortcuts and network shares are not resolved. Malformed shortcuts preserve any
+previously generated app until a later successful sync.
+
+An app execs the configured Raven binary, preserving LaunchServices' original application record, name, bundle ID and path. On macOS
+27.2 this record survives shell → Python → Raven `exec`, even though `NSBundle.mainBundle` does not identify the generated bundle.
+`app_identity.mm` applies the saved display name and extracted icon once before Cocoa activation; it does not use private LaunchServices
+APIs or change window/input/pump code. `NSProcessInfo.processName` alone is not the bundle identity: launching through the app supplies
+the Dock/Cmd-Tab identity and enables pinning. The Finder launcher uses this same path, deriving name/icon from the selected executable.
+Both generated apps and Finder launches sync their prefix after the host process exits, using a detached supervisor and a kqueue exit
+notification. The supervisor does not access guest files until the host exits. Finder-created apps without shortcuts are retained.
+Logs remain in `~/Library/Logs/Raven/<name>.log`; working directory defaults to the target's folder. Shortcut arguments are passed via
+`--command-line` verbatim, not split as POSIX shell words. `RAVEN_GUEST_*` settings present during sync are saved in the app's launch
+metadata; current launch environment values override them.
+
+`RAVEN_BINARY` selects a build (otherwise `build-macos/native/raven`, then `build/native/raven` in this checkout). Bundles refer to this
+checkout's helper and binary, so re-sync after moving either. `RAVEN_APPS_DIR` selects an alternate output folder and `RAVEN_LOG_DIR`
+selects logs; both are retained for post-exit sync, including when LaunchServices does not inherit shell environment. A sync only reads
+the prefix. Launching a generated app runs Windows code and may write to it; test with a copied prefix. A lock in the output directory
+serializes syncs. Parser and lifecycle contracts run without guest execution:
+
+```sh
+python3 native/platform/darwin/tests/apps_test.py
+```
