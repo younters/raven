@@ -364,6 +364,9 @@ if(TARGET raven AND RAVEN_MINGW64)
                 ${RAVEN_DARWIN_DIR}/tests/printing.py $<TARGET_FILE:raven> ${PRINT_FIXTURE}
                 ${CMAKE_CURRENT_BINARY_DIR}/printing${width})
             set_tests_properties(native_printing_pdf${width} PROPERTIES TIMEOUT 120)
+        endif()
+    endforeach()
+endif()
 
 # Worker processes retain their creator's desktop pixels even with a different DPI declaration.
 if(TARGET raven AND RAVEN_MINGW64)
