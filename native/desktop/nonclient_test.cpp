@@ -104,6 +104,14 @@ int main(int argc,char **argv)
 			objects.window(handle)->glass=std::array<int32_t,4>{-1,-1,-1,-1};
 			windows.drawing(handle); windows.flush_dirty(true);
 			check(shown!=pixels,"fully extended caption lost compositor buttons");
+			objects.set_dpi(192);
+			windows.drawing(handle); windows.flush_dirty(true);
+			int32_t first=240,last=-1;
+			for (int32_t y=0;y<80;++y)
+				for (int32_t x=140;x<232;++x)
+					if (shown[(size_t(y)*240+x)*4]!=64) { first=std::min(first,x); last=std::max(last,x); }
+			check(last-first>=19 && last-first<=23,"192-DPI close glyph did not scale with its button");
+			objects.set_dpi(96);
 			objects.window(handle)->visible=false;
 			windows.set_presentation(presentation);
 		}
