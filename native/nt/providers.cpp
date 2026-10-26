@@ -137,6 +137,8 @@ const std::vector<FastStub> &fast_stubs()
 // the answer is there, so the guest never stops for them.
 static bool served_api(std::string_view module, std::string_view name)
 {
+	if (module == "user32.dll")
+		return name == "GetWindow";
 	if (module == "kernel32.dll" || module == "kernelbase.dll")
 		return name == "QueryPerformanceCounter" || name == "QueryPerformanceFrequency" || name == "WakeConditionVariable" ||
 			name == "WakeAllConditionVariable" || name == "ReleaseSemaphore";
@@ -2367,7 +2369,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		windows.screen_dc_use(found->second);
 		const WindowCallScope window_scope(windows);
 		const auto profile_start = RuntimeProfile::instance().enabled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-		const bool dispatched = api_registry.dispatch(process, environment, found->second)
+		const bool dispatched = desktop_api.dispatch(process, environment, found->second) || api_registry.dispatch(process, environment, found->second)
 #ifdef RAVEN_VULKAN
 			|| vulkan.dispatch(found->second)
 #endif

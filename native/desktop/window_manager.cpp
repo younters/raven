@@ -446,7 +446,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		}
 	});
 	registry.add("GetWindow", 2, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		if (!window) {
 			call.fail(1400);
 			return;
