@@ -194,6 +194,8 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 		::lseek(file, 0, SEEK_SET);
 		arguments.push_back("--environment-fd=" + std::to_string(pass(file)));
 	}
+	if (launch.process_token_descriptor >= 0)
+		arguments.push_back("--process-token-fd=" + std::to_string(pass(launch.process_token_descriptor)));
 	int gate_pair[2] = {-1, -1};
 	if (launch.suspended) {
 		if (::pipe2(gate_pair, O_CLOEXEC)) {

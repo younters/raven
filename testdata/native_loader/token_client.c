@@ -393,6 +393,48 @@ done:
 	return result;
 }
 
+static int as_user_child(void)
+{
+	HANDLE token = NULL;
+	int result;
+	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return 139;
+	result = integrity(token) != 4096 ? 140 : traversal(token) != 1 ? 141 : 0;
+	CloseHandle(token);
+	return result;
+}
+
+static int test_process_as_user(HANDLE source)
+{
+	HANDLE primary = NULL, restricted = NULL;
+	STARTUPINFOW startup = {0};
+	PROCESS_INFORMATION child;
+	WCHAR command[512];
+	DWORD length, code = 0;
+	int result = 0;
+	if (!DuplicateTokenEx(source, TOKEN_ALL_ACCESS, NULL, SecurityImpersonation, TokenPrimary, &primary) ||
+		!CreateRestrictedToken(primary, DISABLE_MAX_PRIVILEGE, 0, NULL, 0, NULL, 0, NULL, &restricted) ||
+		!set_integrity(restricted, 4096) || !set_traversal(restricted, 0)) { result = 137; goto done; }
+	command[0] = '"';
+	length = GetModuleFileNameW(NULL, command + 1, 480);
+	if (!length || length >= 480) { result = 137; goto done; }
+	command[++length] = '"'; command[++length] = ' '; command[++length] = '-'; command[++length] = '-'; command[++length] = 'a'; command[++length] = 0;
+	startup.cb = sizeof(startup);
+	if (!CreateProcessAsUserW(restricted, NULL, command, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &startup, &child)) {
+		result = 137;
+		goto done;
+	}
+	if (!set_integrity(restricted, 6000) || ResumeThread(child.hThread) != 1 ||
+		WaitForSingleObject(child.hProcess, 15000) != WAIT_OBJECT_0 || !GetExitCodeProcess(child.hProcess, &code) || code)
+		result = code ? (int)code : 138;
+	if (result) { TerminateProcess(child.hProcess, 99); WaitForSingleObject(child.hProcess, 5000); }
+	CloseHandle(child.hThread);
+	CloseHandle(child.hProcess);
+done:
+	if (restricted) CloseHandle(restricted);
+	if (primary) CloseHandle(primary);
+	return result;
+}
+
 int raven_entry(void)
 {
 	const WCHAR *line = GetCommandLineW();
@@ -407,6 +449,9 @@ int raven_entry(void)
 	for (index = 0; line[index]; ++index)
 		if (line[index] == '-' && line[index + 1] == '-' && line[index + 2] == 'c')
 			return child_entry();
+	for (index = 0; line[index]; ++index)
+		if (line[index] == '-' && line[index + 1] == '-' && line[index + 2] == 'a')
+			return as_user_child();
 	if (!open || !open_ex)
 		return 1;
 	result = test_mandatory_ace();
@@ -455,6 +500,9 @@ int raven_entry(void)
 	if (result)
 		return result;
 	result = test_child(open, first);
+	if (result)
+		return result;
+	result = test_process_as_user(copy);
 	if (result)
 		return result;
 	if (integrity(first) != 2222 || integrity(copy) != 4096 || !set_integrity(copy, 8192) || integrity(first) != 2222)
