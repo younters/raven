@@ -31,6 +31,9 @@
 #include "x86_system_api.h"
 #include "x86_d3d9.h"
 #include "x86_dsound.h"
+#ifdef __APPLE__
+#include "platform/darwin/audio/api.h"
+#endif
 #include "x86_thread_api.h"
 
 #include <unistd.h>
@@ -650,6 +653,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		"GetFileVersionInfoSizeExW", "GetFileVersionInfoSizeW", "GetFileVersionInfoW", "VerQueryValueA", "VerQueryValueW"};
 	static constexpr std::array<std::string_view, 1> controls_exports{"InitCommonControlsEx"};
 	add_library("winmm.dll", winmm_exports, {}, [](std::string_view name) { return uint32_t(name == "PlaySoundW" ? 3 : name == "timeGetTime" ? 0 : 1); });
+	#ifdef __APPLE__
+	add_library("raven-audio.dll", raven_darwin::audio_method_names(), {}, [](std::string_view name) { return raven_darwin::audio_method_words(name); });
+#endif
 	const auto dsound_methods = NativeX86DirectSound::method_names();
 	add_library("dsound.dll", NativeX86DirectSound::entry_names(), {}, [](std::string_view name) { return NativeX86DirectSound::entry_words(name); });
 	add_library("raven-dsound.dll", dsound_methods, {}, [](std::string_view name) { return NativeX86DirectSound::method_words(name); });
@@ -1149,7 +1155,10 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				process.abandon_call();
 				throw ProcessExit{code, result.instruction};
 			}
-			if (!environment.dispatch(api) && !thread_api.dispatch(api) && !system_api.dispatch(api) && !compat.dispatch(api) && !direct3d9.dispatch(api) && !directsound.dispatch(api) &&
+			if (!environment.dispatch(api) && !thread_api.dispatch(api) && !system_api.dispatch(api) && !compat.dispatch(api) && !direct3d9.dispatch(api) &&
+#ifndef __APPLE__
+				!directsound.dispatch(api) &&
+#endif
 #ifdef RAVEN_VULKAN_THUNK32
 				!vulkan32.dispatch(api) &&
 #endif
@@ -1244,6 +1253,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_actctx_api(shared_api, kernel);
 	register_mmio_api(shared_api, kernel);
 	register_wave_api(shared_api, kernel);
+#ifdef __APPLE__
+	raven_darwin::register_audio_api(shared_api, kernel);
+#endif
 	register_process_api(shared_api, kernel);
 	register_thread_api(shared_api, kernel);
 	register_sync_api(shared_api, kernel);

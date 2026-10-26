@@ -4,6 +4,9 @@
 #include "host_names.h"
 #include "kernel_context.h"
 #include "system_exports.h"
+#ifdef __APPLE__
+#include "platform/darwin/audio/api.h"
+#endif
 
 #include <sys/random.h>
 #include <sys/sysinfo.h>
@@ -169,13 +172,21 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	// DirectSound where the runtime has no sound device to give: Windows without an audio device answers so, and programs go on silent.
 	// The 32-bit runtime's own DirectSound answers its entry points before these do.
 	constexpr uint32_t no_driver = 0x88780078U;
-	for (const auto *name : {"DirectSoundCreate", "DirectSoundCreate8", "DirectSoundCaptureCreate", "DirectSoundCaptureCreate8"})
+	for (const auto *name : {
+#ifndef __APPLE__
+		"DirectSoundCreate", "DirectSoundCreate8",
+#endif
+		"DirectSoundCaptureCreate", "DirectSoundCaptureCreate8"})
 		registry.add(name, 3, [](ApiCall &call) {
 			if (call[1])
 				call.store_pointer(call[1], 0);
 			call.ret(no_driver);
 		});
-	for (const auto *name : {"DirectSoundEnumerateA", "DirectSoundEnumerateW", "DirectSoundCaptureEnumerateA", "DirectSoundCaptureEnumerateW"})
+	for (const auto *name : {
+#ifndef __APPLE__
+		"DirectSoundEnumerateA", "DirectSoundEnumerateW",
+#endif
+		"DirectSoundCaptureEnumerateA", "DirectSoundCaptureEnumerateW"})
 		registry.add(name, 2, [](ApiCall &call) { call.ret(0); });
 	registry.add("DirectSoundFullDuplexCreate", 10, [](ApiCall &call) {
 		for (const size_t index : {6, 7, 8})
@@ -529,6 +540,9 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("CoUninitialize", 0, uninitialize);
 	registry.add("OleUninitialize", 0, uninitialize);
 	registry.add("CoCreateInstance", 5, [](ApiCall &call) {
+#ifdef __APPLE__
+		if (raven_darwin::create_audio_instance(call)) return;
+#endif
 		if (std::getenv("RAVEN_TRACE_API")) {
 			const auto bytes = call.read(call[0], 16);
 			std::fprintf(stderr, "com class");

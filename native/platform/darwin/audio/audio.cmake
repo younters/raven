@@ -1,4 +1,5 @@
-add_library(raven_darwin_audio STATIC ${RAVEN_DARWIN_DIR}/audio/output.cpp)
+target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/audio/api.cpp)
+add_library(raven_darwin_audio STATIC ${RAVEN_DARWIN_DIR}/audio/output.cpp ${RAVEN_DARWIN_DIR}/audio/mixer.cpp)
 target_link_libraries(raven_darwin_audio PUBLIC "-framework AudioToolbox" "-framework CoreAudio")
 target_compile_options(raven_darwin_audio PRIVATE -Wall -Wextra)
 target_link_libraries(raven_cpu PUBLIC raven_darwin_audio)
@@ -28,5 +29,23 @@ if(RAVEN_MINGW64)
                 SKIP_REGULAR_EXPRESSION "Native entry returned 77 "
                 ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-wave-prefix${width};RAVEN_AUDIO_TRACE=1")
         endif()
+    endforeach()
+endif()
+if(RAVEN_MINGW64 AND RAVEN_MINGW32)
+    foreach(width IN ITEMS 64 32)
+        if(width EQUAL 64)
+            set(audio_cc ${RAVEN_MINGW64})
+        else()
+            set(audio_cc ${RAVEN_MINGW32})
+        endif()
+        set(fixture ${CMAKE_CURRENT_BINARY_DIR}/darwin-dsound${width}.exe)
+        add_custom_command(OUTPUT ${fixture}
+            COMMAND ${audio_cc} -O2 -nostdlib -fno-builtin -fno-stack-protector -Wl,--entry,raven_entry
+                -o ${fixture} ${RAVEN_DARWIN_DIR}/audio/dsound_client.c -lkernel32 -luser32 -ldxguid
+            DEPENDS ${RAVEN_DARWIN_DIR}/audio/dsound_client.c VERBATIM)
+        add_custom_target(darwin_dsound${width}_fixture ALL DEPENDS ${fixture})
+        add_test(NAME native_darwin_dsound_x${width} COMMAND raven --run-process --execution=native --timeout-ms=10000 ${fixture})
+        set_tests_properties(native_darwin_dsound_x${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+            ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-dsound-prefix${width};RAVEN_AUDIO_TRACE=1")
     endforeach()
 endif()
