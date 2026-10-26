@@ -821,7 +821,23 @@ std::vector<uint8_t> NativeProcess::read_memory(uint64_t address, size_t size) c
 		size_t count = size - offset;
 		if (const auto *shared = state->shared_memory(address + offset, count)) {
 			ControllerProfile::Scope timing(profile, profile.shared_reads, count);
-			std::memcpy(result.data() + offset, shared, count);
+			// Windows address waits and other scalar reads may race a running guest pthread. Aligned scalar loads must be
+			// indivisible; larger buffers retain the ordinary byte-copy contract.
+			const auto at = address + offset;
+			if (count == 8 && !(at & 7)) {
+				const auto value = __atomic_load_n(reinterpret_cast<const uint64_t *>(shared), __ATOMIC_ACQUIRE);
+				std::memcpy(result.data() + offset, &value, 8);
+			} else if (count == 4 && !(at & 3)) {
+				const auto value = __atomic_load_n(reinterpret_cast<const uint32_t *>(shared), __ATOMIC_ACQUIRE);
+				std::memcpy(result.data() + offset, &value, 4);
+			} else if (count == 2 && !(at & 1)) {
+				const auto value = __atomic_load_n(reinterpret_cast<const uint16_t *>(shared), __ATOMIC_ACQUIRE);
+				std::memcpy(result.data() + offset, &value, 2);
+			} else if (count == 1) {
+				result[offset] = __atomic_load_n(shared, __ATOMIC_ACQUIRE);
+			} else {
+				std::memcpy(result.data() + offset, shared, count);
+			}
 			offset += count;
 			continue;
 		}
@@ -858,7 +874,24 @@ void NativeProcess::write_memory(uint64_t address, std::span<const uint8_t> byte
 		const bool code = mapping.protection & PROT_EXEC;
 		if (auto *shared = state->shared_memory(address + offset, count); shared && !code) {
 			ControllerProfile::Scope timing(profile, profile.shared_writes, count);
-			std::memcpy(shared, bytes.data() + offset, count);
+			const auto at = address + offset;
+			if (count == 8 && !(at & 7)) {
+				uint64_t value;
+				std::memcpy(&value, bytes.data() + offset, 8);
+				__atomic_store_n(reinterpret_cast<uint64_t *>(shared), value, __ATOMIC_RELEASE);
+			} else if (count == 4 && !(at & 3)) {
+				uint32_t value;
+				std::memcpy(&value, bytes.data() + offset, 4);
+				__atomic_store_n(reinterpret_cast<uint32_t *>(shared), value, __ATOMIC_RELEASE);
+			} else if (count == 2 && !(at & 1)) {
+				uint16_t value;
+				std::memcpy(&value, bytes.data() + offset, 2);
+				__atomic_store_n(reinterpret_cast<uint16_t *>(shared), value, __ATOMIC_RELEASE);
+			} else if (count == 1) {
+				__atomic_store_n(shared, bytes[offset], __ATOMIC_RELEASE);
+			} else {
+				std::memcpy(shared, bytes.data() + offset, count);
+			}
 			offset += count;
 			continue;
 		}
