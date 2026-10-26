@@ -43,3 +43,21 @@ The integration test runs three real Windows fixtures: programmatically DPI awar
 At the implementation baseline (`c9c7e1a`), this checkout registered 253 tests: 195 passed, 57 failed, and one was skipped (CTest prints 77%). The final 254-test serial run passed the new integration test and had 195 passes, 58 failures, and the same skip. The sole additional failure was `native_dll_lifecycle`: its 300 ms `loop.dll` startup budget expired before `base.dll` initialization (`base_state=0`); the separate fault case retained the expected `1125` state. Three isolated reruns also hit the short startup budget. No loader or guest-agent implementation changes are included here.
 
 Real Notepad++ verification: the 1100x700 saved placement produces a 2200x1400 guest frame in a 1092x698-point native window, including the native title bar. A clean quit/relaunch preserves the saved 1100x700 placement and returns to 2200x1400 rather than doubling it again. API traces show 192 for both display axes and system/window DPI, the initial `WM_DPICHANGED` packs `0x00c000c0`, and pointer traces show stock `0xfa01` (I-beam) over Scintilla and `0xfa00` (arrow) over the toolbar. The temporary PerMonitorV2 Notepad++ copy also renders at 2200x1400.
+
+## Child controllers and foreign GDI windows
+
+A child Raven controller inherits its creator's current desktop DPI in host launch metadata (`RAVEN_DESKTOP_DPI`), independently
+of an explicit Windows environment block. Its own awareness declaration is retained, but its desktop coordinates and render scale
+remain in the creator's space. This is the existing single-space desktop policy, not complete Windows mixed-awareness virtualization.
+The x86 legacy awareness setter goes through the same Darwin handler as the newer awareness APIs.
+
+Steam's unaware 32-bit process and aware 64-bit CEF helper previously chose different scales. A captured black main-window run
+published a 7032x4520 foreign client while its producer retained a 1x1 surface; CEF then stopped in its GDI failure diagnostic.
+With inherited DPI, the signed-in Store rendered through CEF's separate software/GPU process: GetDC/BitBlt/ReleaseDC published
+1758x1130 and 1756x987 shared frames with advancing sequences, and the captured Cocoa window contained Store artwork and navigation.
+The user's original prefix was not modified. The private copy automatically signed in using saved credentials and was stopped after
+capture; whether it displaced the original account session was not established.
+
+`native_darwin_desktop_dpi_x64` and `_x32` launch a helper choosing the opposite awareness at both 96 and 192 DPI. They also acquire
+a foreign DC at 1x1, resize the owner to 17x11, reacquire and draw a nonuniform page, then check the owner surface's pixels. Both pass.
+Foreign DCs already allocate from the owner's published client pixels and recreate their bitmap when that extent changes.

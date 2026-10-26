@@ -1687,6 +1687,20 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     list(APPEND DYNAMIC_DIALOG_CLIENTS ${secure_client})
                     add_test(NAME native_secure_stream_x${width} COMMAND raven --run-process --execution=native ${secure_client})
                     set_tests_properties(native_secure_stream_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    if(NOT TARGET transparent_clip_test)
+                        add_executable(transparent_clip_test desktop/transparent_clip_test.cpp)
+                        target_link_libraries(transparent_clip_test PRIVATE raven_cpu)
+                    endif()
+                    set(transparent_clip_client ${CMAKE_CURRENT_BINARY_DIR}/transparent-clip${width}.exe)
+                    add_custom_command(OUTPUT ${transparent_clip_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${transparent_clip_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/transparent_clip_client.c -luser32 -lgdi32 -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/transparent_clip_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${transparent_clip_client})
+                    add_test(NAME native_transparent_clip_x${width} COMMAND transparent_clip_test $<TARGET_FILE:raven-bootstrap> ${transparent_clip_client})
+                    set_tests_properties(native_transparent_clip_x${width} PROPERTIES TIMEOUT 20
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/transparent-clip-prefix)
                     # The OLE clipboard over the Win32 one, as Firefox copies and pastes.
                     set(ole_clipboard_client ${CMAKE_CURRENT_BINARY_DIR}/ole-clipboard${width}.exe)
                     add_custom_command(OUTPUT ${ole_clipboard_client}

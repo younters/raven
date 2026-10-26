@@ -5,6 +5,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <charconv>
+#include "raven_darwin_dpi.h"
 
 namespace raven {
 
@@ -25,6 +28,15 @@ void NativeWindows::initialize_dpi()
 {
 	if (!presentation.backing_scale) return;
 	display_scale=std::clamp(presentation.backing_scale(),1.0,4.0);
+	if (const char *text=std::getenv("RAVEN_DESKTOP_DPI")) {
+		uint32_t value=0;
+		const auto end=text+std::char_traits<char>::length(text);
+		const auto parsed=std::from_chars(text,end,value);
+		if (parsed.ec==std::errc{} && parsed.ptr==end && value>=96 && value<=384) {
+			inherited_dpi=value;
+			display_scale=double(value)/96;
+		}
+	}
 	const auto manifest=activation_contexts().process_dpi_context();
 	dpi_context=manifest.value_or(-1);
 	dpi_declared=manifest.has_value();
@@ -33,8 +45,9 @@ void NativeWindows::initialize_dpi()
 
 void NativeWindows::apply_dpi()
 {
-	const double scale=dpi_context==-1 || dpi_context==-5 ? 1 : display_scale;
+	const double scale=inherited_dpi ? double(inherited_dpi)/96 : dpi_context==-1 || dpi_context==-5 ? 1 : display_scale;
 	objects.set_dpi(uint32_t(std::lround(96*scale)));
+	raven_darwin::child_desktop_dpi=objects.nonclient_metrics().dpi;
 	if (presentation.render_scale) presentation.render_scale(scale);
 	refresh_screen();
 	if (system_table) set_system_table(system_table);

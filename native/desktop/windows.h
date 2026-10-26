@@ -421,6 +421,7 @@ private:
 	int64_t dpi_context=-2;
 	bool dpi_declared=false;
 	double display_scale=1;
+	uint32_t inherited_dpi=0;
 	std::map<uint32_t,int64_t> thread_dpi_contexts;
 	void initialize_dpi();
 	void apply_dpi();
