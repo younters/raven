@@ -81,8 +81,9 @@ int main(int argc, char **argv)
 		process.set_served_calls(nullptr, {}, 0, 0, {}, {});
 		const auto memory = process.map_memory(16384, PROT_READ | PROT_WRITE);
 		const std::array<uint8_t, 8> bytes{1, 2, 3, 4};
-		measure("mach-read-8", 10000, [&] { process.read_memory(memory, 8); });
-		measure("mach-write-8", 10000, [&] { process.write_memory(memory, bytes); });
+		measure("private-read-4", 10000, [&] { process.read_memory(memory, 4); });
+		measure("private-read-8", 10000, [&] { process.read_memory(memory, 8); });
+		measure("private-write-8", 10000, [&] { process.write_memory(memory, bytes); });
 		measure("shared-read-8", 10000, [&] { process.read_memory(shared + 4096, 8); });
 		measure("shared-write-8", 10000, [&] { process.write_memory(shared + 4096, bytes); });
 		measure("service-protect-pair", 2000, [&] {
