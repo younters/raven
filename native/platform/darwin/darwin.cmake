@@ -339,3 +339,28 @@ endif()
 
 # Host-only shortcut parser and generated bundle ownership/lifecycle contracts.
 add_test(NAME native_darwin_apps COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/apps_test.py)
+
+# Worker processes retain their creator's desktop pixels even with a different DPI declaration.
+if(TARGET raven AND RAVEN_MINGW64)
+    foreach(width 64 32)
+        if(width EQUAL 64)
+            set(dpi_compiler ${RAVEN_MINGW64})
+            set(dpi_entry raven_entry)
+        else()
+            set(dpi_compiler ${RAVEN_MINGW32})
+            set(dpi_entry _raven_entry)
+        endif()
+        if(dpi_compiler)
+            set(dpi_client ${CMAKE_CURRENT_BINARY_DIR}/desktop-dpi${width}.exe)
+            add_custom_command(OUTPUT ${dpi_client}
+                COMMAND ${dpi_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                    -Wl,--entry,${dpi_entry},--no-insert-timestamp -o ${dpi_client}
+                    ${RAVEN_DARWIN_DIR}/tests/desktop_dpi.c -luser32 -lgdi32 -lkernel32
+                DEPENDS ${RAVEN_DARWIN_DIR}/tests/desktop_dpi.c VERBATIM)
+            add_custom_target(darwin_desktop_dpi${width}_fixture ALL DEPENDS ${dpi_client})
+            add_test(NAME native_darwin_desktop_dpi_x${width} COMMAND raven --run-process --execution=native --desktop=macos ${dpi_client})
+            set_tests_properties(native_darwin_desktop_dpi_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/desktop-dpi-prefix)
+        endif()
+    endforeach()
+endif()

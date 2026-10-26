@@ -1,3 +1,6 @@
+#ifdef __APPLE__
+#include "raven_darwin_dpi.h"
+#endif
 #include "child_process.h"
 
 #include "elevation.h"
@@ -295,7 +298,20 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 	posix_spawnattr_setsigdefault(&attributes, &all);
 	posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
 	pid_t child = 0;
+#ifdef __APPLE__
+	// Runtime metadata travels in the host environment, separately from the guest's explicit Windows environment block.
+	std::vector<std::string> environment;
+	for (auto variable=environ; *variable; ++variable)
+		if (!std::string_view(*variable).starts_with("RAVEN_DESKTOP_DPI=")) environment.emplace_back(*variable);
+	if (raven_darwin::child_desktop_dpi)
+		environment.push_back("RAVEN_DESKTOP_DPI="+std::to_string(raven_darwin::child_desktop_dpi));
+	std::vector<char *> env;
+	for (auto &variable:environment) env.push_back(variable.data());
+	env.push_back(nullptr);
+	const int status = ::posix_spawn(&child, self, &actions, &attributes, argv.data(), env.data());
+#else
 	const int status = ::posix_spawn(&child, self, &actions, &attributes, argv.data(), environ);
+#endif
 	posix_spawnattr_destroy(&attributes);
 	posix_spawn_file_actions_destroy(&actions);
 	for (const int descriptor : moved)
