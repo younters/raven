@@ -30,7 +30,7 @@ NativeWindows::FrameLayout NativeWindows::frame_layout(const DesktopWindow &wind
 	const bool modern = themed();
 	const int32_t inset = modern ? 0 : 2;
 	const int32_t button_height = std::max(layout.caption.bottom - layout.caption.top - 2 * inset + (modern ? 1 : 0), 0);
-	const int32_t button_width = std::min(modern ? 46 : metrics.button_x, std::max(layout.caption.right - layout.caption.left, 0));
+	const int32_t button_width = std::min(modern ? int32_t(46 * metrics.dpi / 96) : metrics.button_x, std::max(layout.caption.right - layout.caption.left, 0));
 	int32_t cursor = layout.caption.right - inset;
 	layout.close = layout.maximize = layout.minimize = {0, 0, 0, 0};
 	if (layout.caption_height && (style & 0x80000U)) {
@@ -342,6 +342,7 @@ uint32_t NativeWindows::caption_color(bool is_active) const
 // The minimize, maximize and close buttons of the Windows 11 caption, which also appear over the frame a program extends into its client area.
 void NativeWindows::paint_caption_buttons(uint64_t handle, const DesktopWindow &window, const FrameLayout &layout, Canvas &canvas, bool is_active)
 {
+	const double scale = objects.nonclient_metrics().dpi / 96.0;
 	CanvasSurface surface{canvas};
 	shapes::Shapes<CanvasSurface> shapes{surface};
 	const uint32_t ink = is_active ? shade(0x1a, 0x1a, 0x1a) : shade(0x8a, 0x8a, 0x8a);
@@ -362,16 +363,16 @@ void NativeWindows::paint_caption_buttons(uint64_t handle, const DesktopWindow &
 		}
 		const double cx = (rect.left + rect.right) / 2.0, cy = (rect.top + rect.bottom) / 2.0;
 		if (hit == 20) {
-			shapes.segment(cx - 5, cy - 5, cx + 5, cy + 5, 1, glyph);
-			shapes.segment(cx + 5, cy - 5, cx - 5, cy + 5, 1, glyph);
+			shapes.segment(cx - 5 * scale, cy - 5 * scale, cx + 5 * scale, cy + 5 * scale, scale, glyph);
+			shapes.segment(cx + 5 * scale, cy - 5 * scale, cx - 5 * scale, cy + 5 * scale, scale, glyph);
 		} else if (hit == 9 && maximized) {
-			shapes.rounded(cx - 5, cy - 3, cx + 3, cy + 5, 1, std::nullopt, glyph);
-			shapes.segment(cx - 3, cy - 5, cx + 5, cy - 5, 1, glyph);
-			shapes.segment(cx + 5, cy - 5, cx + 5, cy + 3, 1, glyph);
+			shapes.rounded(cx - 5 * scale, cy - 3 * scale, cx + 3 * scale, cy + 5 * scale, scale, std::nullopt, glyph);
+			shapes.segment(cx - 3 * scale, cy - 5 * scale, cx + 5 * scale, cy - 5 * scale, scale, glyph);
+			shapes.segment(cx + 5 * scale, cy - 5 * scale, cx + 5 * scale, cy + 3 * scale, scale, glyph);
 		} else if (hit == 9) {
-			shapes.rounded(cx - 5, cy - 5, cx + 5, cy + 5, 1, std::nullopt, glyph);
+			shapes.rounded(cx - 5 * scale, cy - 5 * scale, cx + 5 * scale, cy + 5 * scale, scale, std::nullopt, glyph);
 		} else {
-			shapes.segment(cx - 5, cy, cx + 5, cy, 1, glyph);
+			shapes.segment(cx - 5 * scale, cy, cx + 5 * scale, cy, scale, glyph);
 		}
 	};
 	button(layout.close, 20);

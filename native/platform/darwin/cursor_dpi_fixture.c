@@ -129,6 +129,17 @@ void mainCRTStartup(void)
     if (!SetWindowPlacement(parent,&placement)) ExitProcess(25);
     GetWindowRect(parent,&rect);
     if (rect.right-rect.left != (int)(400*dpi/96) || dpi_messages != (dpi == 192)) ExitProcess(26);
+    RECT work;
+    if (!SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0)) ExitProcess(30);
+    WINDOWPLACEMENT oversized = placement;
+    oversized.rcNormalPosition = (RECT){-100,-100,1900,1400};
+    if (!SetWindowPlacement(parent,&oversized) || !GetWindowRect(parent,&rect) ||
+        rect.left < work.left || rect.top < work.top || rect.right > work.right || rect.bottom > work.bottom) ExitProcess(31);
+    /* Programmatic movement and resizing can deliberately go beyond the work area. */
+    if (!SetWindowPos(parent,NULL,-100,-100,work.right-work.left+100,work.bottom-work.top+100,SWP_NOZORDER) ||
+        !GetWindowRect(parent,&rect) || rect.left != -100 || rect.top != -100 ||
+        rect.right-rect.left != work.right-work.left+100 || rect.bottom-rect.top != work.bottom-work.top+100) ExitProcess(32);
+    if (!SetWindowPlacement(parent,&placement)) ExitProcess(33);
     /* A dialog manager has already converted its template's units with the DPI-scaled font, even when it has no owner. */
     WNDCLASSW dialog_class = parent_class;
     dialog_class.lpszClassName = L"#32770";

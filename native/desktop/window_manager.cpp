@@ -31,6 +31,17 @@ Layout position_layout(bool narrow)
 
 }
 
+DesktopRect NativeWindows::fit_placement(DesktopRect rect) const
+{
+	const auto &screen = objects.nonclient_metrics();
+	const auto width = std::min<int64_t>(int64_t(rect.right) - rect.left, screen.screen_x);
+	const auto height = std::min<int64_t>(int64_t(rect.bottom) - rect.top, screen.screen_y);
+	if (width <= 0 || height <= 0) return rect;
+	const auto x = std::clamp<int64_t>(rect.left, 0, screen.screen_x - width);
+	const auto y = std::clamp<int64_t>(rect.top, 0, screen.screen_y - height);
+	return {int32_t(x), int32_t(y), int32_t(x + width), int32_t(y + height)};
+}
+
 std::vector<uint64_t> NativeWindows::top_level_windows() const
 {
 	std::vector<uint64_t> result;
@@ -825,6 +836,8 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 #ifdef __APPLE__
 			normal=placement_rect(normal,true);
 #endif
+			// A saved placement can come from a larger or disconnected monitor. Explicit SetWindowPos sizes remain unrestricted.
+			if (!window->parent) normal=fit_placement(normal);
 			objects.window(call[0])->restore = normal;
 			// The window becomes visible before it is sized, so its size notifications reach a window that is already shown.
 			if (fields[2] != 0)
@@ -960,7 +973,9 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		}
 		const auto layout = frame_layout(*window);
 		const int32_t x = int16_t(call[3] & 0xffff) - window->outer.left, y = int16_t((call[3] >> 16) & 0xffff) - window->outer.top;
-		if (window->y - window->outer.top > layout.close.top) {
+		const auto &margins = *window->glass;
+		const bool whole = std::any_of(margins.begin(), margins.end(), [](int32_t margin) { return margin < 0; });
+		if (window->y - window->outer.top > layout.close.top || (!whole && margins[2] < layout.close.bottom - (window->y - window->outer.top))) {
 			call.ret(0);
 			return;
 		}

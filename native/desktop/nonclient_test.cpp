@@ -87,6 +87,34 @@ int main(int argc,char **argv)
 			check(frames==2,"glass popup was not presented");
 			windows.set_presentation(presentation);
 		}
+		{
+			const auto handle=objects.add(raven::DesktopWindow{0,0,u"client caption",0,0,240,80});
+			auto *window=objects.window(handle);
+			window->visible=window->painted=true;
+			window->style=0x10cf0000U;
+			window->glass=std::array<int32_t,4>{1,1,1,1};
+			std::vector<uint8_t> pixels(240*80*4,64),shown;
+			window->bitmap=objects.add(raven::DesktopBitmap{240,80,32,pixels});
+			window->dc=objects.add(raven::DesktopDC{window->bitmap,window->bitmap,handle});
+			auto glass=presentation;
+			glass.present=[&](auto,auto,auto,auto,std::span<const uint8_t> image) { shown.assign(image.begin(),image.end()); };
+			windows.set_presentation(glass);
+			windows.drawing(handle); windows.flush_dirty(true);
+			check(shown==pixels,"narrow glass border drew over the client's caption buttons");
+			objects.window(handle)->glass=std::array<int32_t,4>{-1,-1,-1,-1};
+			windows.drawing(handle); windows.flush_dirty(true);
+			check(shown!=pixels,"fully extended caption lost compositor buttons");
+			objects.set_dpi(192);
+			windows.drawing(handle); windows.flush_dirty(true);
+			int32_t first=240,last=-1;
+			for (int32_t y=0;y<80;++y)
+				for (int32_t x=140;x<232;++x)
+					if (shown[(size_t(y)*240+x)*4]!=64) { first=std::min(first,x); last=std::max(last,x); }
+			check(last-first>=19 && last-first<=23,"192-DPI close glyph did not scale with its button");
+			objects.set_dpi(96);
+			objects.window(handle)->visible=false;
+			windows.set_presentation(presentation);
+		}
 		const auto page=process.map_memory(8192,PROT_READ | PROT_WRITE); process.protect_memory(page+4096,4096,PROT_NONE);
 		const auto rect=page+4096-16;
 		const std::array<uint8_t,16> input{0,0,0,0,0,0,0,0,64,1,0,0,240,0,0,0}; process.write_memory(rect,input);
