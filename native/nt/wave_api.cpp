@@ -1,5 +1,8 @@
 #include "kernel_context.h"
 #include "text.h"
+#ifdef __APPLE__
+#include "platform/darwin/audio/output.h"
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -24,6 +27,7 @@ constexpr uint32_t whdr_done = 0x1, whdr_prepared = 0x2, whdr_beginloop = 0x4, w
 constexpr uint32_t callback_kind = 0x70000, callback_null = 0, callback_event = 0x50000, wave_format_query = 0x1;
 constexpr uint64_t wave_mapper = 0xffffffffU;
 
+#ifndef __APPLE__
 // The PulseAudio simple client, which PipeWire also serves, loaded when a device first opens. Without it the samples play to nowhere.
 struct SampleSpec {
 	int format;
@@ -61,6 +65,7 @@ const Pulse *pulse()
 	}();
 	return loaded.get();
 }
+#endif
 
 struct Format {
 	uint32_t rate = 0, channels = 0, bits = 0, block = 0;
@@ -90,12 +95,27 @@ std::optional<Format> read_format(ApiCall &call, uint64_t address)
 		tag = uint16_t(subformat);
 	}
 	Format format{rate, channels, bits, block, tag == 3};
+#ifdef __APPLE__
+	// AudioQueue's PCM converter cannot start below 8 kHz. Reject these in format queries as well as opens.
+	if (rate < 8000)
+		return std::nullopt;
+#endif
 	if ((tag != 1 && tag != 3) || !channels || channels > 8 || rate < 1000 || rate > 384000 || block != channels * (bits / 8) ||
 		(tag == 1 && bits != 8 && bits != 16 && bits != 24 && bits != 32) || (tag == 3 && bits != 32))
 		return std::nullopt;
 	return format;
 }
 
+#ifdef __APPLE__
+class WaveOut : public KernelObject, public raven_darwin::AudioOutput {
+public:
+	WaveOut(const Format &value, uint32_t callback, uint64_t target) :
+		AudioOutput({value.rate, value.channels, value.bits, value.block, value.floating}), format(value), callback(callback), target(target) {}
+	const Format format;
+	const uint32_t callback;
+	const uint64_t target;
+};
+#else
 // One opened device: a host thread plays the buffers in order, and the headers it finished wait for the guest to be told.
 class WaveOut : public KernelObject {
 public:
@@ -214,6 +234,7 @@ private:
 	bool stopping = false, paused = false, playing = false;
 	std::thread worker;
 };
+#endif
 
 }
 
@@ -251,7 +272,13 @@ void register_wave_api(ApiRegistry &registry, KernelContext &context)
 		}
 	});
 
-	registry.add("waveOutGetNumDevs", 0, [](ApiCall &call) { call.ret(1); });
+	registry.add("waveOutGetNumDevs", 0, [](ApiCall &call) {
+#ifdef __APPLE__
+		call.ret(raven_darwin::AudioOutput::has_default_device() ? 1 : 0);
+#else
+		call.ret(1);
+#endif
+	});
 	// There is no capture device: recording programs hear that none exists.
 	registry.add("waveInGetNumDevs", 0, [](ApiCall &call) { call.ret(0); });
 	// There is no capture device and no mixer: their calls report a bad device or no driver, as Windows does on such a machine.
@@ -330,6 +357,12 @@ void register_wave_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const auto device = std::make_shared<WaveOut>(*format, kind, kind == callback_event ? call[3] : 0);
+#ifdef __APPLE__
+		if (!device->ready()) {
+			call.ret(mmsyserr_error);
+			return;
+		}
+#endif
 		const auto made = objects.add_object(device);
 		if (made.status) {
 			call.ret(mmsyserr_nomem);
@@ -405,6 +438,7 @@ void register_wave_api(ApiRegistry &registry, KernelContext &context)
 				repeated.insert(repeated.end(), samples.begin(), samples.end());
 			samples = std::move(repeated);
 		}
+#ifndef __APPLE__
 		// The volume scales samples of the formats it can: 16-bit integers and floats, left and right halves of the volume word.
 		if (device->volume != 0xffffffffU) {
 			const float left = float(device->volume & 0xffff) / 65535.0f, right = float(device->volume >> 16) / 65535.0f;
@@ -424,6 +458,7 @@ void register_wave_api(ApiRegistry &registry, KernelContext &context)
 					std::memcpy(samples.data() + index, &value, 2);
 				}
 		}
+#endif
 		call.store<uint32_t>(at, (flags & ~whdr_done) | whdr_inqueue);
 		device->enqueue(call[1], std::move(samples));
 		call.ret(0);
@@ -489,12 +524,20 @@ void register_wave_api(ApiRegistry &registry, KernelContext &context)
 			call.ret(mmsyserr_invalparam);
 			return;
 		}
+#ifdef __APPLE__
+		call.store<uint32_t>(call[1], device ? device->get_volume() : 0xffffffffU);
+#else
 		call.store<uint32_t>(call[1], device ? device->volume : 0xffffffffU);
+#endif
 		call.ret(0);
 	});
 	registry.add("waveOutSetVolume", 2, [device_of](ApiCall &call) {
 		if (const auto device = device_of(call[0]))
+#ifdef __APPLE__
+			device->set_volume(call.u32(1));
+#else
 			device->volume = call.u32(1);
+#endif
 		call.ret(0);
 	});
 	registry.add("waveOutGetID", 2, [device_of](ApiCall &call) {
