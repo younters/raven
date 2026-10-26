@@ -265,11 +265,11 @@ void register_wave_api(ApiRegistry &registry, KernelContext &context)
 	auto inputs = std::make_shared<std::map<uint64_t,std::weak_ptr<WaveIn>>>();
 	const auto input_of = [&objects](uint64_t handle) { return objects.object_as<WaveIn>(handle); };
 	context.threads.add_service([inputs,&context] {
-		const uint64_t width=context.process.mode()==NativeMode::x86?4:8;
 		for (auto entry=inputs->begin();entry!=inputs->end();) {
 			const auto device=entry->second.lock();
 			if (!device) { entry=inputs->erase(entry); continue; }
 			while (device->running && !device->queued.empty() && device->input.padding()) {
+				const uint64_t width=context.process.mode()==NativeMode::x86?4:8;
 				auto &header=device->queued.front();
 				uint32_t total; const auto raw=context.process.read_memory(header.address+width,4); std::memcpy(&total,raw.data(),4);
 				const auto available=total-header.written;
