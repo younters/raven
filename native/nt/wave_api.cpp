@@ -390,7 +390,7 @@ void register_wave_api(ApiRegistry &registry, KernelContext &context)
 			const auto device=input_of(call[0]); if (!device) { call.ret(mmsyserr_invalhandle); return; }
 			const auto method=std::string_view(name);
 			if (method=="waveInClose") { if (!device->queued.empty()) { call.ret(waverr_stillplaying); return; } device->input.stop(); objects.close(call[0]); }
-			else if (method=="waveInStart") { device->running=true; device->input.start(); }
+			else if (method=="waveInStart") { if (!device->input.start()) { call.ret(mmsyserr_error); return; } device->running=true; }
 			else { device->running=false; if (method=="waveInReset") device->input.reset(); else device->input.stop();
 				while (!device->queued.empty()) { finish_input(device,device->queued.front().address); device->queued.pop_front(); }
 			}

@@ -58,18 +58,20 @@ struct AudioInput::State {
 AudioInput::AudioInput(AudioFormat f) : state(std::make_unique<State>(f)) {}
 AudioInput::~AudioInput() = default;
 bool AudioInput::ready() const { return state->queue; }
-void AudioInput::start() {
-	if (!state->queue) return;
+bool AudioInput::start() {
+	if (!state->queue) return false;
 	{ std::lock_guard lock(state->mutex); state->running=true; }
-	if (AudioQueueStart(state->queue,nullptr)) { std::lock_guard lock(state->mutex); state->running=false; }
+	if (AudioQueueStart(state->queue,nullptr)) { std::lock_guard lock(state->mutex); state->running=false; return false; }
+	return true;
 }
 void AudioInput::stop() {
 	{ std::lock_guard lock(state->mutex); state->running=false; }
 	if (state->queue) AudioQueuePause(state->queue);
 }
 void AudioInput::reset() { stop(); std::lock_guard lock(state->mutex); state->bytes.clear(); state->captured=0; }
-std::vector<uint8_t> AudioInput::take(uint32_t frames) {
+std::vector<uint8_t> AudioInput::take(uint32_t frames, uint64_t *first) {
 	std::lock_guard lock(state->mutex);
+	if (first) *first=state->captured-state->bytes.size()/state->format.block;
 	const auto count = std::min<size_t>(size_t(frames)*state->format.block,state->bytes.size());
 	std::vector<uint8_t> result(state->bytes.begin(),state->bytes.begin()+count);
 	state->bytes.erase(state->bytes.begin(),state->bytes.begin()+count); return result;

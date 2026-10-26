@@ -43,13 +43,13 @@ through the same converter. The host remains arm64; no audio library is loaded i
 - Enqueues silence during underruns to keep the timeline continuous. Scheduled buffer sample times map presentation time to guest frames;
   inserted silence does not advance guest position. Header completion waits for presentation, rather than buffer reuse. `position()` reports
   bytes; `padding()` reports submitted guest frames not yet presented, including pending data. WinMM exposes position as bytes/samples/ms.
-  There is no `IAudioClient::GetCurrentPadding` or `IAudioClock` export because WASAPI is not implemented.
+  WASAPI uses the shared mixer for its own padding and clock; see [IMPLEMENTATION.md](IMPLEMENTATION.md).
 - Pause retains pending audio and freezes the queue. Reset synchronously stops callbacks, returns unfinished headers once, clears scheduling
   state, and restarts at position zero. Synchronous disposal keeps callback context alive until callbacks stop.
 - Atomic left/right WinMM gains scale all supported sample formats as chunks are prepared; zero mutes. Already prepared buffers may retain
   the previous gain for up to 40 ms. Channels other than the second use the left gain, matching the prior WinMM convention.
 - Enumerates one logical default output, or zero if CoreAudio has none. Leaving `kAudioQueueProperty_CurrentDevice` unset lets AudioQueue
-  follow the system default, including device changes. Device-specific Windows IDs/names and endpoint notifications are not implemented.
+  follow the system default, including device changes. MMDevice exposes default render/capture endpoints and output-change notifications.
   Failure to open/start CoreAudio returns a WinMM error rather than silently discarding audio.
 
 Apple's [AudioQueueGetCurrentTime](https://developer.apple.com/documentation/audiotoolbox/audioqueuegetcurrenttime(_:_:_:_:)) documents
@@ -83,7 +83,7 @@ Default-device hot switching is delegated to AudioQueue. The host MMDevice provi
 registered `IMMNotificationClient` listeners when it changes. Physical hot switching has not been exercised in automated tests.
 
 
-## Recorded macOS validation (2026-10-25)
+## Earlier WinMM validation (2026-10-25)
 
 Built with the supplied RelWithDebInfo/Ninja command on native arm64 Apple M4 Pro, macOS 27.2 (26B5091g). The focused locked suite
 passed all five tests. The standalone offline contract also passed AddressSanitizer and UndefinedBehaviorSanitizer (system-framework
@@ -101,6 +101,6 @@ The final Windows x64 fixture returned 0 with 69 CoreAudio callbacks and 22,050 
 position zero. Source triangle PCM was explicitly muted, so verification stayed silent. The direct real-device test reported
 56 callbacks, 88,200 presented bytes and zero remaining padding. The offline contract reported zero failures.
 
-[verification.json](verification.json) records counts, exact frame evidence, provenance and limitations. Full logs/XML are retained in
-`/tmp/raven-audio-results/`. The only changed upstream file is `native/nt/wave_api.cpp` (+44/-1); all other changes are under this Darwin
-platform directory. Removing the Apple branches reproduces the original Linux path apart from formatting of the device-count lambda.
+[verification.json](verification.json) records this earlier WinMM milestone's counts, frame evidence, provenance and limitations. Its
+logs/XML are retained in `/tmp/raven-audio-results/`. Later DirectSound, WASAPI, XAudio2, PlaySound and capture work also changes
+platform-neutral registration and API files under `native/`; see [IMPLEMENTATION.md](IMPLEMENTATION.md).

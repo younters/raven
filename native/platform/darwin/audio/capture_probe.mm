@@ -6,7 +6,8 @@ int main(int argc, char **) {
 	if (argc>1) return 0;
 	raven_darwin::AudioInput input({48000,1,32,4,true});
 	if (!input.ready()) return 1;
-	input.start(); std::this_thread::sleep_for(std::chrono::milliseconds(200)); input.stop();
+	if (!input.start()) return 1;
+	std::this_thread::sleep_for(std::chrono::milliseconds(200)); input.stop();
 	if (!input.position() || !input.padding()) return 2;
 	input.reset(); return input.position() ? 3 : 0;
 }

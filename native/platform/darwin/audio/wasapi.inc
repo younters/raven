@@ -5,7 +5,7 @@ struct Client {
 	std::unique_ptr<AudioInput> input;
 	std::vector<uint8_t> capture_pending;
 	uint32_t capacity = 0, flags = 0, acquired = 0;
-	uint64_t memory = 0, event = 0, clock_start = 0, clock_elapsed = 0;
+	uint64_t memory = 0, event = 0, clock_start = 0, clock_elapsed = 0, capture_first = 0;
 	float volume = 1;
 	bool muted = false, initialized = false, running = false, locked = false, capture = false;
 };
@@ -17,6 +17,14 @@ std::chrono::steady_clock::time_point last_trace{};
 AudioDeviceID default_output = 0;
 float endpoint_gain = 1;
 bool endpoint_mute = false;
+void notification_reference(uint64_t callback, size_t index) {
+	const size_t width=context.process.mode()==NativeMode::x86?4:8;
+	const auto table_bytes=context.process.read_memory(callback,width);
+	uint64_t table=0; std::memcpy(&table,table_bytes.data(),width);
+	const auto method_bytes=context.process.read_memory(table+index*width,width);
+	uint64_t method=0; std::memcpy(&method,method_bytes.data(),width);
+	const std::array<uint64_t,1> args{callback}; context.call(method,args);
+}
 uint64_t text(ApiCall &call, std::u16string_view value) {
 	const auto at = context.allocator.allocate((value.size()+1)*2);
 	call.put_wide(at,value,value.size()+1); return at;
@@ -58,8 +66,12 @@ void wasapi(ApiCall &call, std::string_view type, std::string_view method) {
 			const auto at=object(call,"IMMDevice"); device_flows[at]=id.ends_with(u"capture}")?1:0; call.store_pointer(call[2],at);
 		} else if (method == "RegisterEndpointNotificationCallback") {
 			if (!call[1]) { call.ret(invalid); return; }
-			if (std::find(endpoint_callbacks.begin(),endpoint_callbacks.end(),call[1]) == endpoint_callbacks.end()) endpoint_callbacks.push_back(call[1]);
-		} else if (method == "UnregisterEndpointNotificationCallback") std::erase(endpoint_callbacks,call[1]);
+			if (std::find(endpoint_callbacks.begin(),endpoint_callbacks.end(),call[1]) == endpoint_callbacks.end()) {
+				notification_reference(call[1],1); endpoint_callbacks.push_back(call[1]);
+			}
+		} else if (method == "UnregisterEndpointNotificationCallback") {
+			if (std::erase(endpoint_callbacks,call[1])) notification_reference(call[1],2);
+		}
 		else { call.ret(not_impl); return; }
 		call.ret(ok); return;
 	}
@@ -166,10 +178,12 @@ void wasapi(ApiCall &call, std::string_view type, std::string_view method) {
 		else if (method == "Start") {
 			if (c.running) { call.ret(0x8889000a); return; }
 			if ((c.flags&0x40000) && !c.event) { call.ret(0x88890014); return; }
-			c.clock_start=c.capture?c.input->position():mixer().clock(); c.running=true;
-			if (c.capture) c.input->start(); else mixer().play(c.voice);
+			c.clock_start=c.capture?c.input->position():mixer().clock();
+			if (c.capture && !c.input->start()) { call.ret(0x88890004); return; }
+			c.running=true;
+			if (!c.capture) mixer().play(c.voice);
 		} else if (method == "Stop") { if (c.running) c.clock_elapsed+=(c.capture?c.input->position():mixer().clock())-c.clock_start; c.running=false; if (c.capture) c.input->stop(); else mixer().stop(c.voice); }
-		else if (method == "Reset") { if (c.running) { call.ret(not_stopped); return; } if (c.locked) { call.ret(out_of_order); return; } if (c.capture) { c.input->reset(); c.capture_pending.clear(); } else mixer().reset(c.voice); c.clock_elapsed=0; }
+		else if (method == "Reset") { if (c.running) { call.ret(not_stopped); return; } if (c.locked) { call.ret(out_of_order); return; } if (c.capture) { c.input->reset(); c.capture_pending.clear(); c.capture_first=0; } else mixer().reset(c.voice); c.clock_elapsed=0; }
 		else if (method == "GetService" && call[1] && call[2]) {
 			call.store_pointer(call[2],0); const auto type = interface_for(call,call[1]);
 			if ((type != "IAudioRenderClient" && type != "IAudioCaptureClient" && type != "IAudioClock" && type != "ISimpleAudioVolume") ||
@@ -196,17 +210,20 @@ void wasapi(ApiCall &call, std::string_view type, std::string_view method) {
 		else if (method == "GetBuffer") {
 			if (!call[1] || !call[2] || !call[3]) { call.ret(invalid); return; }
 			if (c.locked) { call.ret(out_of_order); return; }
-			if (c.capture_pending.empty()) c.capture_pending=c.input->take(std::min(c.capacity,c.input->padding()));
+			if (c.capture_pending.empty()) {
+				c.capture_pending=c.input->take(std::min(c.capacity,c.input->padding()),&c.capture_first);
+			}
 			const auto frames=uint32_t(c.capture_pending.size()/c.format.block);
 			call.store_pointer(call[1],frames?c.memory:0); call.store<uint32_t>(call[2],frames); call.store<uint32_t>(call[3],0);
 			if (frames) {
 				call.write(c.memory,c.capture_pending); c.locked=true; c.acquired=frames;
-				if (call[4]) call.store<uint64_t>(call[4],c.input->position()-c.input->padding()-frames);
+				if (call[4]) call.store<uint64_t>(call[4],c.capture_first);
 				if (call[5]) call.store<uint64_t>(call[5],counter_ticks());
 			}
 		} else if (method == "ReleaseBuffer") {
 			if (!c.locked || call[1]>c.acquired) { call.ret(out_of_order); return; }
 			c.capture_pending.erase(c.capture_pending.begin(),c.capture_pending.begin()+call[1]*c.format.block);
+			c.capture_first+=call[1];
 			c.locked=false; c.acquired=0;
 		} else { call.ret(not_impl); return; }
 	} else if (type == "IAudioClock") {

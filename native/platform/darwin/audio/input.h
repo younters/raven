@@ -6,10 +6,10 @@ public:
 	explicit AudioInput(AudioFormat);
 	~AudioInput();
 	bool ready() const;
-	void start();
+	bool start();
 	void stop();
 	void reset();
-	std::vector<uint8_t> take(uint32_t frames);
+	std::vector<uint8_t> take(uint32_t frames, uint64_t *first = nullptr);
 	uint32_t padding();
 	uint64_t position();
 	static bool has_default_device();

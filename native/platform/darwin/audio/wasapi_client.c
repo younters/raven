@@ -4,12 +4,26 @@
 #include <windows.h>
 #include <mmdeviceapi.h>
 #include <audioclient.h>
+#include <endpointvolume.h>
 #include <functiondiscoverykeys_devpkey.h>
 #define CHECK(x,n) if (!(x)) return n
+static HRESULT STDMETHODCALLTYPE notify_query(IMMNotificationClient *self,REFIID iid,void **out) { (void)self; (void)iid; *out=0; return E_NOINTERFACE; }
+static int notify_adds,notify_releases;
+static ULONG STDMETHODCALLTYPE notify_add(IMMNotificationClient *self) { (void)self; ++notify_adds; return 2; }
+static ULONG STDMETHODCALLTYPE notify_release(IMMNotificationClient *self) { (void)self; ++notify_releases; return 1; }
+static HRESULT STDMETHODCALLTYPE notify_state(IMMNotificationClient *self,LPCWSTR id,DWORD state) { (void)self; (void)id; (void)state; return S_OK; }
+static HRESULT STDMETHODCALLTYPE notify_id(IMMNotificationClient *self,LPCWSTR id) { (void)self; (void)id; return S_OK; }
+static HRESULT STDMETHODCALLTYPE notify_default(IMMNotificationClient *self,EDataFlow flow,ERole role,LPCWSTR id) { (void)self; (void)flow; (void)role; (void)id; return S_OK; }
+static HRESULT STDMETHODCALLTYPE notify_property(IMMNotificationClient *self,LPCWSTR id,const PROPERTYKEY key) { (void)self; (void)id; (void)key; return S_OK; }
+static IMMNotificationClientVtbl notification_vtable={notify_query,notify_add,notify_release,notify_state,notify_id,notify_id,notify_default,notify_property};
 int raven_entry(void) {
 	IMMDeviceEnumerator *enumerator=0;
 	CHECK(SUCCEEDED(CoInitializeEx(0,0)),1);
 	CHECK(CoCreateInstance(&CLSID_MMDeviceEnumerator,0,CLSCTX_INPROC_SERVER,&IID_IMMDeviceEnumerator,(void**)&enumerator)==S_OK,2);
+	IMMNotificationClient notification={&notification_vtable};
+	CHECK(IMMDeviceEnumerator_RegisterEndpointNotificationCallback(enumerator,&notification)==S_OK,41);
+	CHECK(IMMDeviceEnumerator_UnregisterEndpointNotificationCallback(enumerator,&notification)==S_OK,42);
+	CHECK(notify_adds==1 && notify_releases==1,49);
 	IMMDeviceCollection *collection=0; UINT count=0;
 	CHECK(IMMDeviceEnumerator_EnumAudioEndpoints(enumerator,eRender,DEVICE_STATE_ACTIVE,&collection)==S_OK,3);
 	CHECK(IMMDeviceCollection_GetCount(collection,&count)==S_OK && count==1,4);
@@ -21,6 +35,10 @@ int raven_entry(void) {
 		CHECK(IMMDeviceCollection_Item(inputs,0,&microphone)==S_OK,36);
 		CHECK(IMMDevice_QueryInterface(microphone,&IID_IMMEndpoint,(void**)&endpoint)==S_OK,37);
 		CHECK(IMMEndpoint_GetDataFlow(endpoint,&flow)==S_OK && flow==eCapture,38);
+		IAudioClient3 *input_client=0; WAVEFORMATEX *input_format=0;
+		CHECK(IMMDevice_Activate(microphone,&IID_IAudioClient3,CLSCTX_ALL,0,(void**)&input_client)==S_OK,39);
+		CHECK(IAudioClient3_GetMixFormat(input_client,&input_format)==S_OK && input_format->nChannels==2,40);
+		CoTaskMemFree(input_format); IAudioClient3_Release(input_client);
 		IMMEndpoint_Release(endpoint); IMMDevice_Release(microphone);
 	}
 	IMMDeviceCollection_Release(inputs);
@@ -30,6 +48,14 @@ int raven_entry(void) {
 	CHECK(IMMDevice_OpenPropertyStore(device,STGM_READ,&properties)==S_OK,6);
 	CHECK(IPropertyStore_GetValue(properties,&PKEY_Device_FriendlyName,&value)==S_OK && value.vt==VT_LPWSTR && value.pwszVal[0],7);
 	CoTaskMemFree(value.pwszVal); IPropertyStore_Release(properties);
+	IAudioEndpointVolume *endpoint_volume=0; UINT channels=0; BOOL muted=TRUE; float level=0;
+	CHECK(IMMDevice_Activate(device,&IID_IAudioEndpointVolume,CLSCTX_ALL,0,(void**)&endpoint_volume)==S_OK,43);
+	CHECK(IAudioEndpointVolume_GetChannelCount(endpoint_volume,&channels)==S_OK && channels==2,44);
+	CHECK(IAudioEndpointVolume_SetMasterVolumeLevelScalar(endpoint_volume,0.5f,0)==S_OK,45);
+	CHECK(IAudioEndpointVolume_GetMasterVolumeLevelScalar(endpoint_volume,&level)==S_OK && level==0.5f,46);
+	CHECK(IAudioEndpointVolume_SetMute(endpoint_volume,FALSE,0)==S_OK,47);
+	CHECK(IAudioEndpointVolume_GetMute(endpoint_volume,&muted)==S_OK && !muted,48);
+	IAudioEndpointVolume_Release(endpoint_volume);
 	IAudioClient3 *client=0;
 	CHECK(IMMDevice_Activate(device,&IID_IAudioClient3,CLSCTX_ALL,0,(void**)&client)==S_OK,8);
 	WAVEFORMATEX *format=0;
