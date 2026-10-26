@@ -138,10 +138,11 @@ const std::vector<FastStub> &fast_stubs()
 static bool served_api(std::string_view module, std::string_view name)
 {
 	if (module == "user32.dll")
-		return name == "GetWindow";
+		return name == "GetWindow" || name == "MonitorFromWindow";
 	if (module == "kernel32.dll" || module == "kernelbase.dll")
 		return name == "QueryPerformanceCounter" || name == "QueryPerformanceFrequency" || name == "WakeConditionVariable" ||
-			name == "WakeAllConditionVariable" || name == "ReleaseSemaphore";
+			name == "WakeAllConditionVariable" || name == "ReleaseSemaphore" || name == "GetSystemTime" ||
+			name == "SystemTimeToFileTime";
 	// Waking marks the sleepers; they run when the scheduler next picks a thread.
 	if (module == "ntdll.dll")
 		return name == "RtlWakeConditionVariable" || name == "RtlWakeAllConditionVariable";
