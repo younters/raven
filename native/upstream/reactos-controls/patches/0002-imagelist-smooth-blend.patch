@@ -1,0 +1,24 @@
+--- a/dll/win32/comctl32/imagelist.c
++++ b/dll/win32/comctl32/imagelist.c
+@@ -1309 +1309 @@
+-                               int src_x, int src_y, int cx, int cy, BLENDFUNCTION func,
++                               int src_x, int src_y, int cx, int cy, BOOL has_alpha, BLENDFUNCTION func,
+@@ -1373 +1373 @@
+-    if (himl->has_alpha)  /* we already have an alpha channel in this case */
++    if (has_alpha)  /* this image already has an alpha channel */
+@@ -1426,0 +1427,3 @@
++    if (!has_alpha && !himl->hbmMask)
++        for (i = 0, ptr = bits; i < cx * cy; i++, ptr++) *ptr |= 0xff000000;
++
+@@ -1630 +1633 @@
+-    if (!bMask && (has_alpha || (fState & ILS_ALPHA)))
++    if (!bMask && (has_alpha || bBlend || (fState & ILS_ALPHA)))
+@@ -1654 +1657 @@
+-                                         pt.x, pt.y, cx, cy, func, fStyle, blend_col );
++                                         pt.x, pt.y, cx, cy, has_alpha, func, fStyle, blend_col );
+@@ -1664 +1667 @@
+-        alpha_blend_image( himl, hImageListDC, hMaskListDC, hImageDC, 0, 0, pt.x, pt.y, cx, cy, func, fStyle, blend_col );
++        alpha_blend_image( himl, hImageListDC, hMaskListDC, hImageDC, 0, 0, pt.x, pt.y, cx, cy, has_alpha, func, fStyle, blend_col );
+@@ -1666 +1669 @@
+-        alpha_blend_image( himl, hImageDC, 0, 0, pt.x, pt.y, cx, cy, func, fStyle, blend_col );
++        alpha_blend_image( himl, hImageDC, 0, 0, pt.x, pt.y, cx, cy, has_alpha, func, fStyle, blend_col );

@@ -1719,6 +1719,19 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                         add_test(NAME native_graphics_parity_x${width} COMMAND raven --run-process --execution=native --timeout-ms=30000 ${graphics_parity_client})
                         set_tests_properties(native_graphics_parity_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                     endif()
+                    set(imagelist_blend_client ${CMAKE_CURRENT_BINARY_DIR}/imagelist-blend${width}.exe)
+                    add_custom_command(OUTPUT ${imagelist_blend_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${imagelist_blend_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/imagelist_blend_client.c
+                            -lcomctl32 -lgdi32 -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/imagelist_blend_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${imagelist_blend_client})
+                    if((width EQUAL 64 AND RAVEN_CONTROLS_COMPONENT_DIR) OR (width EQUAL 32 AND RAVEN_CONTROLS32_COMPONENT_DIR))
+                        add_test(NAME native_imagelist_blend_x${width} COMMAND raven --run-process --execution=native ${imagelist_blend_client})
+                        set_tests_properties(native_imagelist_blend_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                            ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/imagelist-blend-prefix${width})
+                    endif()
                     set(library_parity_client ${CMAKE_CURRENT_BINARY_DIR}/library-parity${width}.exe)
                     add_custom_command(OUTPUT ${library_parity_client}
                         COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
