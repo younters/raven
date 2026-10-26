@@ -68,7 +68,7 @@ All CTest invocations must use the shared machine lock, serially:
 /tmp/raven-ctest-lock.sh audio-full ctest --test-dir build -j1 --timeout 120 --output-on-failure
 ```
 
-`native_darwin_audio_offline` renders known nonzero samples without an output device. It checks all integer widths at six rates from
+`native_darwin_audio_offline` renders known nonzero samples without sending them to an output device. It checks all integer widths at six rates from
 8 to 384 kHz and 1/2/6/8 channels, float conversion, independent stereo volume/mute, pause, reset/reuse, header completion, padding,
 underrun position, recycling over a longer stream, and 44.1-to-48 kHz resampling.
 
@@ -83,3 +83,26 @@ loopback driver, Firefox prefix, debugger, or system volume change is needed.
 
 Default-device hot switching is delegated to AudioQueue and has not been exercised by changing the user's active output device. Real
 DirectSound/WASAPI/XAudio2/PlaySound apps still need their missing Windows-facing implementations; this backend enables WinMM playback.
+
+
+## Recorded macOS validation (2026-10-25)
+
+Built with the supplied RelWithDebInfo/Ninja command on native arm64 Apple M4 Pro, macOS 27.2 (26B5091g). The focused locked suite
+passed all five tests. The standalone offline contract also passed AddressSanitizer and UndefinedBehaviorSanitizer (system-framework
+leak detection disabled).
+
+The full serial comparison used a pristine `eaea484` baseline built in `/tmp/raven-print-baseline` by another delegate and executed
+through the shared `printing-baseline` lock. Its ordered 308-test list and Raven/build/component CMake settings were verified identical
+to this checkout's frozen baseline, avoiding a redundant full run. Baseline: 301 passed, 3 failed, 4 disabled/skipped (493 seconds).
+The final locked run of this checkout: 306 passed, 2 failed, 4 disabled/skipped, 312 total (378 seconds). No previously passing test
+regressed; all four added audio contracts passed. `native_layout_failure_component` and `darwin_dxmt_tessellation` failed in both runs.
+`native_dll_lifecycle` failed in the baseline and passed in the final run; this unrelated result is not attributed to audio.
+
+The final Windows x64 fixture returned 0 with 69 CoreAudio callbacks and 22,050 presented frames; the x86 fixture returned 0 with
+70 callbacks and 22,050 presented frames. Each submitted another 22,050 frames and reset that in-flight header, correctly ending at
+position zero. Source triangle PCM was explicitly muted, so verification stayed silent. The direct real-device test reported
+56 callbacks, 88,200 presented bytes and zero remaining padding. The offline contract reported zero failures.
+
+[verification.json](verification.json) records counts, exact frame evidence, provenance and limitations. Full logs/XML are retained in
+`/tmp/raven-audio-results/`. The only changed upstream file is `native/nt/wave_api.cpp` (+44/-1); all other changes are under this Darwin
+platform directory. Removing the Apple branches reproduces the original Linux path apart from formatting of the device-count lambda.

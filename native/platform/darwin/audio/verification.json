@@ -1,0 +1,68 @@
+{
+  "baseline_commit": "eaea484f43f32128bdd87a750f3b7c7a1dd33ce1",
+  "baseline_provenance": "Pristine /tmp/raven-print-baseline; identical 308-test list and Raven/build/component CMake settings; shared lock printing-baseline",
+  "baseline": {
+    "passed": 301,
+    "failed": 3,
+    "skipped": 4
+  },
+  "final": {
+    "passed": 306,
+    "failed": 2,
+    "skipped": 4
+  },
+  "baseline_failures": [
+    "native_layout_failure_component",
+    "native_dll_lifecycle",
+    "darwin_dxmt_tessellation"
+  ],
+  "final_failures": [
+    "native_layout_failure_component",
+    "darwin_dxmt_tessellation"
+  ],
+  "regressions": [],
+  "added_tests": {
+    "native_darwin_audio_offline": "passed",
+    "native_darwin_audio_device": "passed",
+    "native_darwin_wave_x64": "passed",
+    "native_darwin_wave_x32": "passed"
+  },
+  "previous_failure_passed_this_run": [
+    "native_dll_lifecycle"
+  ],
+  "implementation_commit": "af69c6c",
+  "platform": {
+    "os": "macOS 27.2 (26B5091g)",
+    "host": "arm64 Apple M4 Pro",
+    "guest": "x86_64 and x86 Windows under Rosetta 2",
+    "build": "RelWithDebInfo, Ninja, supplied raven-components/raven-skia paths"
+  },
+  "full_command": "RAVEN_PREFIX=/tmp/raven-audio-results/final-prefix /tmp/raven-ctest-lock.sh audio-final-full ctest --test-dir build -j1 --timeout 120 --output-on-failure --output-junit /tmp/raven-audio-results/final.xml",
+  "focused": "5/5 passed under shared lock; all five passed again in final full suite",
+  "sanitizers": "Standalone offline contract passed AddressSanitizer and UndefinedBehaviorSanitizer; leak detection disabled for system frameworks",
+  "final_suite_seconds": "378",
+  "audio_evidence": {
+    "native_darwin_audio_offline": [
+      "CoreAudio offline contract: 0 failures"
+    ],
+    "native_darwin_audio_device": [
+      "CoreAudio real device: callbacks=56 bytes=88200 padding=0"
+    ],
+    "native_darwin_wave_x64": [
+      "CoreAudio: callbacks=69 presented_frames=22050 submitted_frames=44100 position_frames=0",
+      "Native entry returned 0 (process initialization not implemented)"
+    ],
+    "native_darwin_wave_x32": [
+      "CoreAudio: callbacks=70 presented_frames=22050 submitted_frames=44100 position_frames=0",
+      "Native entry returned 0 (process initialization not implemented)"
+    ]
+  },
+  "limits": [
+    "DirectSound remains a timing-only stub; WASAPI, XAudio2 and PlaySound playback are not implemented",
+    "No existing capture interface; no microphone access or permission prompt",
+    "Default-device hot switching is provided by AudioQueue but was not manually exercised",
+    "Guest extensible-format channel masks are not interpreted",
+    "Linux branch preprocessing matches baseline except lambda formatting; Linux suite was not run"
+  ],
+  "final_suite_timestamp": "2026-10-25T19:29:40"
+}
