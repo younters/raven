@@ -11,6 +11,8 @@ public Windows headers. It supplies what the system libraries of the guest canno
 - `ExtractIconExW` and `ExtractIconW`: the icons of a program, a library or an .ico file, at the system's large and small sizes.
 - UI Automation's reserved "not supported" and "mixed attribute" values, one object each for the process.
 - the task allocator, through `CoGetMalloc` and the shell's `SHGetMalloc`.
+- the OLE clipboard (`clipboard.c`): `OleSetClipboard` renders a data object's global-memory formats onto the Win32
+  clipboard, `OleGetClipboard` answers with a data object reading it, and `ReleaseStgMedium` frees every kind of medium.
 - streams over registry values (`SHOpenRegStream`, `SHOpenRegStream2`, `OpenRegStream`), written back when a writable one is released.
 
 Its exports replace the same-named exports of `comdlg32.dll`, `ole32.dll`, `shell32.dll` and `uiautomationcore.dll`
