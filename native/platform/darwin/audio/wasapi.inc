@@ -96,8 +96,16 @@ void wasapi(ApiCall &call, std::string_view type, std::string_view method) {
 		else if (method == "Activate" && call[1] && call[4]) {
 			call.store_pointer(call[4],0);
 			const auto requested = interface_for(call,call[1]);
+			if (std::getenv("RAVEN_AUDIO_TRACE")) {
+				std::fprintf(stderr,"Raven audio: Activate IID %.*s bytes",int(requested.size()),requested.data());
+				for (auto byte:call.read(call[1],16)) std::fprintf(stderr," %02x",byte);
+				std::fprintf(stderr,"\n");
+			}
 			if (requested == "IAudioClient" || requested == "IAudioClient2" || requested == "IAudioClient3") {
 				const auto address = object(call,"IAudioClient3"); clients[address] = std::make_shared<Client>(); clients[address]->capture=flow;
+				call.store_pointer(call[4],address);
+			} else if (requested == "IAudioSessionManager" || requested == "IAudioSessionManager2") {
+				const auto address=object(call,"IAudioSessionManager2"); clients[address]=std::make_shared<Client>();
 				call.store_pointer(call[4],address);
 			} else if (requested == "IAudioEndpointVolume") call.store_pointer(call[4],object(call,"IAudioEndpointVolume"));
 			else { call.ret(no_interface); return; }
@@ -137,6 +145,24 @@ void wasapi(ApiCall &call, std::string_view type, std::string_view method) {
 	}
 	if (!clients.contains(call[0])) { call.ret(invalid); return; }
 	auto &c = *clients.at(call[0]);
+	if (type == "IAudioSessionManager2") {
+		if ((method == "GetAudioSessionControl" || method == "GetSimpleAudioVolume") && call[3]) {
+			const auto at=object(call,method == "GetAudioSessionControl" ? "IAudioSessionControl" : "ISimpleAudioVolume");
+			clients[at]=clients.at(call[0]); call.store_pointer(call[3],at);
+		} else if (method == "RegisterSessionNotification" || method == "UnregisterSessionNotification" ||
+			method == "RegisterDuckNotification" || method == "UnregisterDuckNotification") {}
+		else { call.ret(not_impl); return; }
+		call.ret(ok); return;
+	}
+	if (type == "IAudioSessionControl") {
+		if (method == "GetState" && call[1]) call.store<uint32_t>(call[1],c.voice && c.running ? 1 : 0);
+		else if ((method == "GetDisplayName" || method == "GetIconPath") && call[1]) call.store_pointer(call[1],text(call,u""));
+		else if (method == "GetGroupingParam" && call[1]) call.write(call[1],std::array<uint8_t,16>{});
+		else if (method == "SetDisplayName" || method == "SetIconPath" || method == "SetGroupingParam" ||
+			method == "RegisterAudioSessionNotification" || method == "UnregisterAudioSessionNotification") {}
+		else { call.ret(not_impl); return; }
+		call.ret(ok); return;
+	}
 	constexpr uint32_t uninitialized=0x88890001, already=0x88890002, too_large=0x88890006, out_of_order=0x88890007, not_stopped=0x88890005;
 	if (type == "IAudioClient3") {
 		if (method == "GetMixFormat" && call[1]) call.store_pointer(call[1],mix_format(call,c.capture));

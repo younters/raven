@@ -5,6 +5,7 @@
 #include <mmdeviceapi.h>
 #include <audioclient.h>
 #include <endpointvolume.h>
+#include <audiopolicy.h>
 #include <functiondiscoverykeys_devpkey.h>
 #define CHECK(x,n) if (!(x)) return n
 static HRESULT STDMETHODCALLTYPE notify_query(IMMNotificationClient *self,REFIID iid,void **out) { (void)self; (void)iid; *out=0; return E_NOINTERFACE; }
@@ -56,6 +57,15 @@ int raven_entry(void) {
 	CHECK(IAudioEndpointVolume_SetMute(endpoint_volume,FALSE,0)==S_OK,47);
 	CHECK(IAudioEndpointVolume_GetMute(endpoint_volume,&muted)==S_OK && !muted,48);
 	IAudioEndpointVolume_Release(endpoint_volume);
+	IAudioSessionManager *session_manager=0; IAudioSessionControl *session_control=0; ISimpleAudioVolume *session_volume=0;
+	CHECK(IMMDevice_Activate(device,&IID_IAudioSessionManager,CLSCTX_ALL,0,(void**)&session_manager)==S_OK,50);
+	CHECK(IAudioSessionManager_GetAudioSessionControl(session_manager,0,0,&session_control)==S_OK,51);
+	AudioSessionState session_state=AudioSessionStateActive;
+	CHECK(IAudioSessionControl_GetState(session_control,&session_state)==S_OK && session_state==AudioSessionStateInactive,52);
+	CHECK(IAudioSessionManager_GetSimpleAudioVolume(session_manager,0,0,&session_volume)==S_OK,53);
+	CHECK(ISimpleAudioVolume_SetMasterVolume(session_volume,0.5f,0)==S_OK,54);
+	CHECK(ISimpleAudioVolume_GetMasterVolume(session_volume,&level)==S_OK && level==0.5f,55);
+	ISimpleAudioVolume_Release(session_volume); IAudioSessionControl_Release(session_control); IAudioSessionManager_Release(session_manager);
 	IAudioClient3 *client=0;
 	CHECK(IMMDevice_Activate(device,&IID_IAudioClient3,CLSCTX_ALL,0,(void**)&client)==S_OK,8);
 	WAVEFORMATEX *format=0;

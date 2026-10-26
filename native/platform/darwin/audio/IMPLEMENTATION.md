@@ -32,7 +32,8 @@ A duplicate baseline was inadvertently queued during initial configuration and w
 ## Additional Windows interfaces
 
 MMDevice and WASAPI objects are guest vtables in `raven-audio.dll`; their calls enter the same arm64 host `State` as DirectSound.
-The enumerator exposes the default CoreAudio render and capture endpoints. Each render client copies released guest frames into a
+The enumerator exposes the default CoreAudio render and capture endpoints. Session manager activation supplies basic session control
+and per-session volume objects for applications that inspect the endpoint before opening a stream. Each render client copies released guest frames into a
 bounded mixer voice. `GetCurrentPadding` counts submitted frames that have not been presented, while `IAudioClock` uses the mixer's
 continuous device timeline. Event clients receive scheduler-driven event signals. The default-output notification callback is
 delivered on a scheduler service call after the CoreAudio default device ID changes. The host does not change the system device.

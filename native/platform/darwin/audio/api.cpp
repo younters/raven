@@ -230,6 +230,7 @@ struct State {
 			const auto requested = interface_for(call,call[1]);
 			if (requested.empty()) { call.ret(no_interface); return; }
 			if (requested == "IUnknown" || requested == type ||
+				(type == "IAudioSessionManager2" && requested == "IAudioSessionManager") ||
 				(type == "IAudioClient3" && (requested == "IAudioClient" || requested == "IAudioClient2"))) {
 				++refs[identity]; call.store_pointer(call[2],identity); call.ret(ok); return;
 			}
