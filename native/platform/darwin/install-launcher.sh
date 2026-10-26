@@ -49,6 +49,7 @@ osacompile -o "$APP" "$work/launcher.applescript"
 plist=$APP/Contents/Info.plist
 plutil -replace CFBundleIdentifier -string "$IDENTIFIER" "$plist"
 plutil -replace CFBundleName -string Raven "$plist"
+plutil -replace NSMicrophoneUsageDescription -string "Allow a Windows program running in Raven to record audio." "$plist"
 plutil -replace CFBundleDocumentTypes -json '[{"CFBundleTypeName":"Windows program","CFBundleTypeRole":"Viewer","LSHandlerRank":"Owner","LSItemContentTypes":["com.microsoft.windows-executable"],"CFBundleTypeExtensions":["exe"]}]' "$plist"
 codesign --force --sign - "$APP" >/dev/null 2>&1
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP"

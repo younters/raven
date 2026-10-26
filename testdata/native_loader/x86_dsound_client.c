@@ -47,12 +47,13 @@ int raven_entry(void)
 	DWORD status = 99;
 	if (IDirectSoundBuffer_GetStatus(buffer, &status) != DS_OK || status != 0)
 		return 9;
+	if (IDirectSoundBuffer_SetVolume(buffer, -10000) != DS_OK) return 16;
 	if (IDirectSoundBuffer_Play(buffer, 0, 0, 0) != DS_OK)
 		return 10;
 	if (IDirectSoundBuffer_GetStatus(buffer, &status) != DS_OK || !(status & DSBSTATUS_PLAYING))
 		return 11;
 	DWORD play = 0, write = 0;
-	Sleep(30);
+	Sleep(80);
 	if (IDirectSoundBuffer_GetCurrentPosition(buffer, &play, &write) != DS_OK || play == 0)
 		return 12;
 	/* One tenth of a second of audio at 176400 bytes per second: playback ends by itself. */

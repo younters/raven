@@ -27,6 +27,7 @@
 #include "cpu/served_queue.h"
 #ifdef __APPLE__
 #include "platform/darwin/unix_calls.h"
+#include "platform/darwin/audio/api.h"
 #include "platform/darwin/dxmt/presentation.h"
 #endif
 #ifdef RAVEN_OPENGL
@@ -76,6 +77,12 @@ static constexpr std::array<std::string_view, 50> names{
 
 bool host_device_export(std::string_view library, std::string_view name)
 {
+#ifdef __APPLE__
+	// The host owns the MMDevice class. Its CoCreateInstance handler must see the class ID
+	// before the guest shell component's registry based COM activation path.
+	if (library == "ole32.dll" && name == "CoCreateInstance") return true;
+	if (library == "user32.dll" && name == "MessageBeep") return true;
+#endif
 	return library == "setupapi.dll" && (name == "SetupDiGetClassDevsA" || name == "SetupDiGetClassDevsW" ||
 		name == "SetupDiEnumDeviceInfo" || name == "SetupDiEnumDeviceInterfaces" || name == "SetupDiDestroyDeviceInfoList");
 }
@@ -1563,6 +1570,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		throw std::runtime_error("native process requires an executable graph and positive timeout");
 	for (const auto &[name,module]:modules.all()) validate_native_image(module->image,name);
 	std::vector<std::string_view> native_modules{"kernel32.dll","kernelbase.dll","user32.dll","gdi32.dll","comctl32.dll","ntdll.dll"};
+#ifdef __APPLE__
+	native_modules.emplace_back("raven-audio.dll");
+#endif
 	for (const auto library : system_library_names())
 		if (std::find(native_modules.begin(), native_modules.end(), library) == native_modules.end())
 			native_modules.push_back(library);
@@ -1633,6 +1643,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	std::sort(nt_names.begin(),nt_names.end());
 	// Every Windows system library that a program may import gets a provider; names without a handler stop visibly when called.
 	std::vector<std::string> system_modules{"kernel32.dll", "kernelbase.dll", "user32.dll", "gdi32.dll", "comctl32.dll"};
+#ifdef __APPLE__
+	system_modules.emplace_back("raven-audio.dll");
+	system_modules.emplace_back("xaudio2_9.dll");
+#endif
 	for (const auto library : system_library_names())
 		if (std::find(system_modules.begin(), system_modules.end(), library) == system_modules.end())
 			system_modules.emplace_back(library);
@@ -1671,6 +1685,16 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		// find ones that cannot run, as it does not on a system that lacks them.
 		const auto listed = library == "ntdll.dll" ? std::span<const std::string_view>() : system_export_names(library);
 		symbols.insert(symbols.end(), listed.begin(), listed.end());
+#ifdef __APPLE__
+		if (library == "raven-audio.dll") {
+			const auto audio = raven_darwin::audio_method_names();
+			symbols.insert(symbols.end(), audio.begin(), audio.end());
+		}
+		if (library == "xaudio2_9.dll") {
+			symbols.push_back("XAudio2Create");
+			symbols.push_back("XAudio2CreateWithVersionInfo");
+		}
+#endif
 		if (library == "ntdll.dll")
 			for (const auto &[module_name, module] : modules.all())
 				for (const auto &symbol : module->imports) {
@@ -2454,6 +2478,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_shlwapi_api(api_registry, kernel);
 	register_shell_api(api_registry, kernel);
 	register_platform_api(api_registry, kernel);
+#ifdef __APPLE__
+	raven_darwin::register_audio_api(api_registry, kernel);
+#endif
 	register_actctx_api(api_registry, kernel);
 	register_version_api(api_registry, kernel);
 #ifdef RAVEN_OPENGL

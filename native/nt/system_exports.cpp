@@ -112,8 +112,11 @@ uint32_t system_export_words(std::string_view dll, std::string_view name)
 std::span<const std::string_view> system_library_names()
 {
 	static const auto names = [] {
-		std::array<std::string_view, std::size(libraries)> list{};
-		std::transform(std::begin(libraries), std::end(libraries), list.begin(), [](const auto &item) { return item.first; });
+		std::vector<std::string_view> list;
+		for (const auto &item : libraries) list.push_back(item.first);
+#ifdef __APPLE__
+		list.push_back("xaudio2_9.dll");
+#endif
 		return list;
 	}();
 	return names;

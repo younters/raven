@@ -273,7 +273,8 @@ def bundle(prefix, name, target, arguments='', working='', icon='', icon_index=0
         (macos/'launch').chmod(0o755)
         info = dict(CFBundleIdentifier=identifier, CFBundleName=name, CFBundleDisplayName=name,
                     CFBundleExecutable='launch', CFBundlePackageType='APPL', CFBundleVersion='1',
-                    NSHighResolutionCapable=True, RavenManagedPrefix=str(prefix))
+                    NSHighResolutionCapable=True, RavenManagedPrefix=str(prefix),
+                    NSMicrophoneUsageDescription='Allow a Windows program running in Raven to record audio.')
         if not (icon and make_icon(Path(icon), resources/'app.icns', icon_index)):
             make_icon(target, resources/'app.icns')
         if (resources/'app.icns').exists():

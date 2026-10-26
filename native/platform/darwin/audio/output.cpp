@@ -23,7 +23,8 @@ AudioStreamBasicDescription description(uint32_t rate, uint32_t channels)
 	return {double(rate), kAudioFormatLinearPCM, kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
 		channels * 4, 1, channels * 4, channels, 32, 0};
 }
-float sample(const uint8_t *at, const AudioFormat &format)
+}
+float audio_sample(const uint8_t *at, const AudioFormat &format)
 {
 	if (format.floating) {
 		float value;
@@ -44,7 +45,6 @@ float sample(const uint8_t *at, const AudioFormat &format)
 	int32_t value;
 	std::memcpy(&value, at, 4);
 	return value / 2147483648.0f;
-}
 }
 
 struct AudioOutput::State {
@@ -189,7 +189,7 @@ struct AudioOutput::State {
 					for (uint32_t channel = 0; channel < format.channels; ++channel) {
 						const float scale = float(channel == 1 ? gain >> 16 : gain & 0xffff) / 65535.0f;
 						out[(frames + frame) * format.channels + channel] =
-							sample(item.data.data() + item.offset + frame * format.block + channel * (format.bits / 8), format) * scale;
+							audio_sample(item.data.data() + item.offset + frame * format.block + channel * (format.bits / 8), format) * scale;
 					}
 				frames += uint32_t(count);
 				item.offset += count * format.block;
