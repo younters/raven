@@ -320,6 +320,16 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	// A change notification waits for an address change that is never reported: the host's interfaces are not watched.
 	registry.add("NotifyAddrChange", 2, [](ApiCall &call) { call.ret(call[1] ? error_io_pending : error_not_supported); });
 	registry.add("NotifyRouteChange", 2, [](ApiCall &call) { call.ret(call[1] ? error_io_pending : error_not_supported); });
+#ifdef __APPLE__
+	// The macOS network adapter set is currently a snapshot. Allow callers to subscribe and
+	// cancel without claiming a change; this also lets browsers continue their audio startup.
+	for (const auto *name : {"NotifyIpInterfaceChange","NotifyUnicastIpAddressChange","NotifyRouteChange2"})
+		registry.add(name,5,[](ApiCall &call) {
+			if (!call[1] || !call[4]) { call.ret(error_invalid_parameter); return; }
+			call.store_pointer(call[4],1); call.ret(0);
+		});
+	registry.add("CancelMibChangeNotify2",1,[](ApiCall &call) { call.ret(call[0]?0:error_invalid_parameter); });
+#endif
 	// The computer name is the host's, in the forms Windows reports it.
 	const auto computer_name = [](uint32_t type) -> std::optional<std::u16string> {
 		char host[256] = {};
@@ -364,6 +374,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		// The name goes to the second argument and its length to the third, as in GetComputerNameW.
 		report_name(call, call.u32(0), true);
 	});
+	registry.add("GetComputerNameExA", 3, [report_name](ApiCall &call) { report_name(call, call.u32(0), false); });
 	// Network accounts: the one account of the prefix, a member of Administrators, on a machine in a workgroup. Buffers come from the
 	// guest allocator and go back through NetApiBufferFree.
 	registry.add("NetUserGetInfo", 4, [&context](ApiCall &call) {
@@ -1101,6 +1112,12 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	// No input method editor is installed.
 	registry.add("ImmGetIMEFileNameW", 3, [](ApiCall &call) { call.ret(0); });
 	registry.add("ImmGetIMEFileNameA", 3, [](ApiCall &call) { call.ret(0); });
+#ifdef __APPLE__
+	// There is no Windows IME installed in a Darwin prefix.
+	registry.add("ImmGetDescriptionW", 3, [](ApiCall &call) { call.ret(0); });
+	registry.add("ImmGetDescriptionA", 3, [](ApiCall &call) { call.ret(0); });
+	registry.add("ImmGetProperty", 2, [](ApiCall &call) { call.ret(0); });
+#endif
 	// The policies of a desktop program, which has no package: each call succeeds and names the classic desktop's behaviour, as the
 	// AppPolicy* enumerations number it.
 	static constexpr std::pair<const char *, uint32_t> policies[] = {{"AppPolicyGetThreadInitializationType", 0}, {"AppPolicyGetClrCompat", 1},

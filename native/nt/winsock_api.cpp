@@ -1967,6 +1967,44 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			call.write(call[3], address);
 			call.ret(0);
 		});
+#ifdef __APPLE__
+	for (const auto *name : {"WSCGetProviderPath","WSCGetProviderPath32"})
+		registry.add(name,4,[](ApiCall &call) {
+			if (call[3]) call.store<uint32_t>(call[3],10022); // Synthetic protocols have no provider DLL.
+			call.fail(10022,UINT32_MAX);
+		});
+	for (const auto *name : {"WSCGetProviderInfo","WSCGetProviderInfo32"})
+		registry.add(name,6,[](ApiCall &call) {
+			if (call[5]) call.store<uint32_t>(call[5],10022);
+			call.fail(10022,UINT32_MAX);
+		});
+	for (const auto *name : {"WSCEnumProtocols","WSAEnumProtocolsW","WSAEnumProtocolsA"})
+		registry.add(name,std::string_view(name)=="WSCEnumProtocols"?4:3,[name](ApiCall &call) {
+			const bool narrow=std::string_view(name).ends_with('A');
+			const uint32_t stride=narrow?372:628, needed=2*stride;
+			if (!call[2]) { call.fail(10014,UINT32_MAX); return; }
+			const auto capacity=call.load<uint32_t>(call[2]); call.store<uint32_t>(call[2],needed);
+			if (!call[1] || capacity<needed) {
+				if (std::string_view(name)=="WSCEnumProtocols" && call[3]) call.store<uint32_t>(call[3],10055);
+				call.fail(10055,UINT32_MAX); return;
+			}
+			for (uint32_t i=0;i<2;++i) {
+				const auto at=call[1]+i*stride;
+				call.write(at,std::vector<uint8_t>(stride));
+				call.store<uint32_t>(at+40,1); // one entry in WSAPROTOCOLCHAIN
+				call.store<uint32_t>(at+72,2); // Winsock version
+				call.store<uint32_t>(at+76,2); // AF_INET
+				call.store<uint32_t>(at+80,16);
+				call.store<uint32_t>(at+84,16);
+				call.store<uint32_t>(at+88,i?2:1); // datagram or stream
+				call.store<uint32_t>(at+92,i?17:6); // UDP or TCP
+				if (narrow) call.put_narrow(at+116,i?"UDP/IP":"TCP/IP",256);
+				else call.put_wide(at+116,i?u"UDP/IP":u"TCP/IP",256);
+			}
+			if (std::string_view(name)=="WSCEnumProtocols" && call[3]) call.store<uint32_t>(call[3],0);
+			call.ret(2);
+		});
+#endif
 	registry.add("WSAStartup", 2, [](ApiCall &call) {
 		if (!call[1]) {
 			call.ret(10014);
