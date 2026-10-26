@@ -15,6 +15,9 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <chrono>
+#include <map>
+#include <mutex>
 
 namespace {
 
@@ -91,22 +94,29 @@ CpuFrequency cpu_frequency(unsigned processor)
 bool wireless_interface(const char *name)
 {
 	// Wi-Fi presents an Ethernet link address on macOS. SystemConfiguration retains its physical interface type even while it is off.
-	if (const auto interfaces = SCNetworkInterfaceCopyAll()) {
-		bool wireless = false;
-		for (CFIndex index = 0; index < CFArrayGetCount(interfaces); ++index) {
-			const auto interface = static_cast<SCNetworkInterfaceRef>(CFArrayGetValueAtIndex(interfaces, index));
-			const auto bsd_name = SCNetworkInterfaceGetBSDName(interface), type = SCNetworkInterfaceGetInterfaceType(interface);
-			char buffer[IFNAMSIZ];
-			if (bsd_name && type && CFStringGetCString(bsd_name, buffer, sizeof buffer, kCFStringEncodingUTF8) &&
-				!std::strcmp(buffer, name) && CFEqual(type, kSCNetworkInterfaceTypeIEEE80211)) {
-				wireless = true;
-				break;
+	// Interface types are stable; enumerate the physical inventory together instead of asking IOKit again for every address.
+	// Refresh it for hot-plugged adapters, and retain media-probe results for interfaces SystemConfiguration does not list.
+	static std::mutex mutex;
+	static std::map<std::string, bool> types;
+	static std::chrono::steady_clock::time_point checked{};
+	const std::lock_guard lock(mutex);
+	const auto now = std::chrono::steady_clock::now();
+	if (now - checked >= std::chrono::seconds(5)) {
+		types.clear();
+		if (const auto interfaces = SCNetworkInterfaceCopyAll()) {
+			for (CFIndex index = 0; index < CFArrayGetCount(interfaces); ++index) {
+				const auto interface = static_cast<SCNetworkInterfaceRef>(CFArrayGetValueAtIndex(interfaces, index));
+				const auto bsd_name = SCNetworkInterfaceGetBSDName(interface), type = SCNetworkInterfaceGetInterfaceType(interface);
+				char buffer[IFNAMSIZ];
+				if (bsd_name && type && CFStringGetCString(bsd_name, buffer, sizeof buffer, kCFStringEncodingUTF8))
+					types[buffer] = CFEqual(type, kSCNetworkInterfaceTypeIEEE80211);
 			}
+			CFRelease(interfaces);
 		}
-		CFRelease(interfaces);
-		if (wireless)
-			return true;
+		checked = now;
 	}
+	if (const auto found = types.find(name); found != types.end())
+		return found->second;
 	const int probe = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
 	if (probe < 0)
 		return false;
@@ -114,6 +124,7 @@ bool wireless_interface(const char *name)
 	std::strncpy(media.ifm_name, name, IFNAMSIZ - 1);
 	const bool wireless = ioctl(probe, SIOCGIFMEDIA, &media) == 0 && IFM_TYPE(media.ifm_current) == IFM_IEEE80211;
 	close(probe);
+	types[name] = wireless;
 	return wireless;
 }
 

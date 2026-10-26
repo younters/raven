@@ -1326,6 +1326,21 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const auto value = call[3] ? call.read(call[3], size_t(std::max(call.i32(4), 0))) : std::vector<uint8_t>{};
+		static const bool trace_options = std::getenv("RAVEN_TRACE_SOCKET_OPTIONS") != nullptr;
+		if (trace_options) {
+			int setting = 0;
+			if (value.size() >= sizeof(setting)) std::memcpy(&setting, value.data(), sizeof(setting));
+			std::fprintf(stderr, "raven: setsockopt level=%x option=%x size=%zu value=%d\n", call.u32(1), call.u32(2), value.size(), setting);
+		}
+#ifdef __APPLE__
+		// Winsock permits providers to ignore buffer-size hints. A zero send buffer disables Winsock buffering, but macOS requires
+		// a nonzero kernel buffer even for overlapped sends; retain that buffer rather than rejecting the Windows request.
+		if (option->level == SOL_SOCKET && option->name == SO_SNDBUF && value.size() >= 4) {
+			int setting;
+			std::memcpy(&setting, value.data(), 4);
+			if (!setting) { call.ret(0); return; }
+		}
+#endif
 		int result;
 		if (option->level == SOL_SOCKET && (option->name == SO_RCVTIMEO || option->name == SO_SNDTIMEO) && value.size() >= 4) {
 			uint32_t milliseconds;

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <poll.h>
 #include <utility>
 #include <span>
 #include <string_view>
@@ -97,6 +98,8 @@ struct DesktopPresentation {
 	std::function<double()> backing_scale;
 	std::function<void(double)> render_scale;
 	HostPlatform platform = default_host_platform;
+	// Descriptors that must also end a descriptorless backend's blocking event poll. An empty span removes the watches.
+	std::function<void(std::span<const pollfd>)> wait_descriptors;
 };
 
 }

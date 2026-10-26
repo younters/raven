@@ -3,12 +3,15 @@
 #include "text.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cpuid.h>
 #include <cstring>
 #include <ctime>
 #include <map>
+#include <mutex>
 #include <thread>
+#include <tuple>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -96,6 +99,46 @@ ZoneInfo zone_at(time_t instant)
 	tm local{};
 	::localtime_r(&instant, &local);
 	return {int(local.tm_gmtoff / 60), local.tm_isdst > 0, local.tm_zone ? local.tm_zone : "UTC"};
+}
+
+void zone_transitions(std::span<uint8_t> bytes, int year, const ZoneInfo &january, const ZoneInfo &july)
+{
+	using Key = std::tuple<int, std::string, int, std::string, int, std::string>;
+	static std::mutex mutex;
+	static Key cached_key;
+	static std::array<uint8_t, 32> cached{};
+	const char *zone = std::getenv("TZ");
+	const Key key{year, january.name, january.offset_minutes, july.name, july.offset_minutes, zone ? zone : ""};
+	const std::lock_guard lock(mutex);
+	if (key == cached_key) {
+		std::memcpy(bytes.data() + 68, cached.data(), 16);
+		std::memcpy(bytes.data() + 152, cached.data() + 16, 16);
+		return;
+	}
+	const time_t first = days_from_civil(year, 1, 1) * 86400 - 86400;
+	const time_t last = days_from_civil(year + 1, 1, 1) * 86400 + 86400;
+	for (time_t before = first; before < last; before += 86400) {
+		const auto previous = zone_at(before), next = zone_at(before + 86400);
+		if (previous.daylight == next.daylight) continue;
+		time_t low = before, high = before + 86400;
+		while (high - low > 1) {
+			const time_t middle = low + (high - low) / 2;
+			if (zone_at(middle).daylight == previous.daylight) low = middle;
+			else high = middle;
+		}
+		// Windows describes the transition in local wall time before the offset changes, as a recurring weekday in its month.
+		const int64_t local = high + int64_t(previous.offset_minutes) * 60;
+		const auto date = civil_from_days(local / 86400);
+		if (date.year != year) continue;
+		auto fields = system_time(uint64_t(local) * 10000000ULL + filetime_epoch_offset);
+		const uint16_t zero = 0, week = civil_from_days(local / 86400 + 7).month != date.month ? 5 : (date.day - 1) / 7 + 1;
+		std::memcpy(fields.data(), &zero, 2);
+		std::memcpy(fields.data() + 6, &week, 2);
+		std::memcpy(bytes.data() + (next.daylight ? 152 : 68), fields.data(), fields.size());
+	}
+	cached_key = key;
+	std::memcpy(cached.data(), bytes.data() + 68, 16);
+	std::memcpy(cached.data() + 16, bytes.data() + 152, 16);
 }
 
 std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_environment(const NativePaths &paths, bool wow64)
@@ -272,11 +315,11 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	});
 	const auto zone_information = [](ApiCall &call, bool dynamic) {
 		const time_t now = ::time(nullptr);
-		tm january{}, july{};
-		const time_t year_start = now - now % (365 * 86400);
-		::localtime_r(&year_start, &january);
-		const time_t middle = year_start + 182 * 86400;
-		::localtime_r(&middle, &july);
+		tm local{};
+		::localtime_r(&now, &local);
+		const int year = local.tm_year + 1900;
+		const time_t year_start = days_from_civil(year, 1, 1) * 86400;
+		const time_t middle = days_from_civil(year, 7, 1) * 86400;
 		const auto first = zone_at(year_start), second = zone_at(middle), current = zone_at(now);
 		const int standard = std::min(first.offset_minutes, second.offset_minutes), daylight = std::max(first.offset_minutes, second.offset_minutes);
 		// The dynamic form adds a 128-character key name and a flag after the 172 bytes of the plain one.
@@ -289,6 +332,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		std::memcpy(bytes.data() + 88, daylight_name.data(), daylight_name.size() * 2);
 		const int32_t daylight_bias = standard - daylight;
 		std::memcpy(bytes.data() + 168, &daylight_bias, 4);
+		if (standard != daylight) zone_transitions(bytes, year, first, second);
 		if (dynamic) {
 			const auto key_name = from_utf8(first.offset_minutes <= second.offset_minutes ? first.name : second.name).substr(0, 127);
 			std::memcpy(bytes.data() + 172, key_name.data(), key_name.size() * 2);
