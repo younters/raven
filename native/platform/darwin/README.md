@@ -215,7 +215,7 @@ These compile, but do not yet behave as on Linux.
   see [VULKAN.md](VULKAN.md) for verified tests, the desktop integration test, and Direct3D backend limitations.
 - **Desktop:** Cocoa lives in `cocoa.mm`; graphics bridge work is separate from the controller.
 - **OpenGL:** the bridge uses EGL.
-- **Audio:** uses PulseAudio.
+- **Audio:** WinMM playback uses CoreAudio (see below); DirectSound is timing-only, and WASAPI, XAudio2 and capture are missing.
 
 ## Installed Windows apps in Finder and the Dock
 
