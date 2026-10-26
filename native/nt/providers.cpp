@@ -2462,6 +2462,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	desktop.register_gdi_api(desktop_api);
 	desktop.register_text_api(desktop_api);
 	desktop.register_image_api(desktop_api);
+	desktop.register_print_api(desktop_api, kernel);
 	NativeRegistry hive(prefix.registry_file());
 	apply_registry_settings(hive);
 	register_registry_api(api_registry, kernel, hive);

@@ -25,7 +25,7 @@ bool NativeDesktop::color_dispatch(std::string_view name)
 	try {
 		if (system) result=name=="GetSysColor" ? objects.system_color(int32_t(uint32_t(args[0]))) : objects.system_brush(int32_t(uint32_t(args[0])));
 		else if (name=="GetObjectType") {
-			if (const auto *dc=objects.dc(args[0])) result=dc->window ? 3 : 10;
+			if (const auto *dc=objects.dc(args[0])) result=dc->window || dc->printer ? 3 : 10;
 			else if (objects.brush(args[0])) result=2;
 			else if (objects.font(args[0])) result=6;
 			else if (objects.bitmap(args[0])) result=7;

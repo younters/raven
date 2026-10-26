@@ -1,0 +1,127 @@
+{
+  "implementation_commit": "496096d",
+  "baseline_commit": "eaea484",
+  "upstream_main": "fb18bcaced0783b5e74386b7527b441427e5e0cf",
+  "upstream_search": {
+    "fetch": "success",
+    "native_print_implementation": "none found; exports and unrelated print references only",
+    "pull_requests_search_print": [],
+    "issues_search_print": []
+  },
+  "build": "provided RelWithDebInfo cmake configuration; shared Skia unchanged; cmake --build build -j4",
+  "serial_suite": {
+    "lock": "/tmp/raven-ctest-lock.sh",
+    "arguments": "ctest --test-dir <build> -j1 --timeout 120 --output-on-failure --output-junit <xml>",
+    "baseline": {
+      "total": 308,
+      "passed": 301,
+      "failed": [
+        "native_layout_failure_component",
+        "native_dll_lifecycle",
+        "darwin_dxmt_tessellation"
+      ],
+      "skipped": 3,
+      "disabled": 1,
+      "seconds": 493.0
+    },
+    "after": {
+      "total": 310,
+      "passed": 303,
+      "failed": [
+        "native_layout_failure_component",
+        "native_dll_lifecycle",
+        "darwin_dxmt_tessellation"
+      ],
+      "skipped": 3,
+      "disabled": 1,
+      "seconds": 479.0
+    }
+  },
+  "focused": {
+    "initial": "x64 failed on screen/memory capability shortcut; x86 produced PDF but runner wrongly expected Native entry returned for ExitProcess(0)",
+    "fix": "exclude printer DCs from published screen/memory attribute table; rely on process exit plus output/render assertions",
+    "final": "native_printing_pdf64 and native_printing_pdf32 both passed in the full serial suite; redundant queued standalone rerun cancelled"
+  },
+  "evidence_directory": "/tmp/raven-print-results",
+  "notepad_pdf": "/Users/yount/Downloads/Raven-25117-1.pdf",
+  "preview": {
+    "notepad": "one page; both typed lines legible; monospace appearance consistent with editor; portrait, visible margins, no clipping",
+    "fixtures": "both pages at both widths inspected; correct page labels, blue line, colored bitmap, portrait geometry, visible margins and no clipping",
+    "documents_closed": true,
+    "final_gui_method": "computer use after user requested it; temporary isolated app bundle exposed the otherwise unregistered CLI process"
+  },
+  "limitations": [
+    "MM_TEXT only; scaled mapping modes and world-transform rendering remain unsupported",
+    "raster PDF at 300 DPI; text is not embedded/searchable",
+    "application-modal panels rather than HWND sheets; hooks, custom templates and PrintDlgEx COM callbacks unsupported",
+    "PD_PRINTTOFILE/FILE: output prompting and AbortProc callbacks unsupported",
+    "physical spool settings beyond the accidental submissions were not tested"
+  ],
+  "verification_incident": {
+    "description": "Before the PDF-only guard was added, synthetic input accepted the physical default queue and two test jobs reached CUPS. Both were cancelled by their exact IDs. Physical receipt before cancellation cannot be excluded.",
+    "jobs": [
+      "canon_printer-9",
+      "canon_printer-10"
+    ],
+    "remaining_queue": "",
+    "guard": "RAVEN_PRINT_PDF_ONLY=1 now hides physical queues and rejects physical document creation; all subsequent verification used it"
+  },
+  "upstream_files_touched": {
+    "native/CMakeLists.txt": {
+      "added": 1,
+      "removed": 1
+    },
+    "native/desktop/api.h": {
+      "added": 1,
+      "removed": 0
+    },
+    "native/desktop/caps.cpp": {
+      "added": 28,
+      "removed": 0
+    },
+    "native/desktop/colors.cpp": {
+      "added": 1,
+      "removed": 1
+    },
+    "native/desktop/gdi_api.cpp": {
+      "added": 2,
+      "removed": 0
+    },
+    "native/desktop/objects.h": {
+      "added": 2,
+      "removed": 0
+    },
+    "native/desktop/print_api.cpp": {
+      "added": 308,
+      "removed": 0
+    },
+    "native/desktop/printing.h": {
+      "added": 42,
+      "removed": 0
+    },
+    "native/desktop/surface.cpp": {
+      "added": 5,
+      "removed": 2
+    },
+    "native/desktop/windows.cpp": {
+      "added": 2,
+      "removed": 1
+    },
+    "native/nt/providers.cpp": {
+      "added": 1,
+      "removed": 0
+    },
+    "native/nt/shell_api.cpp": {
+      "added": 2,
+      "removed": 0
+    },
+    "native/nt/x86_process.cpp": {
+      "added": 1,
+      "removed": 0
+    },
+    "testdata/native_loader/printing_client.c": {
+      "added": 80,
+      "removed": 0
+    }
+  }
+}

@@ -2130,7 +2130,8 @@ void NativeWindows::publish_dc(uint64_t handle,const DesktopDC *device)
 	auto *slot=dc_table+dc_slots_at+(handle%dc_slots)*dc_slot;
 	uint64_t occupant=0;
 	std::memcpy(&occupant,slot,8);
-	if (!device) {
+	// The guest capability shortcut describes only screen/memory contexts. Printer capabilities are served by the host.
+	if (!device || device->printer) {
 		if (occupant==handle) std::memset(slot,0,8);
 		return;
 	}

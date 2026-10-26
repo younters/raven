@@ -17,6 +17,7 @@ public:
 	bool dispatch(std::string_view name);
 	// GDI entry points that follow the shared registry conventions; they take precedence over the older dispatchers.
 	void register_gdi_api(ApiRegistry &registry);
+	void register_print_api(ApiRegistry &registry, struct KernelContext &context);
 	void register_text_api(ApiRegistry &registry);
 	void register_image_api(ApiRegistry &registry);
 	void set_host_files(std::function<std::optional<std::vector<uint8_t>>(std::u16string_view)> read) { read_host_file=std::move(read); }
