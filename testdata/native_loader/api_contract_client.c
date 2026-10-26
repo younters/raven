@@ -79,6 +79,12 @@ UINT raven_entry(void)
 	rules.DynamicDaylightTimeDisabled = TRUE;
 	if (!year_zone(2026, &rules, &zone) || zone.DaylightDate.wMonth || zone.StandardDate.wMonth || zone.DaylightBias) return 20;
 	if (!year_zone(2026, NULL, &zone) || year_zone(0, &rules, &zone) || GetLastError() != ERROR_INVALID_PARAMETER) return 21;
+	DWORD local_zone = GetTimeZoneInformation(&zone);
+	if (local_zone == TIME_ZONE_ID_INVALID) return 22;
+	/* A daylight bias without transition dates tells the CRT that this zone never observes daylight saving. */
+	if (local_zone != TIME_ZONE_ID_UNKNOWN && (!zone.StandardDate.wMonth || !zone.DaylightDate.wMonth ||
+		zone.StandardDate.wYear || zone.DaylightDate.wYear || !zone.StandardDate.wDay || zone.StandardDate.wDay > 5 ||
+		!zone.DaylightDate.wDay || zone.DaylightDate.wDay > 5)) return 23;
 	CloseHandle(readable);
 	CloseHandle(mapping);
 	return 0;
