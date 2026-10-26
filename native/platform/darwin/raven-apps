@@ -337,6 +337,9 @@ def run(app):
     metadata = json.loads((app/'Contents/Resources/launch.json').read_text())
     prefix, target = Path(metadata['prefix']), Path(metadata['target'])
     environment = metadata.get('guest_environment', {}).copy()
+    # A program opened from Finder or its app goes on past an API Raven lacks, as it would past a missing feature on Windows;
+    # each one is still logged. Tests and command-line runs keep Raven's strict default.
+    environment.setdefault('RAVEN_CONTINUE_UNIMPLEMENTED', '1')
     environment.update(os.environ)  # Current caller overrides the saved guest settings.
     environment.update(RAVEN_PREFIX=str(prefix), RAVEN_APP_NAME=metadata['name'],
                        RAVEN_APP_ICON=str(app/'Contents/Resources/app.icns'))
