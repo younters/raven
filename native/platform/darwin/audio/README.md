@@ -5,6 +5,9 @@
 On 2026-10-25, `git fetch origin` succeeded. Both `gh pr list --repo mirkobrombin/raven --state all --search audio` and
 `gh issue list --repo mirkobrombin/raven --state all --search audio` returned no entries. Additional searches for `sound` also returned
 none. This is a search result, not a claim that upstream has no related work under other names.
+The fetched `origin/main` was `fb18bca`. Its existing audio history includes `d31a764` (wave playback), `1a2ffde` (waveform-device queries),
+and `2a5d981` (32-bit DirectSound without a device). There were no audio-file commits in `HEAD..origin/main`; these implementations were
+already present in this checkout. No upstream CoreAudio backend was found.
 
 The host implements WinMM `waveOut*` in `native/nt/wave_api.cpp`, registered in both the x64 providers and the x86 shared API registry.
 Windows sample buffers are copied into host memory when submitted. Scheduler services return completed headers and signal event

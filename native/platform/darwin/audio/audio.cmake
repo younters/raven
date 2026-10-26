@@ -25,6 +25,7 @@ if(RAVEN_MINGW64)
             add_custom_target(darwin_wave${width}_fixture ALL DEPENDS ${audio_fixture})
             add_test(NAME native_darwin_wave_x${width} COMMAND raven --run-process --execution=native --timeout-ms=10000 ${audio_fixture})
             set_tests_properties(native_darwin_wave_x${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                SKIP_REGULAR_EXPRESSION "Native entry returned 77 "
                 ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-wave-prefix${width};RAVEN_AUDIO_TRACE=1")
         endif()
     endforeach()

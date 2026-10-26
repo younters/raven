@@ -68,6 +68,7 @@ struct AudioOutput::State {
 	std::atomic<uint32_t> volume{0xffffffffU};
 	std::atomic<uint64_t> callback_count{0};
 	uint64_t submitted = 0, dispatched = 0, played = 0, queue_frames = 0, offline_frames = 0;
+	uint64_t total_submitted = 0, total_played = 0;
 	uint32_t chunk, render_rate, render_chunk;
 	bool offline, stopping = false, paused = false, offline_started = false;
 	std::atomic<bool> failed{false};
@@ -142,8 +143,9 @@ struct AudioOutput::State {
 		if (queue)
 			AudioQueueDispose(queue, true); // joins all callbacks before slots/context are destroyed
 		if (std::getenv("RAVEN_AUDIO_TRACE"))
-			std::fprintf(stderr, "CoreAudio: callbacks=%llu presented_frames=%llu submitted_frames=%llu\n",
-				(unsigned long long)callback_count.load(), (unsigned long long)played, (unsigned long long)submitted);
+			std::fprintf(stderr, "CoreAudio: callbacks=%llu presented_frames=%llu submitted_frames=%llu position_frames=%llu\n",
+				(unsigned long long)callback_count.load(), (unsigned long long)total_played,
+				(unsigned long long)total_submitted, (unsigned long long)played);
 	}
 	void update()
 	{
@@ -156,6 +158,7 @@ struct AudioOutput::State {
 				return;
 			now = stamp.mSampleTime;
 		}
+		const uint64_t previous = played;
 		while (!segments.empty()) {
 			const auto &segment = segments.front();
 			const uint64_t advanced = uint64_t(std::clamp(now - segment.start, 0.0, double(segment.count)));
@@ -164,6 +167,7 @@ struct AudioOutput::State {
 				break;
 			segments.pop_front();
 		}
+		total_played += played - previous;
 		while (!markers.empty() && markers.front().frame <= played) {
 			finished.push_back(markers.front().header);
 			markers.pop_front();
@@ -222,6 +226,7 @@ void AudioOutput::enqueue(uint64_t header, std::vector<uint8_t> data)
 	std::lock_guard lock(state->mutex);
 	data.resize(data.size() / state->format.block * state->format.block);
 	state->submitted += data.size() / state->format.block;
+	state->total_submitted += data.size() / state->format.block;
 	state->markers.push_back({header, state->submitted});
 	if (!data.empty())
 		state->pending.push_back({std::move(data)});
