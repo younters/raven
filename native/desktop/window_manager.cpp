@@ -596,6 +596,11 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	registry.add("AttachThreadInput", 3, [](ApiCall &call) { call.ret(1); });
 	registry.add("GetWindowThreadProcessId", 2, [this](ApiCall &call) {
 		if (!objects.window(call[0])) {
+			if (const auto foreign = foreign_window_info(call[0])) {
+				if (call[1]) call.store<uint32_t>(call[1], foreign->process);
+				call.ret(foreign->thread);
+				return;
+			}
 			call.fail(1400);
 			return;
 		}
@@ -1097,12 +1102,11 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	};
 	registry.add("EnumDisplaySettingsA", 3, [=](ApiCall &call) { display_mode_ansi(call); });
 	registry.add("EnumDisplaySettingsExA", 4, [=](ApiCall &call) { display_mode_ansi(call); });
-	// There is no kernel graphics subsystem behind the host's display: the adapter thunks report that the request is not supported, and
-	// programs that probe them (to size video memory, for instance) fall back to what the graphics API reports.
+	// Unsupported kernel-graphics operations fail explicitly; callers can use DXGI's reported capabilities.
 	for (const auto *thunk : {"D3DKMTOpenAdapterFromLuid", "D3DKMTOpenAdapterFromGdiDisplayName", "D3DKMTOpenAdapterFromHdc", "D3DKMTCloseAdapter",
 			"D3DKMTQueryAdapterInfo", "D3DKMTQueryVideoMemoryInfo", "D3DKMTEnumAdapters", "D3DKMTEnumAdapters2", "D3DKMTGetDeviceState",
 			"D3DKMTCreateDevice", "D3DKMTDestroyDevice", "D3DKMTWaitForVerticalBlankEvent", "D3DKMTCheckVidPnExclusiveOwnership"})
-		registry.add(thunk, 1, [](ApiCall &call) { call.ret(0xC00000BBU); });
+		if (!registry.has(thunk)) registry.add(thunk, 1, [](ApiCall &call) { call.ret(0xC00000BBU); });
 	// The same answer for every other thunk the library exports: each takes one pointer to its parameter structure.
 	for (const auto name : system_export_names("gdi32.dll"))
 		if (name.starts_with("D3DKMT") && !registry.has(name))

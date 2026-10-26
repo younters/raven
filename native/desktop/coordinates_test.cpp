@@ -29,7 +29,7 @@ struct ForeignWindow {
 		if (!owner) {
 			::close(sockets[0]);
 			const auto window=raven::window_handle_base()+1;
-			raven::publish_window(window,801,603);
+			raven::publish_window(window,801,603,73);
 			raven::publish_window(window+1,0,0);
 			if (::write(sockets[1],&window,sizeof window)!=sizeof window) ::_exit(1);
 			char release=0;
@@ -59,6 +59,9 @@ int main(int argc,char **argv)
 	try {
 		check(argc==3,"bootstrap and coordinate fixture required");
 		ForeignWindow foreign;
+		const auto foreign_info = raven::foreign_window_info(foreign.handle);
+		check(foreign_info && foreign_info->process == uint32_t(foreign.owner) && foreign_info->thread == 73 &&
+			foreign_info->width == 801 && foreign_info->height == 603, "foreign window owner metadata differs");
 		std::ifstream file(argv[2],std::ios::binary | std::ios::ate);
 		check(bool(file) && file.tellg()>0 && file.tellg()<1024*1024*1024,"invalid coordinate fixture");
 		std::vector<uint8_t> bytes(static_cast<size_t>(file.tellg()));

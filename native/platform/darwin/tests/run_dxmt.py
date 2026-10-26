@@ -56,7 +56,7 @@ def main():
         (work / "driver.log").write_text(diagnostics)
     if backend == "DXVK" and "DXVK:" not in diagnostics:
         raise RuntimeError("fixture did not identify the selected DXVK backend")
-    output = {"device": "dxmt-device", "deferred": "triangle", "d3d9": "window"}.get(kind, kind)
+    output = {"device": "dxmt-device", "shared": "dxmt-shared", "deferred": "triangle", "d3d9": "window"}.get(kind, kind)
     status = drive / f"{output}.txt"
     text = status.read_text() if status.exists() else "missing"
     if result.returncode or (kind not in ("present_rate", "pacing") and not text.startswith("OK")):

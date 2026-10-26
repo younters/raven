@@ -1680,7 +1680,7 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 		}
 		if (child) parent_notify(handle,1);
 		if (!objects.window(handle)) return 0;
-		if (const auto *created=objects.window(handle)) publish_window(handle,uint32_t(std::max(created->width,0)),uint32_t(std::max(created->height,0)));
+		if (const auto *created=objects.window(handle)) publish_window(handle,uint32_t(std::max(created->width,0)),uint32_t(std::max(created->height,0)),created->thread);
 		if (effective_style & 0x10000000U) {
 #ifdef __APPLE__
 			initialize_window_dpi(handle);

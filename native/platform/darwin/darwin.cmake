@@ -79,6 +79,15 @@ if(TARGET vulkan_pe_fixture AND RAVEN_MINGW64)
 endif()
 
 if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
+    set(RAVEN_DXMT_SHARED ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-shared.exe)
+    add_custom_command(OUTPUT ${RAVEN_DXMT_SHARED}
+        COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/dxmt_shared.c
+            -o ${RAVEN_DXMT_SHARED} -ld3d11 -ldxgi -ldxguid -lkernel32 -luser32 -lgcc
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/dxmt_shared.c VERBATIM)
+    add_custom_target(darwin_dxmt_shared_fixture ALL DEPENDS ${RAVEN_DXMT_SHARED})
+    add_test(NAME darwin_dxmt_shared COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+        $<TARGET_FILE:raven> ${RAVEN_DXMT_SHARED} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-shared shared)
+    set_tests_properties(darwin_dxmt_shared PROPERTIES TIMEOUT 120)
     set(RAVEN_DXMT_DEVICE10 ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-device10.exe)
     add_custom_command(OUTPUT ${RAVEN_DXMT_DEVICE10}
         COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/dxmt_device10.c
@@ -259,10 +268,10 @@ if(TARGET raven_cpu)
     target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/print.mm)
     set_source_files_properties(${RAVEN_DARWIN_DIR}/print.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wall;-Wextra")
     target_link_libraries(raven_cpu PUBLIC "-framework AppKit" "-framework ApplicationServices")
-    target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/dxmt/presentation.mm)
-    set_source_files_properties(${RAVEN_DARWIN_DIR}/dxmt/presentation.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wall;-Wextra")
+    target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/dxmt/presentation.mm ${RAVEN_DARWIN_DIR}/dxmt/kernel_thunks.mm)
+    set_source_files_properties(${RAVEN_DARWIN_DIR}/dxmt/presentation.mm ${RAVEN_DARWIN_DIR}/dxmt/kernel_thunks.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wall;-Wextra")
     set_property(TARGET raven_cpu PROPERTY OBJCXX_STANDARD 20)
-    target_link_libraries(raven_cpu PUBLIC "-framework IOSurface" "-framework QuartzCore")
+    target_link_libraries(raven_cpu PUBLIC "-framework IOSurface" "-framework QuartzCore" "-framework Metal")
     target_sources(raven PRIVATE ${RAVEN_DARWIN_DIR}/cocoa.mm ${RAVEN_DARWIN_DIR}/gdi_presenter.mm ${RAVEN_DARWIN_DIR}/app_identity.mm)
     set_source_files_properties(${RAVEN_DARWIN_DIR}/cocoa.mm ${RAVEN_DARWIN_DIR}/gdi_presenter.mm ${RAVEN_DARWIN_DIR}/app_identity.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wall;-Wextra")
     set_property(TARGET raven PROPERTY OBJCXX_STANDARD 20)

@@ -118,9 +118,28 @@ MTL_DEBUG_LAYER=1 MTL_SHADER_VALIDATION=1 ctest --test-dir build -j1 --timeout 1
   -R '^darwin_dxmt_tessellation$' --output-on-failure
 ```
 
-Validation evidence from this run is `build/native/dxmt-tessellation-validation.log`. The D3DKMT adapter probe still returns
-STATUS_NOT_SUPPORTED; the pinned driver tolerates it and logs a warning. Cross-process D3D resource sharing is untested. The
-shared IOSurface table has a fixed capacity, and shutdown of the agent releases remaining native resources.
+Validation evidence from this run is `build/native/dxmt-tessellation-validation.log`. The shared IOSurface table has a fixed
+capacity, and shutdown of the agent releases remaining native resources.
+
+## Shared D3D11 textures and browser presentation
+
+Raven implements DXMT's D3DKMT adapter, device, allocation, legacy shared resource and NT shared handle calls in
+`dxmt/kernel_thunks.mm`. A shared allocation records DXMT's private runtime data in the prefix; DXMT publishes its IOSurface
+Mach port under the name in that data. NT shared handles are ordinary Raven file handles, so handle inheritance and
+`DuplicateHandle` use the existing process channel. `darwin_dxmt_shared` creates both kinds of texture, opens them on a
+second D3D11 device and in another Raven process, and checks GPU readback. The fixture covers 64-bit guests; DXMT's
+WoW64 unix-call table is not available yet.
+
+DXMT v0.80 rejects a swapchain whose HWND belongs to another process. The pinned provisioner applies the source-equivalent
+patch in `dxmt/patches/0001-allow-foreign-hwnd-swapchain.patch` to the release's `d3d11.dll`, verifying the complete input
+and output hashes. Raven forwards the resulting IOSurface Mach port to the HWND owner's presentation service. Chrome's
+sandboxed GPU process can then present D3D11 frames in its browser process. Provision a new external DXMT overlay with
+`scripts/provision-dxmt.py` to get this patch; an older overlay retains the rejection.
+
+The pinned DXMT version creates textures with `D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX` but has a TODO for the mutex and
+does not implement `IDXGIKeyedMutex::AcquireSync` or `ReleaseSync`. Its named NT share and shared fence paths are also
+not covered by the fixture. Firefox's DXMT WebGL path additionally needs `d3dcompiler_47.dll` in the private browser
+prefix; this is an application dependency, not a DXMT provisioner file.
 
 ## Reproduce
 
@@ -174,7 +193,8 @@ Each mode presented all 310 frames with zero presentation errors. Logs, JUnit re
 
 The 29 baseline failures comprise 23 DXVK/vkd3d hardware fixtures and six existing contracts: memory, layout-failure component,
 coordinates, desktop icon, string resources and DLL lifecycle. DXMT tessellation remains strict and enabled with its documented
-clear-only output. Hardware vblank synchronization, HDR, WoW64 and cross-process D3D resource sharing retain the limitations above.
+clear-only output. Hardware vblank synchronization, HDR and WoW64 retain the limitations above. Cross-process D3D resource
+sharing was added after that 2026-10-25 comparison, as described above.
 
 Existing files outside the Darwin platform directory have these final line deltas against `macos`:
 
