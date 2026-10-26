@@ -577,7 +577,8 @@ struct CocoaPresentation::State {
 	{
 		const NSPoint point = NSEvent.mouseLocation;
 		Surface *target = surface(window_at(point));
-		const bool client = NSApp.active && target && NSPointInRect(point, content_of(target->window));
+		// Menus and other popups show the arrow, as on Windows, not the cursor the program last set over its own window.
+		const bool client = NSApp.active && target && !target->popup && NSPointInRect(point, content_of(target->window));
 		const int edges = NSApp.active && target ? edges_at(*target, point) : 0;
 		cursor.apply(client || edges, edges ? resize_cursor_for(edges) : nil);
 	}
