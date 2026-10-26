@@ -1511,9 +1511,11 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 		call.fail(120, 0);
 	});
 
+#ifndef __APPLE__
 	// ---- printing is not provided ----
 	for (const auto *name : {"StartDocW", "StartDocA", "EndDoc", "StartPage", "EndPage", "AbortDoc"})
 		registry.add(name, 2, [](ApiCall &call) { call.fail(120, 0); });
+#endif
 	registry.add("GdiGetCodePage", 1, [](ApiCall &call) { call.ret(1252); });
 	registry.add("GetTextCharsetInfo", 3, [=, this](ApiCall &call) {
 		guarded(call, 0, [&] {

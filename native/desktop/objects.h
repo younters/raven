@@ -7,6 +7,7 @@
 #include "nonclient.h"
 #include "colors.h"
 #include "menu.h"
+#include "printing.h"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -140,6 +141,7 @@ struct DesktopDC {
 	// Parts of the window other windows cover; drawing never reaches them.
 	std::optional<DesktopRegion> visible{};
 	std::vector<DesktopDCState> saved{};
+	std::shared_ptr<PrinterDC> printer{};
 	// Clip coordinates belong to the DC, not its bitmap backing.
 	bool contains(int64_t x,int64_t y) const
 	{

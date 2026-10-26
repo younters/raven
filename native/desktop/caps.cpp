@@ -1,6 +1,7 @@
 #include "api.h"
 
 #include <algorithm>
+#include <cmath>
 #include <new>
 #include <stdexcept>
 
@@ -23,6 +24,33 @@ uint32_t device_caps(const DesktopObjects &objects, const DesktopDC &dc, int32_t
 	const auto *bitmap = objects.bitmap(dc.bitmap);
 	if (!bitmap)
 		throw uint32_t(6);
+	if (dc.printer) {
+		const auto &p = dc.printer->settings;
+		auto pixels = [](double points) { return uint32_t(std::lround(points * 300 / 72)); };
+		switch (index) {
+		case 2: return 2; // DT_RASPRINTER
+		case 4: return uint32_t((p.right - p.left) * 25.4 / 72);
+		case 6: return uint32_t((p.bottom - p.top) * 25.4 / 72);
+		case 8: return bitmap->width;
+		case 10: return bitmap->height;
+		case 12: return 32;
+		case 14: return 1;
+		case 24: return uint32_t(-1);
+		case 28: return 0x7f; // curves
+		case 30: return 0xfe; // lines
+		case 32: return 0xff; // polygons
+		case 34: return 0x1fff; // text
+		case 38: return 0x2809;
+		case 40: case 42: case 88: case 90: return 300;
+		case 44: return 424;
+		case 108: return 24;
+		case 110: return pixels(p.width);
+		case 111: return pixels(p.height);
+		case 112: return pixels(p.left);
+		case 113: return pixels(p.top);
+		default: return 0;
+		}
+	}
 	const auto &screen = objects.nonclient_metrics();
 	// Screen DCs report the virtual display; memory DCs report the depth of their selected bitmap.
 	const bool screen_dc = dc.window != 0;

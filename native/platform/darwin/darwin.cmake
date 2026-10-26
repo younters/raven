@@ -255,6 +255,9 @@ endforeach()
 # The macOS desktop (--desktop=macos): AppKit windows, Metal surfaces for graphics drivers, and keymaps from xkbcommon.
 if(TARGET raven_cpu)
     enable_language(OBJCXX)
+    target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/print.mm)
+    set_source_files_properties(${RAVEN_DARWIN_DIR}/print.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wall;-Wextra")
+    target_link_libraries(raven_cpu PUBLIC "-framework AppKit" "-framework ApplicationServices")
     target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/dxmt/presentation.mm)
     set_source_files_properties(${RAVEN_DARWIN_DIR}/dxmt/presentation.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wall;-Wextra")
     set_property(TARGET raven_cpu PROPERTY OBJCXX_STANDARD 20)
@@ -335,4 +338,28 @@ if(TARGET raven_cpu)
     target_link_libraries(darwin_gdi_presenter_test PRIVATE raven_cpu "-framework Metal")
     set_property(TARGET darwin_gdi_presenter_test PROPERTY OBJCXX_STANDARD 20)
     add_test(NAME native_darwin_gdi_presenter COMMAND darwin_gdi_presenter_test)
+endif()
+
+# Both guest widths exercise the same printer contracts and verify the resulting PDF on the host.
+if(TARGET raven AND RAVEN_MINGW64)
+    foreach(width 64 32)
+        if(width EQUAL 64)
+            set(PRINT_COMPILER ${RAVEN_MINGW64})
+        else()
+            set(PRINT_COMPILER ${RAVEN_MINGW32})
+        endif()
+        if(PRINT_COMPILER)
+            set(PRINT_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/printing${width}.exe)
+            add_custom_command(OUTPUT ${PRINT_FIXTURE}
+                COMMAND ${PRINT_COMPILER} -O2 -nostdlib -fno-builtin -fno-stack-protector
+                    -Wl,--entry,raven_entry -o ${PRINT_FIXTURE}
+                    ${PROJECT_SOURCE_DIR}/testdata/native_loader/printing_client.c -luser32 -lgdi32 -lwinspool -lcomdlg32 -lkernel32
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/printing_client.c VERBATIM)
+            add_custom_target(printing_fixture${width} ALL DEPENDS ${PRINT_FIXTURE})
+            add_test(NAME native_printing_pdf${width} COMMAND ${Python3_EXECUTABLE}
+                ${RAVEN_DARWIN_DIR}/tests/printing.py $<TARGET_FILE:raven> ${PRINT_FIXTURE}
+                ${CMAKE_CURRENT_BINARY_DIR}/printing${width})
+            set_tests_properties(native_printing_pdf${width} PROPERTIES TIMEOUT 120)
+        endif()
+    endforeach()
 endif()
