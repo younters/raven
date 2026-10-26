@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -49,15 +50,16 @@ int main(int argc, char **)
 				if (!output.ready())
 					continue;
 				std::vector<uint8_t> samples(frames * block, 0);
-				// Every channel is +0.25 full scale (unsigned PCM8 has its zero at 128).
+				// Both signs of 0.25 full scale (unsigned PCM8 has its zero at 128).
 				for (size_t offset = 0; offset < samples.size(); offset += bits / 8)
-					samples[offset + bits / 8 - 1] = bits == 8 ? 160 : 32;
+					samples[offset + bits / 8 - 1] = offset / block < frames / 2 ? (bits == 8 ? 160 : 32) : (bits == 8 ? 96 : 224);
 				output.enqueue(11, samples);
 				require(output.padding() == frames, "padding includes pending guest frames");
 				const auto rendered = output.render(frames);
 				require(rendered.size() == frames * channels, "offline renderer supplies requested frames");
 				if (!rendered.empty())
-					require(std::abs(rendered[rendered.size() / 2] - 0.25f) < 0.001f, "integer PCM conversion");
+					require(std::abs(rendered[channels * (frames / 4)] - 0.25f) < 0.001f &&
+						std::abs(rendered[channels * (frames * 3 / 4)] + 0.25f) < 0.001f, "signed integer PCM conversion");
 				require(output.position() == samples.size(), "clock advances by rendered guest bytes");
 				require(output.padding() == 0 && !output.busy(), "padding drains");
 				require(output.take_finished() == std::vector<uint64_t>{11}, "header completes exactly once");
@@ -85,6 +87,17 @@ int main(int argc, char **)
 	require(scaled.size() == 960, "float render count");
 	if (scaled.size() == 960)
 		require(scaled[100] == 0 && std::abs(scaled[101] - 0.25f) < 0.001f, "left mute and right volume");
+	floating.reset();
+	floating.set_volume(0xffffffffU);
+	values[0] = std::numeric_limits<float>::quiet_NaN();
+	values[1] = std::numeric_limits<float>::infinity();
+	values[2] = 1.5f;
+	values[3] = -2.0f;
+	std::memcpy(bytes.data(), values.data(), bytes.size());
+	floating.enqueue(2, bytes);
+	const auto clipped = floating.render(480);
+	require(clipped.size() == 960 && clipped[0] == 0 && clipped[1] == 0 && clipped[2] == 1 && clipped[3] == -1,
+		"non-finite floats are silent and out-of-range floats are clipped");
 	AudioOutput resampled({44100, 2, 16, 4, false}, true, 48000);
 	require(resampled.ready(), "44.1 to 48 kHz converter opens");
 	std::vector<int16_t> constant(44100 / 5 * 2, 8192);
