@@ -136,6 +136,24 @@ class AppsTest(unittest.TestCase):
         self.assertEqual(supervisor.call_args.kwargs['env']['RAVEN_APPS_DIR'], str(output))
         self.assertNotIn('RAVEN_APP_NAME', supervisor.call_args.kwargs['env'])
 
+    def test_exit_supervisor_uses_kqueue_and_closes_it(self):
+        class Queue:
+            closed = False
+            events = None
+            def control(self, changes, count, timeout):
+                self.events = changes
+                return []
+            def close(self):
+                self.closed = True
+        queue = Queue()  # Deliberately has no context-manager methods, like select.kqueue.
+        with patch('select.kqueue', return_value=queue), patch.object(apps, 'APPS', self.root/'Apps'), \
+             patch.object(apps.sys, 'argv', ['raven-apps', 'after', '123', str(self.prefix)]), \
+             patch.object(apps, 'sync') as sync:
+            apps.main()
+        self.assertTrue(queue.closed)
+        self.assertEqual(queue.events[0].ident, 123)
+        sync.assert_called_once_with(self.prefix.resolve())
+
     def test_malformed_shortcut_preserves_existing_app(self):
         output = self.root/'Applications'
         shortcut = self.programs/'Example.lnk'

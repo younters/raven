@@ -307,6 +307,9 @@ def sync(prefix):
                 continue
             if re.search(r'(?i)(uninstall|unins\d*|readme|\bhelp\b|\bsupport\b)', name+' '+target.stem):
                 continue
+            if (target.stem.lower() in ('rundll32', 'explorer', 'cmd', 'start')
+                    and re.search(r'(?i)(https?://|ftp://|mailto:)', data['arguments'])):
+                continue
             identity = (str(target), data['arguments'])
             if identity in seen:
                 continue
@@ -382,7 +385,8 @@ def main():
         import select
         pid = int(args.paths[0])
         # A kernel process-exit notification avoids polling and PID reuse races.
-        with select.kqueue() as queue:
+        queue = select.kqueue()
+        try:
             event = select.kevent(pid, filter=select.KQ_FILTER_PROC,
                                   flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
                                   fflags=select.KQ_NOTE_EXIT)
@@ -390,6 +394,8 @@ def main():
                 queue.control([event], 1, None)
             except ProcessLookupError:
                 pass
+        finally:
+            queue.close()
         args.paths = args.paths[1:]
     APPS.mkdir(parents=True, exist_ok=True)
     with (APPS/'.sync.lock').open('w') as lock:
