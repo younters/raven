@@ -1429,7 +1429,14 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 			put(12, 1, 4);
 			break;
 		case 1:
-			counted(width == 4 ? 8 : 16, u"");
+			// ObjectNameInformation names open files in the NT device namespace. The sandbox broker uses this name to match a
+			// signed DLL's section against the file it opened; an empty name makes that policy impossible to build.
+			if (const auto file = objects.object_as<FileObject>(handle); file && file->dos_path.size() >= 3 && file->dos_path[1] == u':') {
+				const auto volume = std::to_string(std::max(1, (file->dos_path[0] & 0x1f) - 2));
+				counted(width == 4 ? 8 : 16, u"\\Device\\HarddiskVolume" + std::u16string(volume.begin(), volume.end()) + file->dos_path.substr(2));
+			} else {
+				counted(width == 4 ? 8 : 16, u"");
+			}
 			break;
 		case 2:
 			counted(width == 4 ? 0x60 : 0x68, *type);
