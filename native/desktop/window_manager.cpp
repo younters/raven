@@ -596,6 +596,11 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	registry.add("AttachThreadInput", 3, [](ApiCall &call) { call.ret(1); });
 	registry.add("GetWindowThreadProcessId", 2, [this](ApiCall &call) {
 		if (!objects.window(call[0])) {
+			if (const auto foreign = foreign_window_info(call[0])) {
+				if (call[1]) call.store<uint32_t>(call[1], foreign->process);
+				call.ret(foreign->thread);
+				return;
+			}
 			call.fail(1400);
 			return;
 		}

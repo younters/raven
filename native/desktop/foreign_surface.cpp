@@ -83,7 +83,7 @@ static void sweep_windows(const std::filesystem::path &directory)
 		std::filesystem::remove(path, error);
 }
 
-void publish_window(uint64_t window, uint32_t width, uint32_t height)
+void publish_window(uint64_t window, uint32_t width, uint32_t height, uint32_t thread)
 {
 	const auto directory = window_directory();
 	static std::once_flag swept;
@@ -92,7 +92,7 @@ void publish_window(uint64_t window, uint32_t width, uint32_t height)
 	const auto temporary = directory / (window_name(window) + ".window." + std::to_string(::getpid()));
 	{
 		std::ofstream output(temporary, std::ios::trunc);
-		output << ::getpid() << ' ' << width << ' ' << height << '\n';
+		output << ::getpid() << ' ' << width << ' ' << height << ' ' << thread << '\n';
 	}
 	std::error_code error;
 	std::filesystem::rename(temporary, final_path, error);
@@ -106,16 +106,25 @@ void withdraw_window(uint64_t window)
 	std::filesystem::remove(directory / (window_name(window) + ".pixels"), error);
 }
 
-std::optional<std::pair<uint32_t, uint32_t>> foreign_window_size(uint64_t window)
+std::optional<ForeignWindowInfo> foreign_window_info(uint64_t window)
 {
 	std::ifstream input(window_directory() / (window_name(window) + ".window"));
 	long owner = 0;
-	uint32_t width = 0, height = 0;
-	if (!(input >> owner >> width >> height) || owner <= 0 || owner == ::getpid())
+	ForeignWindowInfo info{};
+	if (!(input >> owner >> info.width >> info.height) || owner <= 0 || owner == ::getpid())
 		return std::nullopt;
 	if (::kill(pid_t(owner), 0) != 0 && errno == ESRCH)
 		return std::nullopt;
-	return std::make_pair(width, height);
+	input >> info.thread; // Older published windows have no thread field.
+	info.process = uint32_t(owner);
+	return info;
+}
+
+std::optional<std::pair<uint32_t, uint32_t>> foreign_window_size(uint64_t window)
+{
+	if (const auto info = foreign_window_info(window))
+		return std::make_pair(info->width, info->height);
+	return std::nullopt;
 }
 
 std::shared_ptr<ForeignSurface> ForeignSurface::open_for_drawing(uint64_t window, uint32_t width, uint32_t height)

@@ -17,8 +17,12 @@ class SharedPixels;
 // The window handles of this process carry a tag of their own, so no two processes of the host hand out the same one.
 uint64_t window_handle_base();
 // Owner side: the window exists with this client size, or no longer exists.
-void publish_window(uint64_t window, uint32_t width, uint32_t height);
+void publish_window(uint64_t window, uint32_t width, uint32_t height, uint32_t thread = 0);
 void withdraw_window(uint64_t window);
+struct ForeignWindowInfo {
+	uint32_t process, thread, width, height;
+};
+std::optional<ForeignWindowInfo> foreign_window_info(uint64_t window);
 // Drawing side: the client size of a window another live process of the prefix owns.
 std::optional<std::pair<uint32_t, uint32_t>> foreign_window_size(uint64_t window);
 
