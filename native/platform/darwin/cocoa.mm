@@ -1509,7 +1509,11 @@ struct CocoaPresentation::State {
 
 namespace raven {
 
-CocoaPresentation::CocoaPresentation() : state(std::make_unique<State>()) {}
+CocoaPresentation::CocoaPresentation() : state(std::make_unique<State>())
+{
+	// Constructed on the main thread before the program starts: the one place Metal's queue may safely be made (see prepare).
+	darwin::GDIPresenter::prepare();
+}
 
 CocoaPresentation::~CocoaPresentation()
 {

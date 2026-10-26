@@ -28,20 +28,44 @@ struct GDIPresenter::State {
 	uint64_t rendered = 0, fallback = 0, busy = 0;
 	bool pending = false;
 
-	State()
+	struct Shared {
+		id<MTLDevice> device;
+		id<MTLCommandQueue> queue;
+		id<MTLRenderPipelineState> pipeline;
+	};
+
+	static bool enabled()
 	{
 		const char *mode = std::getenv("RAVEN_COCOA_PRESENT");
-		if ((mode && std::string_view(mode) == "copy") || std::getenv("RAVEN_PARALLEL")) return;
-		static id<MTLDevice> shared_device = MTLCreateSystemDefaultDevice();
-		static id<MTLCommandQueue> shared_queue;
-		static id<MTLRenderPipelineState> shared_pipeline;
-		device = shared_device;
+		return !(mode && std::string_view(mode) == "copy") && !std::getenv("RAVEN_PARALLEL");
+	}
+
+	// One device, queue and pipeline for every window of the process.
+	static const Shared &shared()
+	{
+		static const Shared made = [] {
+			Shared result{};
+			if (enabled()) build(result);
+			return result;
+		}();
+		return made;
+	}
+
+	State()
+	{
+		if (!enabled()) return;
+		const auto &made = shared();
+		device = made.device;
+		queue = made.queue;
+		pipeline = made.pipeline;
+	}
+
+	static void build(Shared &made)
+	{
+		id<MTLDevice> device = made.device = MTLCreateSystemDefaultDevice();
 		if (!device) return;
-		if (shared_queue) {
-			queue = shared_queue;
-			pipeline = shared_pipeline;
-			return;
-		}
+		id<MTLRenderPipelineState> pipeline;
+		id<MTLCommandQueue> queue;
 		NSError *error = nil;
 		// Buffer addressing supports Raven's exact width*4 stride even for widths not divisible by four.
 		// GDI's fourth byte is unspecified; write alpha=1 rather than trusting layer.opaque to ignore it.
@@ -59,8 +83,8 @@ struct GDIPresenter::State {
 		descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
 		if (library) pipeline = [device newRenderPipelineStateWithDescriptor:descriptor error:&error];
 		if (pipeline) queue = [device newCommandQueue];
-		shared_queue = queue;
-		shared_pipeline = pipeline;
+		made.queue = queue;
+		made.pipeline = pipeline;
 		if (!queue) std::fprintf(stderr, "raven: Metal GDI unavailable: %s; using CGImage\n", error.localizedDescription.UTF8String);
 	}
 
@@ -159,6 +183,7 @@ struct GDIPresenter::State {
 };
 
 GDIPresenter::GDIPresenter() : state(std::make_unique<State>()) {}
+void GDIPresenter::prepare() { State::shared(); }
 GDIPresenter::~GDIPresenter() = default;
 void *GDIPresenter::frame(std::span<const uint8_t> pixels, uint32_t width, uint32_t height)
 {
