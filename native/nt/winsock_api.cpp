@@ -1326,7 +1326,8 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const auto value = call[3] ? call.read(call[3], size_t(std::max(call.i32(4), 0))) : std::vector<uint8_t>{};
-		if (std::getenv("RAVEN_TRACE_SOCKET_OPTIONS")) {
+		static const bool trace_options = std::getenv("RAVEN_TRACE_SOCKET_OPTIONS") != nullptr;
+		if (trace_options) {
 			int setting = 0;
 			if (value.size() >= sizeof(setting)) std::memcpy(&setting, value.data(), sizeof(setting));
 			std::fprintf(stderr, "raven: setsockopt level=%x option=%x size=%zu value=%d\n", call.u32(1), call.u32(2), value.size(), setting);
