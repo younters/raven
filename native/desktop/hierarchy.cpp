@@ -96,7 +96,8 @@ void DesktopObjects::configure_window_dc(uint64_t handle,DesktopDC &device,bool 
 		region.add({0,0,int32_t(std::min<int64_t>(frame ? int64_t(record->outer.right)-x : record->width,INT32_MAX)),
 			int32_t(std::min<int64_t>(frame ? int64_t(record->outer.bottom)-y : record->height,INT32_MAX))});
 		const auto cut=[&](const DesktopWindow &other) {
-			if (!other.visible) return;
+			// Transparent windows let the windows behind them paint first, including under their client area.
+			if (!other.visible || (other.ex_style & 0x20U)) return;
 			region.subtract({int32_t(int64_t(other.outer.left)-x),int32_t(int64_t(other.outer.top)-y),
 				int32_t(int64_t(other.outer.right)-x),int32_t(int64_t(other.outer.bottom)-y)});
 		};
