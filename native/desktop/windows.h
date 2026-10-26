@@ -391,6 +391,7 @@ private:
 	bool show_window(uint64_t window,uint32_t command);
 	// Moves and resizes a window (screen coordinates for the outer rectangle) with the WM_WINDOWPOSCHANGING/CHANGED protocol.
 	void place_window(uint64_t window,DesktopRect outer,uint64_t insert_after,uint32_t flags);
+	DesktopRect fit_placement(DesktopRect rect) const;
 	void shift_window(uint64_t window,int32_t dx,int32_t dy);
 	std::vector<uint64_t> top_level_windows() const;
 	uint64_t window_at(int32_t x,int32_t y);
