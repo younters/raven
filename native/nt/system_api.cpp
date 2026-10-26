@@ -3,12 +3,15 @@
 #include "text.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cpuid.h>
 #include <cstring>
 #include <ctime>
 #include <map>
+#include <mutex>
 #include <thread>
+#include <tuple>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -98,8 +101,20 @@ ZoneInfo zone_at(time_t instant)
 	return {int(local.tm_gmtoff / 60), local.tm_isdst > 0, local.tm_zone ? local.tm_zone : "UTC"};
 }
 
-void zone_transitions(std::span<uint8_t> bytes, int year)
+void zone_transitions(std::span<uint8_t> bytes, int year, const ZoneInfo &january, const ZoneInfo &july)
 {
+	using Key = std::tuple<int, std::string, int, std::string, int, std::string>;
+	static std::mutex mutex;
+	static Key cached_key;
+	static std::array<uint8_t, 32> cached{};
+	const char *zone = std::getenv("TZ");
+	const Key key{year, january.name, january.offset_minutes, july.name, july.offset_minutes, zone ? zone : ""};
+	const std::lock_guard lock(mutex);
+	if (key == cached_key) {
+		std::memcpy(bytes.data() + 68, cached.data(), 16);
+		std::memcpy(bytes.data() + 152, cached.data() + 16, 16);
+		return;
+	}
 	const time_t first = days_from_civil(year, 1, 1) * 86400 - 86400;
 	const time_t last = days_from_civil(year + 1, 1, 1) * 86400 + 86400;
 	for (time_t before = first; before < last; before += 86400) {
@@ -121,6 +136,9 @@ void zone_transitions(std::span<uint8_t> bytes, int year)
 		std::memcpy(fields.data() + 6, &week, 2);
 		std::memcpy(bytes.data() + (next.daylight ? 152 : 68), fields.data(), fields.size());
 	}
+	cached_key = key;
+	std::memcpy(cached.data(), bytes.data() + 68, 16);
+	std::memcpy(cached.data() + 16, bytes.data() + 152, 16);
 }
 
 std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_environment(const NativePaths &paths, bool wow64)
@@ -314,7 +332,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		std::memcpy(bytes.data() + 88, daylight_name.data(), daylight_name.size() * 2);
 		const int32_t daylight_bias = standard - daylight;
 		std::memcpy(bytes.data() + 168, &daylight_bias, 4);
-		if (standard != daylight) zone_transitions(bytes, year);
+		if (standard != daylight) zone_transitions(bytes, year, first, second);
 		if (dynamic) {
 			const auto key_name = from_utf8(first.offset_minutes <= second.offset_minutes ? first.name : second.name).substr(0, 127);
 			std::memcpy(bytes.data() + 172, key_name.data(), key_name.size() * 2);
