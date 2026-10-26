@@ -1,5 +1,8 @@
 #include "windows.h"
 #include "nt/text.h"
+#ifdef __APPLE__
+#include <AudioToolbox/AudioServices.h>
+#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -129,7 +132,12 @@ void NativeWindows::register_api(ApiRegistry &registry)
 	registry.add("IsCharAlphaNumericW", 1, [](ApiCall &call) { call.ret(std::iswalnum(wint_t(call.u32(0) & 0xffff)) != 0); });
 	registry.add("IsCharLowerW", 1, [](ApiCall &call) { call.ret(std::iswlower(wint_t(call.u32(0) & 0xffff)) != 0); });
 	registry.add("IsCharUpperW", 1, [](ApiCall &call) { call.ret(std::iswupper(wint_t(call.u32(0) & 0xffff)) != 0); });
-	registry.add("MessageBeep", 1, [](ApiCall &call) { call.ret(1); });
+	registry.add("MessageBeep", 1, [](ApiCall &call) {
+#ifdef __APPLE__
+		AudioServicesPlayAlertSound(kSystemSoundID_UserPreferredAlert);
+#endif
+		call.ret(1);
+	});
 	registry.add("LockWindowUpdate", 1, [](ApiCall &call) { call.ret(1); });
 	registry.add("NotifyWinEvent", 4, [](ApiCall &) {});
 	registry.add("FlashWindowEx", 1, [](ApiCall &call) { call.ret(0); });

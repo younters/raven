@@ -1,11 +1,16 @@
 #include "api.h"
 #include "mixer.h"
+#include "input.h"
 #include "nt/kernel_context.h"
 #include "nt/x86_com.h"
+#include <CoreAudio/CoreAudio.h>
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <map>
 #include <sys/mman.h>
 
@@ -16,6 +21,8 @@ constexpr uint32_t ok = 0, invalid = 0x80070057, no_interface = 0x80004002, not_
 constexpr ComMethod methods[] = {
 #include "nt/x86_dsound_vtables.inc"
 #include "dsound3d_vtables.inc"
+#include "wasapi_vtables.inc"
+#include "xaudio_vtables.inc"
 	{"IDirectSoundNotify", "QueryInterface", 0, 3}, {"IDirectSoundNotify", "AddRef", 1, 1},
 	{"IDirectSoundNotify", "Release", 2, 1}, {"IDirectSoundNotify", "SetNotificationPositions", 3, 3},
 };
@@ -67,7 +74,15 @@ struct State {
 	}
 	std::optional<AudioFormat> format(ApiCall &call, uint64_t at) {
 		if (!at) return std::nullopt;
-		const auto tag = call.load<uint16_t>(at), channels = call.load<uint16_t>(at + 2), bits = call.load<uint16_t>(at + 14);
+		auto tag = call.load<uint16_t>(at);
+		const auto channels = call.load<uint16_t>(at + 2), bits = call.load<uint16_t>(at + 14);
+		if (tag == 0xfffe) {
+			if (call.load<uint16_t>(at+16)<22) return std::nullopt;
+			const auto sub=call.read(at+24,16);
+			const std::array<uint8_t,12> tail{0,0,0x10,0,0x80,0,0,0xaa,0,0x38,0x9b,0x71};
+			if (!std::equal(sub.begin()+4,sub.end(),tail.begin())) return std::nullopt;
+			tag=uint16_t(call.load<uint32_t>(at+24));
+		}
 		const auto rate = call.load<uint32_t>(at + 4); const auto block = call.load<uint16_t>(at + 12);
 		if ((tag != 1 && tag != 3) || rate < 8000 || rate > 384000 || !channels || channels > 8 ||
 			block != channels * (bits / 8) || (tag == 3 ? bits != 32 : bits != 8 && bits != 16 && bits != 24 && bits != 32)) return std::nullopt;
@@ -178,8 +193,13 @@ struct State {
 		} else if (method != "Restore" && method != "Initialize") { call.ret(not_impl); return; }
 		call.ret(ok);
 	}
+
+#include "xaudio.inc"
+#include "wasapi.inc"
 	void dispatch(ApiCall &call, std::string_view name) {
 		const auto dot = name.find('.'); const auto type = name.substr(0,dot), method = name.substr(dot+1);
+		if (std::getenv("RAVEN_AUDIO_TRACE") && (type.starts_with("IMM") || type.starts_with("IAudio")))
+			std::fprintf(stderr,"Raven audio: %.*s\n",int(name.size()),name.data());
 		if (!objects.contains(call[0])) { call.ret(invalid); return; }
 		const auto identity = buffers.contains(call[0]) ? buffers.at(call[0])->owner : call[0];
 		if (method == "AddRef") { call.ret(++refs[identity]); return; }
@@ -194,7 +214,13 @@ struct State {
 						} else ++it;
 					}
 					if (std::none_of(buffers.begin(),buffers.end(),[&](const auto &item) { return item.second->memory==b->memory; })) context.allocator.release(b->memory);
-				} else { objects.erase(call[0]); refs.erase(call[0]); context.allocator.release(call[0]); }
+				} else {
+					if (auto it=clients.find(call[0]);it!=clients.end()) {
+						auto client=it->second; clients.erase(it);
+						if (client.use_count()==1) { if (client->voice) mixer().stop(client->voice); if (client->input) client->input->stop(); if (client->memory) context.allocator.release(client->memory); }
+					}
+					collections.erase(call[0]); collection_flows.erase(call[0]); device_flows.erase(call[0]); objects.erase(call[0]); refs.erase(call[0]); context.allocator.release(call[0]);
+				}
 			}
 			call.ret(n); return;
 		}
@@ -203,6 +229,13 @@ struct State {
 			call.store_pointer(call[2],0); const auto iid = call.load<uint32_t>(call[1]);
 			const auto requested = interface_for(call,call[1]);
 			if (requested.empty()) { call.ret(no_interface); return; }
+			if (requested == "IUnknown" || requested == type ||
+				(type == "IAudioClient3" && (requested == "IAudioClient" || requested == "IAudioClient2"))) {
+				++refs[identity]; call.store_pointer(call[2],identity); call.ret(ok); return;
+			}
+			if (type == "IMMDevice" && requested == "IMMEndpoint") {
+				const auto at=object(call,"IMMEndpoint"); device_flows[at]=device_flows[call[0]]; call.store_pointer(call[2],at); call.ret(ok); return;
+			}
 			const bool device = type == "IDirectSound8";
 			const bool buffer = buffers.contains(call[0]);
 			if (iid == 0 || (device && (iid == 0x279afa83 || iid == 0xc50a7e93)) ||
@@ -222,7 +255,9 @@ struct State {
 			}
 			call.ret(no_interface); return;
 		}
-		directsound(call,type,method);
+		if (type.starts_with("IDirectSound")) directsound(call,type,method);
+		else if (type.starts_with("IXAudio2")) xaudio(call,type,method);
+		else wasapi(call,type,method);
 	}
 };
 std::map<NativeProcess *, std::weak_ptr<State>> states;
@@ -231,10 +266,30 @@ std::span<const std::string_view> audio_method_names() {
 	static const auto names = com_names(methods); return names;
 }
 uint32_t audio_method_words(std::string_view name) { return com_words(methods,name); }
-bool create_audio_instance(ApiCall &) { return false; }
+bool create_audio_instance(ApiCall &call) {
+	if (!call[0]) return false;
+	const auto bytes = call.read(call[0],16);
+	const auto &clsid=guids.at("CLSID_MMDeviceEnumerator"), &xaudio=guids.at("CLSID_XAudio2_7");
+	const bool legacy=std::equal(bytes.begin(),bytes.end(),xaudio.begin());
+	if (!legacy && !std::equal(bytes.begin(),bytes.end(),clsid.begin())) return false;
+	if (!call[4]) { call.ret(invalid); return true; }
+	call.store_pointer(call[4],0);
+	if (call[1]) { call.ret(0x80040110); return true; }
+	const auto requested=interface_for(call,call[3]);
+	if (requested!="IUnknown" && requested!=(legacy?"IXAudio2Legacy":"IMMDeviceEnumerator")) { call.ret(no_interface); return true; }
+	auto state=states[&call.process].lock();
+	if (!state) { call.ret(0x80040154); return true; }
+	call.store_pointer(call[4],state->object(call,legacy?"IXAudio2Legacy":"IMMDeviceEnumerator")); call.ret(ok); return true;
+}
 void register_audio_api(ApiRegistry &registry, KernelContext &context) {
 	auto state = std::make_shared<State>(context); states[&context.process] = state;
-	context.threads.add_service([state] { if (!state->mixer_) return; for (auto event : state->mixer().take_events()) state->context.objects.set_event(event,true); });
+	context.threads.add_service([state] { state->service_clients(); state->service_voices(); if (!state->mixer_) return; for (auto event : state->mixer().take_events()) state->context.objects.set_event(event,true); });
+	for (const auto *name : {"XAudio2Create","XAudio2CreateWithVersionInfo"}) registry.add(name,std::string_view(name)=="XAudio2Create"?3:4,[state](ApiCall &call) {
+		if (!call[0]) { call.ret(invalid); return; }
+		call.store_pointer(call[0],0);
+		if (!state->mixer().ready()) { call.ret(0x88960001); return; }
+		call.store_pointer(call[0],state->object(call,"IXAudio2")); call.ret(ok);
+	});
 	for (const auto name : audio_method_names()) registry.add(name,audio_method_words(name),[state,name](ApiCall &call) { state->dispatch(call,name); });
 	for (const auto *name : {"DirectSoundCreate", "DirectSoundCreate8"}) registry.add(name,3,[state](ApiCall &call) {
 		if (!call[1] || call[2]) { call.ret(invalid); return; }

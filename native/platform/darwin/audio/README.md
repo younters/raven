@@ -18,12 +18,10 @@ without PulseAudio it sleeps and discards samples. Its position counts completed
 The Darwin implementation supplies the same queue-level methods on `WaveOut` with a small `__APPLE__` adapter; Linux retains its
 existing implementation.
 
-`nt/x86_dsound.cpp` only maps buffer memory and computes cursors/status from elapsed wall time. It does not submit samples to WinMM
-or any host audio device. No WASAPI (`IAudioClient`, `MMDevice`), XAudio2 engine, or working `PlaySound` implementation was found.
-`MessageBeep` returns success without audio. Merely loading an XAudio2 DLL in the existing DirectX check is not playback coverage.
-`waveInGetNumDevs` reports zero and `waveInOpen` rejects recording: there is no existing capture interface to implement. This change
-never accesses a microphone or requests permission; future capture work needs a usage description and an explicit authorization check
-before opening an input device, with unauthorized automated tests skipped.
+The original `nt/x86_dsound.cpp` maps buffers and computes timing without sending samples to a device. On macOS, the host now serves
+DirectSound through a shared mixer. MMDevice/WASAPI, basic XAudio2, PlaySound and waveIn use the same native audio layer. See
+[IMPLEMENTATION.md](IMPLEMENTATION.md) for the newer interfaces and their verified coverage. Linux keeps its existing behavior.
+Microphone authorization is queried without prompting during enumeration and automated tests; only opening an input requests access.
 
 ## Backend
 
@@ -81,8 +79,8 @@ position, underrun, and reset while in flight. Private build-local prefixes are 
 counts at disposal, providing host-side evidence that Windows submissions reached CoreAudio. No speakers, microphone permission,
 loopback driver, Firefox prefix, debugger, or system volume change is needed.
 
-Default-device hot switching is delegated to AudioQueue and has not been exercised by changing the user's active output device. Real
-DirectSound/WASAPI/XAudio2/PlaySound apps still need their missing Windows-facing implementations; this backend enables WinMM playback.
+Default-device hot switching is delegated to AudioQueue. The host MMDevice provider also polls the CoreAudio default output and calls
+registered `IMMNotificationClient` listeners when it changes. Physical hot switching has not been exercised in automated tests.
 
 
 ## Recorded macOS validation (2026-10-25)

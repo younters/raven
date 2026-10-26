@@ -100,6 +100,7 @@ struct AudioMixer::State {
 					mixed[used * 2 + channel] += (a + (b - a) * fraction) * (channel ? v.right : v.left);
 				}
 				v.cursor += step;
+				if (!(v.circular && v.looping)) v.cursor = std::min(v.cursor,double(count));
 			}
 			if (v.circular && !v.looping && v.cursor >= count) end = true;
 			v.marks.push_back({dispatched + used, uint64_t(v.cursor), end});
@@ -141,6 +142,8 @@ uint64_t AudioMixer::padding(const std::shared_ptr<Voice> &v) { std::lock_guard 
 bool AudioMixer::playing(const std::shared_ptr<Voice> &v) { std::lock_guard lock(state->mutex); state->refresh(); return v->running; }
 void AudioMixer::notifications(const std::shared_ptr<Voice> &v, std::vector<std::pair<uint32_t, uint64_t>> points) { std::lock_guard lock(state->mutex); v->notifications = std::move(points); }
 std::vector<uint64_t> AudioMixer::take_events() { std::lock_guard lock(state->mutex); state->refresh(); return std::exchange(state->events, {}); }
+uint64_t AudioMixer::clock() { return state->output.position()/8; }
+uint64_t AudioMixer::callbacks() { return state->output.callbacks(); }
 bool AudioMixer::ready() const { return state->output.ready(); }
 uint32_t AudioMixer::device_rate() {
 	AudioDeviceID device = 0; UInt32 size = sizeof(device);

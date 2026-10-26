@@ -28,3 +28,29 @@ these include mixed silence and must not be interpreted as source-buffer frame c
 Baseline full serial run: 317 listed, three failures (`native_layout_failure_component`, `native_dll_lifecycle`,
 `darwin_dxmt_tessellation`), four disabled/skipped, 530.97 seconds. Logs: `/tmp/raven-audio2-results/baseline-complete.log`.
 A duplicate baseline was inadvertently queued during initial configuration and was stopped after the complete run was preserved.
+
+## Additional Windows interfaces
+
+MMDevice and WASAPI objects are guest vtables in `raven-audio.dll`; their calls enter the same arm64 host `State` as DirectSound.
+The enumerator exposes the default CoreAudio render and capture endpoints. Each render client copies released guest frames into a
+bounded mixer voice. `GetCurrentPadding` counts submitted frames that have not been presented, while `IAudioClock` uses the mixer's
+continuous device timeline. Event clients receive scheduler-driven event signals. The default-output notification callback is
+delivered on a scheduler service call after the CoreAudio default device ID changes. The host does not change the system device.
+
+For capture, `AudioInput` owns a CoreAudio input queue and bounded host storage. Enumeration and the authorization probe only read
+the microphone authorization state. Constructing `AudioInput` when a Windows program actually opens input may request permission;
+automated capture opening is skipped unless authorization was already granted. The Raven executable and generated app bundles
+carry `NSMicrophoneUsageDescription` so an actual user open can present the macOS prompt. `IAudioCaptureClient` and `waveIn*` consume the
+same queue. The queue's CoreAudio callback never touches guest memory. The recording path needs validation on a previously
+authorized host; the current machine's authorized capture test skipped.
+
+XAudio2 2.9 (`XAudio2Create`) and 2.7 (`CoCreateInstance`) are small native implementations over `AudioMixer`. Source voices copy
+PCM into host storage on `SubmitSourceBuffer`, expose queue state and delivered-frame positions, and send buffer/stream completion
+callbacks on the scheduler thread. The mastering voice names the shared output. FAudio was considered: the provisioned Wine
+source contains a zlib-licensed copy, but importing its guest DLL and Win32 backend would add a second mixing engine and media
+dependencies to a port whose output already has one native mixer. No FAudio component or other binary was added. Submix voices
+can be created, but graph routing is approximated by direct output. Effects and compressed input are still unsupported.
+
+PlaySound accepts RIFF PCM/float WAV from Windows paths, memory, or WAVE resources. Aliases enqueue a short, quiet generated tone
+through the same WinMM/CoreAudio queue path. `MessageBeep` asks macOS to play the selected alert sound. The PlaySound tone and
+MessageBeep are not exercised by automated tests, which submit silence.

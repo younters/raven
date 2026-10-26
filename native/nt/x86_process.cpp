@@ -269,7 +269,7 @@ bool unsupported_library(NativeProcess &process, NativeEnvironment &environment,
 		process.return_api(0xC00000BBU);
 		return true;
 	}
-	const bool known = name == "PlaySoundW" || name == "ShellAboutW" || name == "InitCommonControlsEx";
+	const bool known = name == "PlaySoundW" || name == "PlaySoundA" || name == "sndPlaySoundW" || name == "sndPlaySoundA" || name == "ShellAboutW" || name == "InitCommonControlsEx";
 	if (!known)
 		return false;
 	process.api_arguments(0);
@@ -646,13 +646,17 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	std::sort(crt_names.begin(), crt_names.end());
 	crt_names.erase(std::unique(crt_names.begin(), crt_names.end()), crt_names.end());
 	add_library("msvcrt.dll", crt_names, NativeCRT::data_exports(), [](std::string_view name) { return uint32_t(0); });
-	static constexpr std::array<std::string_view, 4> winmm_exports{"PlaySoundW", "timeBeginPeriod", "timeEndPeriod", "timeGetTime"};
+	static constexpr std::array<std::string_view, 7> winmm_exports{"PlaySoundA", "PlaySoundW", "sndPlaySoundA", "sndPlaySoundW", "timeBeginPeriod", "timeEndPeriod", "timeGetTime"};
 	static constexpr std::array<std::string_view, 1> shell_exports{"ShellAboutW"};
 	// File version resources are read by the shared handlers; the names are in byte order.
 	static constexpr std::array<std::string_view, 8> version_exports{"GetFileVersionInfoA", "GetFileVersionInfoExW", "GetFileVersionInfoSizeA",
 		"GetFileVersionInfoSizeExW", "GetFileVersionInfoSizeW", "GetFileVersionInfoW", "VerQueryValueA", "VerQueryValueW"};
 	static constexpr std::array<std::string_view, 1> controls_exports{"InitCommonControlsEx"};
-	add_library("winmm.dll", winmm_exports, {}, [](std::string_view name) { return uint32_t(name == "PlaySoundW" ? 3 : name == "timeGetTime" ? 0 : 1); });
+	add_library("winmm.dll", winmm_exports, {}, [](std::string_view name) { return uint32_t(name.starts_with("PlaySound") ? 3 : name.starts_with("sndPlaySound") ? 2 : name == "timeGetTime" ? 0 : 1); });
+	#ifdef __APPLE__
+	static constexpr std::array<std::string_view,2> xaudio_exports{"XAudio2Create","XAudio2CreateWithVersionInfo"};
+	add_library("xaudio2_9.dll",xaudio_exports,{},[](std::string_view name) { return uint32_t(name=="XAudio2Create"?3:4); });
+	#endif
 	#ifdef __APPLE__
 	add_library("raven-audio.dll", raven_darwin::audio_method_names(), {}, [](std::string_view name) { return raven_darwin::audio_method_words(name); });
 #endif

@@ -77,6 +77,12 @@ static constexpr std::array<std::string_view, 50> names{
 
 bool host_device_export(std::string_view library, std::string_view name)
 {
+#ifdef __APPLE__
+	// The host owns the MMDevice class. Its CoCreateInstance handler must see the class ID
+	// before the guest shell component's registry based COM activation path.
+	if (library == "ole32.dll" && name == "CoCreateInstance") return true;
+	if (library == "user32.dll" && name == "MessageBeep") return true;
+#endif
 	return library == "setupapi.dll" && (name == "SetupDiGetClassDevsA" || name == "SetupDiGetClassDevsW" ||
 		name == "SetupDiEnumDeviceInfo" || name == "SetupDiEnumDeviceInterfaces" || name == "SetupDiDestroyDeviceInfoList");
 }
@@ -1638,6 +1644,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	std::vector<std::string> system_modules{"kernel32.dll", "kernelbase.dll", "user32.dll", "gdi32.dll", "comctl32.dll"};
 #ifdef __APPLE__
 	system_modules.emplace_back("raven-audio.dll");
+	system_modules.emplace_back("xaudio2_9.dll");
 #endif
 	for (const auto library : system_library_names())
 		if (std::find(system_modules.begin(), system_modules.end(), library) == system_modules.end())
@@ -1681,6 +1688,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		if (library == "raven-audio.dll") {
 			const auto audio = raven_darwin::audio_method_names();
 			symbols.insert(symbols.end(), audio.begin(), audio.end());
+		}
+		if (library == "xaudio2_9.dll") {
+			symbols.push_back("XAudio2Create");
+			symbols.push_back("XAudio2CreateWithVersionInfo");
 		}
 #endif
 		if (library == "ntdll.dll")

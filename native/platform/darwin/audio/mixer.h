@@ -23,6 +23,8 @@ public:
 	bool playing(const std::shared_ptr<Voice> &);
 	void notifications(const std::shared_ptr<Voice> &, std::vector<std::pair<uint32_t, uint64_t>> points);
 	std::vector<uint64_t> take_events();
+	uint64_t clock(); // device-rate frames on the shared presentation timeline
+	uint64_t callbacks();
 	bool ready() const;
 	static uint32_t device_rate();
 private:

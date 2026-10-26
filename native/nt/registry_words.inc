@@ -1248,3 +1248,5 @@
 {"waveOutSetVolume", 2},
 {"waveOutUnprepareHeader", 3},
 {"waveOutWrite", 3},
+{"XAudio2Create", 3},
+{"XAudio2CreateWithVersionInfo", 4},

@@ -539,9 +539,16 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	});
 	registry.add("CoUninitialize", 0, uninitialize);
 	registry.add("OleUninitialize", 0, uninitialize);
-	registry.add("CoCreateInstance", 5, [](ApiCall &call) {
+	registry.add("CoCreateInstance", 5, [&context](ApiCall &call) {
 #ifdef __APPLE__
 		if (raven_darwin::create_audio_instance(call)) return;
+		if (context.modules.all().contains("raven-shell.dll")) {
+			const auto target = context.modules.resolve({"raven-shell.dll", "CoCreateInstance", 0, false, 0});
+			if (target) {
+				const std::array<uint64_t,5> arguments{call[0],call[1],call[2],call[3],call[4]};
+				call.ret(context.call(target, arguments).value); return;
+			}
+		}
 #endif
 		if (std::getenv("RAVEN_TRACE_API")) {
 			const auto bytes = call.read(call[0], 16);

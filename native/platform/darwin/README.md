@@ -215,7 +215,7 @@ These compile, but do not yet behave as on Linux.
   see [VULKAN.md](VULKAN.md) for verified tests, the desktop integration test, and Direct3D backend limitations.
 - **Desktop:** Cocoa lives in `cocoa.mm`; graphics bridge work is separate from the controller.
 - **OpenGL:** the bridge uses EGL.
-- **Audio:** WinMM playback uses CoreAudio (see below); DirectSound is timing-only, and WASAPI, XAudio2 and capture are missing.
+- **Audio:** WinMM, DirectSound, WASAPI, basic XAudio2, PlaySound and authorized microphone capture use CoreAudio; see [audio/IMPLEMENTATION.md](audio/IMPLEMENTATION.md) for coverage and limitations.
 
 ## Installed Windows apps in Finder and the Dock
 
@@ -261,5 +261,4 @@ serializes syncs. Parser and lifecycle contracts run without guest execution:
 ```sh
 python3 native/platform/darwin/tests/apps_test.py
 ```
-- **Audio:** WinMM playback uses CoreAudio AudioQueue on macOS; Linux retains PulseAudio. See [audio/README.md](audio/README.md)
-  for formats, buffering, clock behavior, silent integration tests, and the remaining Windows audio API limitations.
+- **Audio:** WinMM playback uses CoreAudio AudioQueue on macOS; Linux retains PulseAudio. The other macOS Windows audio interfaces share a host mixer and are described in [audio/IMPLEMENTATION.md](audio/IMPLEMENTATION.md).
