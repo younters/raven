@@ -960,7 +960,9 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		}
 		const auto layout = frame_layout(*window);
 		const int32_t x = int16_t(call[3] & 0xffff) - window->outer.left, y = int16_t((call[3] >> 16) & 0xffff) - window->outer.top;
-		if (window->y - window->outer.top > layout.close.top) {
+		const auto &margins = *window->glass;
+		const bool whole = std::any_of(margins.begin(), margins.end(), [](int32_t margin) { return margin < 0; });
+		if (window->y - window->outer.top > layout.close.top || (!whole && margins[2] < layout.close.bottom - (window->y - window->outer.top))) {
 			call.ret(0);
 			return;
 		}

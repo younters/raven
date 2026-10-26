@@ -254,7 +254,8 @@ void NativeWindows::present(uint64_t handle, bool force)
 					canvas.set(x,y,title);
 			}
 		const auto layout=frame_layout(*window);
-		if (themed() && layout.close.right>layout.close.left && top<=layout.close.top)
+		// Narrow glass borders do not give the compositor the program's caption: its buttons are client drawing too.
+		if (themed() && layout.close.right>layout.close.left && top<=layout.close.top && (whole || margins[2]>=layout.close.bottom-top))
 			paint_caption_buttons(handle,*window,layout,canvas,active==handle);
 		pixels=glazed;
 	}
