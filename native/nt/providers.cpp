@@ -29,6 +29,7 @@
 #include "platform/darwin/unix_calls.h"
 #include "platform/darwin/audio/api.h"
 #include "platform/darwin/dxmt/presentation.h"
+#include "platform/darwin/dxmt/kernel_thunks.h"
 #endif
 #ifdef RAVEN_OPENGL
 #include "graphics/opengl_bridge.h"
@@ -2487,6 +2488,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_version_api(api_registry, kernel);
 #ifdef RAVEN_OPENGL
 	if (opengl) opengl->register_api(api_registry, threads);
+#endif
+#ifdef __APPLE__
+	register_darwin_d3dkmt(desktop_api, kernel_objects);
 #endif
 	windows.register_api(desktop_api);
 	desktop.register_gdi_api(desktop_api);
