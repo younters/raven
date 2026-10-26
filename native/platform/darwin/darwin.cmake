@@ -21,6 +21,7 @@ endif()
 # The guest controller: Linux traces an ELF child with ptrace; macOS runs an x86_64 Mach-O agent under Rosetta 2 that the host
 # drives through shared memory. Same NativeProcess interface, different implementation file.
 if(TARGET raven_cpu)
+    include(${RAVEN_DARWIN_DIR}/audio/audio.cmake)
     get_target_property(RAVEN_CPU_SOURCES raven_cpu SOURCES)
     list(REMOVE_ITEM RAVEN_CPU_SOURCES cpu/native_cpu.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/native_process.cpp ${RAVEN_DARWIN_DIR}/unix_calls.cpp)

@@ -261,3 +261,5 @@ serializes syncs. Parser and lifecycle contracts run without guest execution:
 ```sh
 python3 native/platform/darwin/tests/apps_test.py
 ```
+- **Audio:** WinMM playback uses CoreAudio AudioQueue on macOS; Linux retains PulseAudio. See [audio/README.md](audio/README.md)
+  for formats, buffering, clock behavior, silent integration tests, and the remaining Windows audio API limitations.
