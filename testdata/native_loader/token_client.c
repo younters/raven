@@ -422,6 +422,13 @@ int raven_entry(void)
 	if (!DuplicateTokenEx(first, TOKEN_ALL_ACCESS, NULL, SecurityImpersonation, TokenImpersonation, &copy) ||
 		!GetTokenInformation(copy, TokenType, &type, sizeof(type), &size) || type != TokenImpersonation)
 		return 4;
+	{
+		struct { WORD version, reserved; DWORD count; void *attributes; } claims;
+		if (GetTokenInformation(copy, TokenSecurityAttributes, NULL, 0, &size) || GetLastError() != ERROR_INSUFFICIENT_BUFFER ||
+			size != sizeof(claims) || !GetTokenInformation(copy, TokenSecurityAttributes, &claims, sizeof(claims), &size) ||
+			size != sizeof(claims) || claims.version != 1 || claims.count || claims.attributes)
+			return 136;
+	}
 	limited = OpenProcess(PROCESS_VM_READ, FALSE, GetCurrentProcessId());
 	if (!limited || (ULONG)open(limited, TOKEN_QUERY, &sentinel) != 0xc0000022 || sentinel != (HANDLE)(ULONG_PTR)0x12345678)
 		return 5;

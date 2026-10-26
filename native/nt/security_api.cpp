@@ -544,6 +544,11 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 		case 20: data = {process_elevated() ? uint8_t(1) : uint8_t(0), 0, 0, 0}; break;
 		case 29: data = {0, 0, 0, 0}; break;
 		case 25: with_sid(make_sid(16, {value.integrity}), 0x60, true); break;
+		// TOKEN_SECURITY_ATTRIBUTES_INFORMATION: version 1, with no claims attached to this token.
+		case 39:
+			data.assign(width == 4 ? 12 : 16, 0);
+			data[0] = 1;
+			break;
 		case 10: data.assign(56, 0); break;
 		default:
 			call.fail(87);
