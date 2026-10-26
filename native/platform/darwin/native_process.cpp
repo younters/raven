@@ -541,9 +541,19 @@ struct NativeProcess::State {
 		view->host = static_cast<uint8_t *>(view->mapping) + slack;
 		return view;
 	}
+	static std::unique_ptr<SharedView> anonymous_view(size_t size)
+	{
+		auto view = std::make_unique<SharedView>();
+		view->size = view->mapping_size = size;
+		view->mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANON, -1, 0);
+		if (view->mapping == MAP_FAILED)
+			throw std::runtime_error("cannot reserve anonymous native host view");
+		view->host = static_cast<uint8_t *>(view->mapping);
+		return view;
+	}
 	std::map<uint64_t, std::unique_ptr<SharedView>> shared_views;
-	// Anonymous allocations use the same descriptor transport as images and the main stack. Keeping the backing in this table
-	// also makes release invalidate the host alias before a guest address can be reused.
+	// Private allocations retain either a Mach-remapped anonymous view or a small descriptor view. Keeping the backing here
+	// makes release invalidate the host alias before a guest address can be reused.
 	std::set<uint64_t> anonymous_views;
 	std::map<uint64_t, ImageMapping> mappings;
 	std::vector<std::pair<uint64_t, uint64_t>> allocations;
@@ -952,23 +962,56 @@ uint64_t NativeProcess::map_memory(size_t size, int protection, uint64_t address
 	state->require_memory();
 	memory_range(address, size, protection, state->limit());
 	state->allocations.reserve(state->allocations.size() + 1);
-	const uint64_t flags = address ? RAVEN_MAP_EXACT : state->mode == NativeMode::x86 ? RAVEN_MAP_LOW : 0;
-	uint64_t mapped;
+	const bool aliases = !std::getenv("RAVEN_DARWIN_DISABLE_PRIVATE_ALIASES");
+	const uint64_t flags = address ? RAVEN_MAP_EXACT : state->mode == NativeMode::x86 ? RAVEN_MAP_LOW :
+		aliases && !(size % size_t(getpagesize())) ? RAVEN_MAP_GRANULAR : 0;
+	uint64_t mapped = 0;
 	std::unique_ptr<State::SharedView> view;
-	// Comparison and fault-injection switch: the ordinary anonymous service mapping is still a complete fallback.
-	int backing = std::getenv("RAVEN_DARWIN_DISABLE_PRIVATE_ALIASES") ? -1 : memfd_create("raven-private", MFD_CLOEXEC);
-	if (backing >= 0) {
-		if (size <= INT64_MAX && ftruncate(backing, off_t(size)) == 0) {
-			try { view = State::host_view(backing, size); }
-			catch (const std::runtime_error &) { /* Keep the task-port allocation path when a host alias cannot be reserved. */ }
-		}
-	}
+	bool remapped = false;
+	int backing = -1;
 	try {
-		if (view) {
-			state->child->send_descriptor(backing);
-			mapped = state->service(RAVEN_SERVICE_MAP_DESCRIPTOR, {address, size, 0, flags, uint64_t(protection)}, "allocation");
-		} else {
-			mapped = state->service(RAVEN_SERVICE_MAP, {address, size, uint64_t(protection), flags}, "allocation");
+		// A guest-owned 16 KiB-aligned reservation can share anonymous VM pages with the host without creating a disk file.
+		// Smaller or subpage-aligned ranges keep the proven descriptor path: Mach remap would replace neighbouring guest pages.
+		const auto host_page = size_t(getpagesize());
+		if (aliases && !(size % host_page) && (!address || !(address % host_page))) {
+			try { view = State::anonymous_view(size); }
+			catch (const std::runtime_error &) { /* Try the descriptor or task-port path. */ }
+			if (view) {
+				mapped = state->service(RAVEN_SERVICE_MAP, {address, size, PROT_NONE, flags}, "allocation");
+				if (!(mapped % host_page)) {
+					mach_vm_address_t target = mapped;
+					vm_prot_t current = 0, maximum = 0;
+					const auto status = mach_vm_remap(state->child->task, &target, size, 0,
+						VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(),
+						reinterpret_cast<mach_vm_address_t>(view->host), false, &current, &maximum, VM_INHERIT_NONE);
+					if (status == KERN_SUCCESS && target == mapped) {
+						try {
+							state->service(RAVEN_SERVICE_PROTECT, {mapped, size, uint64_t(protection)}, "allocation protection");
+							remapped = true;
+						} catch (const std::system_error &) { /* Fall back if the guest cannot protect this anonymous view. */ }
+					}
+				}
+				if (!remapped) {
+					state->service(RAVEN_SERVICE_UNMAP, {mapped, size}, "failed anonymous remap cleanup");
+					view.reset();
+				}
+			}
+		}
+		if (!remapped) {
+			// 4 KiB mappings can share a 16 KiB host page with unrelated guest regions; a file descriptor preserves
+			// their boundaries. A failed large remap uses the task-port path rather than creating a huge disk-backed file.
+			const bool subpage = size % host_page || (address && address % host_page);
+			backing = aliases && subpage ? memfd_create("raven-private", MFD_CLOEXEC) : -1;
+			if (backing >= 0 && size <= INT64_MAX && ftruncate(backing, off_t(size)) == 0) {
+				try { view = State::host_view(backing, size); }
+				catch (const std::runtime_error &) { /* Use the task-port path. */ }
+			}
+			if (view) {
+				state->child->send_descriptor(backing);
+				mapped = state->service(RAVEN_SERVICE_MAP_DESCRIPTOR, {address, size, 0, flags, uint64_t(protection)}, "allocation");
+			} else {
+				mapped = state->service(RAVEN_SERVICE_MAP, {address, size, uint64_t(protection), flags}, "allocation");
+			}
 		}
 	} catch (const std::system_error &) {
 		if (backing >= 0) close(backing);
@@ -983,8 +1026,11 @@ uint64_t NativeProcess::map_memory(size_t size, int protection, uint64_t address
 		throw std::runtime_error("host returned an invalid native allocation address");
 	}
 	if (state->child->profile.enabled) {
-		if (view) ++state->child->profile.private_aliases;
-		else ++state->child->profile.private_fallbacks;
+		if (view) {
+			++state->child->profile.private_aliases;
+			if (remapped) ++state->child->profile.private_remaps;
+			else ++state->child->profile.private_descriptors;
+		} else ++state->child->profile.private_fallbacks;
 	}
 	try {
 		state->mappings.insert_or_assign(mapped, ImageMapping{mapped, size, 0, protection});

@@ -98,8 +98,10 @@ thread creations in one process even when pthread channels have been reused.
 
 ## Anonymous memory aliases
 
-`NativeProcess::map_memory` backs each private reservation with an unlinked descriptor, maps it into the guest through the same descriptor
-service used for the main stack and images, and retains a writable host view. The guest agent still chooses exact, low-address or ordinary
+`NativeProcess::map_memory` backs 16 KiB-aligned private reservations with anonymous host VM and remaps those pages into the guest task
+through `mach_vm_remap(copy=false)`, as the IOSurface presenter does. Smaller or subpage-aligned allocations use an unlinked descriptor
+through the image/stack service, preserving their 4 KiB boundaries. Large private heaps therefore do not charge temporary-file space.
+The guest agent still chooses exact, low-address or ordinary
 placement and enforces protection on its own 4 KiB pages; the host's 16 KiB mapping is never used as evidence of guest access. The Windows
 allocator remains responsible for reserve/commit accounting and reports these regions as `MEM_PRIVATE`. Secondary Windows stacks, TEBs,
 PEBs and heaps all use this allocator. The host view is removed on release before the guest address can be reused. Private discard zeros
@@ -110,7 +112,7 @@ guest-service path. Aligned scalar reads use acquire loads and scalar writes use
 locked compare-and-exchange still executes in the guest service thread. Host writes into executable pages also remain guest-service
 writes so Rosetta invalidates translated code. A writable-to-executable protection change runs in the guest, and executable discard
 reprotects there after zeroing the host view. `RAVEN_DARWIN_DISABLE_PRIVATE_ALIASES=1` selects the old private allocation path for
-comparison and fallback testing; file creation or host-view failure selects it automatically for that allocation.
+comparison and fallback testing; remap, file creation or host-view failure selects it automatically for that allocation.
 `native_darwin_parallel_contracts` checks the shared path at both guest widths; `native_darwin_private_fallback_contracts` runs the
 same concurrent and executable-memory checks with the fallback forced.
 

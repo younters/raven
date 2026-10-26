@@ -18,6 +18,7 @@ struct ControllerProfile {
 	std::array<Counter, RAVEN_SERVICE_EXIT + 1> services{};
 	uint64_t wait_sleeps = 0, service_sleeps = 0;
 	uint64_t private_aliases = 0, private_fallbacks = 0;
+	uint64_t private_remaps = 0, private_descriptors = 0;
 
 	struct Scope {
 		ControllerProfile &profile;
@@ -62,6 +63,8 @@ struct ControllerProfile {
 			static_cast<unsigned long long>(service_sleeps));
 		std::fprintf(stderr, "controller: private-aliases=%llu private-fallbacks=%llu\n",
 			static_cast<unsigned long long>(private_aliases), static_cast<unsigned long long>(private_fallbacks));
+		std::fprintf(stderr, "controller: private-remaps=%llu private-descriptors=%llu\n",
+			static_cast<unsigned long long>(private_remaps), static_cast<unsigned long long>(private_descriptors));
 	}
 };
 

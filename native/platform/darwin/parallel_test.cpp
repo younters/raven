@@ -36,14 +36,14 @@ void contracts(const std::string &bootstrap, raven::NativeMode mode)
 	raven::NativeProcess process({}, bootstrap, timeout, mode);
 	check(process.parallel() && process.execution_descriptor() >= 0, "parallel guest has no wake descriptor");
 	const size_t width = mode == raven::NativeMode::x64 ? 8 : 4;
-	const auto data = process.map_memory(4096, PROT_READ | PROT_WRITE);
+	const auto data = process.map_memory(65536, PROT_READ | PROT_WRITE);
 	const auto stack = process.map_memory(65536, PROT_READ | PROT_WRITE);
-	const auto code = process.map_memory(4096, PROT_READ | PROT_WRITE);
+	const auto code = process.map_memory(65536, PROT_READ | PROT_WRITE);
 	// Both widths exercise anonymous backing through guest instructions, including a W^X transition and a fresh
 	// reservation at a fixed low address. The controller must keep the host view coherent and drop it on release.
 	const std::vector<uint8_t> writer64{0xc6, 0x01, 0x5a, 0x0f, 0xb6, 0x01, 0xc3};
 	const std::vector<uint8_t> writer32{0x8b, 0x44, 0x24, 0x04, 0xc6, 0x00, 0x5a, 0x0f, 0xb6, 0x00, 0xc3};
-	const auto writer = process.map_memory(4096, PROT_READ | PROT_WRITE);
+	const auto writer = process.map_memory(65536, PROT_READ | PROT_WRITE);
 	auto instructions = width == 8 ? writer64 : writer32;
 	process.write_memory(writer, instructions);
 	process.protect_memory(writer, 4096, PROT_READ | PROT_EXEC);
