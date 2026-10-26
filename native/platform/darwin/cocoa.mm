@@ -3,6 +3,8 @@
 
 #include "cocoa.h"
 
+void raven_macos_app_identity();
+
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
 #import <QuartzCore/QuartzCore.h>
@@ -259,6 +261,7 @@ struct CocoaPresentation::State {
 		if (![NSThread isMainThread])
 			throw std::runtime_error("the macOS desktop runs on the main thread");
 		[NSApplication sharedApplication];
+		raven_macos_app_identity();
 		[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 		// The title-bar double click is the program's (maximize, as on Windows): AppKit's own action would resize the window behind its
 		// back. The user's choice is kept to decide what the double click does.
