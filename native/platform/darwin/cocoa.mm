@@ -174,6 +174,7 @@ struct CocoaPresentation::State {
 	std::chrono::steady_clock::time_point next_pump{};
 	std::optional<std::pair<int32_t, int32_t>> screen_size;
 	id screen_observer = nil;
+	std::vector<CFFileDescriptorRef> wait_descriptors;
 	RavenApplicationDelegate *delegate = nil;
 	std::map<uint64_t, std::unique_ptr<Surface>> surfaces;
 	std::map<NSInteger, uint64_t> numbers;
@@ -235,6 +236,7 @@ struct CocoaPresentation::State {
 
 	~State()
 	{
+		watch_waits({});
 		if (screen_observer)
 			[NSNotificationCenter.defaultCenter removeObserver:screen_observer];
 		surfaces.clear();
@@ -868,6 +870,37 @@ struct CocoaPresentation::State {
 		return true;
 	}
 
+	void watch_waits(std::span<const pollfd> descriptors)
+	{
+		for (const auto descriptor : wait_descriptors) {
+			CFFileDescriptorInvalidate(descriptor);
+			CFRelease(descriptor);
+		}
+		wait_descriptors.clear();
+		std::map<int, short> combined;
+		for (const auto &descriptor : descriptors)
+			if (descriptor.fd >= 0) combined[descriptor.fd] |= descriptor.events;
+		for (const auto &[descriptor, events] : combined) {
+			const CFOptionFlags kinds = ((events & POLLIN) ? kCFFileDescriptorReadCallBack : 0) |
+				((events & POLLOUT) ? kCFFileDescriptorWriteCallBack : 0);
+			if (!kinds) continue;
+			const auto wake = [](CFFileDescriptorRef, CFOptionFlags, void *) {
+				// nextEvent runs the main CFRunLoop, but a descriptor callback alone does not return an NSEvent to its caller.
+				[NSApp postEvent:[NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint modifierFlags:0
+					timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:0 context:nil subtype:0 data1:0 data2:0] atStart:NO];
+			};
+			const auto watched = CFFileDescriptorCreate(kCFAllocatorDefault, descriptor, false, wake, nullptr);
+			if (!watched) continue;
+			const auto source = CFFileDescriptorCreateRunLoopSource(kCFAllocatorDefault, watched, 0);
+			if (source) {
+				CFRunLoopAddSource(CFRunLoopGetMain(), source, kCFRunLoopCommonModes);
+				CFRelease(source);
+				CFFileDescriptorEnableCallBacks(watched, kinds);
+				wait_descriptors.push_back(watched);
+			} else CFRelease(watched);
+		}
+	}
+
 	void pump(std::chrono::milliseconds budget)
 	{
 		// PeekMessage and scheduler predicates can ask several times per API call. AppKit has no pollable descriptor: bound the
@@ -1487,6 +1520,7 @@ DesktopPresentation CocoaPresentation::callbacks()
 	result.owned_popup = [this](uint64_t handle, uint64_t owner, int32_t x, int32_t y, uint32_t width, uint32_t height,
 		std::span<const uint8_t> pixels) { state->popup(handle, owner, x, y, width, height, pixels, false); };
 	result.descriptor = [] { return -1; };
+	result.wait_descriptors = [this](std::span<const pollfd> descriptors) { state->watch_waits(descriptors); };
 	result.host_display = [this]() -> void * {
 		state->connect();
 		return nullptr;

@@ -7,7 +7,14 @@ namespace raven {
 void NativeWindows::poll_idle(std::chrono::milliseconds budget)
 {
 	const auto until = std::chrono::steady_clock::now() + budget;
+	std::vector<pollfd> descriptors;
+	if (idle_descriptors)
+		idle_descriptors(descriptors);
+	if (presentation.wait_descriptors)
+		presentation.wait_descriptors(descriptors);
 	const auto events = presentation.poll(budget);
+	if (presentation.wait_descriptors)
+		presentation.wait_descriptors({});
 	for (const auto &event : events) {
 		pending_events.push_back(event);
 		// Same queue categories as event_kinds in windows.cpp; a positive-budget poll must publish new input too.
@@ -27,9 +34,6 @@ void NativeWindows::poll_idle(std::chrono::milliseconds budget)
 	// A backend may only poll, even for a nonzero budget. Sleep the unused part on all scheduler descriptors instead of busy-polling it.
 	const auto now = std::chrono::steady_clock::now();
 	if (events.empty() && now < until) {
-		std::vector<pollfd> descriptors;
-		if (idle_descriptors)
-			idle_descriptors(descriptors);
 		const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(until - now).count();
 		const timespec timeout{ns / 1000000000, ns % 1000000000};
 		::ppoll(descriptors.data(), descriptors.size(), &timeout, nullptr);
