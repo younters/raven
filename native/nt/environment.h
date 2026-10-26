@@ -35,6 +35,8 @@ struct NativeLaunch {
 	std::optional<std::u16string> environment;
 	// The handles the program received from the process that created it.
 	std::vector<InheritedHandle> inherited;
+	// Storage for the process primary token passed by its creator; owned by AccessToken after initialization.
+	int process_token_fd = -1;
 	// The primary thread stays suspended after its process environment and request channel exist.
 	int suspended_fd = -1;
 };

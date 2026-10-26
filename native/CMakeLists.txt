@@ -1687,6 +1687,26 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     list(APPEND DYNAMIC_DIALOG_CLIENTS ${secure_client})
                     add_test(NAME native_secure_stream_x${width} COMMAND raven --run-process --execution=native ${secure_client})
                     set_tests_properties(native_secure_stream_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    set(pipe_roundtrip_client ${CMAKE_CURRENT_BINARY_DIR}/pipe-roundtrip${width}.exe)
+                    add_custom_command(OUTPUT ${pipe_roundtrip_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${pipe_roundtrip_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/pipe_roundtrip_client.c -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/pipe_roundtrip_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${pipe_roundtrip_client})
+                    add_test(NAME native_pipe_roundtrip_x${width} COMMAND raven --run-process --execution=native --stdio=inherit ${pipe_roundtrip_client} -- -b)
+                    set_tests_properties(native_pipe_roundtrip_x${width} PROPERTIES TIMEOUT 30
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/pipe-roundtrip-prefix)
+                    set(object_name_client ${CMAKE_CURRENT_BINARY_DIR}/object-name${width}.exe)
+                    add_custom_command(OUTPUT ${object_name_client}
+                        COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${dialog_entry},--no-insert-timestamp
+                            -o ${object_name_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/object_name_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/object_name_client.c VERBATIM)
+                    list(APPEND DYNAMIC_DIALOG_CLIENTS ${object_name_client})
+                    add_test(NAME native_object_name_x${width} COMMAND raven --run-process --execution=native ${object_name_client})
+                    set_tests_properties(native_object_name_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/object-name-prefix)
                     if(NOT TARGET transparent_clip_test)
                         add_executable(transparent_clip_test desktop/transparent_clip_test.cpp)
                         target_link_libraries(transparent_clip_test PRIVATE raven_cpu)
