@@ -587,6 +587,12 @@ struct CocoaPresentation::State {
 
 	void update_cursor()
 	{
+		// Without focus, the pointer cannot use one of our client or resize cursors.
+		// Avoid a WindowServer window-at-point round trip on every idle poll.
+		if (!NSApp.active) {
+			cursor.apply(false, nil);
+			return;
+		}
 		const NSPoint point = NSEvent.mouseLocation;
 		Surface *target = surface(window_at(point));
 		// Menus and other popups show the arrow, as on Windows, not the cursor the program last set over its own window.
