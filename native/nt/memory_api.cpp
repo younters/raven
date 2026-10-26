@@ -502,6 +502,8 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		objects.set_access(made.value, call.u32(1) ? call.u32(1) : 0xf001f);
+		if (call[2] && (call.load<uint32_t>(call[2] + (call.pointer_width() == 8 ? 24 : 12)) & 2))
+			objects.set_inherit(made.value, true); // OBJECT_ATTRIBUTES.Attributes: OBJ_INHERIT
 		call.store_pointer(call[0], made.value);
 		call.ret(0);
 	});

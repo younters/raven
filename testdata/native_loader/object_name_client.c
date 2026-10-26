@@ -49,6 +49,19 @@ int raven_entry(void)
 	if (!create_section) return 13;
 	HANDLE section = 0;
 	if (create_section(&section, 0xf, 0, 0, PAGE_EXECUTE, SEC_IMAGE, image) != 0 || !section) return 14;
-	if (!CloseHandle(section) || !CloseHandle(image)) return 15;
+	DWORD flags = 0;
+	if (!GetHandleInformation(section, &flags) || (flags & HANDLE_FLAG_INHERIT)) return 15;
+	if (!CloseHandle(section)) return 16;
+	struct {
+		ULONG length;
+		HANDLE root;
+		void *name;
+		ULONG attributes;
+		void *security;
+		void *quality;
+	} attributes = {sizeof(attributes), 0, 0, 2, 0, 0};
+	if (create_section(&section, 0xf, &attributes, 0, PAGE_EXECUTE, SEC_IMAGE, image) != 0 || !section) return 17;
+	if (!GetHandleInformation(section, &flags) || !(flags & HANDLE_FLAG_INHERIT)) return 18;
+	if (!CloseHandle(section) || !CloseHandle(image)) return 19;
 	return 0;
 }
