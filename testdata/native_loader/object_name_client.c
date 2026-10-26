@@ -10,6 +10,9 @@ typedef struct {
 	WCHAR *buffer;
 } object_name;
 
+static int relocation_target = 0x12345678;
+static int *volatile relocation_pointer = &relocation_target;
+
 static int equals(const WCHAR *actual, const WCHAR *expected, unsigned length)
 {
 	for (unsigned index = 0; index < length; ++index)
@@ -63,5 +66,17 @@ int raven_entry(void)
 	if (create_section(&section, 0xf, &attributes, 0, PAGE_EXECUTE, SEC_IMAGE, image) != 0 || !section) return 17;
 	if (!GetHandleInformation(section, &flags) || !(flags & HANDLE_FLAG_INHERIT)) return 18;
 	if (!CloseHandle(section) || !CloseHandle(image)) return 19;
+	// Mapping an image a second time must relocate its pointers to the new base in both PE widths.
+	image = CreateFileW(image_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
+		0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+	if (image == INVALID_HANDLE_VALUE) return 20;
+	section = CreateFileMappingW(image, 0, PAGE_READONLY | SEC_IMAGE, 0, 0, 0);
+	if (!section) return 21;
+	BYTE *view = (BYTE *)MapViewOfFile(section, FILE_MAP_READ, 0, 0, 0);
+	if (!view) return 22;
+	BYTE *base = (BYTE *)GetModuleHandleW(0);
+	if ((BYTE *)*(int **)(view + ((BYTE *)&relocation_pointer - base)) !=
+	    view + ((BYTE *)&relocation_target - base)) return 23;
+	if (!UnmapViewOfFile(view) || !CloseHandle(section) || !CloseHandle(image)) return 24;
 	return 0;
 }
