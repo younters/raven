@@ -154,6 +154,9 @@ static int network_event(SOCKET socket, HANDLE event, long expected)
 static int selected_events(void)
 {
 	SOCKET listener = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP), client = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	/* Windows allows disabling the send buffer; subsequent sends must still make progress. */
+	int unbuffered = 0;
+	if (client == INVALID_SOCKET || setsockopt(client, SOL_SOCKET, SO_SNDBUF, (const char *)&unbuffered, sizeof(unbuffered))) return 56;
 	SOCKADDR_IN address;
 	zero(&address, sizeof(address));
 	address.sin_family = AF_INET;
