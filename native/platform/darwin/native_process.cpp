@@ -3,7 +3,8 @@
 // Linux drives a ptraced ELF child from outside (cpu/native_cpu.cpp). Rosetta exposes neither ptrace nor the x86 register state of a
 // translated thread to another task, so here the agent catches its own stops with signal handlers and trades the registers through a
 // shared control block (guest/protocol.h); a thread of the agent maps and protects memory for the host. The host reads and writes guest
-// memory through the agent's task port, and through the agent itself where the kernel will not let it.
+// memory through coherent host views where possible, the task port for untracked mappings, and the agent itself where Rosetta needs
+// guest-side stores to invalidate translated code.
 //
 // This follows the Linux controller call for call: the stops, the stack frames and the bookkeeping of mappings are the same, so the
 // runtime above sees one behaviour. By default Windows threads share the main agent thread; RAVEN_PARALLEL gives each its own pthread.
@@ -540,7 +541,20 @@ struct NativeProcess::State {
 		view->host = static_cast<uint8_t *>(view->mapping) + slack;
 		return view;
 	}
+	static std::unique_ptr<SharedView> anonymous_view(size_t size)
+	{
+		auto view = std::make_unique<SharedView>();
+		view->size = view->mapping_size = size;
+		view->mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANON, -1, 0);
+		if (view->mapping == MAP_FAILED)
+			throw std::runtime_error("cannot reserve anonymous native host view");
+		view->host = static_cast<uint8_t *>(view->mapping);
+		return view;
+	}
 	std::map<uint64_t, std::unique_ptr<SharedView>> shared_views;
+	// Private allocations retain either a Mach-remapped anonymous view or a small descriptor view. Keeping the backing here
+	// makes release invalidate the host alias before a guest address can be reused.
+	std::set<uint64_t> anonymous_views;
 	std::map<uint64_t, ImageMapping> mappings;
 	std::vector<std::pair<uint64_t, uint64_t>> allocations;
 	std::vector<std::pair<uint64_t, uint64_t>> image_allocations;
@@ -817,7 +831,23 @@ std::vector<uint8_t> NativeProcess::read_memory(uint64_t address, size_t size) c
 		size_t count = size - offset;
 		if (const auto *shared = state->shared_memory(address + offset, count)) {
 			ControllerProfile::Scope timing(profile, profile.shared_reads, count);
-			std::memcpy(result.data() + offset, shared, count);
+			// Windows address waits and other scalar reads may race a running guest pthread. Aligned scalar loads must be
+			// indivisible; larger buffers retain the ordinary byte-copy contract.
+			const auto at = address + offset;
+			if (count == 8 && !(at & 7)) {
+				const auto value = __atomic_load_n(reinterpret_cast<const uint64_t *>(shared), __ATOMIC_ACQUIRE);
+				std::memcpy(result.data() + offset, &value, 8);
+			} else if (count == 4 && !(at & 3)) {
+				const auto value = __atomic_load_n(reinterpret_cast<const uint32_t *>(shared), __ATOMIC_ACQUIRE);
+				std::memcpy(result.data() + offset, &value, 4);
+			} else if (count == 2 && !(at & 1)) {
+				const auto value = __atomic_load_n(reinterpret_cast<const uint16_t *>(shared), __ATOMIC_ACQUIRE);
+				std::memcpy(result.data() + offset, &value, 2);
+			} else if (count == 1) {
+				result[offset] = __atomic_load_n(shared, __ATOMIC_ACQUIRE);
+			} else {
+				std::memcpy(result.data() + offset, shared, count);
+			}
 			offset += count;
 			continue;
 		}
@@ -854,7 +884,24 @@ void NativeProcess::write_memory(uint64_t address, std::span<const uint8_t> byte
 		const bool code = mapping.protection & PROT_EXEC;
 		if (auto *shared = state->shared_memory(address + offset, count); shared && !code) {
 			ControllerProfile::Scope timing(profile, profile.shared_writes, count);
-			std::memcpy(shared, bytes.data() + offset, count);
+			const auto at = address + offset;
+			if (count == 8 && !(at & 7)) {
+				uint64_t value;
+				std::memcpy(&value, bytes.data() + offset, 8);
+				__atomic_store_n(reinterpret_cast<uint64_t *>(shared), value, __ATOMIC_RELEASE);
+			} else if (count == 4 && !(at & 3)) {
+				uint32_t value;
+				std::memcpy(&value, bytes.data() + offset, 4);
+				__atomic_store_n(reinterpret_cast<uint32_t *>(shared), value, __ATOMIC_RELEASE);
+			} else if (count == 2 && !(at & 1)) {
+				uint16_t value;
+				std::memcpy(&value, bytes.data() + offset, 2);
+				__atomic_store_n(reinterpret_cast<uint16_t *>(shared), value, __ATOMIC_RELEASE);
+			} else if (count == 1) {
+				__atomic_store_n(shared, bytes[offset], __ATOMIC_RELEASE);
+			} else {
+				std::memcpy(shared, bytes.data() + offset, count);
+			}
 			offset += count;
 			continue;
 		}
@@ -915,19 +962,95 @@ uint64_t NativeProcess::map_memory(size_t size, int protection, uint64_t address
 	state->require_memory();
 	memory_range(address, size, protection, state->limit());
 	state->allocations.reserve(state->allocations.size() + 1);
-	const uint64_t flags = address ? RAVEN_MAP_EXACT : state->mode == NativeMode::x86 ? RAVEN_MAP_LOW : 0;
-	uint64_t mapped;
+	const bool aliases = !std::getenv("RAVEN_DARWIN_DISABLE_PRIVATE_ALIASES");
+	const uint64_t flags = address ? RAVEN_MAP_EXACT : state->mode == NativeMode::x86 ? RAVEN_MAP_LOW :
+		aliases && !(size % size_t(getpagesize())) ? RAVEN_MAP_GRANULAR : 0;
+	uint64_t mapped = 0;
+	std::unique_ptr<State::SharedView> view;
+	bool remapped = false;
+	int backing = -1;
 	try {
-		mapped = state->service(RAVEN_SERVICE_MAP, {address, size, uint64_t(protection), flags}, "allocation");
+		// A guest-owned 16 KiB-aligned reservation can share anonymous VM pages with the host without creating a disk file.
+		// Smaller or subpage-aligned ranges keep the proven descriptor path: Mach remap would replace neighbouring guest pages.
+		const auto host_page = size_t(getpagesize());
+		if (aliases && !(size % host_page) && (!address || !(address % host_page))) {
+			try { view = State::anonymous_view(size); }
+			catch (const std::runtime_error &) { /* Try the descriptor or task-port path. */ }
+			if (view) {
+				mapped = state->service(RAVEN_SERVICE_MAP, {address, size, PROT_NONE, flags}, "allocation");
+				if (!(mapped % host_page)) {
+					mach_vm_address_t target = mapped;
+					vm_prot_t current = 0, maximum = 0;
+					const auto status = mach_vm_remap(state->child->task, &target, size, 0,
+						VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(),
+						reinterpret_cast<mach_vm_address_t>(view->host), false, &current, &maximum, VM_INHERIT_NONE);
+					if (status == KERN_SUCCESS && target == mapped) {
+						try {
+							state->service(RAVEN_SERVICE_PROTECT, {mapped, size, uint64_t(protection)}, "allocation protection");
+							remapped = true;
+						} catch (const std::system_error &) { /* Fall back if the guest cannot protect this anonymous view. */ }
+					}
+				}
+				if (!remapped) {
+					state->service(RAVEN_SERVICE_UNMAP, {mapped, size}, "failed anonymous remap cleanup");
+					view.reset();
+				}
+			}
+		}
+		if (!remapped) {
+			// 4 KiB mappings can share a 16 KiB host page with unrelated guest regions; a file descriptor preserves
+			// their boundaries. A failed large remap uses the task-port path rather than creating a huge disk-backed file.
+			const bool subpage = size % host_page || (address && address % host_page);
+			backing = aliases && subpage ? memfd_create("raven-private", MFD_CLOEXEC) : -1;
+			if (backing >= 0 && size <= INT64_MAX && ftruncate(backing, off_t(size)) == 0) {
+				try { view = State::host_view(backing, size); }
+				catch (const std::runtime_error &) { /* Use the task-port path. */ }
+			}
+			if (view) {
+				state->child->send_descriptor(backing);
+				mapped = state->service(RAVEN_SERVICE_MAP_DESCRIPTOR, {address, size, 0, flags, uint64_t(protection)}, "allocation");
+			} else {
+				mapped = state->service(RAVEN_SERVICE_MAP, {address, size, uint64_t(protection), flags}, "allocation");
+			}
+		}
 	} catch (const std::system_error &) {
+		if (backing >= 0) close(backing);
 		throw std::runtime_error("native allocation: " + std::string(address ? "the address range is in use" : "no address range is free"));
+	} catch (...) {
+		if (backing >= 0) close(backing);
+		throw;
 	}
+	if (backing >= 0) close(backing);
 	if ((address && mapped != address) || mapped >= state->limit() || size > state->limit() - mapped) {
 		state->child->stop();
 		throw std::runtime_error("host returned an invalid native allocation address");
 	}
-	state->mappings.insert_or_assign(mapped, ImageMapping{mapped, size, 0, protection});
-	state->allocations.emplace_back(mapped, size);
+	if (state->child->profile.enabled) {
+		if (view) {
+			++state->child->profile.private_aliases;
+			if (remapped) ++state->child->profile.private_remaps;
+			else ++state->child->profile.private_descriptors;
+		} else ++state->child->profile.private_fallbacks;
+	}
+	try {
+		state->mappings.insert_or_assign(mapped, ImageMapping{mapped, size, 0, protection});
+		state->allocations.emplace_back(mapped, size);
+		if (view) {
+			state->shared_views.emplace(mapped, std::move(view));
+			state->anonymous_views.insert(mapped);
+		}
+	} catch (...) {
+		state->anonymous_views.erase(mapped);
+		state->shared_views.erase(mapped);
+		state->mappings.erase(mapped);
+		const auto allocation = std::find_if(state->allocations.begin(), state->allocations.end(), [mapped](const auto &entry) {
+			return entry.first == mapped;
+		});
+		if (allocation != state->allocations.end()) state->allocations.erase(allocation);
+		try { state->service(RAVEN_SERVICE_UNMAP, {mapped, size}, "failed allocation cleanup"); }
+		catch (...) { state->child->stop(); }
+		throw;
+	}
 	return mapped;
 }
 
@@ -1084,6 +1207,7 @@ void NativeProcess::unmap_memory(uint64_t address)
 	if (const auto view = state->shared_views.find(address); view != state->shared_views.end())
 		state->served_owners.erase(reinterpret_cast<uint64_t *>(view->second->host));
 	state->shared_views.erase(address);
+	state->anonymous_views.erase(address);
 	state->mappings.erase(state->mappings.lower_bound(address), state->mappings.lower_bound(end));
 	state->api_traps.erase(state->api_traps.lower_bound(address), state->api_traps.lower_bound(end));
 	state->returning_traps.erase(state->returning_traps.lower_bound(address), state->returning_traps.lower_bound(end));
@@ -1118,6 +1242,7 @@ void NativeProcess::discard_memory(uint64_t address, size_t size)
 	// Linux's MADV_DONTNEED leaves private pages reading as zero; the agent maps fresh ones with the protection the pages had.
 	const auto shared = state->shared_views.upper_bound(address);
 	const bool view = shared != state->shared_views.begin() && address - std::prev(shared)->first < std::prev(shared)->second->size;
+	const bool anonymous = view && state->anonymous_views.contains(std::prev(shared)->first);
 	for (uint64_t at = address; at < address + size;) {
 		const auto found = state->mappings.upper_bound(at);
 		uint64_t piece_end = address + size;
@@ -1128,7 +1253,18 @@ void NativeProcess::discard_memory(uint64_t address, size_t size)
 		} else if (found != state->mappings.end()) {
 			piece_end = std::min(piece_end, found->second.address);
 		}
-		state->service(RAVEN_SERVICE_DISCARD, {at, piece_end - at, uint64_t(protection), uint64_t(view)}, "discard");
+		if (anonymous) {
+			size_t count = size_t(piece_end - at);
+			auto *host = state->shared_memory(at, count);
+			if (!host || count != piece_end - at)
+				throw std::runtime_error("native anonymous alias does not cover discard range");
+			std::memset(host, 0, count);
+			// A host store does not notify Rosetta of changed code. Reprotecting in the guest invalidates any old translation.
+			if (protection & PROT_EXEC)
+				state->service(RAVEN_SERVICE_FLUSH, {at, count, uint64_t(protection)}, "discarded code flush");
+		} else {
+			state->service(RAVEN_SERVICE_DISCARD, {at, piece_end - at, uint64_t(protection), uint64_t(view)}, "discard");
+		}
 		at = piece_end;
 	}
 }

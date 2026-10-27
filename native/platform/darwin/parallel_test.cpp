@@ -36,9 +36,52 @@ void contracts(const std::string &bootstrap, raven::NativeMode mode)
 	raven::NativeProcess process({}, bootstrap, timeout, mode);
 	check(process.parallel() && process.execution_descriptor() >= 0, "parallel guest has no wake descriptor");
 	const size_t width = mode == raven::NativeMode::x64 ? 8 : 4;
-	const auto data = process.map_memory(4096, PROT_READ | PROT_WRITE);
+	const auto data = process.map_memory(65536, PROT_READ | PROT_WRITE);
 	const auto stack = process.map_memory(65536, PROT_READ | PROT_WRITE);
-	const auto code = process.map_memory(4096, PROT_READ | PROT_WRITE);
+	const auto code = process.map_memory(65536, PROT_READ | PROT_WRITE);
+	// Both widths exercise anonymous backing through guest instructions, including a W^X transition and a fresh
+	// reservation at a fixed low address. The controller must keep the host view coherent and drop it on release.
+	const std::vector<uint8_t> writer64{0xc6, 0x01, 0x5a, 0x0f, 0xb6, 0x01, 0xc3};
+	const std::vector<uint8_t> writer32{0x8b, 0x44, 0x24, 0x04, 0xc6, 0x00, 0x5a, 0x0f, 0xb6, 0x00, 0xc3};
+	const auto writer = process.map_memory(65536, PROT_READ | PROT_WRITE);
+	auto instructions = width == 8 ? writer64 : writer32;
+	process.write_memory(writer, instructions);
+	process.protect_memory(writer, 4096, PROT_READ | PROT_EXEC);
+	check(process.call(writer, {&data, 1}, timeout).value == 0x5a && word(process, data, 1) == 0x5a,
+		"guest store and host read of anonymous backing differ");
+	process.protect_memory(writer, 4096, PROT_READ | PROT_WRITE);
+	instructions[width == 8 ? 2 : 6] = 0x6b;
+	process.write_memory(writer, instructions);
+	process.protect_memory(writer, 4096, PROT_READ | PROT_EXEC);
+	check(process.call(writer, {&data, 1}, timeout).value == 0x6b && word(process, data, 1) == 0x6b,
+		"Rosetta kept an old translation after a host alias write and W^X transition");
+	process.protect_memory(writer, 4096, PROT_READ | PROT_WRITE | PROT_EXEC);
+	instructions[width == 8 ? 2 : 6] = 0x7d;
+	process.write_memory(writer, instructions);
+	check(process.call(writer, {&data, 1}, timeout).value == 0x7d,
+		"Rosetta kept an old translation after an executable anonymous-page write");
+	process.protect_memory(data, 4096, PROT_READ);
+	const auto fault = process.call(writer, {&data, 1}, timeout);
+	check(fault.stop == raven::NativeStop::fault && fault.fault_address == data,
+		"guest write bypassed protection on an anonymous shared page");
+	process.protect_memory(data, 4096, PROT_READ | PROT_WRITE);
+	check(process.resume(timeout).value == 0x7d, "guest fault did not resume after repairing shared-page protection");
+	process.discard_memory(data, 4096);
+	check(word(process, data, 1) == 0, "discard retained anonymous shared backing contents");
+	process.unmap_memory(writer);
+	const uint64_t low = 0x60000000;
+	check(process.map_memory(65536, PROT_NONE, low) == low, "fixed low reservation moved");
+	process.protect_memory(low + 4096, 4096, PROT_READ | PROT_WRITE);
+	bool inaccessible = false;
+	try { process.read_memory(low, 1); } catch (const std::runtime_error &) { inaccessible = true; }
+	check(inaccessible, "host alias exposed a protected 4 KiB page in its 16 KiB host page");
+	const uint8_t value = 0x7c;
+	process.write_memory(low + 4096, {&value, 1});
+	check(word(process, low + 4096, 1) == value, "low reservation lost its committed contents");
+	process.unmap_memory(low);
+	check(process.map_memory(65536, PROT_READ | PROT_WRITE, low) == low && word(process, low + 4096, 1) == 0,
+		"released low reservation retained its old alias or contents");
+	process.unmap_memory(low);
 	// Publish our barrier, wait for the other pthread, then increment the shared counter a fixed number of times.
 	const std::vector<uint8_t> x64{
 		0xc7, 0x02, 1, 0, 0, 0, 0x41, 0x83, 0x38, 0, 0x74, 0xfa,
@@ -71,6 +114,8 @@ void contracts(const std::string &bootstrap, raven::NativeMode mode)
 			serviced = true;
 			uint64_t previous = word(process, data, width);
 			for (uint64_t count = 0; count < host_increments;) {
+				check(word(process, data, width) <= 2 * rounds + host_increments,
+					"concurrent host atomic load observed a torn guest counter");
 				const uint64_t observed = process.compare_exchange(data, previous, previous + 1, width);
 				if (observed == previous) {
 					++count;

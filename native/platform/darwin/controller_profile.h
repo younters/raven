@@ -17,6 +17,8 @@ struct ControllerProfile {
 	Counter reads, writes, shared_reads, shared_writes, mach_reads, mach_writes, waits;
 	std::array<Counter, RAVEN_SERVICE_EXIT + 1> services{};
 	uint64_t wait_sleeps = 0, service_sleeps = 0;
+	uint64_t private_aliases = 0, private_fallbacks = 0;
+	uint64_t private_remaps = 0, private_descriptors = 0;
 
 	struct Scope {
 		ControllerProfile &profile;
@@ -49,7 +51,8 @@ struct ControllerProfile {
 		row("mach-read", mach_reads); row("mach-write", mach_writes);
 		row("stop-wait", waits);
 		static constexpr const char *names[] = {"none", "map", "protect", "unmap", "discard", "map-descriptor", "set-ldt", "read", "write",
-			"available", "flush", "exit"};
+			"available", "flush", "thread-create", "thread-interrupt", "thread-join", "compare-exchange", "load-unixlib", "exit"};
+		static_assert(std::size(names) == RAVEN_SERVICE_EXIT + 1);
 		for (size_t index = 0; index < services.size(); ++index)
 			if (services[index].calls) {
 				char label[64];
@@ -58,6 +61,10 @@ struct ControllerProfile {
 			}
 		std::fprintf(stderr, "controller: stop-sleeps=%llu service-sleeps=%llu\n", static_cast<unsigned long long>(wait_sleeps),
 			static_cast<unsigned long long>(service_sleeps));
+		std::fprintf(stderr, "controller: private-aliases=%llu private-fallbacks=%llu\n",
+			static_cast<unsigned long long>(private_aliases), static_cast<unsigned long long>(private_fallbacks));
+		std::fprintf(stderr, "controller: private-remaps=%llu private-descriptors=%llu\n",
+			static_cast<unsigned long long>(private_remaps), static_cast<unsigned long long>(private_descriptors));
 	}
 };
 

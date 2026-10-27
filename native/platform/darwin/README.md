@@ -66,8 +66,8 @@ asks `raven_darwin_unix_name_bound` where Linux reads `/proc/net/unix`, and `nt/
 
 - Phase 1, done: everything builds, and the tests that need no guest process pass.
 - The guest controller runs x64 and x86 Windows code. The agent catches its own traps and faults with signal handlers and trades register
-  contexts with the host through shared memory. Images, descriptor views and the main stack have coherent host aliases; anonymous guest
-  heaps and secondary stacks still use the agent's task port. Every host access checks the guest's 4 KiB protections first.
+  contexts with the host through shared memory. Images, descriptor views, the main stack, anonymous guest heaps and secondary stacks
+  have coherent host aliases. Untracked agent mappings still use the task port. Every host access checks the guest's 4 KiB protections first.
 - The default scheduler swaps Windows contexts on the agent's main thread. `RAVEN_PARALLEL=1` gives each Windows thread its own Rosetta
   pthread, for both x64 and x86 programs.
 
@@ -95,6 +95,26 @@ Inherited process handle channels use length-prefixed streams on macOS, preservi
 The existing limit of 256 live Windows threads remains. Guest computation can run concurrently; service commands and host API handlers
 still run serially. x86 TEB descriptors retain the existing monotonic LDT allocation policy, which can exhaust the table after about 8,000
 thread creations in one process even when pthread channels have been reused.
+
+## Anonymous memory aliases
+
+`NativeProcess::map_memory` backs 16 KiB-aligned private reservations with anonymous host VM and remaps those pages into the guest task
+through `mach_vm_remap(copy=false)`, as the IOSurface presenter does. Smaller or subpage-aligned allocations use an unlinked descriptor
+through the image/stack service, preserving their 4 KiB boundaries. Large private heaps therefore do not charge temporary-file space.
+The guest agent still chooses exact, low-address or ordinary
+placement and enforces protection on its own 4 KiB pages; the host's 16 KiB mapping is never used as evidence of guest access. The Windows
+allocator remains responsible for reserve/commit accounting and reports these regions as `MEM_PRIVATE`. Secondary Windows stacks, TEBs,
+PEBs and heaps all use this allocator. The host view is removed on release before the guest address can be reused. Private discard zeros
+the shared backing, including pages that the guest cannot currently access.
+
+Reads and writes check the controller's guest protection map before one alias lookup. An absent alias takes the previous task-port or
+guest-service path. Aligned scalar reads use acquire loads and scalar writes use release stores while a guest pthread may be running;
+locked compare-and-exchange still executes in the guest service thread. Host writes into executable pages also remain guest-service
+writes so Rosetta invalidates translated code. A writable-to-executable protection change runs in the guest, and executable discard
+reprotects there after zeroing the host view. `RAVEN_DARWIN_DISABLE_PRIVATE_ALIASES=1` selects the old private allocation path for
+comparison and fallback testing; remap, file creation or host-view failure selects it automatically for that allocation.
+`native_darwin_parallel_contracts` checks the shared path at both guest widths; `native_darwin_private_fallback_contracts` runs the
+same concurrent and executable-memory checks with the fallback forced.
 
 Run the contracts serially:
 

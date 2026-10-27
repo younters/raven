@@ -46,6 +46,9 @@ if(TARGET raven_cpu)
     add_dependencies(darwin_parallel_test raven-bootstrap)
     add_test(NAME native_darwin_parallel_contracts COMMAND darwin_parallel_test $<TARGET_FILE:raven-bootstrap>)
     set_tests_properties(native_darwin_parallel_contracts PROPERTIES TIMEOUT 30 ENVIRONMENT RAVEN_PARALLEL=1)
+    add_test(NAME native_darwin_private_fallback_contracts COMMAND darwin_parallel_test $<TARGET_FILE:raven-bootstrap>)
+    set_tests_properties(native_darwin_private_fallback_contracts PROPERTIES TIMEOUT 30
+        ENVIRONMENT "RAVEN_PARALLEL=1;RAVEN_DARWIN_DISABLE_PRIVATE_ALIASES=1")
     if(RAVEN_MINGW64)
         set(RAVEN_DARWIN_PARALLEL_BENCHMARK ${CMAKE_CURRENT_BINARY_DIR}/darwin-parallel-benchmark.exe)
         add_custom_command(OUTPUT ${RAVEN_DARWIN_PARALLEL_BENCHMARK}
