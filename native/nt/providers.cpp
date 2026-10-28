@@ -32,6 +32,7 @@
 #include "platform/darwin/dxmt/presentation.h"
 #include "platform/darwin/dxmt/identity.h"
 #include "platform/darwin/dxmt/kernel_thunks.h"
+#include "platform/darwin/nt_file_api.h"
 #endif
 #ifdef RAVEN_OPENGL
 #include "graphics/opengl_bridge.h"
@@ -1641,6 +1642,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	nt_names.push_back("__wine_unix_call_dispatcher");
 	nt_names.push_back("LdrGetDllHandle");
 	nt_names.push_back("RtlFindExportedRoutineByName");
+	// Chromium's sandbox resolves the natives it intercepts from ntdll's export table, not through GetProcAddress.
+	for (const auto name : {"NtCreateFile", "NtOpenFile", "NtQueryAttributesFile", "NtQueryFullAttributesFile", "NtSetInformationFile",
+		"NtImpersonateAnonymousToken", "NtOpenSection"})
+		nt_names.push_back(name);
 	nt_names.push_back("strncpy"); // winemetal.dll can be loaded after ntdll's export table was built.
 #endif
 	nt_names.insert(nt_names.end(),NativeEnvironment::nt_exports().begin(),NativeEnvironment::nt_exports().end());
@@ -2573,6 +2578,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_profile_api(api_registry, profile);
 	register_ansi_adapters(api_registry);
 	register_legacy_file_api(api_registry);
+#ifdef __APPLE__
+	raven_darwin::register_nt_file_api(api_registry, kernel);
+#endif
 	write_native_api_inventory(modules, {&api_registry, &desktop_api});
 	std::vector<const PEModule *> attached;
 	attached.reserve(order.size());

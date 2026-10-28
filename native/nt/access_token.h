@@ -20,6 +20,8 @@ public:
 		uint32_t type = 1;
 		uint32_t impersonation_level = 2;
 		std::vector<Privilege> privileges;
+		// The ANONYMOUS LOGON identity NtImpersonateAnonymousToken gives a thread, in place of the program's user.
+		bool anonymous = false;
 	};
 	AccessToken();
 	explicit AccessToken(int descriptor);
@@ -34,6 +36,7 @@ public:
 	void set_integrity(uint32_t value);
 	void set_type(uint32_t value);
 	void set_impersonation_level(uint32_t value);
+	void set_anonymous();
 	void restrict_privileges(bool maximum, std::span<const uint64_t> removed);
 	// Output validation runs before any privilege changes become visible through another handle.
 	uint32_t adjust_privileges(bool disable, std::span<const Privilege> changes,

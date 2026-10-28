@@ -26,7 +26,7 @@ std::optional<uint32_t> token_access(uint32_t requested)
 
 struct AccessToken::Shared {
 	uint32_t integrity, type, acl_size, impersonation_level;
-	uint32_t privilege_count;
+	uint32_t privilege_count, anonymous;
 	Privilege privileges[64];
 	uint8_t acl[65535];
 };
@@ -102,6 +102,7 @@ AccessToken::AccessToken(const AccessToken &other) : AccessToken()
 	shared->integrity = value.integrity;
 	shared->type = value.type;
 	shared->impersonation_level = value.impersonation_level;
+	shared->anonymous = value.anonymous;
 	shared->acl_size = uint32_t(value.default_dacl.size());
 	shared->privilege_count = uint32_t(value.privileges.size());
 	std::copy(value.privileges.begin(), value.privileges.end(), shared->privileges);
@@ -128,7 +129,7 @@ AccessToken::Data AccessToken::data() const
 	if (shared->acl_size > sizeof(shared->acl) || shared->privilege_count > std::size(shared->privileges))
 		throw std::runtime_error("invalid access token storage size");
 	return {{shared->acl, shared->acl + shared->acl_size}, shared->integrity, shared->type, shared->impersonation_level,
-		{shared->privileges, shared->privileges + shared->privilege_count}};
+		{shared->privileges, shared->privileges + shared->privilege_count}, shared->anonymous != 0};
 }
 
 void AccessToken::set_default_dacl(std::span<const uint8_t> acl)
@@ -157,6 +158,12 @@ void AccessToken::set_impersonation_level(uint32_t value)
 {
 	const TokenLock lock(descriptor, true);
 	shared->impersonation_level = value;
+}
+
+void AccessToken::set_anonymous()
+{
+	const TokenLock lock(descriptor, true);
+	shared->anonymous = 1;
 }
 
 void AccessToken::restrict_privileges(bool maximum, std::span<const uint64_t> removed)

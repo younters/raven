@@ -27,7 +27,7 @@ if(TARGET raven_cpu)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/native_process.cpp ${RAVEN_DARWIN_DIR}/unix_calls.cpp)
     list(REMOVE_ITEM RAVEN_CPU_SOURCES desktop/shared_pixels.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/shared_pixels.cpp)
-    list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/system_api.cpp)
+    list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/system_api.cpp ${RAVEN_DARWIN_DIR}/nt_file_api.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/desktop_idle.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/dpi.cpp)
     set_property(TARGET raven_cpu PROPERTY SOURCES ${RAVEN_CPU_SOURCES})
@@ -100,6 +100,15 @@ if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
     add_test(NAME darwin_dxmt_self_share COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
         $<TARGET_FILE:raven> ${SELF_SHARE_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-self-share self_share)
     set_tests_properties(darwin_dxmt_self_share PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+    set(NT_FILE_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-nt-file.exe)
+    add_custom_command(OUTPUT ${NT_FILE_EXE}
+        COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/nt_file.c
+            -o ${NT_FILE_EXE} -lntdll -ladvapi32 -lkernel32 -lgcc
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/nt_file.c VERBATIM)
+    add_custom_target(darwin_nt_file_fixture ALL DEPENDS ${NT_FILE_EXE})
+    add_test(NAME darwin_nt_file COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+        $<TARGET_FILE:raven> ${NT_FILE_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/nt-file nt_file)
+    set_tests_properties(darwin_nt_file PROPERTIES TIMEOUT 120)
     foreach(width IN ITEMS 64 32)
         if(width EQUAL 64)
             set(KEYED_CC ${RAVEN_MINGW64})
