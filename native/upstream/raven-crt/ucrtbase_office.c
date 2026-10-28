@@ -218,7 +218,6 @@ CRT int _itoa_s(int value, char *buffer, size_t size, int radix)
 	return integer_to_narrow(negative ? 0ULL - (unsigned long long)(long long)value : (unsigned)value, negative, buffer, size, radix);
 }
 
-CRT int _ltoa_s(long value, char *buffer, size_t size, int radix) { return _itoa_s(value, buffer, size, radix); }
 CRT int _ultoa_s(unsigned long value, char *buffer, size_t size, int radix) { return integer_to_narrow(value, 0, buffer, size, radix); }
 CRT char *_ltoa(long value, char *to, int radix) { return _itoa(value, to, radix); }
 
@@ -575,7 +574,6 @@ static unsigned mb_lower(unsigned code) { return code >= 'A' && code <= 'Z' ? co
 static unsigned mb_upper(unsigned code) { return code >= 'a' && code <= 'z' ? code - 32 : code; }
 
 CRT size_t _mbclen(const unsigned char *at) { return mb_size(at); }
-CRT unsigned char *_mbsinc(const unsigned char *at) { return (unsigned char *)at + mb_size(at); }
 CRT int _ismbcspace(unsigned code) { return code < 0x100 && (code == ' ' || (code >= '\t' && code <= '\r')); }
 
 /* Whether `at` is a lead byte, judged by walking from the start, since a trail byte can look like one. */
@@ -927,11 +925,6 @@ CRT size_t fread_s(void *buffer, size_t size, size_t element, size_t count, void
 	return fread(buffer, element, count, stream);
 }
 
-CRT int __stdio_common_vfprintf_s(unsigned long long options, void *stream, const char *text, void *locale, va_list arguments)
-{
-	return __stdio_common_vfprintf(options, stream, text, locale, arguments);
-}
-
 /* ---- time ---- */
 CRT long _time32(long *out)
 {
@@ -1068,17 +1061,7 @@ CRT void _wassert(const wchar_t *expression, const wchar_t *file, unsigned line)
 	ExitProcess(3);
 }
 
-typedef void (__cdecl *invalid_parameter_handler)(const wchar_t *, const wchar_t *, const wchar_t *, unsigned, uintptr_t);
-static invalid_parameter_handler current_invalid_parameter_handler;
-
-CRT invalid_parameter_handler _set_invalid_parameter_handler(invalid_parameter_handler handler)
-{
-	const invalid_parameter_handler previous = current_invalid_parameter_handler;
-	current_invalid_parameter_handler = handler;
-	return previous;
-}
-
-CRT invalid_parameter_handler _get_invalid_parameter_handler(void) { return current_invalid_parameter_handler; }
+CRT RavenInvalidParameterHandler _get_invalid_parameter_handler(void) { return invalid_parameter_handler; }
 
 CRT int _get_pgmptr(char **out)
 {
@@ -1089,18 +1072,6 @@ CRT int _get_pgmptr(char **out)
 		GetModuleFileNameA(NULL, path, MAX_PATH);
 	*out = path;
 	return 0;
-}
-
-CRT wchar_t *_wsetlocale(int category, const wchar_t *name)
-{
-	static wchar_t result[128];
-	char narrow[128];
-	if (name && !WideCharToMultiByte(CP_ACP, 0, name, -1, narrow, sizeof narrow, NULL, NULL))
-		return NULL;
-	const char *chosen = setlocale(category, name ? narrow : NULL);
-	if (!chosen || !MultiByteToWideChar(CP_ACP, 0, chosen, -1, result, 128))
-		return NULL;
-	return result;
 }
 
 CRT int __uncaught_exception(void) { return 0; }

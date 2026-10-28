@@ -1,4 +1,5 @@
 #include "xcb.h"
+#include "objects.h"
 
 #include <xcb/xcb.h>
 #include <xcb/xfixes.h>
@@ -922,7 +923,12 @@ DesktopPresentation XcbPresentation::callbacks()
 		return std::pair{int32_t(state->screen->width_in_pixels),int32_t(state->screen->height_in_pixels)};
 	},
 	[this](uint64_t handle,bool maximized) { state->maximize(handle,maximized); },
-	[this](uint32_t shape) {
+	{}, {}, {},
+	[this](uint64_t handle, int count, const DesktopIcon *) {
+        uint32_t shape = 32512;
+        if (count < 0 || !handle) shape = 0;
+        else if (handle >= desktop_stock_cursor && handle < desktop_stock_cursor + desktop_stock_cursor_count)
+            shape = uint32_t(32512 + handle - desktop_stock_cursor);
 		if (state->cursor==shape) return;
 		state->cursor=shape;
 		state->show_cursor();

@@ -827,20 +827,6 @@ void register_shlwapi_api(ApiRegistry &registry, KernelContext &context)
 		call.store_pointer(call[1], call[0] + root * 2);
 		call.ret(0);
 	});
-	registry.add("PathCchCanonicalize", 3, [](ApiCall &call) {
-		if (!call[0] || !call[1] || call[1] > 32768 || !call[2]) {
-			call.ret(0x80070057U);
-			return;
-		}
-		const auto result = canonical(call.wide(call[2]));
-		if (result.size() >= call[1]) {
-			call.store<uint16_t>(call[0], 0);
-			call.ret(0x8007007aU);
-			return;
-		}
-		call.put_wide(call[0], result, call[1]);
-		call.ret(0);
-	});
 	registry.add("PathCchCombineEx", 5, [](ApiCall &call) {
 		if (!call[0] || !call[1] || call[1] > 32768 || (!call[2] && !call[3])) {
 			call.ret(0x80070057U);

@@ -1,4 +1,5 @@
 #include "nt/providers.h"
+#include "desktop/objects.h"
 
 #include <fstream>
 #include <iostream>
@@ -37,7 +38,9 @@ int main(int argc,char **argv)
 			presentation.remove=[&](uint64_t handle) { check(handle==window,"removed wrong surface"); ++removed; };
 			// The pointer over the window shows the hand its class names.
 			std::vector<uint32_t> cursors;
-			presentation.cursor=[&](uint32_t shape) { cursors.push_back(shape); };
+			presentation.cursor=[&](uint64_t handle, int count, const raven::DesktopIcon *) {
+                cursors.push_back(count < 0 || !handle ? 0 : uint32_t(32512 + handle - raven::desktop_stock_cursor));
+            };
 			unsigned waits=0;
 			bool closed=false;
 			// A blocked GetMessage looks at the host without a budget of its own, so the event comes on the first look after the frame.

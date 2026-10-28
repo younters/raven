@@ -608,7 +608,7 @@ struct NativeProcess::State {
 	std::function<void()> unix_pump;
 	std::function<bool()> poll_served;
 	std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> execution_wait;
-	bool serving = false, serving_queued = false;
+	bool serving = false, serving_queued = false, served_declined = false;
 	std::chrono::milliseconds sample_period{0};
 	std::function<void(uint64_t)> sampler;
 	uint64_t served_stack = 0;
@@ -1970,6 +1970,18 @@ uint64_t NativeProcess::serving_teb() const
 	return found->second;
 }
 
+bool NativeProcess::serving() const
+{
+    return state->serving;
+}
+
+void NativeProcess::decline_served()
+{
+    if (!state->serving || state->serving_queued)
+        throw std::runtime_error("only a synchronous served call can be declined");
+    state->served_declined = true;
+}
+
 bool NativeProcess::serving_queued() const
 {
 	return state->serving && state->serving_queued;
@@ -2182,16 +2194,19 @@ bool NativeProcess::serve_pending()
 	if (!stub && !queued)
 		return false;
 	// A synchronous call observes every earlier queued record on this thread.
+	bool declined = false;
 	if (stub) {
 		drain_queued_calls(true);
+        state->served_declined = false;
 		block[10] = serve_call(stub, {block[1], block[2], block[3], block[4]}, {block[6], block[7], block[8], block[9]}, block[5] + 40);
+        declined = std::exchange(state->served_declined, false);
 	}
 	if (state->resume_hook)
 		state->resume_hook();
 	// The stub saves its result in RAX before obeying this request; later threads may then overwrite the shared result slot.
 	const bool due = state->slice.count() > 0 && state->slice_yield &&
 		std::chrono::steady_clock::now() - state->slice_started >= state->slice;
-	block[11] = !parallel() && !state->served_yield_traps.empty() && due;
+	block[11] = declined ? 2 : !parallel() && !state->served_yield_traps.empty() && due;
 	if (stub)
 		__atomic_store_n(&block[0], 0, __ATOMIC_RELEASE);
 	// Parallel threads own their results, so another host frame can run as soon as this reply is published.
