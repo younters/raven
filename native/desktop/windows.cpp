@@ -293,16 +293,7 @@ void NativeWindows::present(uint64_t handle, bool force)
 	// program placed it: as a popup of the owner's host window, since a host window of its own would be placed by the compositor.
 	const auto owner=host_owner(*window);
 	const auto *owning=owner && owner!=handle ? objects.window(owner) : nullptr;
-	if (presentation.presence) {
-		const auto screen=presentation.screen_size ? presentation.screen_size() : std::nullopt;
-		presentation.presence(handle,DesktopWindowPresence{
-			.visible=objects.window_visible(handle), .top_level=!window->parent, .message_only=window->message_only,
-			.owner_visible=owning && objects.window_visible(owner) && owning->presented,
-			.style=window->style, .ex_style=window->ex_style,
-			.owner=owner,
-			.left=window->outer.left, .top=window->outer.top, .right=window->outer.right, .bottom=window->outer.bottom,
-			.screen_width=screen ? screen->first : 0, .screen_height=screen ? screen->second : 0});
-	}
+	if (presentation.window_state) presentation.window_state(handle,objects);
 	if (presentation.owned_popup && owning && shown_on_owner(*window)) {
 		try {
 			presentation.owned_popup(handle,owner,window->outer.left-owning->outer.left,window->outer.top-owning->outer.top,bitmap->width,bitmap->height,pixels);
@@ -1401,6 +1392,7 @@ uint64_t NativeWindows::send(uint64_t handle, uint32_t message, uint64_t wparam,
 void NativeWindows::activate(uint64_t handle)
 {
 	if (handle) handle=objects.window_root(handle);
+	if (handle && presentation.foreground) presentation.foreground(handle);
 	// A window that is activated while another activation is being delivered takes its turn when that one is done.
 	if (activating) { queued_activation=handle; has_queued_activation=true; return; }
 	for (;;) {

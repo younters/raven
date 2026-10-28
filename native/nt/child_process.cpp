@@ -1,5 +1,6 @@
 #ifdef __APPLE__
 #include "raven_darwin_dpi.h"
+#include "raven_darwin_launch.h"
 #endif
 #include "child_process.h"
 
@@ -306,23 +307,8 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 	// Runtime metadata travels in the host environment, separately from the guest's explicit Windows environment block.
 	std::vector<std::string> environment;
 	for (auto variable=environ; *variable; ++variable)
-		if (!std::string_view(*variable).starts_with("RAVEN_DESKTOP_DPI=") &&
-			!std::string_view(*variable).starts_with("RAVEN_FOREGROUND_TICKET=") &&
-			!std::string_view(*variable).starts_with("RAVEN_FOREGROUND_CHILD=") &&
-			!std::string_view(*variable).starts_with("RAVEN_PROGRAM_IMAGE=")) environment.emplace_back(*variable);
-	environment.push_back("RAVEN_FOREGROUND_CHILD=1");
-	environment.push_back("RAVEN_PROGRAM_IMAGE="+launch.image.string());
-	// Transfer the one-use macOS activation ticket explicitly; a consumed ticket is never passed to a later helper.
-	if (const char *ticket = std::getenv("RAVEN_FOREGROUND_TICKET")) {
-		if (int file = ::open(ticket, O_RDONLY); file >= 0) {
-			char value[64]{};
-			const auto size = ::pread(file, value, sizeof(value)-1, 0);
-			int origin=0, consumed=1;
-			if (size>0 && std::sscanf(value, "%d\n%d", &origin, &consumed)==2 && !consumed)
-				environment.push_back(std::string("RAVEN_FOREGROUND_TICKET=")+ticket);
-			::close(file);
-		}
-	}
+		if (!std::string_view(*variable).starts_with("RAVEN_DESKTOP_DPI=")) environment.emplace_back(*variable);
+	raven_darwin::child_launch_metadata(environment,launch.image.string(),&actions);
 	if (raven_darwin::child_desktop_dpi)
 		environment.push_back("RAVEN_DESKTOP_DPI="+std::to_string(raven_darwin::child_desktop_dpi));
 	std::vector<char *> env;

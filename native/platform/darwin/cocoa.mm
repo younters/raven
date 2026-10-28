@@ -1,7 +1,9 @@
+#include "dock_policy.h"
 // The macOS desktop presentation (see cocoa.h). It reports input the way a Wayland compositor does, which is what the runtime reads:
 // pointer positions on the window's frame, Linux input codes for buttons and keys, and an XKB keymap with its modifier state.
 
 #include "cocoa.h"
+#include "desktop/objects.h"
 
 void raven_macos_app_identity();
 bool raven_macos_claim_foreground();
@@ -188,6 +190,9 @@ struct CocoaPresentation::State {
 	std::set<uint64_t> alpha_windows;
 	std::set<uint64_t> dock_windows;
 	bool reconcile_dock = false;
+	std::map<uint64_t,bool> visibility_intent;
+	bool activate_on_present = false;
+	bool attention_on_present = false;
 	std::vector<DesktopEvent> pending;
 	uint64_t pointer_window = 0, keyboard_window = 0;
 	bool keyboard_known = false;
@@ -304,14 +309,15 @@ struct CocoaPresentation::State {
 
 	void presence(uint64_t handle, DesktopWindowPresence facts)
 	{
-		if (facts.eligible()) {
+		if (darwin::dock_eligible(facts)) {
 			const bool first = dock_windows.empty();
 			dock_windows.insert(handle);
 			reconcile_dock = false;
 			if (first) {
-				raven_macos_program_identity();
 				[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-				if (raven_macos_claim_foreground()) [NSApp activateIgnoringOtherApps:YES];
+				raven_macos_program_identity();
+				activate_on_present = raven_macos_claim_foreground();
+				attention_on_present = !activate_on_present && !NSApp.active;
 			}
 		} else if (dock_windows.erase(handle) && dock_windows.empty()) {
 			reconcile_dock = true;
@@ -323,6 +329,19 @@ struct CocoaPresentation::State {
 		if (reconcile_dock && dock_windows.empty())
 			[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
 		reconcile_dock = false;
+	}
+
+	void foreground_request(uint64_t handle)
+	{
+		Surface *target = surface(handle);
+		if (!target) return;
+		if (NSApp.active || raven_macos_claim_foreground()) {
+			[target->window makeKeyAndOrderFront:nil];
+			[NSApp activateIgnoringOtherApps:YES];
+			[NSRunningApplication.currentApplication activateWithOptions:NSApplicationActivateAllWindows];
+		} else {
+			[NSApp requestUserAttention:NSInformationalRequest];
+		}
 	}
 
 	void load_keymap()
@@ -1125,6 +1144,7 @@ struct CocoaPresentation::State {
 
 	void forget(uint64_t handle)
 	{
+		visibility_intent.erase(handle);
 		if (dock_windows.erase(handle) && dock_windows.empty()) reconcile_dock = true;
 		std::erase_if(numbers, [&](const auto &entry) { return entry.second == handle; });
 		std::erase_if(pending, [&](const DesktopEvent &event) { return event.window == handle; });
@@ -1133,6 +1153,7 @@ struct CocoaPresentation::State {
 		if (constrained == handle)
 			release_constraint();
 		surfaces.erase(handle);
+
 	}
 
 	void present(uint64_t handle, std::string_view title, uint32_t width, uint32_t height, std::span<const uint8_t> pixels)
@@ -1236,6 +1257,17 @@ struct CocoaPresentation::State {
 				[target->window deminiaturize:nil];
 			if (!target->window.visible)
 				[target->window orderFront:nil];
+			if (activate_on_present) {
+				activate_on_present=false;
+				[target->window makeKeyAndOrderFront:nil];
+				[NSApp activateIgnoringOtherApps:YES];
+				const bool activated=[NSRunningApplication.currentApplication activateWithOptions:NSApplicationActivateIgnoringOtherApps|NSApplicationActivateAllWindows];
+				if (trace) fprintf(stderr,"foreground: activation pid=%d current=%d accepted=%d active=%d\n",getpid(),NSRunningApplication.currentApplication.processIdentifier,activated,NSApp.active);
+			}
+			if (attention_on_present) {
+				attention_on_present = false;
+				[NSApp requestUserAttention:NSInformationalRequest];
+			}
 		}
 	}
 
@@ -1555,10 +1587,40 @@ CocoaPresentation::~CocoaPresentation()
 		state->delegate.state = nullptr;
 }
 
+void CocoaPresentation::describe(uint64_t handle,DesktopWindowPresence facts)
+{
+	state->presence(handle,facts);
+}
+
 DesktopPresentation CocoaPresentation::callbacks()
 {
 	DesktopPresentation result;
-	result.presence = [this](uint64_t handle, DesktopWindowPresence facts) { state->presence(handle, facts); };
+	result.foreground = [this](uint64_t handle) { state->foreground_request(handle); };
+	result.visibility = [this](uint64_t handle,bool visible) { state->visibility_intent[handle] = visible; };
+	result.window_state = [this](uint64_t handle,const DesktopObjects &objects) {
+		const auto *window = objects.window(handle);
+		if (!window) return;
+		const auto owner = objects.window_root(window->owner ? window->owner : window->shown_on);
+		const auto &screen = objects.nonclient_metrics();
+		const auto intended = state->visibility_intent.find(handle);
+		const bool visible = intended == state->visibility_intent.end() ? objects.window_visible(handle) : intended->second;
+		state->visibility_intent.erase(handle);
+		const auto *owning = owner && owner != handle ? objects.window(owner) : nullptr;
+		if (std::getenv("RAVEN_TRACE_DOCK")) {
+			const auto *definition = objects.window_class(window->class_id);
+			NSString *title = [[NSString alloc] initWithCharacters:reinterpret_cast<const unichar *>(window->title.data()) length:window->title.size()];
+			fprintf(stderr,"dock-window pid=%d handle=%llx class=%s title=%s style=%x ex=%x owner=%llx rect=%d,%d,%d,%d visible=%d owner_surface=%d\n",
+				getpid(),(unsigned long long)handle,definition ? definition->name.c_str() : "?",title.UTF8String ?: "",
+				window->style,window->ex_style,(unsigned long long)owner,window->outer.left,window->outer.top,window->outer.right,window->outer.bottom,
+				visible,owning && objects.window_visible(owner) && state->surface(owner));
+		}
+		state->presence(handle,DesktopWindowPresence{
+			.visible = visible, .top_level = !window->parent, .message_only = window->message_only,
+			.owner_visible = owning && objects.window_visible(owner) && state->surface(owner),
+			.style = window->style, .ex_style = window->ex_style, .owner = owner,
+			.left = window->outer.left, .top = window->outer.top, .right = window->outer.right, .bottom = window->outer.bottom,
+			.screen_width = screen.screen_x, .screen_height = screen.screen_y});
+	};
 	result.present = [this](uint64_t handle, std::string_view title, uint32_t width, uint32_t height, std::span<const uint8_t> pixels) {
 		state->present(handle, title, width, height, pixels);
 	};

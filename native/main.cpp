@@ -1,3 +1,6 @@
+#ifdef __APPLE__
+#include "raven_darwin_launch.h"
+#endif
 #include "pe/pe.h"
 #include "pe/resources.h"
 #include "pe/loaded_image.h"
@@ -143,8 +146,7 @@ static void show_fault(int signal)
 int main(int argc, char **argv)
 {
 #ifdef __APPLE__
-	extern void raven_macos_prepare_identity();
-	raven_macos_prepare_identity();
+	raven_macos_startup(argc,argv);
 #endif
 	if (std::getenv("RAVEN_BACKTRACE")) {
 		std::set_terminate(show_backtrace);
@@ -211,12 +213,6 @@ int main(int argc, char **argv)
 	} else if (run_process && argc>first_file && std::string_view(argv[first_file])=="--desktop=macos") {
 		macos=true; ++first_file;
 	}
-#ifdef __APPLE__
-	if (macos) {
-		extern void raven_macos_prepare_foreground();
-		raven_macos_prepare_foreground();
-	}
-#endif
 	bool inherited_stdio=false;
 	if (run_process && argc>first_file && std::string_view(argv[first_file])=="--stdio=inherit") {
 		inherited_stdio=true; ++first_file;
@@ -285,10 +281,6 @@ int main(int argc, char **argv)
 			<< "Complete Windows process initialization is not implemented yet.\n";
 		return 2;
 	}
-#ifdef __APPLE__
-	if (macos && first_file < argc)
-		setenv("RAVEN_PROGRAM_IMAGE", std::filesystem::absolute(argv[first_file]).string().c_str(), 1);
-#endif
 	try {
 		if (bind_imports || run_modules || run_process) {
 			raven::ModuleSet modules;

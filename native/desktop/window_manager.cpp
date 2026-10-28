@@ -160,9 +160,7 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 		window = objects.window(handle);
 	}
 	const bool show = !hide && !(window->style & ws_minimize && !window->parent);
-	// Presentation metadata must see effective visibility before Cocoa orders the first frame.
-	window->visible = !hide;
-	window->style = (window->style & ~ws_visible) | (window->visible ? ws_visible : 0);
+	if (presentation.visibility) presentation.visibility(handle,!hide);
 	if (show && (!window->parent || objects.window_visible(window->parent)))
 		present(handle);
 	else if (!hide && (window->style & ws_minimize) && previous && !window->parent && presentation.minimize)
@@ -170,6 +168,8 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 	else if ((!show || (window->style & ws_minimize)) && previous && !window->parent && presentation.remove)
 		remove_host_window(handle);
 	window = objects.window(handle);
+	window->visible = !hide;
+	window->style = (window->style & ~ws_visible) | (window->visible ? ws_visible : 0);
 	objects.update_window_dcs(window->parent ? window->parent : handle);
 	if (show) {
 		// Showing a window paints its whole subtree, so the children's update regions are invalidated with it.

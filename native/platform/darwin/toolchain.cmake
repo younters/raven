@@ -24,7 +24,8 @@ set(RAVEN_CLANG ${RAVEN_DARWIN_DIR}/bin/raven-clang CACHE FILEPATH "clang for Wi
 
 # The functions behind the shim headers, linked into every host target.
 add_library(raven_darwin STATIC ${RAVEN_DARWIN_DIR}/compat/linux.cpp ${RAVEN_DARWIN_DIR}/compat/procfs.cpp
-    ${RAVEN_DARWIN_DIR}/compat/sockets.cpp ${RAVEN_DARWIN_DIR}/compat/eventfd.cpp ${RAVEN_DARWIN_DIR}/compat/system.cpp)
+    ${RAVEN_DARWIN_DIR}/compat/sockets.cpp ${RAVEN_DARWIN_DIR}/compat/eventfd.cpp ${RAVEN_DARWIN_DIR}/compat/system.cpp
+    ${RAVEN_DARWIN_DIR}/compat/host_launch.cpp)
 target_link_libraries(raven_darwin PUBLIC "-framework CoreFoundation" "-framework IOKit" "-framework SystemConfiguration")
 target_compile_options(raven_darwin PRIVATE -Wall -Wextra)
 link_libraries(raven_darwin)
