@@ -1,0 +1,19 @@
+From: Raven macOS integration
+Upstream: 3Shain/dxmt 3b252590cb0290e36fca6f088b5255b871d2d95a
+Reason: satisfy IDXGIDevice2::EnqueueSetEvent for DirectComposition initial presentation.
+
+--- a/src/d3d11/d3d11_device.cpp
++++ b/src/d3d11/d3d11_device.cpp
+@@ -1284,7 +1284,11 @@
+   }
+ 
+   HRESULT STDMETHODCALLTYPE EnqueueSetEvent(HANDLE hEvent) override {
+-    return E_FAIL;
++    if (!hEvent) return E_INVALIDARG;
++    // Complete earlier device work before publishing the caller's event. A synchronous
++    // wait also preserves event ownership: no worker can outlive the supplied handle.
++    d3d11_device_.GetImmediateContextPrivate()->WaitUntilGPUIdle();
++    return SetEvent(hEvent) ? S_OK : HRESULT_FROM_WIN32(GetLastError());
+   }
+ 
+   void STDMETHODCALLTYPE Trim() override { WARN("DXGIDevice3::Trim: no-op"); };

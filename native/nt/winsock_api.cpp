@@ -1270,7 +1270,7 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			if (milliseconds == 0 || (wake && std::chrono::steady_clock::now() >= *wake))
 				return std::nullopt;
 			HostWait waiting;
-			threads.block([&] { reactor.poll(); return !port->empty(); }, wake);
+			threads.block([&reactor, port] { reactor.poll(); return !port->empty(); }, wake);
 		}
 	};
 	registry.add("GetQueuedCompletionStatus", 5, [&objects, wait_packet](ApiCall &call) {

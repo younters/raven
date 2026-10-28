@@ -29,6 +29,8 @@ public:
 	// A host surface over the client area of a window for a graphics driver to present into, and its release; null when the host shows no such window.
 	std::optional<HostSurface> host_surface(uint64_t window);
 	void release_host_surface(uint64_t window);
+	struct CompositionBinding { uint64_t target=0; float x=0,y=0; int32_t order=0; float sx=1,sy=1; float left=-1000000,top=-1000000,right=1000000,bottom=1000000; };
+	std::optional<CompositionBinding> composition_binding(uint64_t window) const;
 	void *host_display() const { return presentation.host_display ? presentation.host_display() : nullptr; }
 	HostPlatform host_platform() const { return presentation.platform; }
 	void set_surface_cleanup(std::function<void(uint64_t)> cleanup) { surface_cleanup = std::move(cleanup); }
@@ -113,6 +115,9 @@ public:
 	void shutdown();
 
 private:
+	void sync_window_updates();
+	bool syncing_window_updates=false;
+	std::chrono::steady_clock::time_point window_updates_checked{};
 	void refresh_screen();
 	NativeProcess &process;
 	NativeEnvironment &environment;

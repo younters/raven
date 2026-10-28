@@ -191,6 +191,23 @@ if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
             -o ${RAVEN_DXMT_WINDOW_INFO}
         DEPENDS ${RAVEN_DARWIN_DIR}/tests/window_info.m VERBATIM)
     add_custom_target(darwin_dxmt_window_info ALL DEPENDS ${RAVEN_DXMT_WINDOW_INFO})
+    find_program(RAVEN_MINGW64_CXX x86_64-w64-mingw32-g++)
+    if(RAVEN_MINGW64_CXX)
+        set(DCOMP_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-dcomp.exe)
+        add_custom_command(OUTPUT ${DCOMP_EXE}
+            COMMAND ${RAVEN_MINGW64_CXX} -nostdlib -O2 -Wl,--entry,entry
+                ${RAVEN_DARWIN_DIR}/tests/dcomp.cpp -o ${DCOMP_EXE}
+                -ldcomp -ld3d11 -ldxgi -ldxguid -luuid -lkernel32 -luser32 -lgcc
+            DEPENDS ${RAVEN_DARWIN_DIR}/tests/dcomp.cpp VERBATIM)
+        add_custom_target(darwin_dcomp_fixture ALL DEPENDS ${DCOMP_EXE})
+        foreach(kind local foreign)
+            add_test(NAME darwin_dcomp_${kind} COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dcomp.py
+                $<TARGET_FILE:raven> ${DCOMP_EXE} ${RAVEN_DXMT_ROOT} ${RAVEN_DXMT_WINDOW_INFO}
+                ${CMAKE_CURRENT_BINARY_DIR}/dcomp-${kind} ${kind})
+            set_tests_properties(darwin_dcomp_${kind} PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
+        endforeach()
+    endif()
+
     foreach(workload device pool pacing triangle window deferred geometry tessellation textured msaa compute features fullscreen present_rate)
         if(workload STREQUAL "device")
             set(RAVEN_DXMT_FIXTURE ${RAVEN_DARWIN_DIR}/tests/dxmt_device.c)

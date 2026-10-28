@@ -191,7 +191,7 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 		throw uint32_t(1400);
 	if (!window->visible && previous && window->parent) {
 		const auto *parent = objects.window(window->parent);
-		objects.invalidate(window->parent, {window->outer.left - parent->x, window->outer.top - parent->y, window->outer.right - parent->x,
+		if (parent) objects.invalidate(window->parent, {window->outer.left - parent->x, window->outer.top - parent->y, window->outer.right - parent->x,
 			window->outer.bottom - parent->y}, true);
 	}
 	send(handle, 0x18, window->visible, 0);
@@ -307,7 +307,7 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 		const auto old_client_x = window->x, old_client_y = window->y;
 		if (window->parent && was_visible) {
 			const auto *parent = objects.window(window->parent);
-			objects.invalidate(window->parent, {old.left - parent->x, old.top - parent->y, old.right - parent->x, old.bottom - parent->y}, true);
+			if (parent) objects.invalidate(window->parent, {old.left - parent->x, old.top - parent->y, old.right - parent->x, old.bottom - parent->y}, true);
 		}
 		if (window->parent || !resized) {
 			if (shifted)
@@ -334,7 +334,7 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 			// Moving a child in its parent changes where its whole subtree draws.
 			objects.update_window_dcs(handle);
 			const auto *parent = objects.window(window->parent);
-			send(handle, 3, 0, uint16_t(window->x - parent->x) | (uint64_t(uint16_t(window->y - parent->y)) << 16));
+			send(handle, 3, 0, uint16_t(window->x - (parent ? parent->x : 0)) | (uint64_t(uint16_t(window->y - (parent ? parent->y : 0))) << 16));
 		}
 		window = objects.window(handle);
 		if (window && window->parent && objects.window_visible(handle) && !(effective & swp_noredraw)) {
@@ -484,7 +484,14 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	});
 	registry.add("SetParent", 2, [this](ApiCall &call) {
 		auto *window = objects.window(call[0]);
-		if (!window || (call[1] && !objects.window(call[1]))) {
+		if (!window) {
+			const auto foreign=foreign_window_info(call[0]);
+			if (!foreign || call[0]==call[1] || (call[1]&&!objects.window(call[1])&&!foreign_window_info(call[1]))) { call.fail(1400);return; }
+			ForeignWindowUpdate update{};update.mask=1;update.parent=call[1];
+			if (!request_window_update(call[0],update)) {call.fail(1400);return;}
+			call.ret(foreign->parent);return;
+		}
+		if (call[1] && !objects.window(call[1]) && !foreign_window_info(call[1])) {
 			call.fail(1400);
 			return;
 		}
@@ -760,8 +767,11 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	registry.add("SetWindowPos", 7, [this](ApiCall &call) {
 		const auto *window = objects.window(call[0]);
 		if (!window) {
-			call.fail(1400);
-			return;
+			ForeignWindowUpdate update{};update.mask=2;update.after=call[1];update.flags=call.u32(6);
+			update.x=call.i32(2);update.y=call.i32(3);update.width=std::max(call.i32(4),0);update.height=std::max(call.i32(5),0);
+			if (update.x<-1000000||update.x>1000000||update.y<-1000000||update.y>1000000||update.width>32768||update.height>32768) {call.fail(87);return;}
+			if (!request_window_update(call[0],update)) {call.fail(1400);return;}
+			call.ret(1);return;
 		}
 		const uint32_t flags = call.u32(6);
 		const auto *parent = window->parent ? objects.window(window->parent) : nullptr;

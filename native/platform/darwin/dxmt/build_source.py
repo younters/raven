@@ -13,7 +13,7 @@ def run(*args, cwd=None):
     subprocess.run([str(arg) for arg in args], cwd=cwd, check=True)
 
 
-def build(root, llvm, wine):
+def build(root, llvm, wine, build_compiler=True):
     here = Path(__file__).resolve().parent
     work = root.parent / 'dxmt-source-build'
     source, output = work / 'src', work / 'build'
@@ -51,6 +51,6 @@ def build(root, llvm, wine):
     compiler = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(compiler)
     (root / 'licenses').mkdir(exist_ok=True)
-    compiler_build = compiler.build(root / 'pe64/d3dcompiler_47.dll', wine, work / 'd3dcompiler')
+    compiler_build = compiler.build(root / 'pe64/d3dcompiler_47.dll', wine, work / 'd3dcompiler') if build_compiler else None
     return {'unix_call_count': 146, 'd3dcompiler_47': compiler_build, 'commit': REVISION, 'keyed_mutex_merge': KEYED_MUTEX_MERGE,
             'patches': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted((here / 'patches').glob('*.patch'))}}

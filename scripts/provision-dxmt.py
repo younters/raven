@@ -36,7 +36,7 @@ def patch_cross_process_swapchain(path):
     path.write_bytes(data)
 
 
-def provision(destination, source_llvm=None, source_wine=None):
+def provision(destination, source_llvm=None, source_wine=None, hlsl_compiler="microsoft"):
     if sys.platform != "darwin":
         raise RuntimeError("the DXMT adapter must be built on macOS")
     repository = Path(__file__).resolve().parent.parent
@@ -107,13 +107,25 @@ def provision(destination, source_llvm=None, source_wine=None):
         spec = importlib.util.spec_from_file_location("dxmt_source", source.with_name("build_source.py"))
         builder = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(builder)
-        source_build = builder.build(root, source_llvm, source_wine)
+        source_build = builder.build(root, source_llvm, source_wine, build_compiler=hlsl_compiler == "wine")
         for record in records:
             if record.get("component") == "dxmt":
                 path = destination / record["path"]
                 if path.is_file():
                     record["sha256"] = graphics.digest(path)
         manifest.write_text(json.dumps(records, indent=2) + "\n")
+    if source_build:
+        cpp = shutil.which("x86_64-w64-mingw32-g++")
+        if not cpp:
+            raise RuntimeError("DirectComposition needs mingw-w64 g++")
+        subprocess.run([cpp, "-shared", "-nostdlib", "-O2", "-std=c++17", "-fno-exceptions", "-fno-rtti",
+                        "-fno-stack-protector", "-Wl,--entry,0", str(source.parent.parent / "dcomp/dcomp.cpp"),
+                        "-o", str(root / "pe64/dcomp.dll"), "-lkernel32", "-luser32", "-lgdi32", "-luuid", "-lgcc"], check=True)
+    if hlsl_compiler == "microsoft":
+        spec = importlib.util.spec_from_file_location("microsoft_hlsl", repository / "scripts/provision-d3dcompiler.py")
+        compiler = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(compiler)
+        compiler.provision(root / "pe64")
     provenance = repository / "native/upstream/dxmt"
     shutil.copytree(provenance, root / "licenses", dirs_exist_ok=True)
     if source_build:
@@ -139,12 +151,14 @@ def main():
     parser.add_argument("--destination", type=Path, required=True, help="external graphics cache; creates dxmt/ inside it")
     parser.add_argument("--source-llvm", type=Path, help="experimental source build: x86_64 LLVM 15 installation")
     parser.add_argument("--source-wine", type=Path, help="configured Wine build with winebuild and x86_64 import libraries")
+    parser.add_argument("--hlsl-compiler", choices=("microsoft", "wine"), default="microsoft",
+                        help="Microsoft SDK redistributable (default), or Wine/vkd3d in a source build")
     arguments = parser.parse_args()
     if bool(arguments.source_llvm) != bool(arguments.source_wine):
         parser.error("--source-llvm and --source-wine must be supplied together")
     try:
         provision(arguments.destination.resolve(), arguments.source_llvm.resolve() if arguments.source_llvm else None,
-                  arguments.source_wine.resolve() if arguments.source_wine else None)
+                  arguments.source_wine.resolve() if arguments.source_wine else None, arguments.hlsl_compiler)
     except (OSError, RuntimeError, subprocess.CalledProcessError, tarfile.TarError) as error:
         parser.exit(1, f"DXMT provisioning failed: {error}\n")
 
