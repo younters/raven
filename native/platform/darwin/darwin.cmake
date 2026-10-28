@@ -410,3 +410,18 @@ endif()
 if(TEST native_d3d10_1_x64)
     set_tests_properties(native_d3d10_1_x64 PROPERTIES ENVIRONMENT "RAVEN_DXMT_ROOT=")
 endif()
+
+# These upstream fixtures require serial scheduling: the provider checks a serial stub yield, and the input backend asserts that its
+# first poll follows drawing. A parallel guest's execution wait can poll during initialization. Keep the upstream contracts unchanged;
+# native_parallel_served_contract and the Darwin input contract below cover the corresponding parallel behavior.
+if(TEST native_provider_contract)
+    set_property(TEST native_provider_contract APPEND PROPERTY ENVIRONMENT_MODIFICATION "RAVEN_PARALLEL=unset:")
+endif()
+if(TEST native_outer_surface_input)
+    set_property(TEST native_outer_surface_input APPEND PROPERTY ENVIRONMENT_MODIFICATION "RAVEN_PARALLEL=unset:")
+    add_executable(darwin_outer_input_test ${RAVEN_DARWIN_DIR}/outer_input_test.cpp)
+    target_link_libraries(darwin_outer_input_test PRIVATE raven_cpu)
+    add_dependencies(darwin_outer_input_test outer_surface_input_fixture raven-bootstrap)
+    add_test(NAME native_darwin_parallel_input COMMAND darwin_outer_input_test $<TARGET_FILE:raven-bootstrap> ${OUTER_SURFACE_INPUT})
+    set_tests_properties(native_darwin_parallel_input PROPERTIES TIMEOUT 15 ENVIRONMENT "RAVEN_PARALLEL=1")
+endif()

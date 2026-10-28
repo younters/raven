@@ -126,7 +126,7 @@ static void guest_memory(const char *bootstrap)
 		raven::SharedPixels pixels(size, width, 7);
 		const auto surface = raven::darwin::pixel_surface(pixels.descriptor());
 		const bool copy = std::getenv("RAVEN_COCOA_PRESENT") && std::string_view(std::getenv("RAVEN_COCOA_PRESENT")) == "copy";
-		check(copy ? !surface : surface && raven::darwin::pixel_surface(pixels.data()) == surface &&
+		check((copy || std::getenv("RAVEN_PARALLEL")) ? !surface : surface && raven::darwin::pixel_surface(pixels.data()) == surface &&
 			IOSurfaceGetBytesPerRow(surface) == size_t(width) * 4, "window IOSurface stride or registry differs");
 		const auto mapped = process.map_shared(pixels.descriptor(), size);
 		check(mapped % 65536 == 0, "window surface lost shared-view allocation alignment");

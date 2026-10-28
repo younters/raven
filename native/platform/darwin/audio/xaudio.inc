@@ -13,6 +13,19 @@ std::map<uint64_t,XVoice> xvoices;
 float xmaster=1;
 void voice_callback(uint64_t callback, uint32_t index, uint64_t value=0) {
 	if (!callback) return;
+	// The service may be running inside a parked Sleep/Windows wait. A parallel callback's execution wait uses the same scheduler
+	// thread, so keep that outer wait alive across context.call without changing the common scheduler's wait contract.
+	auto &thread=context.threads.current();
+	struct RestoreWait {
+		GuestThread &thread;
+		std::function<bool()> ready;
+		std::optional<std::chrono::steady_clock::time_point> wake;
+		GuestThread::State state;
+		~RestoreWait() {
+			thread.ready=std::move(ready); thread.wake=wake;
+			if (thread.state!=GuestThread::State::done) thread.state=state;
+		}
+	} restore{thread,thread.ready,thread.wake,thread.state};
 	try {
 		const size_t width=context.process.mode()==NativeMode::x86?4:8;
 		const auto table_bytes=context.process.read_memory(callback,width);
@@ -26,9 +39,13 @@ void voice_callback(uint64_t callback, uint32_t index, uint64_t value=0) {
 	} catch (const std::exception &error) { if (std::getenv("RAVEN_AUDIO_TRACE")) std::fprintf(stderr,"Raven audio: callback failed: %s\n",error.what()); }
 }
 void service_voices() {
+	// A parallel guest may still be running when the host services its other threads. Calling into Windows code requires the
+	// stopped frame of an API call; keep the packets queued until the scheduler reaches one.
+	if (context.process.parallel() && !context.process.stopped()) return;
 	for (auto &[address,v]:xvoices) {
-		if (!v.voice) continue;
+		if (!v.voice || v.packets.empty()) continue;
 		const auto presented=mixer().position(v.voice)/v.format.block;
+		if ((v.packets.front().started || presented<v.packets.front().begin) && presented<v.packets.front().end) continue;
 		for (auto &packet:v.packets)
 			if (v.running && !packet.started && presented>=packet.begin) { packet.started=true; voice_callback(v.callback,3,packet.context); }
 		while (!v.packets.empty() && presented>=v.packets.front().end) {

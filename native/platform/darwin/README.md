@@ -73,7 +73,19 @@ asks `raven_darwin_unix_name_bound` where Linux reads `/proc/net/unix`, and `nt/
 
 ## Parallel execution
 
-The version 2 control block has 256 thread channels and a separate service channel. A channel retains its registers, XSAVE state and stop
+`RAVEN_PARALLEL=1` applies to every launched program that inherits it. Upstream's `RAVEN_PARALLEL_PROGRAM=<basename.exe>` instead
+selects parallel execution by case-insensitive program basename; each child program decides again. It does not change the meaning of
+the global switch. Darwin uses the common served-call handlers and decline handshake: decided waits answer in the guest stub, while
+blocking parallel waits can park their host frame. Darwin XAudio preserves its outer Windows wait's predicate and deadline across
+nested callback execution and retains callback packets until a stopped API frame is available. Parallel GDI presentation still uses
+copied pixels until a producer fence is available.
+
+XAudio callbacks currently run from a stopped API frame on the selected Windows thread. A parallel thread that computes or busy-polls
+without entering an API can therefore delay them; there is no independent Windows XAudio engine callback thread yet. The parallel XAudio
+tests cover callbacks during a timed Windows wait, including preservation of that wait across nested callback execution. They do not
+establish Windows' asynchronous delivery guarantee for a computing guest.
+
+The version 4 control block has 256 thread channels and a separate service channel. A channel retains its registers, XSAVE state and stop
 reason until the host resumes that pthread; switching host coroutines selects a different channel without copying a running thread's
 state. `save_thread(false)` leaves register ownership in the channel, while an explicit stopped snapshot includes the extended state.
 Task identities increase even when a channel is reused, so an old scheduler snapshot cannot select a newer pthread.
