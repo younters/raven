@@ -308,7 +308,7 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 	std::vector<std::string> environment;
 	for (auto variable=environ; *variable; ++variable)
 		if (!std::string_view(*variable).starts_with("RAVEN_DESKTOP_DPI=")) environment.emplace_back(*variable);
-	raven_darwin::child_launch_metadata(environment,launch.image.string(),&actions);
+	raven_darwin::child_launch_metadata(environment, launch.image.string(), &actions);
 	if (raven_darwin::child_desktop_dpi)
 		environment.push_back("RAVEN_DESKTOP_DPI="+std::to_string(raven_darwin::child_desktop_dpi));
 	std::vector<char *> env;

@@ -1,10 +1,12 @@
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <unistd.h>
 #include <string>
-#include <cstdio>
+#include <unistd.h>
+
 void raven_macos_startup(int,char **);
+
 int main(int argc,char **argv)
 {
 	for (int i=1;i<argc;++i) if (const char *value=strstr(argv[i],"-fd=")) fcntl(atoi(value+4),F_SETFD,FD_CLOEXEC);
