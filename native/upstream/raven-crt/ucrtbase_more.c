@@ -1537,3 +1537,30 @@ CRT int wcstombs_s(size_t *converted, char *to, size_t size, const wchar_t *text
 	free(whole);
 	return result;
 }
+
+/* Keep the Windows double ABI for math names the Office module does not yet supply. */
+extern long double fmal(long double, long double, long double), remainderl(long double, long double);
+CRT double fma(double x, double y, double z) { return (double)fmal(x, y, z); }
+CRT double remainder(double x, double y) { return (double)remainderl(x, y); }
+extern double nextafter(double, double);
+CRT double nexttoward(double x, double y) { return nextafter(x, y); }
+
+CRT int _wmktemp_s(wchar_t *name, size_t capacity)
+{
+	if (!name || !capacity || wcsnlen(name, capacity) == capacity) {
+		if (name && capacity) name[0] = 0;
+		set_errno(22); _invalid_parameter_noinfo(); return 22;
+	}
+	const size_t length = wcslen(name);
+	if (length < 6 || memcmp(name + length - 6, L"XXXXXX", 12)) {
+		name[0] = 0; set_errno(22); return 22;
+	}
+	wchar_t *suffix = name + length - 6;
+	unsigned number = GetCurrentThreadId() % 100000;
+	for (int at = 5; at; --at) { suffix[at] = L'0' + number % 10; number /= 10; }
+	for (wchar_t letter = L'a'; letter <= L'z'; ++letter) {
+		suffix[0] = letter;
+		if (GetFileAttributesW(name) == INVALID_FILE_ATTRIBUTES) return 0;
+	}
+	name[0] = 0; set_errno(17); return 17;
+}

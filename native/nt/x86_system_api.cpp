@@ -247,6 +247,7 @@ bool NativeX86System::dispatch(std::string_view name)
 			fail(1460);
 			return true;
 		}
+        process.return_api(1);
 	} else if (name == "GetCurrentThreadStackLimits") {
 		// The whole reservation, from the TEB: DeallocationStack (0xe0c) is its bottom, StackBase (4) its top; StackLimit (8) stands in
 		// for a bottom that was never recorded.

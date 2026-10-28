@@ -65,9 +65,27 @@ CRT double cbrt(double x)
 }
 
 CRT float cbrtf(float x) { return (float)cbrt(x); }
-CRT double asinh(double x) { return copysign(log(fabs(x) + sqrt(x * x + 1)), x); }
-CRT double acosh(double x) { return x < 1 ? 0.0 / 0.0 : log(x + sqrt(x * x - 1)); }
-CRT double atanh(double x) { return fabs(x) > 1 ? 0.0 / 0.0 : 0.5 * log1p(2 * x / (1 - x)); }
+CRT double acosh(double x)
+{
+	if (x > 1e154) return log(x) + 0.69314718055994530942;
+	return log1p(x - 1 + sqrt(x - 1) * sqrt(x + 1));
+}
+
+CRT double asinh(double x)
+{
+	const double magnitude = fabs(x);
+	if (magnitude < 1e-154) return x;
+	const double result = magnitude > 1e154 ? log(magnitude) + 0.69314718055994530942 :
+		log1p(magnitude + magnitude * magnitude / (1 + sqrt(1 + magnitude * magnitude)));
+	return copysign(result, x);
+}
+
+CRT double atanh(double x)
+{
+	const double magnitude = fabs(x);
+	if (magnitude < 1e-154) return x;
+	return copysign(0.5 * log1p(2 * magnitude / (1 - magnitude)), x);
+}
 
 /* The power of two of a value as frexp finds it, one less since frexp scales into [0.5, 1). */
 CRT int ilogb(double x)
@@ -108,6 +126,7 @@ CRT float remainderf(float x, float y)
 /* The logarithm of the gamma function: the Lanczos series for positive arguments and the reflection formula below one half. */
 CRT double lgamma(double x)
 {
+	if (x == 1 || x == 2) return 0;
 	static const double coefficients[] = {0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313,
 		-176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7};
 	const double pi = 3.14159265358979323846;
@@ -119,14 +138,16 @@ CRT double lgamma(double x)
 		const double sine = sin(pi * x);
 		if (sine == 0)
 			return 1.0 / 0.0;
-		return log(pi / fabs(sine)) - lgamma(1 - x);
+		volatile double result = log(pi / fabs(sine)) - lgamma(1 - x);
+		return result;
 	}
 	x -= 1;
 	double sum = coefficients[0];
 	for (int at = 1; at < 9; ++at)
 		sum += coefficients[at] / (x + at);
 	const double t = x + 7.5;
-	return 0.91893853320467274178 + (x + 0.5) * log(t) - t + log(sum);
+	volatile double result = 0.91893853320467274178 + (x + 0.5) * log(t) - t + log(sum);
+	return result;
 }
 
 /* The rounding mode lives in both units: bits 13-14 of MXCSR and bits 10-11 of the x87 control word share one encoding, which the C
@@ -1137,8 +1158,9 @@ CRT void *bsearch_s(const void *key, const void *data, size_t count, size_t size
 /* ---- what the shared Office library and the rest of the suite import besides ---- */
 /* A long double is a double in this runtime, as in Microsoft's. */
 __asm__(".section .drectve\n\t.ascii \" -export:strtold=raven_strtod -export:_copysign=copysign -export:_nextafter=nextafter"
-	" -export:llroundl=llround -export:lgammal=lgamma -export:__std_terminate=terminate\"\n\t.text");
+	" -export:llroundl=llround -export:__std_terminate=terminate\"\n\t.text");
 CRT float lgammaf(float x) { return (float)lgamma(x); }
+CRT double lgammal(double x) { return lgamma(x); }
 CRT float coshf(float x) { return (float)cosh(x); }
 CRT float sinhf(float x) { return (float)sinh(x); }
 CRT float acoshf(float x) { return (float)acosh(x); }

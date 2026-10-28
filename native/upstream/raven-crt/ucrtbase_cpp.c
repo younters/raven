@@ -300,6 +300,30 @@ CRT int __initialize_lconv_for_unsigned_char(void) { return 0; }
 
 /* At most count characters, or as many as fit when count is _TRUNCATE: a result cut short returns -1, and one that does not fit the
    buffer at all leaves an empty string. */
+CRT int __stdio_common_vsnwprintf_s(unsigned long long options, wchar_t *buffer, size_t size, size_t count, const wchar_t *text, void *locale,
+	va_list arguments)
+{
+	va_list copy;
+	int length;
+	if (!buffer || !size || !text)
+		return -1;
+	va_copy(copy, arguments);
+	length = __stdio_common_vswprintf(options, NULL, 0, text, locale, copy);
+	va_end(copy);
+	if (length < 0) {
+		buffer[0] = 0;
+		return -1;
+	}
+	const size_t room = count == (size_t)-1 || count >= size ? size - 1 : count;
+	if ((size_t)length > room && count != (size_t)-1 && count >= size) {
+		buffer[0] = 0;
+		return -1;
+	}
+	__stdio_common_vswprintf(options, buffer, room + 1, text, locale, arguments);
+	buffer[(size_t)length < room ? (size_t)length : room] = 0;
+	return (size_t)length > room ? -1 : length;
+}
+
 #ifdef __i386__
 /* The SSE2 math entry points of 32-bit programs built for SSE2: the argument comes in xmm0 (the exponent of pow in xmm1) and the
    result goes back in xmm0 rather than on the x87 stack. */

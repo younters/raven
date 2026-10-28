@@ -1052,11 +1052,6 @@ CRT int __stdio_common_vsnprintf_s(unsigned long long options, char *buffer, siz
 	return __stdio_common_vsprintf(options, buffer, count < size ? count + 1 : size, text, locale, arguments);
 }
 
-CRT int __stdio_common_vsnwprintf_s(unsigned long long options, wchar_t *buffer, size_t size, size_t count, const wchar_t *text, void *locale, va_list arguments)
-{
-	return __stdio_common_vswprintf(options, buffer, count < size ? count + 1 : size, text, locale, arguments);
-}
-
 static void msvcrt_attach(void);
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)

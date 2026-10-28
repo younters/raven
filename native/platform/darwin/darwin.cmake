@@ -404,3 +404,9 @@ if(TARGET raven AND RAVEN_MINGW64)
         endif()
     endforeach()
 endif()
+
+# The upstream D3D10.1 fixture expects its fallback component to report unsupported hardware. Keep DXMT's
+# hardware path for applications and exercise it separately with darwin_dxmt_device10.
+if(TEST native_d3d10_1_x64)
+    set_tests_properties(native_d3d10_1_x64 PROPERTIES ENVIRONMENT "RAVEN_DXMT_ROOT=")
+endif()

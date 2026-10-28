@@ -856,6 +856,16 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("memcpy", 3, copy);
 	registry.add("memmove", 3, copy);
+    registry.add("strncpy", 3, [](ApiCall &call) {
+        const auto count = size_t(call[2]);
+        if (count) {
+            auto bytes = call.read(call[1], count);
+            if (const auto end = std::find(bytes.begin(), bytes.end(), uint8_t(0)); end != bytes.end())
+                std::fill(end + 1, bytes.end(), uint8_t(0));
+            call.write(call[0], bytes);
+        }
+        call.ret(call[0]);
+    });
 	registry.add("memset", 3, [](ApiCall &call) {
 		if (call[2])
 			call.write(call[0], std::vector<uint8_t>(size_t(call[2]), uint8_t(call[1])));

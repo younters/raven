@@ -1549,25 +1549,24 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 			int64_t(y)<int64_t(window->y)+window->height ? 1 : 0;
 	}
 	if (message==0x20) {
-		// WM_SETCURSOR: the parent of a child chooses first. The client area shows the class cursor, the frame the cursor of its edge
-		// and the rest the arrow.
-		if ((window->style & 0x40000000U) && window->parent && objects.window(window->parent) && send(window->parent,0x20,args[2],args[3])) return 1;
+		// Parents can override a child's cursor; their default procedure must leave that child's class cursor alone.
+		const auto parent=window->parent;
+		if (parent && objects.window(parent) && send(parent,0x20,args[2],args[3])) return 1;
 		window=objects.window(args[0]);
-		if (!window) return 0;
+		if (!window || args[0]!=args[2]) return 0;
 		const auto hit=int16_t(uint16_t(args[3]));
-		uint64_t cursor=desktop_stock_cursor;
 		if (hit==1) {
-			const auto *definition=objects.window_class(window->class_id);
-			if (!definition || !definition->cursor) return 0;
-			cursor=definition->cursor;
+			const auto *klass=objects.window_class(window->class_id);
+			if (klass && klass->cursor) set_cursor(klass->cursor);
+		} else {
+			uint32_t id=32512;
+			if (hit==10 || hit==11) id=32644;
+			else if (hit==12 || hit==15) id=32645;
+			else if (hit==13 || hit==17) id=32642;
+			else if (hit==14 || hit==16) id=32643;
+			set_cursor(desktop_stock_cursor+id-32512);
 		}
-		else if (hit==10 || hit==11) cursor=desktop_stock_cursor+(32644-32512);
-		else if (hit==12 || hit==15) cursor=desktop_stock_cursor+(32645-32512);
-		else if (hit==13 || hit==17) cursor=desktop_stock_cursor+(32642-32512);
-		else if (hit==14 || hit==16) cursor=desktop_stock_cursor+(32643-32512);
-		current_cursor=cursor;
-		show_cursor();
-		return hit==1 || (hit>=10 && hit<=17);
+		return 1;
 	}
 	if (message==0x317) {
 		// WM_PRINT: the default procedure replays its flags as the erase and client-paint requests.
@@ -1646,26 +1645,6 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 	if (message==0x21) return 1;
 	if (message==0x11) return 1;
 	if (!message || message==1 || message==2 || message==3 || message==5 || message==0x82 || message==0x18) return 0;
-	if (message==0x20) {
-		// Parents can override a child's cursor; their default procedure must leave that child's class cursor alone.
-		const auto parent=window->parent;
-		if (parent && objects.window(parent) && send(parent,0x20,args[2],args[3])) return 1;
-		window=objects.window(args[0]);
-		if (!window || args[0]!=args[2]) return 0;
-		const auto hit=int16_t(uint16_t(args[3]));
-		if (hit==1) {
-			const auto *klass=objects.window_class(window->class_id);
-			if (klass && klass->cursor) set_cursor(klass->cursor);
-		} else {
-			uint32_t id=32512;
-			if (hit==10 || hit==11) id=32644;
-			else if (hit==12 || hit==15) id=32645;
-			else if (hit==13 || hit==17) id=32642;
-			else if (hit==14 || hit==16) id=32643;
-			set_cursor(desktop_stock_cursor+id-32512);
-		}
-		return 1;
-	}
 	// Messages whose Windows default is "no action, result 0": activation notices, window-position notices,
 	// non-client mouse notices, capture loss, keyboard and timer/command traffic nobody consumed.
 	if (message==0x16 || message==0x1c || message==0x24 || message==0x46 || message==0x47 || message==0x4e ||
