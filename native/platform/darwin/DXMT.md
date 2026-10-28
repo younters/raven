@@ -227,7 +227,10 @@ The opt-in source provisioner pins `3b252590cb0290e36fca6f088b5255b871d2d95a`, w
 keyed-mutex merge `e520fea415ba4b82b0c346dae77bbb1be4897453` (upstream PR #195).
 It applies the foreign-HWND source patch and links the unixlib directly to Raven's adapter instead
 of Wine's unix libraries. Two additional source patches correct the non-indexed geometry argument
-sentinel and preserve signed 100 ns keyed-mutex timeouts (including infinite waits). The normal binary-patched v0.80 path remains the default until runtime
+sentinel and preserve signed 100 ns keyed-mutex timeouts (including infinite waits). Patch 0005 makes
+AcquireSync/ReleaseSync own the shared event their encoder command captures; upstream retains it only when
+the encoder runs, after Firefox's GPU-process checks have released the texture (use-after-free in
+`objc_retain`, covered by `darwin_dxmt_self_share`). The normal binary-patched v0.80 path remains the default until runtime
 qualification passes. Building the upstream test executables is not equivalent to passing them.
 
 Prerequisites: Meson, the Windows cross compiler, Metal's Xcode toolchain, **x86_64** LLVM 15 static
@@ -283,6 +286,19 @@ texture into another process and checks synchronized GPU pixel readback; it expl
 the v0.80 fallback. NT-security keyed-mutex handles are not implemented and return
 `STATUS_NOT_SUPPORTED`. Abruptly terminated creators can leave small metadata files in the test
 prefix; normal destruction removes them.
+
+#### System32 HLSL compiler
+
+Windows ships `d3dcompiler_47.dll` in System32 and ANGLE loads it from there; Raven's built-in export only
+refuses `D3DCompile`. The source overlay also builds `pe64/d3dcompiler_47.dll`
+(`dxmt/build_d3dcompiler.py`): Wine 10's d3dcompiler objects linked against vkd3d-shader pinned at git
+`dcefd8b0` (Wine's bundled vkd3d 1.14 crashes in copy propagation on WebRender shaders, and 1.19 rejects
+ANGLE's statically indexed sampler arrays), with `d3dcompiler_crt.c` forwarding the stdio calls mingw headers
+emit to ucrtbase. When the configured DXMT root carries this file it replaces the stub as a system module;
+a copy beside the application still wins. `darwin_d3d_compile` checks vs_5_0/ps_5_0 DXBC and error blobs.
+The compiler builds every WebRender shader, but some generated code is wrong: page content draws with
+wrong colours and missing gradients/shadows, while Microsoft's compiler renders the same page correctly
+on the same DXMT build. Hardware WebRender is therefore not yet correct with this compiler.
 
 `raven-apps` selects the AMD compatibility identity for `firefox.exe`, including generated app
 bundles launched from Launchpad, while preserving explicit caller overrides. Direct runtime launches

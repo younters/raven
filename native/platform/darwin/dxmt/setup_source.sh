@@ -1,4 +1,11 @@
 # Sourced by setup.sh for the opt-in source overlay. Toolchains stay outside the checkout.
+# vkd3d (the System32 d3dcompiler_47's HLSL compiler) builds from git: autotools, missing formulae only.
+dxmt_missing=
+for formula in autoconf automake libtool; do
+    brew list --formula "$formula" >/dev/null 2>&1 || dxmt_missing="$dxmt_missing $formula"
+done
+# shellcheck disable=SC2086
+[ -z "$dxmt_missing" ] || HOMEBREW_NO_INSTALL_UPGRADE=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew install $dxmt_missing
 dxmt_build_root=${RAVEN_DXMT_BUILD_ROOT:-$HOME/Documents/Projects/raven-components-build}
 dxmt_llvm_default=$dxmt_build_root/llvm15
 

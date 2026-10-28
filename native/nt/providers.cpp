@@ -1775,6 +1775,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		std::vector<std::pair<std::string_view, uint16_t>> ordinals(published_numbers.begin(), published_numbers.end());
 		if (const auto extra = unknown_ordinals.find(std::string(name)); extra != unknown_ordinals.end())
 			ordinals.insert(ordinals.end(), extra->second.begin(), extra->second.end());
+#ifdef __APPLE__
+		if (darwin_graphics_system_module(name, true))
+			continue; // The provisioned library loads in place of a stub.
+#endif
 		PEModule *provider = nullptr;
 		const auto found = modules.all().find(name);
 		if (found != modules.all().end()) {

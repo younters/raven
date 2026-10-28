@@ -1,6 +1,7 @@
 """Experimental pinned DXMT source build; publish only to a private provisioner overlay."""
 from pathlib import Path
 import hashlib
+import importlib.util
 import shutil
 import subprocess
 
@@ -46,5 +47,10 @@ def build(root, llvm, wine):
     run('/usr/bin/install_name_tool', '-change', '@rpath/raven-dxmt.dylib', '@loader_path/raven-dxmt.dylib', library)
     run('/usr/bin/codesign', '--force', '--sign', '-', library)
     (root / 'unix64/unix-call-count').write_text('146\n')
-    return {'unix_call_count': 146, 'commit': REVISION, 'keyed_mutex_merge': KEYED_MUTEX_MERGE,
+    spec = importlib.util.spec_from_file_location('d3dcompiler_build', here / 'build_d3dcompiler.py')
+    compiler = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(compiler)
+    (root / 'licenses').mkdir(exist_ok=True)
+    compiler_build = compiler.build(root / 'pe64/d3dcompiler_47.dll', wine, work / 'd3dcompiler')
+    return {'unix_call_count': 146, 'd3dcompiler_47': compiler_build, 'commit': REVISION, 'keyed_mutex_merge': KEYED_MUTEX_MERGE,
             'patches': {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted((here / 'patches').glob('*.patch'))}}

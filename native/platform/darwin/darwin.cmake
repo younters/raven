@@ -100,6 +100,15 @@ if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
     add_test(NAME darwin_dxmt_self_share COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
         $<TARGET_FILE:raven> ${SELF_SHARE_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-self-share self_share)
     set_tests_properties(darwin_dxmt_self_share PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+    set(D3D_COMPILE_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-d3d-compile.exe)
+    add_custom_command(OUTPUT ${D3D_COMPILE_EXE}
+        COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/d3d_compile.c
+            -o ${D3D_COMPILE_EXE} -lkernel32 -ldxguid -lgcc
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/d3d_compile.c VERBATIM)
+    add_custom_target(darwin_d3d_compile_fixture ALL DEPENDS ${D3D_COMPILE_EXE})
+    add_test(NAME darwin_d3d_compile COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+        $<TARGET_FILE:raven> ${D3D_COMPILE_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/d3d-compile d3d_compile)
+    set_tests_properties(darwin_d3d_compile PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
     set(NT_FILE_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-nt-file.exe)
     add_custom_command(OUTPUT ${NT_FILE_EXE}
         COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/nt_file.c

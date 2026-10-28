@@ -23,6 +23,9 @@ def main():
         if not count.exists() or count.read_text().strip() != "146":
             print("source DXMT overlay required for keyed texture test")
             return 77
+    if kind == "d3d_compile" and not (root / "pe64/d3dcompiler_47.dll").exists():
+        print("provisioned d3dcompiler_47 required")
+        return 77
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
     prefix = work / "prefix"
