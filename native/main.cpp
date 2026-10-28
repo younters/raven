@@ -285,6 +285,10 @@ int main(int argc, char **argv)
 			<< "Complete Windows process initialization is not implemented yet.\n";
 		return 2;
 	}
+#ifdef __APPLE__
+	if (macos && first_file < argc)
+		setenv("RAVEN_PROGRAM_IMAGE", std::filesystem::absolute(argv[first_file]).string().c_str(), 1);
+#endif
 	try {
 		if (bind_imports || run_modules || run_process) {
 			raven::ModuleSet modules;

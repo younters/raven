@@ -308,8 +308,10 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 	for (auto variable=environ; *variable; ++variable)
 		if (!std::string_view(*variable).starts_with("RAVEN_DESKTOP_DPI=") &&
 			!std::string_view(*variable).starts_with("RAVEN_FOREGROUND_TICKET=") &&
-			!std::string_view(*variable).starts_with("RAVEN_FOREGROUND_CHILD=")) environment.emplace_back(*variable);
+			!std::string_view(*variable).starts_with("RAVEN_FOREGROUND_CHILD=") &&
+			!std::string_view(*variable).starts_with("RAVEN_PROGRAM_IMAGE=")) environment.emplace_back(*variable);
 	environment.push_back("RAVEN_FOREGROUND_CHILD=1");
+	environment.push_back("RAVEN_PROGRAM_IMAGE="+launch.image.string());
 	// Transfer the one-use macOS activation ticket explicitly; a consumed ticket is never passed to a later helper.
 	if (const char *ticket = std::getenv("RAVEN_FOREGROUND_TICKET")) {
 		if (int file = ::open(ticket, O_RDONLY); file >= 0) {

@@ -5,6 +5,7 @@
 
 void raven_macos_app_identity();
 bool raven_macos_claim_foreground();
+void raven_macos_program_identity();
 
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
@@ -308,6 +309,7 @@ struct CocoaPresentation::State {
 			dock_windows.insert(handle);
 			reconcile_dock = false;
 			if (first) {
+				raven_macos_program_identity();
 				[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 				if (raven_macos_claim_foreground()) [NSApp activateIgnoringOtherApps:YES];
 			}
