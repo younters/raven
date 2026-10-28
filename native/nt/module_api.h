@@ -19,6 +19,10 @@ public:
 	void set_path_lookup(std::function<uint64_t(const std::string &)> lookup) { path_lookup = std::move(lookup); }
 
 private:
+#ifdef __APPLE__
+	bool dispatch_darwin(std::string_view name);
+#endif
+	uint64_t module_handle_name(std::optional<std::string> decoded);
 	NativeProcess &process;
 	NativeEnvironment &environment;
 	const ModuleSet &modules;

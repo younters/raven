@@ -33,6 +33,7 @@
 #include "x86_dsound.h"
 #ifdef __APPLE__
 #include "platform/darwin/audio/api.h"
+#include "platform/darwin/dxmt/kernel_thunks.h"
 #endif
 #include "x86_thread_api.h"
 
@@ -901,6 +902,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	windows.set_menu_loader([&desktop](uint64_t instance,uint64_t identifier) { return desktop.menu_resource(instance,identifier); });
 	// Registry handlers whose arguments carry no pointer-width structures also serve 32-bit programs.
 	ApiRegistry shared_api;
+#ifdef __APPLE__
+	register_darwin_d3dkmt(shared_api, kernel_objects, guest_threads, true);
+#endif
 	windows.register_api(shared_api);
 	desktop.register_gdi_api(shared_api);
 	desktop.register_text_api(shared_api);

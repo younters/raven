@@ -6,6 +6,7 @@
 #include <cstdio>
 #ifdef __APPLE__
 #include "../platform/darwin/dxmt/identity.h"
+#include "../platform/darwin/dxmt/kernel_thunks.h"
 #endif
 
 namespace raven {
@@ -157,8 +158,8 @@ void NativeX86System::lock_shared(uint64_t address)
 bool NativeX86System::dispatch(std::string_view name)
 {
 #ifdef __APPLE__
-	// The desktop's DPI handler changes the coordinate scale; the legacy no-op must not consume this call first.
-	if (name=="SetProcessDPIAware") return false;
+	// Darwin handlers supply DPI and keyed-mutex behavior before the legacy fallback.
+	if (name=="SetProcessDPIAware" || darwin_keyed_mutex_api(name)) return false;
 #endif
 	const auto known = std::find_if(exported.begin(), exported.end(), [&](const auto &item) { return item.name == name; });
 	if (known == exported.end())

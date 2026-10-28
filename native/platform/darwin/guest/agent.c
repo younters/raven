@@ -60,6 +60,8 @@ struct unix_library {
 };
 static struct unix_library unix_libraries[32];
 static uint32_t unix_library_count;
+static __thread uint32_t active_unix_code;
+static __thread void *active_unix_args;
 
 int32_t raven_dispatch_unix_call(uint64_t handle, uint32_t code, void *args)
 {
@@ -70,8 +72,12 @@ int32_t raven_dispatch_unix_call(uint64_t handle, uint32_t code, void *args)
 		if ((uint64_t)library->functions != handle)
 			continue;
 		result = (int32_t)0xc000000dU; // STATUS_INVALID_PARAMETER
-		if (code < library->count && library->functions[code])
-			result = library->functions[code](args);
+		if (code < library->count && library->functions[code]) {
+            active_unix_code = code;
+            active_unix_args = args;
+            result = library->functions[code](args);
+            active_unix_args = NULL;
+        }
 		break;
 	}
 	return result;
@@ -805,6 +811,7 @@ void raven_agent_stop(int signal, siginfo_t *info, void *raw, uint32_t index)
 		fprintf(stderr, "raven-bootstrap: native fault %d in %s+0x%llx (%s) at %p\n", signal,
 			image.dli_fname ? image.dli_fname : "unknown", thread->registers.rip - (uint64_t)image.dli_fbase,
 			image.dli_sname ? image.dli_sname : "unknown", info->si_addr);
+        fprintf(stderr, "raven-bootstrap: active unix call %u args=%p\n", active_unix_code, active_unix_args);
 		void *frames[32];
 		backtrace_symbols_fd(frames, backtrace(frames, 32), STDERR_FILENO);
 	}

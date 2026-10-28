@@ -220,3 +220,70 @@ Existing files outside the Darwin platform directory have these final line delta
 
 The new `scripts/provision-dxmt.py` has 78 lines. New DXMT provenance and license files total 861 lines. There is no final diff in
 `cocoa.mm`: IOSurface layer scaling lives entirely in `dxmt/presentation.mm` and inherits the existing graphics layer's contentsScale.
+
+### Experimental source overlay (Firefox investigation)
+
+The opt-in source provisioner pins `3b252590cb0290e36fca6f088b5255b871d2d95a`, which contains
+keyed-mutex merge `e520fea415ba4b82b0c346dae77bbb1be4897453` (upstream PR #195).
+It applies the foreign-HWND source patch and links the unixlib directly to Raven's adapter instead
+of Wine's unix libraries. Two additional source patches correct the non-indexed geometry argument
+sentinel and preserve signed 100 ns keyed-mutex timeouts (including infinite waits). The normal binary-patched v0.80 path remains the default until runtime
+qualification passes. Building the upstream test executables is not equivalent to passing them.
+
+Prerequisites: Meson, the Windows cross compiler, Metal's Xcode toolchain, **x86_64** LLVM 15 static
+libraries, and a private configured Wine build. Current DXMT still requires major version 15;
+the Apple Silicon Homebrew support does not make arm64 LLVM archives suitable for this unixlib.
+The existing local LLVM installation is `/Users/yount/Documents/Projects/raven-components-build/llvm15`.
+Do not use an arm64-only Homebrew archive in its place.
+
+For Wine 10 source already provisioned under `$C/tools/wine-src`, configure a fresh external directory:
+
+```sh
+export PATH="$C/tools/bin:$(brew --prefix bison)/bin:$PATH"
+mkdir -p /tmp/raven-firefox-wine-build
+cd /tmp/raven-firefox-wine-build
+CC='clang -arch x86_64' CXX='clang++ -arch x86_64' "$C/tools/wine-src/configure" \
+  --host=x86_64-apple-darwin --enable-win64 --disable-tests --without-x --without-freetype \
+  --without-gstreamer --without-pcap --without-sdl --without-usb --without-vulkan --without-cups --without-gnutls
+make -j4 BISON="$(brew --prefix bison)/bin/bison" tools/winebuild/winebuild \
+  dlls/ntdll/x86_64-windows/libntdll.a dlls/dbghelp/x86_64-windows/libdbghelp.a \
+  dlls/winecrt0/x86_64-windows/libwinecrt0.a
+```
+
+From Raven's checkout:
+
+```sh
+python3 scripts/provision-dxmt.py --destination /tmp/raven-firefox-source-components \
+  --source-llvm ~/Documents/Projects/raven-components-build/llvm15 \
+  --source-wine /tmp/raven-firefox-wine-build
+```
+
+The source build and submodules stay inside the chosen destination's `dxmt-source-build` directory;
+that directory is provisioner-owned and reset to the pin on each invocation. Builds use `-j4`.
+`dxmt/installed.json` records the source revision, patch hashes and installed file hashes. The source
+overlay carries the pin’s LGPL license files and retained source separately from the MIT fallback’s notices.
+The source table has 146 entries; provisioning verifies that its first 132 entries match the fallback
+wrapper layout before publishing `unix64/unix-call-count`.
+For setup.sh, set `RAVEN_DXMT_SOURCE_BUILD=1` and an explicit **private** `RAVEN_COMPONENTS`
+destination. `RAVEN_DXMT_LLVM15` and `RAVEN_DXMT_WINE_BUILD` can reuse prepared toolchains.
+Otherwise the source helper checks the existing x86_64 LLVM 15 installation, then a missing-only
+Homebrew llvm@15 installation, and finally builds pinned LLVM 15.0.7 static libraries under
+`~/Documents/Projects/raven-components-build/llvm15`. An arm64-only Homebrew installation is
+not used for the x86_64 unixlib. Wine's build tools and import libraries stay in a private build
+under that same build root; `RAVEN_DXMT_BUILD_ROOT` overrides it. All builds use `-j4` and nothing
+is installed system-wide. The existing LLVM/Wine reuse path was tested; the LLVM-from-scratch
+branch was not needed on this machine.
+
+
+The new D3DKMT keyed-mutex implementation shares opaque runtime metadata, 64-bit keys and GPU
+fence values across processes in the prefix's shared-object namespace. Guest waits yield to the
+scheduler. Tests cover both pointer widths, same-process thread contention, cross-process handoff,
+timeout and persistent abandonment. `darwin_dxmt_shared_keyed` additionally imports a real DXMT
+texture into another process and checks synchronized GPU pixel readback; it explicitly skips on
+the v0.80 fallback. NT-security keyed-mutex handles are not implemented and return
+`STATUS_NOT_SUPPORTED`. Abruptly terminated creators can leave small metadata files in the test
+prefix; normal destruction removes them.
+
+`raven-apps` selects the AMD compatibility identity for `firefox.exe`, including generated app
+bundles launched from Launchpad, while preserving explicit caller overrides. Direct runtime launches
+remain opt-in through `RAVEN_DXGI_VENDOR=amd`. This setting does not disable Firefox's sandboxes.

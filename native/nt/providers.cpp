@@ -1639,6 +1639,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 #ifdef __APPLE__
 	nt_names.push_back("__wine_dbg_output");
 	nt_names.push_back("__wine_unix_call_dispatcher");
+	nt_names.push_back("LdrGetDllHandle");
+	nt_names.push_back("RtlFindExportedRoutineByName");
 	nt_names.push_back("strncpy"); // winemetal.dll can be loaded after ntdll's export table was built.
 #endif
 	nt_names.insert(nt_names.end(),NativeEnvironment::nt_exports().begin(),NativeEnvironment::nt_exports().end());
@@ -2025,6 +2027,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 								const auto pc = context_rip(frame);
 								if (!trace_unwinder.module_at(pc)) break;
 								std::cerr << ' ' << describe(pc);
+                                // TEMP_FIREFOX_DIAGNOSTIC: restored nonvolatile registers identify sandbox export lookup.
+                                if (std::getenv("RAVEN_TRACE_STRINGS"))
+                                    for (size_t reg : {size_t(3), size_t(6), size_t(7), size_t(12), size_t(13), size_t(14), size_t(15)})
+                                        if (auto text = describe_text(process, context_register(frame, reg)); !text.empty())
+                                            std::cerr << " <r" << reg << ":" << text << ">";
 								if (const auto function = trace_unwinder.lookup(pc)) trace_unwinder.unwind(0, pc, *function, frame);
 								else trace_unwinder.unwind_leaf(frame);
 							}
@@ -2555,7 +2562,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	if (opengl) opengl->register_api(api_registry, threads);
 #endif
 #ifdef __APPLE__
-	register_darwin_d3dkmt(desktop_api, kernel_objects);
+	register_darwin_d3dkmt(desktop_api, kernel_objects, threads);
 #endif
 	windows.register_api(desktop_api);
 	desktop.register_gdi_api(desktop_api);
@@ -2759,7 +2766,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				const auto system_names = system_library_names();
 				// COM graphics components have no Win32 import-library export list, but are system libraries too.
 				const bool system = std::find(system_names.begin(), system_names.end(), identity) != system_names.end() ||
-					identity == "dwrite.dll" || identity == "d2d1.dll" || identity == "uianimation.dll";
+					identity == "dwrite.dll" || identity == "d2d1.dll" || identity == "uianimation.dll"
+#ifdef __APPLE__
+                    || darwin_graphics_system_module(identity, true)
+#endif
+                    ;
 				if (!system && !activation_contexts().library_folder(identity)) {
 					if (const auto found = paths.find_library(launch->image_path, from_utf8(identity), true, flags)) {
 						bytes = ModuleBytes::map(found->host);
