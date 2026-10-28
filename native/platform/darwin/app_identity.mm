@@ -1,6 +1,7 @@
 // Apply launcher metadata once, before AppKit registers this process with the Dock.
 #import <AppKit/AppKit.h>
 #include <algorithm>
+#include <cerrno>
 #include <crt_externs.h>
 #include <cstdint>
 #include <cstdio>
@@ -10,12 +11,15 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
+#include <mach-o/dyld.h>
+#include <span>
 #include <spawn.h>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <sys/file.h>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 #include "graphics/icon_bitmap.h"
@@ -83,9 +87,10 @@ uint16_t word(std::span<const uint8_t> data, size_t at)
 	return at+2 <= data.size() ? uint16_t(data[at] | (uint16_t(data[at+1])<<8)) : 0;
 }
 
-NSString *version_string(std::span<const uint8_t> data, size_t start, NSString *wanted, unsigned depth = 0)
+NSString *version_string(std::span<const uint8_t> data, size_t start, NSString *wanted, size_t &budget, unsigned depth = 0)
 {
-	if (depth >= 32) return nil;
+	if (depth >= 32 || !budget) return nil;
+	--budget;
 	if (start+6 > data.size()) return nil;
 	const size_t end = std::min(data.size(),start+word(data,start));
 	if (end <= start+6) return nil;
@@ -100,8 +105,8 @@ NSString *version_string(std::span<const uint8_t> data, size_t start, NSString *
 		if (value.length) return value;
 	}
 	at = (std::min(end,at+value_length)+3)&~size_t(3);
-	while (at+6 <= end) {
-		if (NSString *found = version_string(data,at,wanted,depth+1)) return found;
+	while (at+6 <= end && budget) {
+		if (NSString *found = version_string(data.first(end),at,wanted,budget,depth+1)) return found;
 		const size_t step = word(data,at);
 		if (step < 6) break;
 		at = (at+step+3)&~size_t(3);
@@ -140,28 +145,37 @@ void raven_macos_program_identity()
 	if (std::getenv("RAVEN_APP_NAME") && std::getenv("RAVEN_APP_ICON")) return;
 	const char *path = std::getenv("RAVEN_PROGRAM_IMAGE");
 	if (!path) return;
-	try {
-		std::ifstream stream(path,std::ios::binary);
-		if (!stream) return;
-		std::vector<uint8_t> file{std::istreambuf_iterator<char>(stream),{}};
-		raven::PEImage image(file);
-		NSString *name = nil, *product = nil;
-		for (const auto &resource:image.resources()) {
-			if (resource.type != raven::ResourceKey(uint32_t(16))) continue;
-			const auto data = image.file_span(resource.data_address,resource.size);
-			name = version_string(data,0,@"FileDescription");
-			product = version_string(data,0,@"ProductName");
-			if (name || product) break;
-		}
-		NSString *fallback = [NSString stringWithUTF8String:path].lastPathComponent.stringByDeletingPathExtension;
-		NSProcessInfo.processInfo.processName = name ?: product ?: fallback;
-		update_registered_name(name ?: product ?: fallback);
-		if (NSImage *icon = program_icon(file)) NSApp.applicationIconImage = icon;
-	} catch (...) {
-		NSString *fallback = [NSString stringWithUTF8String:path].lastPathComponent.stringByDeletingPathExtension;
-		NSProcessInfo.processInfo.processName = fallback;
-		update_registered_name(fallback);
+	static std::string cached_path;
+	static NSString *cached_name = nil;
+	static NSImage *cached_icon = nil;
+	if (cached_path != path) {
+		cached_path = path;
+		cached_name = [NSString stringWithUTF8String:path].lastPathComponent.stringByDeletingPathExtension;
+		cached_icon = nil;
+		try {
+			std::ifstream stream(path,std::ios::binary|std::ios::ate);
+			if (!stream || stream.tellg() <= 0) throw std::runtime_error("unreadable executable identity");
+			std::vector<uint8_t> file(size_t(stream.tellg()));
+			stream.seekg(0);
+			if (!stream.read(reinterpret_cast<char *>(file.data()),std::streamsize(file.size())))
+				throw std::runtime_error("short executable identity read");
+			raven::PEImage image(file);
+			NSString *name = nil, *product = nil;
+			size_t budget = 8192;
+			for (const auto &resource : image.resources()) {
+				if (resource.type != raven::ResourceKey(uint32_t(16)) || !budget) continue;
+				const auto data = image.file_span(resource.data_address,resource.size);
+				name = version_string(data,0,@"FileDescription",budget);
+				if (!product) product = version_string(data,0,@"ProductName",budget);
+				if (name) break;
+			}
+			cached_name = name ?: product ?: cached_name;
+			cached_icon = program_icon(file);
+		} catch (...) {}
 	}
+	NSProcessInfo.processInfo.processName = cached_name;
+	update_registered_name(cached_name);
+	if (cached_icon) NSApp.applicationIconImage = cached_icon;
 }
 
 void raven_macos_prepare_identity()
@@ -182,37 +196,52 @@ void raven_macos_disclaim_foreign_identity(char **argv)
 	auto responsible = reinterpret_cast<Responsible>(dlsym(RTLD_DEFAULT,"responsibility_get_pid_responsible_for_pid"));
 	if (std::getenv("RAVEN_TRACE_COCOA") && responsible)
 		fprintf(stderr,"identity: startup pid=%d responsible=%d checked=%s\n",getpid(),responsible(getpid()),getenv("RAVEN_RESPONSIBILITY_CHECKED") ?: "no");
-	if (std::getenv("RAVEN_RESPONSIBILITY_CHECKED") || std::getenv("RAVEN_FOREGROUND_CHILD") ||
-		(std::getenv("RAVEN_APP_NAME") && std::getenv("RAVEN_APP_ICON"))) return;
+	if (std::getenv("RAVEN_FOREGROUND_CHILD") || (std::getenv("RAVEN_APP_NAME") && std::getenv("RAVEN_APP_ICON"))) return;
+	if (std::getenv("RAVEN_RESPONSIBILITY_CHECKED")) {
+		if (!responsible || responsible(getpid()) != getpid()) unsetenv("RAVEN_RESPONSIBILITY_CHECKED");
+		return;
+	}
 	using Disclaim = int (*)(posix_spawnattr_t *,int);
 	auto disclaim = reinterpret_cast<Disclaim>(dlsym(RTLD_DEFAULT,"responsibility_spawnattrs_setdisclaim"));
 	if (std::getenv("RAVEN_TRACE_COCOA") && responsible)
 		fprintf(stderr,"identity: pid=%d responsible=%d checked=%s\n",getpid(),responsible(getpid()),getenv("RAVEN_RESPONSIBILITY_CHECKED") ?: "no");
 	if (!disclaim || (responsible && responsible(getpid()) == getpid())) return;
+	uint32_t path_size = 1024;
+	std::vector<char> executable(path_size);
+	if (_NSGetExecutablePath(executable.data(),&path_size)) {
+		executable.resize(path_size);
+		if (_NSGetExecutablePath(executable.data(),&path_size)) return;
+	}
 	posix_spawnattr_t attributes;
-	posix_spawn_file_actions_t actions;
 	if (posix_spawnattr_init(&attributes)) return;
-	posix_spawn_file_actions_init(&actions);
-	// A same-PID exec preserves status plumbing and ordinary inherited descriptors. Explicit descriptors may already be CLOEXEC.
+	int setup_status = 0;
+	std::vector<std::pair<int,int>> descriptor_flags;
+	// Preserve explicit fd arguments even when CLOEXEC; never resolve the executable through argv[0] or PATH.
 	for (char **arg = argv+1; *arg; ++arg) {
 		for (const std::string_view option : {"--environment-fd=", "--suspended-fd=", "--inherit-fd=", "--process-token-fd=",
 			"--handle-channel-fd=", "--diagnostics-fd=", "--exit-code-fd="}) {
 			if (std::string_view(*arg).starts_with(option)) {
 				const int fd = atoi(*arg+option.size());
-				if (fd >= 0 && fcntl(fd,F_GETFD) >= 0) posix_spawn_file_actions_addinherit_np(&actions,fd);
+				const int flags = fd >= 0 ? fcntl(fd,F_GETFD) : -1;
+				if (flags >= 0 && !setup_status) {
+					descriptor_flags.emplace_back(fd,flags);
+					if (fcntl(fd,F_SETFD,flags & ~FD_CLOEXEC)) setup_status = errno;
+				}
 				break;
 			}
 		}
 	}
-	setenv("RAVEN_RESPONSIBILITY_CHECKED","1",1);
-	const int disclaim_status = disclaim(&attributes,1);
-	if (std::getenv("RAVEN_TRACE_COCOA")) fprintf(stderr,"identity: disclaim status=%d\n",disclaim_status);
-	if (!disclaim_status && !posix_spawnattr_setflags(&attributes,POSIX_SPAWN_SETEXEC)) {
+	if (!setup_status) setup_status = disclaim(&attributes,1);
+	if (!setup_status) setup_status = posix_spawnattr_setflags(&attributes,POSIX_SPAWN_SETEXEC);
+	if (!setup_status && !setenv("RAVEN_RESPONSIBILITY_CHECKED","1",1)) {
 		pid_t pid;
-		const int result = posix_spawnp(&pid,argv[0],&actions,&attributes,argv,*_NSGetEnviron());
+		const int result = posix_spawn(&pid,executable.data(),nullptr,&attributes,argv,*_NSGetEnviron());
 		if (std::getenv("RAVEN_TRACE_COCOA")) fprintf(stderr,"identity: reexec failed %d\n",result);
 	}
-	posix_spawn_file_actions_destroy(&actions);
+	// Successful SETEXEC never returns. Any return must not authorize the independent application check-in.
+	unsetenv("RAVEN_RESPONSIBILITY_CHECKED");
+	for (auto entry = descriptor_flags.rbegin(); entry != descriptor_flags.rend(); ++entry)
+		fcntl(entry->first,F_SETFD,entry->second);
 	posix_spawnattr_destroy(&attributes);
 }
 
