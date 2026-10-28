@@ -1795,21 +1795,6 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     add_test(NAME native_pipe_roundtrip_x${width} COMMAND raven --run-process --execution=native --stdio=inherit ${pipe_roundtrip_client} -- -b)
                     set_tests_properties(native_pipe_roundtrip_x${width} PROPERTIES TIMEOUT 30
                         ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/pipe-roundtrip-prefix)
-                    if(APPLE)
-                        set(orphan_client ${CMAKE_CURRENT_BINARY_DIR}/orphan-contract${width}.exe)
-                        add_custom_command(OUTPUT ${orphan_client}
-                            COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
-                                -Wl,--entry,${dialog_entry},--no-insert-timestamp
-                                -o ${orphan_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/orphan_contract_client.c -lkernel32 -lgcc
-                            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/orphan_contract_client.c VERBATIM)
-                        list(APPEND DYNAMIC_DIALOG_CLIENTS ${orphan_client})
-                        foreach(orphan_mode RANGE 0 3)
-                            add_test(NAME native_orphan_${orphan_mode}_x${width}
-                                COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/native/platform/darwin/tests/orphan_contract.py
-                                    $<TARGET_FILE:raven> ${orphan_client} ${orphan_mode})
-                            set_tests_properties(native_orphan_${orphan_mode}_x${width} PROPERTIES TIMEOUT 30)
-                        endforeach()
-                    endif()
                     set(object_name_client ${CMAKE_CURRENT_BINARY_DIR}/object-name${width}.exe)
                     add_custom_command(OUTPUT ${object_name_client}
                         COMMAND ${dialog_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector

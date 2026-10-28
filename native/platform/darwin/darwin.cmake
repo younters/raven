@@ -357,6 +357,34 @@ endif()
 add_test(NAME native_darwin_apps COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/apps_test.py)
 
 # Both guest widths exercise the same printer contracts and verify the resulting PDF on the host.
+# Orphaned children: a parent host killed outright leaves its child a broken pipe, a signalled process handle and a failed
+# completion, and a detached child running.
+if(TARGET raven AND RAVEN_MINGW64)
+    foreach(width 64 32)
+        if(width EQUAL 64)
+            set(ORPHAN_COMPILER ${RAVEN_MINGW64})
+            set(ORPHAN_ENTRY raven_entry)
+        else()
+            set(ORPHAN_COMPILER ${RAVEN_MINGW32})
+            set(ORPHAN_ENTRY _raven_entry)
+        endif()
+        if(ORPHAN_COMPILER)
+            set(ORPHAN_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/orphan-contract${width}.exe)
+            add_custom_command(OUTPUT ${ORPHAN_FIXTURE}
+                COMMAND ${ORPHAN_COMPILER} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                    -Wl,--entry,${ORPHAN_ENTRY},--no-insert-timestamp -o ${ORPHAN_FIXTURE}
+                    ${RAVEN_DARWIN_DIR}/tests/orphan_contract.c -lkernel32 -lgcc
+                DEPENDS ${RAVEN_DARWIN_DIR}/tests/orphan_contract.c VERBATIM)
+            add_custom_target(orphan_contract_fixture${width} ALL DEPENDS ${ORPHAN_FIXTURE})
+            foreach(orphan_mode RANGE 0 3)
+                add_test(NAME native_orphan_${orphan_mode}_x${width} COMMAND ${Python3_EXECUTABLE}
+                    ${RAVEN_DARWIN_DIR}/tests/orphan_contract.py $<TARGET_FILE:raven> ${ORPHAN_FIXTURE} ${orphan_mode})
+                set_tests_properties(native_orphan_${orphan_mode}_x${width} PROPERTIES TIMEOUT 30)
+            endforeach()
+        endif()
+    endforeach()
+endif()
+
 if(TARGET raven AND RAVEN_MINGW64)
     foreach(width 64 32)
         if(width EQUAL 64)

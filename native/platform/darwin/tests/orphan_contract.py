@@ -22,33 +22,33 @@ with tempfile.TemporaryDirectory(prefix='raven-orphan-contract-') as prefix:
     reader.start()
     child = None
     try:
-        deadline = time.monotonic()+12
-        while time.monotonic()<deadline:
+        deadline = time.monotonic() + 12
+        while time.monotonic() < deadline:
             try: line = output.get(timeout=0.2)
             except queue.Empty:
                 if host.poll() is not None: break
                 continue
             print(line, end='', flush=True)
-            fields=line.split()
-            if len(fields)==3 and fields[:2]==['READY',str(mode)]:
-                child=int(fields[2]); break
+            fields = line.split()
+            if len(fields) == 3 and fields[:2] == ['READY', str(mode)]:
+                child = int(fields[2]); break
         if child is None: raise AssertionError('guest child did not report READY')
-        os.kill(host.pid,signal.SIGKILL)
+        os.kill(host.pid, signal.SIGKILL)
         host.wait(timeout=5)
-        if mode==3:
+        if mode == 3:
             time.sleep(0.5)
-            os.kill(child,0)  # a child without a wait must survive its parent's exit
-        deadline=time.monotonic()+7
-        passed=False
-        while time.monotonic()<deadline:
-            try: line=output.get(timeout=0.2)
+            os.kill(child, 0)  # a child without a wait must survive its parent's exit
+        deadline = time.monotonic() + 7
+        passed = False
+        while time.monotonic() < deadline:
+            try: line = output.get(timeout=0.2)
             except queue.Empty: continue
-            print(line,end='',flush=True)
-            if line.split()[:2]==['PASS',str(mode)]: passed=True; break
+            print(line, end='', flush=True)
+            if line.split()[:2] == ['PASS', str(mode)]: passed = True; break
         if not passed: raise AssertionError('child did not complete the orphan contract')
-        deadline=time.monotonic()+2
-        while time.monotonic()<deadline:
-            command_line=subprocess.run(['ps','-p',str(child),'-o','command='],capture_output=True,text=True).stdout
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            command_line = subprocess.run(['ps', '-p', str(child), '-o', 'command='], capture_output=True, text=True).stdout
             if '--run-process' not in command_line or fixture not in command_line:
                 break
             time.sleep(0.1)
