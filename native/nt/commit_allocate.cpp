@@ -3,6 +3,7 @@
 #include <sys/mman.h>
 
 namespace raven {
+
 static constexpr uint32_t invalid = 0xc000000dU, unsupported = 0xc00000bbU;
 static constexpr uint32_t no_memory = 0xc0000017U, conflict = 0xc0000018U, commitment_limit = 0xc000012dU;
 

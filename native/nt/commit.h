@@ -1,13 +1,17 @@
 #pragma once
+
 #include <cstddef>
 #include <cstdint>
 #include <span>
+
 namespace raven {
+
 class ApiCall;
 class NativeProcess;
 class NativeMemory;
-uint32_t commit_system_information(NativeProcess &, NativeMemory &, std::span<const uint64_t>);
 struct KernelContext;
+
+uint32_t commit_system_information(NativeProcess &, NativeMemory &, std::span<const uint64_t>);
 void commit_global_status_ex(ApiCall &, NativeMemory &);
 void commit_global_status(ApiCall &, NativeMemory &);
 void commit_performance_info(ApiCall &, KernelContext &);

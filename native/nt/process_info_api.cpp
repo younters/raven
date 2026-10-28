@@ -426,7 +426,8 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		const auto answer = own ? std::optional(objects.process_request(request)) : request_process(call[0], request);
 		if (!answer || answer->access) {
 			const uint32_t status = answer ? answer->access : 0xc0000001U;
-			call.fail(status == 0xc000012dU ? 1455 : status == 0xc0000017U ? 8 : status == 0xc0000018U || status == 0xc000002dU ? 487 : status == 0xc00000bbU ? 50 : 87);
+			call.fail(status == 0xc000012dU ? 1455 : status == 0xc0000017U ? 8 : status == 0xc0000018U || status == 0xc000002dU ? 487 :
+				status == 0xc00000bbU ? 50 : 87);
 			return;
 		}
 		if (protect)

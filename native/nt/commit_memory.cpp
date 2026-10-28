@@ -3,9 +3,8 @@
 
 namespace raven {
 
-// The sum of uncommitted bytes in every published window must fit the remaining
-// budget. Overlapping windows are deliberately counted twice. Guest log entries
-// can only consume this bounded set, even when a log fills before the next trap.
+// The sum of uncommitted bytes in every published window must fit the remaining budget. Overlapping windows are deliberately counted
+// twice. Guest log entries can only consume this bounded set, even when a log fills before the next trap.
 void NativeMemory::budget_windows()
 {
 	if (!commit_block) return;
