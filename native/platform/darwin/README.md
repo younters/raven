@@ -191,6 +191,19 @@ Measured on macOS 27.2, M4 Pro.
 
 ## Controller profiling
 
+On 2026-10-27, fresh copies of `raven-fixtures/firefox-new` with first-run terms accepted, the 4096 MiB commit limit and the launch
+recipe's sandbox variables received 30/30 keys in each of two complete runs per mode. Typing median/p95 latencies were 125.28/313.22
+and 199.65/432.32 ms by default, versus 1782.81/2201.69 and 1645.52/1856.57 ms in parallel. The median of run medians was therefore
+162.47 versus 1714.17 ms (10.55 times slower). Page-ready times were 13.624 and 11.356 s default, 13.931 and 14.212 s parallel.
+An intervening default attempt received only 25/30 keys and was excluded; the replacement allowed 1.5 s after raising/focusing and
+clicking the window before sending measured keys. All runs used the shared serial slot, `sample` during typing, and both profile switches.
+
+The largest `NativeThreads::pick` branch occupied 2.3-2.4% of default main-thread sample ticks versus 15.8-16.4% in parallel. The largest
+reactor-poll branch grew from 0.2-0.5% to 6.6-6.9%, with pending pipe operations repeatedly attempting socket reads. The largest
+handle-channel service branch grew from 2.1-2.2% to 9.9-11.0%. These are individual nested branches, not additive totals. Mach guest-memory
+read/write fallback had zero ticks in both modes. The samples identify scheduler/IPC polling as investigation targets, but do not prove
+that they explain the entire latency gap. No performance change was made from these measurements; parallel remains opt-in.
+
 `RAVEN_PROFILE=1` reports API handler time. `RAVEN_PROFILE_CONTROLLER=1` separately reports memory operations, Mach calls, service commands,
 stop waits, served calls and sleep counts. Totals are nested: do not add read time to its Mach-read time, or service time to its parent API.
 Stop-wait time includes guest execution and any served handlers; it is not a pure signal-latency measurement.
