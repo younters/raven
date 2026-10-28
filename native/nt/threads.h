@@ -109,7 +109,7 @@ public:
 	void add_pump(std::function<void()> work) { pumps.push_back(std::move(work)); }
 	// Runs at every scheduling decision, also while threads run: requests from other processes are answered without waiting for idleness.
 	void add_service(std::function<void()> work) { services.push_back(std::move(work)); }
-	void serve() { for (const auto &service : services) service(); }
+	void serve() { if (tearing_down) return; for (const auto &service : services) service(); }
 	// Ends the scheduler's idle wait early: called from a host thread that finished work a waiting guest thread looks for.
 	void nudge();
 	// For a wait outside the scheduler, such as a thread waiting for window messages while the others wait too: the latest time it may

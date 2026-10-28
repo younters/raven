@@ -14,6 +14,7 @@
 #include "guest/protocol.h"
 #include "controller_profile.h"
 #include "shared_surface.h"
+#include "audio/api.h"
 
 #include <algorithm>
 #include <atomic>
@@ -47,6 +48,9 @@ namespace raven {
 extern const char *api_in_progress;
 
 namespace {
+
+// Unwind a served handler before it parks a guest that must run an audio callback at its stopped API frame.
+struct AudioWaitNeedsStop {};
 
 uint32_t load(const uint32_t *word)
 {
@@ -2120,6 +2124,11 @@ uint64_t NativeProcess::serve_call(uint64_t stub, std::vector<uint64_t> words, s
 		begin_translated_call(std::move(words), floats);
 		state->served_handler(stub);
 		result = end_translated_call();
+	} catch (const AudioWaitNeedsStop &) {
+		state->translated_words.reset();
+		state->served_declined=true;
+		restore();
+		return 0;
 	} catch (...) {
 		state->translated_words.reset();
 		restore();
@@ -2253,6 +2262,10 @@ std::vector<uint64_t> NativeProcess::api_arguments(size_t count) const
 			}
 		}
 		words.resize(count);
+		if (state->serving && !state->serving_queued && !state->stopped && count>=2 && words[1] &&
+			(std::string_view(api_in_progress)=="WaitForSingleObject" || std::string_view(api_in_progress)=="WaitForSingleObjectEx") &&
+			raven_darwin::pending_audio_callbacks(*this))
+			throw AudioWaitNeedsStop{};
 		return words;
 	}
 	if (!state->awaiting_api || count > 128)
