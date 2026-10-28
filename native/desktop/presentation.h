@@ -54,10 +54,11 @@ struct HostSurface {
 struct DesktopWindowPresence {
 	bool visible = false, top_level = false, message_only = false, owner_visible = false;
 	uint32_t style = 0, ex_style = 0;
+	uint64_t owner = 0;
 	int32_t left = 0, top = 0, right = 0, bottom = 0;
 	int32_t screen_width = 0, screen_height = 0;
 	bool eligible() const {
-		return visible && top_level && !message_only && !owner_visible && !(ex_style & 0x80U) &&
+		return visible && top_level && !(style & 0x40000000U) && !message_only && !owner_visible && !(ex_style & 0x80U) &&
 			right > left && bottom > top && right > 0 && bottom > 0 && left < screen_width && top < screen_height;
 	}
 };

@@ -11,6 +11,7 @@ int main()
 	window.owner_visible=true; check(!window.eligible()); window.owner_visible=false;
 	window.ex_style=0x80; check(!window.eligible()); window.ex_style=0;
 	window.top_level=false; check(!window.eligible()); window.top_level=true;
+	window.style=0x40000000U; check(!window.eligible()); window.style=0;
 	window.message_only=true; check(!window.eligible()); window.message_only=false;
 	window.right=window.left; check(!window.eligible()); window.right=400;
 	window.left=1920; check(!window.eligible()); window.left=10;

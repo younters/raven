@@ -54,7 +54,7 @@ NSImage *program_icon(std::span<const uint8_t> file)
 		return [[NSImage alloc] initWithData:[NSData dataWithBytes:bytes.data() length:bytes.size()]];
 	auto bitmap=raven::decode_icon_dib(bytes);
 	for (size_t i=0;i<bitmap.and_mask.size();++i)
-		if (bitmap.and_mask[i]) bitmap.color.rgba[i*4+3]=0;
+		bitmap.color.rgba[i*4+3]=bitmap.and_mask[i] ? 0 : bitmap.has_alpha ? bitmap.color.rgba[i*4+3] : 255;
 	CGDataProviderRef provider=CGDataProviderCreateWithData(nullptr,bitmap.color.rgba.data(),bitmap.color.rgba.size(),nullptr);
 	CGColorSpaceRef colors=CGColorSpaceCreateDeviceRGB();
 	CGImageRef image=CGImageCreate(bitmap.color.width,bitmap.color.height,8,32,bitmap.color.width*4,colors,

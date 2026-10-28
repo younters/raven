@@ -299,6 +299,7 @@ void NativeWindows::present(uint64_t handle, bool force)
 			.visible=objects.window_visible(handle), .top_level=!window->parent, .message_only=window->message_only,
 			.owner_visible=owning && objects.window_visible(owner) && owning->presented,
 			.style=window->style, .ex_style=window->ex_style,
+			.owner=owner,
 			.left=window->outer.left, .top=window->outer.top, .right=window->outer.right, .bottom=window->outer.bottom,
 			.screen_width=screen ? screen->first : 0, .screen_height=screen ? screen->second : 0});
 	}
