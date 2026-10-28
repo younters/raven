@@ -21,6 +21,8 @@ static void rejected(const std::function<void()> &operation, const char *message
 	check(failure.find(message)!=failure.npos,"memory negative failed for another reason");
 }
 
+#include "commit_test_cases.h"
+
 int main(int argc, char **argv)
 {
 	try {
@@ -57,13 +59,14 @@ int main(int argc, char **argv)
 			memory.count()==1,"invalid release removed a reservation");
 		check(!memory.free(reserved.address,0,0x4000).status && !memory.free(reserved.address,0,0x8000).status &&
 			!memory.count() && !memory.bytes(),"whole decommit/release leaked state");
-		check(memory.allocate(0,20000,0x3000,4).status==0xc0000017U && !memory.count(),"reservation limit created state");
+		check(memory.allocate(0,20000,0x3000,4).status==0xc000012dU && !memory.count(),"reservation limit created state");
 		check(memory.allocate(0,0,0x3000,4).status && memory.allocate(UINT64_MAX,4096,0x3000,4).status &&
 			memory.allocate(0,4096,0x403000,4).status && memory.allocate(0,4096,0x3000,0x104).status && !memory.count(),
 			"invalid geometry or unsupported modifiers succeeded");
 		// MEM_TOP_DOWN only states a preference for high addresses, which any free address satisfies.
 		const auto top_down=memory.allocate(0,4096,0x103000,4);
 		check(!top_down.status && !memory.free(top_down.address,0,0x8000).status && !memory.count(),"top-down allocation failed");
+		commit_test_cases(process,environment,memory);
 		const auto code=memory.allocate(0,4096,0x3000,4);
 		check(!code.status,"executable test allocation failed");
 		process.write_memory(code.address,std::array<uint8_t,6>{0xb8,42,0,0,0,0xc3});

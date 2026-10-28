@@ -282,3 +282,14 @@ serializes syncs. Parser and lifecycle contracts run without guest execution:
 python3 native/platform/darwin/tests/apps_test.py
 ```
 - **Audio:** WinMM playback uses CoreAudio AudioQueue on macOS; Linux retains PulseAudio. The other macOS Windows audio interfaces share a host mixer and are described in [audio/IMPLEMENTATION.md](audio/IMPLEMENTATION.md).
+
+## Windows commit accounting
+
+The system commit limit models RAM plus a system-managed page file of `min(max(3 × RAM, 4 GiB), volume / 8)` on the VM volume.
+`RAVEN_COMMIT_LIMIT_MB` overrides this system limit (including the value stored by the prefix control panel); it is no longer a fixed
+512 MiB private budget. Private committed pages and pagefile-backed or writable/copy-on-write views charge once, release and decommit
+return the charge, and reset/protection changes preserve it. Guest commit windows are bounded by remaining capacity, keeping their fast
+path within the same limit. Memory status and performance APIs use host physical availability plus guest commitment; the reported system
+charge includes host RAM use and swap and has a process-local peak. This is an approximation across independent Raven processes, with
+no shared global reservation ledger. Secondary stacks still commit their entire reservation; the bootstrap-owned main stack is included
+in virtual address occupancy but not private commit. Process working set remains the host controller resident-size approximation.

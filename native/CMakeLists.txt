@@ -2681,6 +2681,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                         -o ${CMAKE_CURRENT_BINARY_DIR}/kernel-threads32.exe ${LOADER_SOURCES}/kernel_threads_client.c -lkernel32
                     DEPENDS ${LOADER_SOURCES}/kernel_threads_client.c VERBATIM)
                 add_custom_target(kernel_threads32_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/kernel-threads32.exe)
+                include(${CMAKE_CURRENT_SOURCE_DIR}/nt/commit_tests.cmake)
                 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/served-semaphore32.exe
                     COMMAND ${RAVEN_MINGW32} -O1 -nostdlib -fno-stack-protector -fno-builtin
                         -Wl,--entry,_raven_entry,--no-insert-timestamp
