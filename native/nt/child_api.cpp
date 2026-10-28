@@ -6,8 +6,10 @@
 #include "text.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <fstream>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -184,6 +186,20 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 		if (const auto pipe = std::dynamic_pointer_cast<PipeObject>(file); pipe && !ensure_pipe_connected(*pipe)) {
 			call.fail(pipe->server ? 536 : 233);
 			return;
+		}
+		// FIONREAD reports zero both for an empty pipe and for one whose last writer died.
+		// Peek at one byte to distinguish EOF without consuming data. A caller that polls
+		// PeekNamedPipe must see the same broken-pipe error as a reader, or it can spin forever.
+		if (const auto pipe = std::dynamic_pointer_cast<PipeObject>(file)) {
+			char byte;
+			const auto count = ::recv(file->descriptor, &byte, 1, MSG_PEEK | MSG_DONTWAIT);
+			pollfd state{file->descriptor, 0, 0};
+			const bool closed = count == 0 &&
+				(!pipe->message_mode || (::poll(&state, 1, 0) > 0 && (state.revents & (POLLHUP | POLLERR))));
+			if (closed || (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+				call.fail(109);
+				return;
+			}
 		}
 		int available = 0;
 		if (::ioctl(file->descriptor, FIONREAD, &available) || available < 0) {
