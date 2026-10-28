@@ -116,7 +116,7 @@ def main():
     run(["clang", "-O1", "-w", source / "sdk/tools/spec2def/spec2def.c", "-o", output / "spec2def"])
     for name in ("winnt", "ntdef", "devioctl"):
         run([output / "hpp", name + ".template.h", generated / "psdk" / (name + ".h")], source / "sdk/include/xdk")
-    widl = ["widl", "-m32" if x86 else "-m64", "-D__REACTOS__", "-I", source / "sdk/include/psdk", "-I", source / "sdk/include", "-I", generated / "psdk"]
+    widl = ["widl", "-b", triple, "-D__REACTOS__", "-I", source / "sdk/include/psdk", "-I", source / "sdk/include", "-I", generated / "psdk"]
     idls = set()
 
     def idl(name):
