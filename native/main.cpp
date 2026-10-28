@@ -142,6 +142,10 @@ static void show_fault(int signal)
 
 int main(int argc, char **argv)
 {
+#ifdef __APPLE__
+	extern void raven_macos_prepare_identity();
+	raven_macos_prepare_identity();
+#endif
 	if (std::getenv("RAVEN_BACKTRACE")) {
 		std::set_terminate(show_backtrace);
 		std::signal(SIGSEGV, show_fault);
@@ -207,6 +211,12 @@ int main(int argc, char **argv)
 	} else if (run_process && argc>first_file && std::string_view(argv[first_file])=="--desktop=macos") {
 		macos=true; ++first_file;
 	}
+#ifdef __APPLE__
+	if (macos) {
+		extern void raven_macos_prepare_foreground();
+		raven_macos_prepare_foreground();
+	}
+#endif
 	bool inherited_stdio=false;
 	if (run_process && argc>first_file && std::string_view(argv[first_file])=="--stdio=inherit") {
 		inherited_stdio=true; ++first_file;
