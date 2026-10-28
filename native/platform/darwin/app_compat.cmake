@@ -1,0 +1,20 @@
+foreach(width 64 32)
+    set(compiler ${RAVEN_MINGW64})
+    set(entry raven_entry)
+    if(width EQUAL 32)
+        set(compiler ${RAVEN_MINGW32})
+        set(entry _raven_entry)
+    endif()
+    if(compiler)
+        foreach(area socket_exclusive)
+            set(fixture ${CMAKE_CURRENT_BINARY_DIR}/darwin-${area}${width}.exe)
+            add_custom_command(OUTPUT ${fixture}
+                COMMAND ${compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${entry}
+                    -o ${fixture} ${RAVEN_DARWIN_DIR}/tests/${area}.c -lsecur32 -lws2_32 -lkernel32 -lgcc
+                DEPENDS ${RAVEN_DARWIN_DIR}/tests/${area}.c VERBATIM)
+            add_custom_target(darwin_${area}${width}_fixture ALL DEPENDS ${fixture})
+            add_test(NAME native_darwin_${area}_x${width} COMMAND raven --run-process --execution=native --timeout-ms=5000 ${fixture})
+            set_tests_properties(native_darwin_${area}_x${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        endforeach()
+    endif()
+endforeach()

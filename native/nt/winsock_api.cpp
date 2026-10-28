@@ -18,6 +18,7 @@
 #ifdef __APPLE__
 #include <mutex>
 #include "platform/darwin/socket_catalog.h"
+#include "platform/darwin/socket_options.h"
 #endif
 #include <sstream>
 #include <tuple>
@@ -43,6 +44,9 @@ public:
 	~SocketObject() override { ::close(descriptor); }
 	int signaled(uint32_t) const override { return 1; }
 	int descriptor;
+#ifdef __APPLE__
+	darwin::SocketOptions options;
+#endif
 	bool guest_nonblocking = false;
 	// Set when the program closed the handle while transfers on it were still pending: they end as aborted.
 	bool closed = false;
@@ -1396,6 +1400,9 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			fail(call, wsaenotsock);
 			return;
 		}
+#ifdef __APPLE__
+		if (socket->options.handle(call, socket->descriptor, true)) return;
+#endif
 		const auto option = host_option(call.u32(1), call.u32(2));
 		if (!option) {
 			fail(call, wsaenoprotoopt);
@@ -1450,6 +1457,9 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			fail(call, socket ? wsaefault : wsaenotsock);
 			return;
 		}
+#ifdef __APPLE__
+		if (socket->options.handle(call, socket->descriptor, false)) return;
+#endif
 		const auto option = host_option(call.u32(1), call.u32(2));
 		if (!option) {
 			fail(call, wsaenoprotoopt);
