@@ -136,6 +136,20 @@ and output hashes. Raven forwards the resulting IOSurface Mach port to the HWND 
 sandboxed GPU process can then present D3D11 frames in its browser process. Provision a new external DXMT overlay with
 `scripts/provision-dxmt.py` to get this patch; an older overlay retains the rejection.
 
+### Opt-in DXGI identity
+
+`RAVEN_DXGI_VENDOR=amd` reports AMD `1002:7340` and “AMD Radeon Pro 5300M” through both
+`EnumDisplayDevices` and DXMT's `IDXGIAdapter::GetDesc`. `nvidia` reports `10de:1e84`, `intel` reports
+`8086:3e92`, and a four-digit hex vendor (with optional `0x`) reports that vendor and device `0001`.
+The host passes DXMT's existing `dxgi.customVendorId`, `dxgi.customDeviceId`, and `dxgi.customDeviceDesc`
+options through the guest Windows `DXMT_CONFIG` environment variable; existing options from
+`RAVEN_GUEST_DXMT_CONFIG` or `DXMT_CONFIG` are retained. The
+display's SetupAPI driver key resolves to a process-local registry view with driver version
+`31.0.22000.11000` and date `10-01-2025`; this does not write the prefix hive. Without the setting,
+the display identification remains unchanged. `raven-apps` selects `amd` by default for `firefox.exe`
+and permits an explicit caller override. These identifiers are compatibility declarations for DXMT,
+not the Mac's physical GPU model.
+
 The pinned DXMT version creates textures with `D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX` but has a TODO for the mutex and
 does not implement `IDXGIKeyedMutex::AcquireSync` or `ReleaseSync`. Its named NT share and shared fence paths are also
 not covered by the fixture. Firefox's DXMT WebGL path additionally needs `d3dcompiler_47.dll` in the private browser

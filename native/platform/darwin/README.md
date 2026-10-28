@@ -271,6 +271,11 @@ These compile, but do not yet behave as on Linux.
 
 ## Installed Windows apps in Finder and the Dock
 
+Firefox bundles launched by `raven-apps` select the opt-in AMD DXGI compatibility identity by default;
+set `RAVEN_DXGI_VENDOR` explicitly to override it. Raw `raven` launches retain the physical DXMT
+identity unless this variable is set. The reported PCI ID, driver metadata and DXMT options are
+documented in [DXMT.md](DXMT.md).
+
 ```sh
 native/platform/darwin/raven-apps sync                       # all ~/.local/share/raven prefixes
 native/platform/darwin/raven-apps sync ~/.local/share/raven/Steam

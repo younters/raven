@@ -7,9 +7,14 @@
 #include "nls.h"
 
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <stdexcept>
 #include <utility>
+#ifdef __APPLE__
+#include "../platform/darwin/dxmt/identity.h"
+constexpr std::u16string_view raven_display_driver_key = u"HKEY_LOCAL_MACHINE\\System\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0000";
+#endif
 
 namespace raven {
 
@@ -402,7 +407,11 @@ bool NativeRegistry::resolve(uint64_t parent, std::u16string_view path, std::u16
 		if (found == open_keys.end())
 			return false;
 		base = found->second;
+#ifdef __APPLE__
+		shown = base == fold(raven_display_driver_key) ? std::u16string(raven_display_driver_key) : keys.at(base).path;
+#else
 		shown = keys.at(base).path;
+#endif
 	}
 	std::u16string tail(path);
 	while (!tail.empty() && tail.front() == u'\\')
@@ -459,7 +468,13 @@ uint32_t NativeRegistry::open(uint64_t parent, std::u16string_view path, uint64_
 	std::u16string folded, display;
 	if (!resolve(parent, path, folded, display))
 		return bad_handle;
-	if (!keys.contains(folded))
+	const bool virtual_display =
+#ifdef __APPLE__
+		darwin_dxgi::identity() && folded == fold(raven_display_driver_key);
+#else
+		false;
+#endif
+	if (!virtual_display && !keys.contains(folded))
 		return file_not_found;
 	if (open_keys.size() >= 10000)
 		return 8;
@@ -483,6 +498,18 @@ uint32_t NativeRegistry::query(uint64_t key, std::u16string_view name, uint32_t 
 	const auto found = open_keys.find(key);
 	if (found == open_keys.end())
 		return predefined(key) ? file_not_found : bad_handle;
+#ifdef __APPLE__
+	if (darwin_dxgi::identity() && found->second == fold(raven_display_driver_key)) {
+		const auto folded_name = fold(name);
+		const std::u16string_view value = folded_name == fold(u"DriverVersion") ? u"31.0.22000.11000" :
+			folded_name == fold(u"DriverDate") ? u"10-01-2025" : u"";
+		if (value.empty()) return file_not_found;
+		type = 1;
+		data.assign((value.size() + 1) * 2, 0);
+		std::memcpy(data.data(), value.data(), value.size() * 2);
+		return 0;
+	}
+#endif
 	const auto &values = keys.at(found->second).values;
 	const auto value = values.find(fold(name));
 	if (value == values.end())

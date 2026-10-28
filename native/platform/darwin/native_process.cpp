@@ -15,6 +15,7 @@
 #include "controller_profile.h"
 #include "shared_surface.h"
 #include "audio/api.h"
+#include "dxmt/identity.h"
 
 #include <algorithm>
 #include <atomic>
@@ -249,6 +250,14 @@ GuestAgent::GuestAgent(const std::string &bootstrap, std::chrono::milliseconds t
 		char *arguments[] = {path.data(), const_cast<char *>(name.c_str()), nullptr};
 		char avx[] = "ROSETTA_ADVERTISE_AVX=1";
 		std::vector<std::string> native_environment{avx};
+		if (const auto gpu = darwin_dxgi::identity()) {
+			std::string config = darwin_dxgi::dxmt_config(*gpu);
+			if (const char *existing = std::getenv("DXMT_CONFIG")) config = std::string(existing) + ";" + config;
+			native_environment.emplace_back("DXMT_CONFIG=" + config);
+		} else if (const char *config = std::getenv("DXMT_CONFIG"))
+			native_environment.emplace_back(std::string("DXMT_CONFIG=") + config);
+		if (const char *file = std::getenv("DXMT_CONFIG_FILE"))
+			native_environment.emplace_back(std::string("DXMT_CONFIG_FILE=") + file);
 		for (const char *key : {"MTL_DEBUG_LAYER", "MTL_SHADER_VALIDATION", "MTL_CAPTURE_ENABLED"})
 			if (const char *value = std::getenv(key)) native_environment.emplace_back(std::string(key) + "=" + value);
 		std::vector<char *> environment;

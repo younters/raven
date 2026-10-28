@@ -10,6 +10,9 @@
 #include <memory>
 #include <cstring>
 #include <sys/mman.h>
+#ifdef __APPLE__
+#include "../platform/darwin/dxmt/identity.h"
+#endif
 
 namespace raven {
 
@@ -1154,7 +1157,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	for (const auto name : system_export_names("gdi32.dll"))
 		if (name.starts_with("D3DKMT") && !registry.has(name))
 			registry.add(name, 1, [](ApiCall &call) { call.ret(0xC00000BBU); });
-	// One adapter, and one monitor on it, for programs that ask which display they are on.
+// One adapter, and one monitor on it, for programs that ask which display they are on.
 	const auto display_device = [](ApiCall &call, bool wide) {
 		const size_t size = wide ? 840 : 424;
 		if (call.u32(1) != 0 || !call[2] || call.load<uint32_t>(call[2]) != size) {
@@ -1172,9 +1175,21 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		record[1] = uint8_t(size >> 8);
 		const size_t name = 4, description = wide ? 68 : 36, flags = wide ? 324 : 164, identifier = wide ? 328 : 168;
 		put(name, monitor ? "\\\\.\\DISPLAY1\\Monitor0" : "\\\\.\\DISPLAY1");
+		#ifdef __APPLE__
+		const auto identity = darwin_dxgi::identity();
+		put(description, monitor ? "Raven Monitor" : identity ? identity->description : "Raven Display");
+		#else
 		put(description, monitor ? "Raven Monitor" : "Raven Display");
+		#endif
 		record[flags] = monitor ? 3 : 5;
+		#ifdef __APPLE__
+		const auto pci = identity ? darwin_dxgi::pci_id(*identity) : "PCI\\VEN_1AF4&DEV_1050";
+		put(identifier, monitor ? "MONITOR\\RAVEN0000" : pci);
+		if (!monitor && identity) put(wide ? 584 : 296,
+			"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0000");
+		#else
 		put(identifier, monitor ? "MONITOR\\RAVEN0000" : "PCI\\VEN_1AF4&DEV_1050");
+		#endif
 		call.write(call[2], record);
 		call.ret(1);
 	};

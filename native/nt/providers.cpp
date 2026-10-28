@@ -30,6 +30,7 @@
 #include "platform/darwin/unix_calls.h"
 #include "platform/darwin/audio/api.h"
 #include "platform/darwin/dxmt/presentation.h"
+#include "platform/darwin/dxmt/identity.h"
 #include "platform/darwin/dxmt/kernel_thunks.h"
 #endif
 #ifdef RAVEN_OPENGL
@@ -84,6 +85,8 @@ bool host_device_export(std::string_view library, std::string_view name)
 	// before the guest shell component's registry based COM activation path.
 	if (library == "ole32.dll" && name == "CoCreateInstance") return true;
 	if (library == "user32.dll" && name == "MessageBeep") return true;
+	if (library == "setupapi.dll" && name == "SetupDiGetDeviceRegistryPropertyW")
+		return darwin_dxgi::identity().has_value();
 #endif
 	return library == "setupapi.dll" && (name == "SetupDiGetClassDevsA" || name == "SetupDiGetClassDevsW" ||
 		name == "SetupDiEnumDeviceInfo" || name == "SetupDiEnumDeviceInterfaces" || name == "SetupDiDestroyDeviceInfoList");
