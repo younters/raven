@@ -81,16 +81,14 @@ void NativeMemory::settle()
 		const auto first=(base-found->first)/4096, pages=(end-base)/4096;
 		const auto committed=found->second.pages.nonzero(first,pages);
 		if (decommit) {
-			if (found->second.charged) used-=committed*4096;
+			used-=committed*4096;
 			found->second.pages.fill(first,pages,0);
 		} else {
-			if (found->second.charged) used+=(pages-committed)*4096;
+			used+=(pages-committed)*4096;
 			found->second.pages.fill(first,pages,4);
-			peak=std::max(peak,used);
 		}
 	}
 	*count=0;
-	peak=std::max(peak,used);
 }
 
 void NativeMemory::open_window(uint64_t from, uint64_t to)
