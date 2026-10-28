@@ -528,10 +528,18 @@ int main(int argc, char **argv)
 								if (names.insert(lower(symbol.module)).second)
 									pending.push_back(lower(symbol.module));
 						};
+						// Windows reads a delay import table only when a delayed function is first called, so one the file does not hold, as in a
+						// packed program whose unpacker writes it at run time, cannot stop the program here: its libraries are found when used.
+						const auto visit_delayed = [&](const raven::PEImage &image) {
+							try {
+								for (const auto &descriptor : image.delay_imports())
+									visit(descriptor.imports);
+							} catch (const std::runtime_error &) {
+							}
+						};
 						for (const auto &item : modules.all()) {
 							visit(item.second->imports);
-							for (const auto &descriptor : item.second->image.delay_imports())
-								visit(descriptor.imports);
+							visit_delayed(item.second->image);
 						}
 						while (!pending.empty()) {
 							const auto name = pending.back();
@@ -541,8 +549,7 @@ int main(int argc, char **argv)
 								const raven::PEImage image(*bytes);
 								visit(image.imports());
 								// A library the program loads lazily still needs its components in place.
-								for (const auto &descriptor : image.delay_imports())
-									visit(descriptor.imports);
+								visit_delayed(image);
 							}
 						}
 						return names;
