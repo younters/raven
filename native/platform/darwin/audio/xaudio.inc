@@ -39,6 +39,7 @@ void voice_callback(uint64_t callback, uint32_t index, uint64_t value=0) {
 	} catch (const std::exception &error) { if (std::getenv("RAVEN_AUDIO_TRACE")) std::fprintf(stderr,"Raven audio: callback failed: %s\n",error.what()); }
 }
 void service_voices() {
+	if (xvoices.empty()) return;
 	// A parallel guest may still be running when the host services its other threads. Calling into Windows code requires the
 	// stopped frame of an API call; keep the packets queued until the scheduler reaches one.
 	if (context.process.parallel() && !context.process.stopped()) return;

@@ -13,6 +13,10 @@ static void STDMETHODCALLTYPE loop_end(IXAudio2VoiceCallback *self,void *context
 static void STDMETHODCALLTYPE voice_error(IXAudio2VoiceCallback *self,void *context,HRESULT error) { (void)self; (void)context; (void)error; }
 static const IXAudio2VoiceCallbackVtbl callback_vtable={pass_start,pass_end,stream_end,buffer_start,buffer_end,loop_end,voice_error};
 static IXAudio2VoiceCallback callback={&callback_vtable};
+#ifdef AUDIO_LIFECYCLE
+static volatile LONG progress;
+static DWORD WINAPI worker(void *unused) { (void)unused; for (;;) InterlockedIncrement(&progress); }
+#endif
 int raven_entry(void) {
 	IXAudio2 *engine=0;
 	CHECK(XAudio2Create(&engine,0,XAUDIO2_DEFAULT_PROCESSOR)==S_OK && engine,1);
@@ -32,6 +36,11 @@ int raven_entry(void) {
 	XAUDIO2_VOICE_STATE state={0}; IXAudio2SourceVoice_GetState(voice,&state,0);
 	CHECK(state.BuffersQueued==1,7);
 	CHECK(IXAudio2SourceVoice_Start(voice,0,0)==S_OK,8);
+#ifdef AUDIO_LIFECYCLE
+	CHECK(CreateThread(0,0,worker,0,0,0)!=0,12);
+	Sleep(20);
+	return 0; // Leave playback and a computing worker for process teardown to unwind.
+#endif
 	Sleep(250); IXAudio2SourceVoice_GetState(voice,&state,0);
 	CHECK(state.BuffersQueued==0 && state.SamplesPlayed>=1200,9);
 	CHECK(started==1 && ended==1 && streams==1,10);

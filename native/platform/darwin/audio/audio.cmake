@@ -163,5 +163,14 @@ foreach(width IN ITEMS 64 32)
         add_test(NAME native_darwin_xaudio_parallel_x${width} COMMAND raven --run-process --execution=native --timeout-ms=10000 ${fixture})
         set_tests_properties(native_darwin_xaudio_parallel_x${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
             ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-xaudio-prefix${width};RAVEN_AUDIO_TRACE=1;RAVEN_PARALLEL=1")
+        set(lifecycle_fixture ${CMAKE_CURRENT_BINARY_DIR}/darwin-xaudio-lifecycle${width}.exe)
+        add_custom_command(OUTPUT ${lifecycle_fixture}
+            COMMAND ${audio_cc} -O2 -nostdlib -fno-builtin -fno-stack-protector -DAUDIO_LIFECYCLE -Wl,--entry,raven_entry
+                -o ${lifecycle_fixture} ${RAVEN_DARWIN_DIR}/audio/xaudio_client.c -lxaudio2_9 -lkernel32
+            DEPENDS ${RAVEN_DARWIN_DIR}/audio/xaudio_client.c VERBATIM)
+        add_custom_target(darwin_xaudio_lifecycle${width}_fixture ALL DEPENDS ${lifecycle_fixture})
+        add_test(NAME native_darwin_xaudio_lifecycle_x${width} COMMAND raven --run-process --execution=native --timeout-ms=10000 ${lifecycle_fixture})
+        set_tests_properties(native_darwin_xaudio_lifecycle_x${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+            ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-xaudio-prefix${width};RAVEN_AUDIO_TRACE=1;RAVEN_PARALLEL=1")
     endif()
 endforeach()
