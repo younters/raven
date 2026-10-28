@@ -1541,6 +1541,33 @@ CRT int wcstombs_s(size_t *converted, char *to, size_t size, const wchar_t *text
 /* Keep the Windows double ABI for math names the Office module does not yet supply. */
 extern long double fmal(long double, long double, long double), remainderl(long double, long double);
 CRT double fma(double x, double y, double z) { return (double)fmal(x, y, z); }
+CRT float fmaf(float x, float y, float z) { return (float)fmal(x, y, z); }
+CRT long *__timezone(void) { return &_timezone; }
+static char **timezone_names = _tzname;
+CRT char ***__tzname(void) { return &timezone_names; }
+CRT char *_i64toa(long long value, char *to, int radix)
+{
+	return digits_of(value < 0 && radix == 10 ? 0ULL - (unsigned long long)value : (unsigned long long)value,
+		value < 0 && radix == 10, to, radix);
+}
+CRT char *_ui64toa(unsigned long long value, char *to, int radix) { return digits_of(value, 0, to, radix); }
+typedef struct { long long quotient, remainder; } RavenLongLongDivision;
+__asm__(".section .drectve\n\t.ascii \" -export:lldiv=raven_lldiv -export:imaxdiv=raven_lldiv\"\n\t.text");
+RavenLongLongDivision raven_lldiv(long long numerator, long long denominator)
+{
+	RavenLongLongDivision result = {numerator / denominator, numerator % denominator};
+	return result;
+}
+CRT int _mktemp_s(char *name, size_t capacity)
+{
+	if (!name || !capacity || strnlen(name, capacity) == capacity) {
+		if (name && capacity) name[0] = 0;
+		set_errno(22); _invalid_parameter_noinfo(); return 22;
+	}
+	if (_mktemp(name)) return 0;
+	name[0] = 0;
+	return *_errno();
+}
 CRT double remainder(double x, double y) { return (double)remainderl(x, y); }
 extern double nextafter(double, double);
 CRT double nexttoward(double x, double y) { return nextafter(x, y); }
