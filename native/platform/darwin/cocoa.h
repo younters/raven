@@ -1,6 +1,7 @@
 #pragma once
 
 #include "desktop/presentation.h"
+#include "dock_policy.h"
 #include <memory>
 
 namespace raven {
@@ -15,6 +16,7 @@ public:
 	CocoaPresentation(const CocoaPresentation &) = delete;
 	CocoaPresentation &operator=(const CocoaPresentation &) = delete;
 	DesktopPresentation callbacks();
+	void describe(uint64_t, DesktopWindowPresence);
 	// Public only so the application delegate can name it.
 	struct State;
 

@@ -227,6 +227,7 @@ struct DesktopWindow {
 	bool destroying = false;
 	uint64_t bitmap = 0, dc = 0;
 	bool visible = false;
+	bool message_only = false;
 	bool painting = false, erase_pending = false;
 	DesktopRegion update{};
 	uint64_t update_generation=0;

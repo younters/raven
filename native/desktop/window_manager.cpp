@@ -160,6 +160,7 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 		window = objects.window(handle);
 	}
 	const bool show = !hide && !(window->style & ws_minimize && !window->parent);
+	if (presentation.visibility) presentation.visibility(handle, !hide);
 	if (show && (!window->parent || objects.window_visible(window->parent)))
 		present(handle);
 	else if (!hide && (window->style & ws_minimize) && previous && !window->parent && presentation.minimize)

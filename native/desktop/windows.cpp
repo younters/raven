@@ -293,6 +293,7 @@ void NativeWindows::present(uint64_t handle, bool force)
 	// program placed it: as a popup of the owner's host window, since a host window of its own would be placed by the compositor.
 	const auto owner=host_owner(*window);
 	const auto *owning=owner && owner!=handle ? objects.window(owner) : nullptr;
+	if (presentation.window_state) presentation.window_state(handle,objects);
 	if (presentation.owned_popup && owning && shown_on_owner(*window)) {
 		try {
 			presentation.owned_popup(handle,owner,window->outer.left-owning->outer.left,window->outer.top-owning->outer.top,bitmap->width,bitmap->height,pixels);
@@ -909,7 +910,7 @@ void NativeWindows::receive(const DesktopEvent &event)
 		focus_leaving=false;
 		key_down=initial; key_translation.reset();
 		if (!event.window) { set_focus(0); activate(0); }
-		else if (!focus || objects.window_root(focus)!=event.window) set_focus(event.window);
+		else if (!focus || objects.window_root(focus)!=event.window) set_focus(event.window,false);
 		deliver_moving_keys();
 		return;
 	}
@@ -1388,9 +1389,10 @@ uint64_t NativeWindows::send(uint64_t handle, uint32_t message, uint64_t wparam,
 	return result.value;
 }
 
-void NativeWindows::activate(uint64_t handle)
+void NativeWindows::activate(uint64_t handle,bool notify_host)
 {
 	if (handle) handle=objects.window_root(handle);
+	if (handle && notify_host && presentation.foreground) presentation.foreground(handle);
 	// A window that is activated while another activation is being delivered takes its turn when that one is done.
 	if (activating) { queued_activation=handle; has_queued_activation=true; return; }
 	for (;;) {
@@ -1415,10 +1417,10 @@ void NativeWindows::activate(uint64_t handle)
 	}
 }
 
-uint64_t NativeWindows::set_focus(uint64_t handle)
+uint64_t NativeWindows::set_focus(uint64_t handle,bool notify_host)
 {
 	if (handle && (!objects.window(handle) || objects.window(handle)->destroying)) throw uint32_t(1400);
-	if (handle) activate(handle);
+	if (handle) activate(handle,notify_host);
 	const auto previous=focus;
 	if (previous==handle) return previous;
 	// A handler may move the focus again; the nested change completes first and the outer one stops when it was superseded.
@@ -1705,6 +1707,7 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 	}
 	if (args[2]) window_text(args[2]);
 	DesktopWindow record{class_atom,definition->procedure,{},x,y,width,height};
+	record.message_only=message_only;
 	record.thread=environment.thread_id();
 	record.instance=args[10]; record.style=effective_style | (child ? 0U : 0x04000000U);record.ex_style=ex_style;
 	record.parent=child ? args[8] : 0;record.child_id=child ? args[9] : 0;record.client_ready=false;

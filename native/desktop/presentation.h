@@ -50,6 +50,8 @@ struct HostSurface {
 	uint32_t window = 0, visual = 0;
 };
 
+class DesktopObjects;
+
 struct DesktopPresentation {
 	std::function<void(uint64_t,std::string_view,uint32_t,uint32_t,std::span<const uint8_t>)> present;
 	std::function<void(uint64_t)> remove;
@@ -100,6 +102,9 @@ struct DesktopPresentation {
 	HostPlatform platform = default_host_platform;
 	// Descriptors that must also end a descriptorless backend's blocking event poll. An empty span removes the watches.
 	std::function<void(std::span<const pollfd>)> wait_descriptors;
+	std::function<void(uint64_t,const DesktopObjects &)> window_state;
+	std::function<void(uint64_t,bool)> visibility;
+	std::function<void(uint64_t)> foreground;
 };
 
 }

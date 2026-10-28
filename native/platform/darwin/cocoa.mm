@@ -2,8 +2,12 @@
 // pointer positions on the window's frame, Linux input codes for buttons and keys, and an XKB keymap with its modifier state.
 
 #include "cocoa.h"
+#include "desktop/objects.h"
+#include "dock_policy.h"
 
 void raven_macos_app_identity();
+bool raven_macos_claim_foreground();
+void raven_macos_program_identity();
 
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
@@ -184,6 +188,11 @@ struct CocoaPresentation::State {
 	std::map<NSInteger, uint64_t> numbers;
 	std::set<uint64_t> maximized;
 	std::set<uint64_t> alpha_windows;
+	std::set<uint64_t> dock_windows;
+	bool reconcile_dock = false;
+	std::map<uint64_t,bool> visibility_intent;
+	bool activate_on_present = false;
+	bool attention_on_present = false;
 	std::vector<DesktopEvent> pending;
 	uint64_t pointer_window = 0, keyboard_window = 0;
 	bool keyboard_known = false;
@@ -269,7 +278,7 @@ struct CocoaPresentation::State {
 			throw std::runtime_error("the macOS desktop runs on the main thread");
 		[NSApplication sharedApplication];
 		raven_macos_app_identity();
-		[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+		[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
 		// The title-bar double click is the program's (maximize, as on Windows): AppKit's own action would resize the window behind its
 		// back. The user's choice is kept to decide what the double click does.
 		double_click_action = [[NSUserDefaults.standardUserDefaults persistentDomainForName:NSGlobalDomain][@"AppleActionOnDoubleClick"] copy];
@@ -290,13 +299,49 @@ struct CocoaPresentation::State {
 		[NSApp finishLaunching];
 		screen_observer = [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification
 			object:nil queue:nil usingBlock:^(NSNotification *) { screen_size.reset(); }];
-		[NSApp activateIgnoringOtherApps:YES];
 		if (const char *value = std::getenv("RAVEN_COMMAND_KEY"))
 			command_is_control = std::string_view(value) != "windows";
 		if (const char *value = std::getenv("RAVEN_MACOS_FRAME"))
 			native_frames = std::string_view(value) != "windows";
 		connected = true;
 		load_keymap();
+	}
+
+	void presence(uint64_t handle, DesktopWindowPresence facts)
+	{
+		if (darwin::dock_eligible(facts)) {
+			const bool first = dock_windows.empty();
+			dock_windows.insert(handle);
+			reconcile_dock = false;
+			if (first) {
+				[NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+				raven_macos_program_identity();
+				activate_on_present = raven_macos_claim_foreground();
+				attention_on_present = !activate_on_present && !NSApp.active;
+			}
+		} else if (dock_windows.erase(handle) && dock_windows.empty()) {
+			reconcile_dock = true;
+		}
+	}
+
+	void reconcile_policy()
+	{
+		if (reconcile_dock && dock_windows.empty())
+			[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+		reconcile_dock = false;
+	}
+
+	void foreground_request(uint64_t handle)
+	{
+		Surface *target = surface(handle);
+		if (!target) return;
+		if (NSApp.active || (dock_windows.contains(handle) && raven_macos_claim_foreground())) {
+			[target->window makeKeyAndOrderFront:nil];
+			[NSApp activateIgnoringOtherApps:YES];
+			[NSRunningApplication.currentApplication activateWithOptions:NSApplicationActivateAllWindows];
+		} else {
+			[NSApp requestUserAttention:NSInformationalRequest];
+		}
 	}
 
 	void load_keymap()
@@ -1097,8 +1142,10 @@ struct CocoaPresentation::State {
 		numbers[target.window.windowNumber] = handle;
 	}
 
-	void forget(uint64_t handle)
+	void forget(uint64_t handle, bool replacing = false)
 	{
+		visibility_intent.erase(handle);
+		if (!replacing && dock_windows.erase(handle) && dock_windows.empty()) reconcile_dock = true;
 		std::erase_if(numbers, [&](const auto &entry) { return entry.second == handle; });
 		std::erase_if(pending, [&](const DesktopEvent &event) { return event.window == handle; });
 		if (pointer_window == handle)
@@ -1115,7 +1162,7 @@ struct CocoaPresentation::State {
 		connect();
 		@autoreleasepool {
 			if (Surface *existing = surface(handle); existing && existing->popup)
-				forget(handle);
+				forget(handle, true);
 			const auto described = frames.find(handle);
 			const auto insets = described != frames.end() ? described->second.first : std::array<int32_t, 4>{};
 			const uint32_t style = described != frames.end() ? described->second.second : 0;
@@ -1209,6 +1256,17 @@ struct CocoaPresentation::State {
 				[target->window deminiaturize:nil];
 			if (!target->window.visible)
 				[target->window orderFront:nil];
+			if (activate_on_present) {
+				activate_on_present = false;
+				[target->window makeKeyAndOrderFront:nil];
+				[NSApp activateIgnoringOtherApps:YES];
+				const bool activated = [NSRunningApplication.currentApplication activateWithOptions:NSApplicationActivateIgnoringOtherApps|NSApplicationActivateAllWindows];
+				if (trace) fprintf(stderr,"foreground: activation pid=%d current=%d accepted=%d active=%d\n", getpid(), NSRunningApplication.currentApplication.processIdentifier, activated, NSApp.active);
+			}
+			if (attention_on_present) {
+				attention_on_present = false;
+				[NSApp requestUserAttention:NSInformationalRequest];
+			}
 		}
 	}
 
@@ -1394,6 +1452,7 @@ struct CocoaPresentation::State {
 			return events;
 		}
 		pump(budget);
+		reconcile_policy();
 		if (resize_test && first_shown != std::chrono::steady_clock::time_point{} && resize_steps < 16) {
 			const auto now = std::chrono::steady_clock::now();
 			if (now - first_shown > std::chrono::seconds(4) && now - last_step > std::chrono::milliseconds(120)) {
@@ -1527,9 +1586,38 @@ CocoaPresentation::~CocoaPresentation()
 		state->delegate.state = nullptr;
 }
 
+void CocoaPresentation::describe(uint64_t handle, DesktopWindowPresence facts)
+{
+	state->presence(handle, facts);
+}
+
 DesktopPresentation CocoaPresentation::callbacks()
 {
 	DesktopPresentation result;
+	result.foreground = [this](uint64_t handle) { state->foreground_request(handle); };
+	result.visibility = [this](uint64_t handle, bool visible) { state->visibility_intent[handle] = visible; };
+	result.window_state = [this](uint64_t handle, const DesktopObjects &objects) {
+		const auto *window = objects.window(handle);
+		if (!window) return;
+		const auto owner = window->owner;
+		const auto intended = state->visibility_intent.find(handle);
+		const bool visible = intended == state->visibility_intent.end() ? objects.window_visible(handle) : intended->second;
+		state->visibility_intent.erase(handle);
+		const auto *owning = owner && owner != handle ? objects.window(owner) : nullptr;
+		if (std::getenv("RAVEN_TRACE_DOCK")) {
+			const auto *definition = objects.window_class(window->class_id);
+			NSString *title = [[NSString alloc] initWithCharacters:reinterpret_cast<const unichar *>(window->title.data()) length:window->title.size()];
+			fprintf(stderr,"dock-window pid=%d handle=%llx class=%s title=%s style=%x ex=%x owner=%llx rect=%d,%d,%d,%d visible=%d owner_surface=%d\n",
+				getpid(), (unsigned long long)handle, definition ? definition->name.c_str() : "?", title.UTF8String ?: "",
+				window->style, window->ex_style, (unsigned long long)owner, window->outer.left, window->outer.top, window->outer.right, window->outer.bottom,
+				visible, owning && objects.window_visible(owner) && state->surface(owner));
+		}
+		state->presence(handle, DesktopWindowPresence{
+			.visible = visible, .top_level = !window->parent, .message_only = window->message_only,
+			.owner_visible = owning && objects.window_visible(owner) && state->surface(owner),
+			.style = window->style, .ex_style = window->ex_style, .owner = owner,
+			.left = window->outer.left, .top = window->outer.top, .right = window->outer.right, .bottom = window->outer.bottom});
+	};
 	result.present = [this](uint64_t handle, std::string_view title, uint32_t width, uint32_t height, std::span<const uint8_t> pixels) {
 		state->present(handle, title, width, height, pixels);
 	};

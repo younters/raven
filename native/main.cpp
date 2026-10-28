@@ -1,3 +1,6 @@
+#ifdef __APPLE__
+#include "raven_darwin_launch.h"
+#endif
 #include "pe/pe.h"
 #include "pe/resources.h"
 #include "pe/loaded_image.h"
@@ -142,6 +145,9 @@ static void show_fault(int signal)
 
 int main(int argc, char **argv)
 {
+#ifdef __APPLE__
+	raven_macos_startup(argc, argv);
+#endif
 	if (std::getenv("RAVEN_BACKTRACE")) {
 		std::set_terminate(show_backtrace);
 		std::signal(SIGSEGV, show_fault);
