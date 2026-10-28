@@ -36,9 +36,13 @@ struct AudioInput::State {
 			const auto status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
 			if (status == AVAuthorizationStatusNotDetermined) {
 				// Only an actual capture open asks. Device enumeration and authorization probes never do.
-				dispatch_semaphore_t done = dispatch_semaphore_create(0);
-				[AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL) { dispatch_semaphore_signal(done); }];
-				dispatch_semaphore_wait(done,DISPATCH_TIME_FOREVER);
+				// Guest APIs run on the scheduler thread. Waiting here freezes every guest thread,
+				// including IPC and UI, for as long as the user leaves the permission unanswered.
+				// Report an unavailable input now; a subsequent open can use the user's decision.
+				static std::atomic<bool> pending{false};
+				if (!pending.exchange(true))
+					[AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL) { pending=false; }];
+				return;
 			}
 			if (!authorized()) return;
 		}
