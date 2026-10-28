@@ -1,44 +1,87 @@
-# Window-driven Dock policy (implementation report)
+# Darwin Dock policy design note
 
-This change is incomplete: direct CLI hosts still inherit the responsible application's fixed LaunchServices bundle ID on this macOS host. Their display names now update correctly through optional LaunchServices SPI, but full identity acceptance remains incomplete.
+A Windows process can connect to Cocoa without becoming a Dock application. A desktop connection starts as Accessory; the first
+taskbar-eligible guest window promotes it to Regular before that window is ordered. Removing or hiding the last eligible window
+schedules one reconciliation after the presentation/pump turn. A replacement arriving in that turn cancels demotion. There is no
+timer-based hysteresis.
 
-## Implemented
+## Taskbar eligibility
 
-Desktop hosts connect as Accessory. Presentation carries effective guest visibility, style/ex-style, owner and guest/screen rectangles. Cocoa promotes before ordering an eligible frame, keeps minimized windows eligible and defers last-window demotion until the next Cocoa presentation/pump reconciliation. A replacement arriving before reconciliation cancels demotion; no timer is used. Existing application menu, reopen handling, WS_MINIMIZE guard and AppleActionOnDoubleClick domain are retained.
+The rule follows the Windows taskbar contract reviewed for this port:
 
-Foreign `__CFBundleIdentifier` metadata is removed in main before AppKit access. `org.raven.*` plus launcher name/icon is retained across child hosts. Generated bundles remain Dock-pinnable and do not gain LSUIElement.
+- The window is effectively visible, top-level, not WS_CHILD, and not message-only.
+- WS_EX_TOOLWINDOW excludes it unless WS_EX_APPWINDOW is also set.
+- An owner excludes it regardless of the owner's visibility, unless WS_EX_APPWINDOW is set.
 
-A shared temporary foreground ticket records the launching foreground PID. Children explicitly inherit an unconsumed ticket and a child marker, preventing later helpers from minting new rights. The first qualifying host atomically consumes it under flock and activates only if its launch origin is still foreground (or it is already active). This is a macOS gate, not Windows AllowSetForegroundWindow lock semantics.
+Screen position and rectangle size do not affect eligibility. In particular, minimized placement outside the screen retains its
+button. Menus and tooltips are excluded by their styles/ownership. Foreign GPU frames do not create guest top-level windows and
+cannot create a Dock application on their own.
 
-At promotion, an unbranded host reads its own PE resources: FileDescription, then ProductName, then executable stem; first icon group at best available 256px size, PNG or DIB decoding. Launcher metadata takes precedence. The resource code updates NSProcessInfo and NSApp's icon. An optional dynamically resolved LaunchServices display-name call (also used by WebKit) updates the externally reported name after check-in. The inherited bundle ID remains T3. This is a private API dependency with a fallback to the public process name/icon updates.
+The generic desktop interface passes the window collection through one callback. Darwin gathers the facts and owns the rule. A
+separate visibility-intent callback lets Cocoa see a ShowWindow request before the original upstream visible/style assignments;
+those assignments retain their original order. Metadata collection, eligibility and policy transitions remain in the Darwin tree.
 
-## Scripted evidence
+The Regular application menu, Dock reopen handling, minimize/restore behavior, WS_MINIMIZE deminiaturization guard, and
+AppleActionOnDoubleClick volatile domain remain in effect.
 
-All fixtures and prefixes were private copies under `/tmp/raven-dock-e2e`; bundles and logs also stayed there. Only recorded PIDs started for these runs were terminated. No debugger was used.
+## Application identity and process responsibility
 
-Counts below are sampled **Regular host records**, using both NSWorkspace/NSRunningApplication and lsappinfo, not a pixel count of Dock tiles. No pre-change baseline was captured.
+A launcher identity requires an org.raven.* bundle identifier and nonempty RAVEN_APP_NAME/RAVEN_APP_ICON metadata. Those values
+survive Windows child-host spawns, including when a windowless launcher starts the host owning the application's main window.
+Generated launcher bundles do not set LSUIElement and remain pinnable.
 
-- Direct Notepad++: 0 Regular before a window, 1 afterward; first qualifying window activated. Initial runs retained T3 name/bundle. Final run reports Notepad++ and activates; bundle remains com.t3tools.t3code. Icon presence was checked, but the external icon pixels were not compared.
-- Fresh prefix followed by copied Notepad++: 0 during initial setup, maximum 1 once Notepad++ appeared. No extra Regular regsvr32 records observed.
-- Firefox setup stub, copied installer/prefix: 0 initially, maximum 2 Regular hosts while installer windows were present. Their external identities were T3: FAIL for identity.
-- Direct Firefox: 0 initially, 1 while its window appeared, 0 after exit. Strict direct launch stopped on WSCEnumProtocols. A retry with RAVEN_CONTINUE_UNIMPLEMENTED=1 reports Firefox and activates; maximum two Regular records appeared late in that run. This is not browser stability evidence.
-- Firefox through a raven-apps shortcut bundle: one Regular host and multiple Accessory/UIElement helpers. Name Firefox, org.raven.app.firefox-prefix.7309cc8f6f3d, icon present on parent and child records. CGWindowList identified the visible Mozilla Firefox window as launch host PID 52707; this run did not establish a child-owned browser window. Another run hit a guest xul breakpoint; no OOM debugging was attempted.
-- Cleaning environment, self-exec and optional responsibility-disclaim spawn experiments still left T3 attribution. Those unsuccessful workarounds were removed.
+A direct desktop host strips foreign bundle metadata before AppKit access. When its responsible ancestor is foreign, it resolves
+responsibility_spawnattrs_setdisclaim dynamically and performs one same-PID posix_spawn exec with that attribute. Its descendants
+retain Raven responsibility; Windows child-host spawns do not disclaim again. The exec preserves ordinary inherited descriptors
+and explicitly inherits command-line fd arguments even when they are CLOEXEC. It does not add a supervisor or change exit status.
 
-Raw ephemeral diagnostics: `/tmp/raven-dock-e2e/*results.jsonl`, `logs/Firefox.log`, and `*-build*.log` files in `/tmp`.
+An embedded runtime property list supplies org.raven.runtime identity. After the responsibility handoff, an optional
+_RegisterApplication check-in supplies the runtime identity and starts the record as UIElement. This is necessary because
+LaunchServices can otherwise retain the original ancestor's registration even after responsibility changes. This registration flag
+belongs to the direct runtime record, not to generated bundles. Cocoa subsequently promotes eligible hosts to Regular. If these
+private APIs are unavailable, Raven continues with public AppKit policy and process-name/icon updates; independent LaunchServices
+attribution is not guaranteed in that fallback.
 
-## Remaining work and risks
+Only promotion of an unbranded host reads the executable's PE resources. The name uses FileDescription, ProductName, then the
+executable stem. The first icon group supplies the best available image at the requested size; both PNG and legacy DIB entries are
+supported. Version-resource traversal is bounded to 32 levels. The icon is applied after promotion because AppKit can replace an
+icon while changing policy. An optional LaunchServices display-name update accompanies NSProcessInfo.processName. Launcher
+metadata always takes precedence. NSRunningApplication.icon can report a bundle-path icon; the actual Dock tile is checked
+externally as well.
 
-- Resolve the fixed direct LaunchServices bundle attribution and compare external Notepad++/Firefox icon pixels. Display names pass via optional SPI; the fixed bundle IDs still identify T3.
-- Verify child-owned browser/dialog foreground transfer and later helper focus behavior with controlled foreground changes.
-- Add/run real Cocoa transition coverage for delayed splash, dialog-only child, hide/show/tray, minimize and same-batch replacement. Current added contracts cover eligibility, ticket one-use/current-origin checks and environment filtering.
-- The ticket checks the foreground PID at consumption; it does not detect leaving that app and returning to it before the first window. An unused ticket can leave a small temporary file.
-- Owner visibility is supplied on presentation updates; owner removal without a child redraw needs stronger reconciliation coverage.
-- Headless behavior follows the existing absence of a Cocoa backend; a dedicated per-PID headless E2E sample remains to be recorded.
+## Foreground launch right
 
-## Validation
+The ticket models only being started by the foreground process. It does not implement Windows' foreground lock, last-input rule,
+or cross-process AllowSetForegroundWindow semantics; Raven's existing Windows API stub remains separate.
 
-Build: supplied CMake configuration and full `cmake --build build -j4` succeeded.
-Darwin/Cocoa and full suites were requested through `/tmp/raven-ctest-lock.sh`, `ctest -j1 --timeout 120`; final results are pending the shared lock.
+The user-launched host records the current foreground process and the launch-root PID in a shared one-use ticket. Child-spawn
+metadata explicitly transfers an unconsumed ticket and identifies a child, preventing background helpers from minting new rights.
+The first eligible host consumes the ticket under a file lock and activates after ordering its first window. The launch origin,
+launch root, or current host must still be foreground. A workspace foreground-change notification permanently expires the ticket
+when another application takes over, so returning to the launch origin does not revive it.
 
-Commits: 3730e5b (metadata), 12e329a (policy/identity/foreground), 0527dee (exe resources), 781222a (first-show visibility), 397e78f (contracts), cc40ffd (external display names).
+A denied activation leaves the ticket unconsumed, leaves focus alone and requests informational user attention, approximating a
+Windows taskbar flash. Workspace expiry is recorded separately from consumption. Guest activate, SetFocus and SetForegroundWindow
+requests reach the same Cocoa gate; an already foreground host can focus its later dialogs. Later helpers cannot reuse a consumed
+ticket.
+
+A shared lease descriptor keeps an unused ticket alive across the host family. It is CLOEXEC for Rosetta guests, explicitly
+inherited by Windows child-host spawns, and closed on host exit. The final host removes both the ticket and lease files, including
+when no window ever appeared. This avoids removing a ticket while a child is still starting.
+
+## Verification
+
+Darwin contracts cover owned and hidden-owner windows, APPWINDOW overrides, TOOLWINDOW, WS_CHILD, message-only windows, off-screen
+and empty rectangles, and actual minimized placement. The Cocoa contract exercises delayed presentation, standalone dialogs,
+minimize, tray hide/restore, replacement in one batch, owned windows and the visibility-intent callback without modifying the
+upstream window record. Foreground tests cover one-use and permanent expiry, and skip clearly without a GUI session.
+
+The child-metadata contract checks replacement of transient environment entries, retention of launcher/DPI metadata and
+withholding a consumed ticket. The same-PID exec contract checks stdin/stdout/stderr, CLOEXEC inherit/channel/exit-code
+descriptors and the exit status, plus no-window ticket cleanup. Existing child, handle-channel and prefix-setup contracts
+supplement those checks.
+
+Scripted acceptance uses private copies of application fixtures and prefixes. A windowless guest launcher is used to verify that
+Firefox's child-owned browser window retains the launcher's name/icon, consumes the foreground ticket once, activates, and leaves
+later helper hosts Accessory. External Dock captures verify executable and launcher icons. Only area tests are run by this work;
+the parent performs the merge-time full-suite comparison.
