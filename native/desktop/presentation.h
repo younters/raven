@@ -50,6 +50,18 @@ struct HostSurface {
 	uint32_t window = 0, visual = 0;
 };
 
+// Guest facts needed by hosts that expose a taskbar/Dock application only for a real window.
+struct DesktopWindowPresence {
+	bool visible = false, top_level = false, message_only = false, owner_visible = false;
+	uint32_t style = 0, ex_style = 0;
+	int32_t left = 0, top = 0, right = 0, bottom = 0;
+	int32_t screen_width = 0, screen_height = 0;
+	bool eligible() const {
+		return visible && top_level && !message_only && !owner_visible && !(ex_style & 0x80U) &&
+			right > left && bottom > top && right > 0 && bottom > 0 && left < screen_width && top < screen_height;
+	}
+};
+
 struct DesktopPresentation {
 	std::function<void(uint64_t,std::string_view,uint32_t,uint32_t,std::span<const uint8_t>)> present;
 	std::function<void(uint64_t)> remove;
@@ -100,6 +112,7 @@ struct DesktopPresentation {
 	HostPlatform platform = default_host_platform;
 	// Descriptors that must also end a descriptorless backend's blocking event poll. An empty span removes the watches.
 	std::function<void(std::span<const pollfd>)> wait_descriptors;
+	std::function<void(uint64_t,DesktopWindowPresence)> presence;
 };
 
 }

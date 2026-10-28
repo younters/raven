@@ -293,6 +293,15 @@ void NativeWindows::present(uint64_t handle, bool force)
 	// program placed it: as a popup of the owner's host window, since a host window of its own would be placed by the compositor.
 	const auto owner=host_owner(*window);
 	const auto *owning=owner && owner!=handle ? objects.window(owner) : nullptr;
+	if (presentation.presence) {
+		const auto screen=presentation.screen_size ? presentation.screen_size() : std::nullopt;
+		presentation.presence(handle,DesktopWindowPresence{
+			.visible=objects.window_visible(handle), .top_level=!window->parent, .message_only=window->message_only,
+			.owner_visible=owning && objects.window_visible(owner) && owning->presented,
+			.style=window->style, .ex_style=window->ex_style,
+			.left=window->outer.left, .top=window->outer.top, .right=window->outer.right, .bottom=window->outer.bottom,
+			.screen_width=screen ? screen->first : 0, .screen_height=screen ? screen->second : 0});
+	}
 	if (presentation.owned_popup && owning && shown_on_owner(*window)) {
 		try {
 			presentation.owned_popup(handle,owner,window->outer.left-owning->outer.left,window->outer.top-owning->outer.top,bitmap->width,bitmap->height,pixels);
@@ -1705,6 +1714,7 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 	}
 	if (args[2]) window_text(args[2]);
 	DesktopWindow record{class_atom,definition->procedure,{},x,y,width,height};
+	record.message_only=message_only;
 	record.thread=environment.thread_id();
 	record.instance=args[10]; record.style=effective_style | (child ? 0U : 0x04000000U);record.ex_style=ex_style;
 	record.parent=child ? args[8] : 0;record.child_id=child ? args[9] : 0;record.client_ready=false;
