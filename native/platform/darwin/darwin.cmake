@@ -534,6 +534,16 @@ if(TARGET raven AND RAVEN_MINGW64)
             set(ORPHAN_ENTRY _raven_entry)
         endif()
         if(ORPHAN_COMPILER)
+            set(TEARDOWN_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/teardown-wait${width}.exe)
+            add_custom_command(OUTPUT ${TEARDOWN_FIXTURE}
+                COMMAND ${ORPHAN_COMPILER} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                    -Wl,--entry,${ORPHAN_ENTRY},--no-insert-timestamp -o ${TEARDOWN_FIXTURE}
+                    ${RAVEN_DARWIN_DIR}/tests/teardown_wait.c -lkernel32 -lgcc
+                DEPENDS ${RAVEN_DARWIN_DIR}/tests/teardown_wait.c VERBATIM)
+            add_custom_target(teardown_wait_fixture${width} ALL DEPENDS ${TEARDOWN_FIXTURE})
+            add_test(NAME native_darwin_teardown_wait_x${width} COMMAND ${Python3_EXECUTABLE}
+                ${RAVEN_DARWIN_DIR}/tests/teardown_wait.py $<TARGET_FILE:raven> ${TEARDOWN_FIXTURE})
+            set_tests_properties(native_darwin_teardown_wait_x${width} PROPERTIES TIMEOUT 30)
             set(CREATION_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/process-creation${width}.exe)
             add_custom_command(OUTPUT ${CREATION_FIXTURE}
                 COMMAND ${ORPHAN_COMPILER} -nostdlib -O1 -fno-builtin -fno-stack-protector
