@@ -426,7 +426,7 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		const auto answer = own ? std::optional(objects.process_request(request)) : request_process(call[0], request);
 		if (!answer || answer->access) {
 			const uint32_t status = answer ? answer->access : 0xc0000001U;
-			call.fail(status == 0xc0000017U ? 8 : status == 0xc0000018U || status == 0xc000002dU ? 487 : status == 0xc00000bbU ? 50 : 87);
+			call.fail(status == 0xc000012dU ? 1455 : status == 0xc0000017U ? 8 : status == 0xc0000018U || status == 0xc000002dU ? 487 : status == 0xc00000bbU ? 50 : 87);
 			return;
 		}
 		if (protect)
@@ -863,7 +863,8 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	// PROCESS_MEMORY_COUNTERS from the host's accounting of this process.
-	registry.add("GetProcessMemoryInfo", 3, [is_self](ApiCall &call) {
+	registry.add("GetProcessMemoryInfo", 3, [is_self, &context](ApiCall &call) {
+		return commit_process_memory_info(call, context);
 		if (!is_self(call[0]) || !call[1]) {
 			call.fail(call[1] ? 6 : 87);
 			return;

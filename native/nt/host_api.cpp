@@ -1366,7 +1366,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("LsaNtStatusToWinError", 1, [](ApiCall &call) {
 		const uint32_t status = call.u32(0);
 		call.ret(status == 0 ? 0 : status == 0xc0000073U ? 1332 : status == 0x107 ? 1332 : status == 0xc0000022U ? 5 : status == 0xc000000dU ? 87 :
-			status == 0xc0000017U ? 8 : 317);
+			status == 0xc000012dU ? 1455 : status == 0xc0000017U ? 8 : 317);
 	});
 	// LsaLookupNames2(policy, flags, count, names, domains, sids): LSA_TRANSLATED_SID2 for each name, "account" or "domain\account", and
 	// the LSA_REFERENCED_DOMAIN_LIST of the domains they belong to, each in memory LsaFreeMemory gives back. STATUS_SOME_NOT_MAPPED or

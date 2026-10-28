@@ -12,16 +12,16 @@
 namespace raven {
 
 static constexpr uint32_t invalid = 0xc000000dU, unsupported = 0xc00000bbU;
-static constexpr uint32_t no_memory = 0xc0000017U, conflict = 0xc0000018U;
+static constexpr uint32_t no_memory = 0xc0000017U, conflict = 0xc0000018U, commitment_limit = 0xc000012dU;
 
 static int protection(uint32_t value)
 {
 	switch (value) {
 	case 1: return PROT_NONE;
 	case 2: return PROT_READ;
-	case 4: return PROT_READ | PROT_WRITE;
+	case 8: case 4: return PROT_READ | PROT_WRITE;
 	case 0x20: return PROT_READ | PROT_EXEC;
-	case 0x40: return PROT_READ | PROT_WRITE | PROT_EXEC;
+	case 0x80: case 0x40: return PROT_READ | PROT_WRITE | PROT_EXEC;
 	default: return -1;
 	}
 }
@@ -48,6 +48,7 @@ void NativeMemory::clear(uint64_t address, uint64_t size)
 NativeMemory::NativeMemory(NativeProcess &process, NativeEnvironment &environment, size_t limit)
 	: process(process), environment(environment), limit(limit)
 {
+	environment.set_memory_accounting(this);
 	if (process.mode()==NativeMode::x86) {
 		user_limit=x86_user_limit;
 		next=floor=0x20000000ULL;
@@ -78,14 +79,16 @@ void NativeMemory::settle()
 		const auto first=(base-found->first)/4096, pages=(end-base)/4096;
 		const auto committed=found->second.pages.nonzero(first,pages);
 		if (decommit) {
-			used-=committed*4096;
+			if (found->second.charged) used-=committed*4096;
 			found->second.pages.fill(first,pages,0);
 		} else {
-			used+=(pages-committed)*4096;
+			if (found->second.charged) used+=(pages-committed)*4096;
 			found->second.pages.fill(first,pages,4);
+			peak=std::max(peak,used);
 		}
 	}
 	*count=0;
+	peak=std::max(peak,used);
 }
 
 void NativeMemory::open_window(uint64_t from, uint64_t to)
@@ -148,6 +151,7 @@ std::map<uint64_t,NativeMemory::Region>::iterator NativeMemory::region(uint64_t 
 
 NativeMemoryRange NativeMemory::allocate(uint64_t address, uint64_t size, uint32_t type, uint32_t access)
 {
+	return commit_allocate(address,size,type,access);
 	settle();
 	if (!range(address,size,user_limit))
 		return {0,0,invalid};
@@ -247,8 +251,9 @@ NativeMemoryRange NativeMemory::allocate(uint64_t address, uint64_t size, uint32
 	return {selected,length};
 }
 
-NativeMemoryRange NativeMemory::map_view(int descriptor, uint64_t offset, uint64_t size, uint32_t access)
+NativeMemoryRange NativeMemory::map_view(int descriptor, uint64_t offset, uint64_t size, uint32_t access, bool charged)
 {
+	return commit_map_view(descriptor,offset,size,access,charged);
 	settle();
 	const auto permissions=protection(access);
 	if (permissions<0 || !size || (offset & 4095))
@@ -279,7 +284,7 @@ NativeMemoryRange NativeMemory::free(uint64_t address, uint64_t size, uint32_t t
 		const auto length=found->second.size;
 		close_windows(address,address+length);
 		process.unmap_memory(address);
-		used-=found->second.pages.nonzero(0,found->second.pages.size())*4096;
+		if (found->second.charged) used-=found->second.pages.nonzero(0,found->second.pages.size())*4096;
 		reserved_total-=length;
 		regions.erase(found);
 		return {address,length};
@@ -303,7 +308,7 @@ NativeMemoryRange NativeMemory::free(uint64_t address, uint64_t size, uint32_t t
 		process.protect_memory(base,length,PROT_NONE);
 	}
 	const auto first=(base-found->first)/4096;
-	used-=found->second.pages.nonzero(first,length/4096)*4096;
+	if (found->second.charged) used-=found->second.pages.nonzero(first,length/4096)*4096;
 	found->second.pages.fill(first,length/4096,0);
 	return {base,length};
 }
@@ -442,6 +447,7 @@ static uint32_t error(uint32_t status)
 {
 	if (status==unsupported) return 120;
 	if (status==no_memory) return 8;
+	if (status==commitment_limit) return 1455;
 	if (status==conflict || status==0xc000002dU) return 487;
 	if (status==0xc0000005U) return 998;
 	return 87;

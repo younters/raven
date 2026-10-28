@@ -1923,7 +1923,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	NativeModuleAPI module_api(process, environment, modules, entry);
 	NativeResources resources(process, environment, modules, entry);
 	// What a program may commit: 512 MiB by default, as set by RAVEN_COMMIT_LIMIT_MB (large programs, a browser engine for one, need more).
-	const size_t commit_limit=(std::getenv("RAVEN_COMMIT_LIMIT_MB") ? size_t(std::strtoull(std::getenv("RAVEN_COMMIT_LIMIT_MB"),nullptr,10)) : size_t(512))*1024*1024;
+	const size_t commit_limit=system_commit_limit();
 	NativeMemory memory(process,environment,commit_limit);
 	register_images(memory,modules);
 	NativeObjectAPI object_api(process,environment,kernel_objects,deadline);
