@@ -91,6 +91,15 @@ if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
     add_test(NAME darwin_dxmt_identity COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
         $<TARGET_FILE:raven> ${IDENTITY_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-identity identity)
     set_tests_properties(darwin_dxmt_identity PROPERTIES TIMEOUT 120 ENVIRONMENT "RAVEN_DXGI_VENDOR=amd")
+    set(SELF_SHARE_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-self-share.exe)
+    add_custom_command(OUTPUT ${SELF_SHARE_EXE}
+        COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/dxmt_self_share.c
+            -o ${SELF_SHARE_EXE} -ld3d11 -ldxgi -ldxguid -lkernel32 -lgcc
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/dxmt_self_share.c VERBATIM)
+    add_custom_target(darwin_dxmt_self_share_fixture ALL DEPENDS ${SELF_SHARE_EXE})
+    add_test(NAME darwin_dxmt_self_share COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+        $<TARGET_FILE:raven> ${SELF_SHARE_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-self-share self_share)
+    set_tests_properties(darwin_dxmt_self_share PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
     foreach(width IN ITEMS 64 32)
         if(width EQUAL 64)
             set(KEYED_CC ${RAVEN_MINGW64})

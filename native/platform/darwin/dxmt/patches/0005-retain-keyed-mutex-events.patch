@@ -1,0 +1,30 @@
+From: Raven macOS integration
+Upstream: 3Shain/dxmt 3b252590cb0290e36fca6f088b5255b871d2d95a
+Reason: AcquireSync and ReleaseSync record a command that captures the keyed
+        mutex's shared event without a reference and retains it only when the
+        encoder thread runs the command. A texture released right after
+        ReleaseSync (Firefox's D3D11Checks) frees the event first, and the
+        encoder retains a freed MTLSharedEvent. Own the event when recording.
+
+diff --git a/src/d3d11/d3d11_context_imm.cpp b/src/d3d11/d3d11_context_imm.cpp
+index a5e4c6e..945f004 100644
+--- a/src/d3d11/d3d11_context_imm.cpp
++++ b/src/d3d11/d3d11_context_imm.cpp
+@@ -669,7 +669,7 @@ public:
+     return resource->keyedMutex()->acquire(
+         [&](uint64_t fence) {
+           InvalidateCurrentPass(true);
+-          EmitOP([event = resource->keyedMutex()->sharedEvent(), fence](ArgumentEncodingContext &enc) mutable {
++          EmitOP([event = WMT::Reference<WMT::Event>(resource->keyedMutex()->sharedEvent()), fence](ArgumentEncodingContext &enc) mutable {
+             enc.waitEvent(std::move(event), fence);
+           });
+           Flush();
+@@ -686,7 +686,7 @@ public:
+     return resource->keyedMutex()->release(
+         [&](uint64_t fence) {
+           InvalidateCurrentPass(true);
+-          EmitOP([event = resource->keyedMutex()->sharedEvent(), fence](ArgumentEncodingContext &enc) mutable {
++          EmitOP([event = WMT::Reference<WMT::Event>(resource->keyedMutex()->sharedEvent()), fence](ArgumentEncodingContext &enc) mutable {
+             enc.signalEvent(std::move(event), fence);
+           });
+           Flush();
