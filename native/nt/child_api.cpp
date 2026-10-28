@@ -4,6 +4,9 @@
 #include "kernel_context.h"
 #include "security_attributes.h"
 #include "text.h"
+#ifdef __APPLE__
+#include "platform/darwin/process_creation.h"
+#endif
 
 #include <algorithm>
 #include <cerrno>
@@ -480,7 +483,10 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(uint32_t(child->pid));
 	});
 	// The host user is unchanged, but the child must see the primary token selected by its creator.
-	registry.add("CreateProcessAsUserW", 11, [create_process, &objects](ApiCall &call) {
+	registry.add("CreateProcessAsUserW", 11, [create_process, &objects, &context](ApiCall &call) {
+#ifdef __APPLE__
+		if (raven_darwin::create_process_without_token(call, context, create_process)) return;
+#endif
 		const auto token = objects.object_as<AccessToken>(call[0]);
 		if (!token) {
 			call.fail(6);

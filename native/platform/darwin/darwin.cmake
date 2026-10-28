@@ -534,6 +534,17 @@ if(TARGET raven AND RAVEN_MINGW64)
             set(ORPHAN_ENTRY _raven_entry)
         endif()
         if(ORPHAN_COMPILER)
+            set(CREATION_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/process-creation${width}.exe)
+            add_custom_command(OUTPUT ${CREATION_FIXTURE}
+                COMMAND ${ORPHAN_COMPILER} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                    -Wl,--entry,${ORPHAN_ENTRY},--no-insert-timestamp -o ${CREATION_FIXTURE}
+                    ${RAVEN_DARWIN_DIR}/tests/process_creation.c -ladvapi32 -lkernel32 -lgcc
+                DEPENDS ${RAVEN_DARWIN_DIR}/tests/process_creation.c VERBATIM)
+            add_custom_target(process_creation_fixture${width} ALL DEPENDS ${CREATION_FIXTURE})
+            add_test(NAME native_darwin_process_creation_x${width} COMMAND raven --run-process
+                --execution=native --timeout-ms=15000 ${CREATION_FIXTURE})
+            set_tests_properties(native_darwin_process_creation_x${width} PROPERTIES TIMEOUT 20
+                PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
             set(ORPHAN_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/orphan-contract${width}.exe)
             add_custom_command(OUTPUT ${ORPHAN_FIXTURE}
                 COMMAND ${ORPHAN_COMPILER} -nostdlib -O1 -fno-builtin -fno-stack-protector

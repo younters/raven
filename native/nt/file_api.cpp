@@ -1,3 +1,6 @@
+#ifdef __APPLE__
+#include "platform/darwin/path_search.h"
+#endif
 #include "child_process.h"
 #include "console.h"
 #include "event.h"
@@ -1608,6 +1611,9 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			if (candidate.empty() || candidate.back() != u'\\')
 				candidate.push_back(u'\\');
 			candidate += file;
+#ifdef __APPLE__
+			raven_darwin::use_qualified_search_path(candidate, file);
+#endif
 			const auto resolved = paths.resolve(candidate);
 			if (!resolved || !resolved->exists || !std::filesystem::is_regular_file(resolved->host))
 				continue;
