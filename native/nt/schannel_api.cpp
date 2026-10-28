@@ -1,5 +1,8 @@
 #include "kernel_context.h"
 #include "text.h"
+#ifdef __APPLE__
+#include "platform/darwin/schannel_ansi.h"
+#endif
 
 #include <openssl/err.h>
 #include <openssl/ssl.h>
@@ -146,7 +149,9 @@ uint32_t failure_status(Context &context)
 void register_schannel_api(ApiRegistry &registry, KernelContext &context)
 {
 	auto provider = std::make_shared<Provider>();
+#ifndef __APPLE__
 	registry.add("InitSecurityInterfaceA", 0, [](ApiCall &call) { call.fail(50); });
+#endif
 	// The table is built outside the lock: the guest allocator can give the processor to another guest thread, which may ask for it too on
 	// the same host thread. The first table published is the one every caller gets.
 	registry.add("InitSecurityInterfaceW", 0, [provider, &context](ApiCall &call) {
@@ -635,6 +640,9 @@ void register_schannel_api(ApiRegistry &registry, KernelContext &context)
 			std::fprintf(stderr, "schannel opened %zu of %zu bytes into %zu, status %x\n", record, bytes.size(), plain.size(), status);
 		call.ret(status);
 	});
+#ifdef __APPLE__
+	darwin::register_schannel_ansi(registry, context);
+#endif
 }
 
 }
