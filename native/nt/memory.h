@@ -2,6 +2,7 @@
 
 #include "environment.h"
 #include "commit.h"
+#include "commit_guest.h"
 
 #include <map>
 #include <array>
@@ -22,7 +23,8 @@ struct NativeMemoryRange {
 // Windows reservation state above the existing stopped-process mapping owner.
 class NativeMemory {
 public:
-	NativeMemory(NativeProcess &process, NativeEnvironment &environment, size_t limit = system_commit_limit());
+	NativeMemory(NativeProcess &process, NativeEnvironment &environment, size_t limit = process_commit_limit());
+	~NativeMemory();
 	NativeMemory(const NativeMemory &) = delete;
 	NativeMemory &operator=(const NativeMemory &) = delete;
 	NativeMemoryRange allocate(uint64_t address, uint64_t size, uint32_t type, uint32_t protection);
@@ -41,7 +43,9 @@ public:
 	size_t bytes() const { return reserved_total; }
 	size_t committed() { settle(); return used; }
 	size_t peak_committed() { settle(); return peak; }
-	size_t commit_limit() const { return limit; }
+	size_t commit_limit() const { return system_commit_limit(); }
+	size_t quota_limit() const { return limit; }
+	uint64_t commit_headroom() const;
 	std::pair<uint64_t,uint64_t> address_space() const;
 	size_t count() const { return regions.size(); }
 	// Where in the served block the open ranges and the guest's commit log sit, as byte offsets, and how many entries each holds: the
@@ -125,6 +129,14 @@ private:
 	// Takes the guest's logged commits into the accounting; every operation that reads or changes it does this first.
 	void settle();
 	void budget_windows();
+	void commit_settle();
+	void commit_changed();
+	CommitBlockLock lock_commits() const { return CommitBlockLock(commit_block); }
+	void commit_open_window(uint64_t, uint64_t);
+	void commit_close_windows(uint64_t, uint64_t);
+	bool commit_window_holds(uint64_t, uint64_t) const;
+	NativeMemory *previous_accounting = nullptr;
+	std::vector<std::pair<uint64_t,uint64_t>> published_windows;
 	NativeMemoryRange commit_allocate(uint64_t, uint64_t, uint32_t, uint32_t);
 	NativeMemoryRange commit_map_view(int, uint64_t, uint64_t, uint32_t, bool);
 	void open_window(uint64_t from, uint64_t to);

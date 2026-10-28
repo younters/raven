@@ -48,7 +48,7 @@ void NativeMemory::clear(uint64_t address, uint64_t size)
 NativeMemory::NativeMemory(NativeProcess &process, NativeEnvironment &environment, size_t limit)
 	: process(process), environment(environment), limit(limit)
 {
-	environment.set_memory_accounting(this);
+	previous_accounting=environment.set_memory_accounting(this);
 	if (process.mode()==NativeMode::x86) {
 		user_limit=x86_user_limit;
 		next=floor=0x20000000ULL;
@@ -64,6 +64,8 @@ std::span<const std::string_view> NativeMemory::nt_exports()
 
 void NativeMemory::settle()
 {
+	// Fork hook; retain the upstream body for merge compatibility.
+	return commit_settle();
 	if (!commit_block)
 		return;
 	auto *count=reinterpret_cast<uint32_t *>(reinterpret_cast<uint8_t *>(commit_block)+commit_log);
@@ -93,6 +95,8 @@ void NativeMemory::settle()
 
 void NativeMemory::open_window(uint64_t from, uint64_t to)
 {
+	// Fork hook; retain the upstream body for merge compatibility.
+	return commit_open_window(from,to);
 	if (!commit_block)
 		return;
 	uint64_t *windows=commit_block+commit_windows/8;
@@ -115,6 +119,8 @@ void NativeMemory::open_window(uint64_t from, uint64_t to)
 
 bool NativeMemory::window_holds(uint64_t from, uint64_t to) const
 {
+	// Fork hook; retain the upstream body for merge compatibility.
+	return commit_window_holds(from,to);
 	if (!commit_block)
 		return false;
 	const uint64_t *windows=commit_block+commit_windows/8;
@@ -126,6 +132,8 @@ bool NativeMemory::window_holds(uint64_t from, uint64_t to) const
 
 void NativeMemory::close_windows(uint64_t from, uint64_t to)
 {
+	// Fork hook; retain the upstream body for merge compatibility.
+	return commit_close_windows(from,to);
 	if (!commit_block)
 		return;
 	uint64_t *windows=commit_block+commit_windows/8;
@@ -151,6 +159,7 @@ std::map<uint64_t,NativeMemory::Region>::iterator NativeMemory::region(uint64_t 
 
 NativeMemoryRange NativeMemory::allocate(uint64_t address, uint64_t size, uint32_t type, uint32_t access)
 {
+	// Fork hook; retain the upstream body for merge compatibility.
 	return commit_allocate(address,size,type,access);
 	settle();
 	if (!range(address,size,user_limit))
@@ -253,6 +262,7 @@ NativeMemoryRange NativeMemory::allocate(uint64_t address, uint64_t size, uint32
 
 NativeMemoryRange NativeMemory::map_view(int descriptor, uint64_t offset, uint64_t size, uint32_t access, bool charged)
 {
+	// Fork hook; retain the upstream body for merge compatibility.
 	return commit_map_view(descriptor,offset,size,access,charged);
 	settle();
 	const auto permissions=protection(access);
@@ -272,6 +282,7 @@ NativeMemoryRange NativeMemory::map_view(int descriptor, uint64_t offset, uint64
 
 NativeMemoryRange NativeMemory::free(uint64_t address, uint64_t size, uint32_t type)
 {
+	auto lock=lock_commits(); // Serialize this transaction with guest commit preludes.
 	settle();
 	if (type!=0x4000 && type!=0x8000)
 		return {0,0,unsupported};
@@ -287,6 +298,7 @@ NativeMemoryRange NativeMemory::free(uint64_t address, uint64_t size, uint32_t t
 		if (found->second.charged) used-=found->second.pages.nonzero(0,found->second.pages.size())*4096;
 		reserved_total-=length;
 		regions.erase(found);
+		commit_changed();
 		return {address,length};
 	}
 	if (!size) {
@@ -310,6 +322,7 @@ NativeMemoryRange NativeMemory::free(uint64_t address, uint64_t size, uint32_t t
 	const auto first=(base-found->first)/4096;
 	if (found->second.charged) used-=found->second.pages.nonzero(first,length/4096)*4096;
 	found->second.pages.fill(first,length/4096,0);
+	commit_changed();
 	return {base,length};
 }
 
@@ -341,6 +354,7 @@ std::map<uint64_t,NativeMemory::Image>::iterator NativeMemory::image_of(uint64_t
 
 NativeMemoryRange NativeMemory::protect(uint64_t address, uint64_t size, uint32_t access)
 {
+	auto lock=lock_commits(); // Serialize this transaction with guest commit preludes.
 	settle();
 	if (!range(address,size,user_limit))
 		return {0,0,invalid};
@@ -375,6 +389,7 @@ NativeMemoryRange NativeMemory::protect(uint64_t address, uint64_t size, uint32_
 
 std::optional<std::array<uint8_t,48>> NativeMemory::query(uint64_t address) const
 {
+	auto lock=lock_commits(); // Serialize this transaction with guest commit preludes.
 	// The guest's own commits count before anything is reported; the accounting is the only thing that changes.
 	const_cast<NativeMemory *>(this)->settle();
 	if (regions.upper_bound(address)==regions.begin() || [&]{ auto it=regions.upper_bound(address); --it; return address-it->first>=it->second.size; }()) {

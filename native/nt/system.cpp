@@ -51,6 +51,7 @@ bool NativeEnvironment::system_information()
 	const auto args=process.api_arguments(4);
 	uint32_t status=0;
 	try {
+		// Fork hook; retain the upstream information classes for merge compatibility.
 		if (uint32_t(args[0])==2 && memory_accounting)
 			status=commit_system_information(process,*memory_accounting,args);
 		else if (uint32_t(args[0])!=0)

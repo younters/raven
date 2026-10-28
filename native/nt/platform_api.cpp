@@ -269,6 +269,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	// PERFORMANCE_INFORMATION from the host's memory figures, in pages, with this process's handles and the host's process and thread counts.
 	for (const char *name : {"K32GetPerformanceInfo", "GetPerformanceInfo"})
 		registry.add(name, 2, [&context](ApiCall &call) {
+			// Fork hook; retain the upstream body for merge compatibility.
 			return commit_performance_info(call, context);
 			const size_t width = call.pointer_width(), size = width == 8 ? 104 : 56;
 			if (!call[0] || call.u32(1) < size) {

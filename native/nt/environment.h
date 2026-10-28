@@ -3,6 +3,7 @@
 #include "cpu/native_cpu.h"
 #include "inherit.h"
 
+#include <utility>
 #include <string_view>
 #include <string>
 #include <optional>
@@ -46,7 +47,7 @@ struct NativeLaunch {
 // Initial x64 thread fields only. Mappings belong to the process and survive this view.
 class NativeEnvironment {
 public:
-	void set_memory_accounting(NativeMemory *memory) { memory_accounting=memory; }
+	NativeMemory *set_memory_accounting(NativeMemory *memory) { return std::exchange(memory_accounting,memory); }
 	NativeEnvironment(NativeProcess &process, uint64_t image_base, uint32_t process_id, uint32_t thread_id);
 	uint64_t teb() const { return thread_block; }
 	uint64_t peb() const { return process_block; }

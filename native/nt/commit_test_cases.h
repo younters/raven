@@ -31,11 +31,25 @@ static void commit_test_cases(raven::NativeProcess &process, raven::NativeEnviro
 		*count=2;
 		entries[0]=entries[2]=r.address+4096;
 		entries[1]=entries[3]=r.address+8192;
-		check(logged.committed()==8192 && logged.committed()==8192,"log duplicated or lost a charge");
+		const auto settled=logged.committed();
+		check(settled==8192 && *count==0,"log duplicated or lost a charge");
+		*count=1; entries[0]=(r.address+4096)|1;
+		check(logged.committed()==4096 && logged.peak_committed()==8192,"logged decommit lost charge or peak");
+		*count=1; entries[0]=r.address+4096;
+		check(logged.committed()==8192,"logged recommit lost charge");
+		// Counts and ranges are guest writable: invalid/unaligned records must not become charges.
+		std::fill(entries,entries+raven::NativeMemory::commit_log_count*2,0);
+		entries[0]=r.address+2; entries[1]=r.address+8192;
+		entries[2]=r.address+1024*1024; entries[3]=r.address+2*1024*1024;
+		*count=UINT32_MAX;
+		block[raven::NativeMemory::commit_windows/8]=UINT64_MAX;
+		check(logged.committed()==8192 && *count==0 &&
+			block[raven::NativeMemory::commit_windows/8]<=raven::NativeMemory::commit_window_count,"untrusted log/count escaped bounds");
 		const auto fill=logged.allocate(0,2*1024*1024-8192,0x3000,4);
 		check(!fill.status && block[raven::NativeMemory::commit_windows/8]==0,"full budget still exposed a commit window");
 		check(logged.allocate(r.address+8192,4096,0x1000,4).status==0xc000012dU,"log fallback exceeded limit");
 		check(!logged.free(fill.address,0,0x8000).status && !logged.free(r.address,0,0x8000).status &&
 			logged.committed()==0 && logged.peak_committed()==2*1024*1024,"log release or peak differs");
 	}
+	check(environment.set_memory_accounting(&memory)==&memory,"destroyed allocator left dangling accounting pointer");
 }

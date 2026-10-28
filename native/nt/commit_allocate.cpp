@@ -20,7 +20,7 @@ static int protection(uint32_t value)
 }
 
 // x86 guests keep Windows' default 2 GiB user range so every allocation stays positive as a signed pointer.
-static constexpr uint64_t x86_user_limit = 0x7fff0000ULL;
+
 
 static bool range(uint64_t address, uint64_t size, uint64_t user_limit)
 {
@@ -29,7 +29,9 @@ static bool range(uint64_t address, uint64_t size, uint64_t user_limit)
 
 NativeMemoryRange NativeMemory::commit_allocate(uint64_t address, uint64_t size, uint32_t type, uint32_t access)
 {
+	auto lock=lock_commits();
 	settle();
+	refresh_commit_sample();
 	if (!range(address,size,user_limit))
 		return {0,0,invalid};
 	// MEM_RESET preserves commitment and protection; eagerly discarding is optional on Windows.
@@ -53,7 +55,7 @@ NativeMemoryRange NativeMemory::commit_allocate(uint64_t address, uint64_t size,
 			return {0,0,conflict};
 		const auto first=(base-found->first)/4096;
 		const uint64_t fresh=found->second.charged ? (length/4096-found->second.pages.nonzero(first,length/4096))*4096 : 0;
-		if (fresh>limit-used) return {0,0,commitment_limit};
+		if (fresh>commit_headroom()) return {0,0,commitment_limit};
 		auto updated=found->second.pages;
 		updated.fill(first,length/4096,access);
 		// Programs such as a browser's allocators commit a few pages at a time, one block after the next, and each change of the guest's
@@ -92,12 +94,11 @@ NativeMemoryRange NativeMemory::commit_allocate(uint64_t address, uint64_t size,
 		// Only pages that were reserved until now count as new commitment.
 		found->second.pages=std::move(updated);
 		used+=fresh;
-		peak=std::max(peak,used);
-		budget_windows();
+		commit_changed();
 		return {base,length};
 	}
 	const bool commit_now=type & 0x1000;
-	if (commit_now && length>limit-used) return {0,0,commitment_limit};
+	if (commit_now && length>commit_headroom()) return {0,0,commitment_limit};
 	if (regions.size()>=10000)
 		return {0,0,no_memory};
 	uint64_t selected=base;
@@ -131,8 +132,7 @@ NativeMemoryRange NativeMemory::commit_allocate(uint64_t address, uint64_t size,
 	catch (...) { regions.erase(found); throw; }
 	if (commit)
 		used+=length;
-	peak=std::max(peak,used);
-	budget_windows();
+	commit_changed();
 	reserved_total+=length;
 	if (!address)
 		next=selected+((length+65535)&~uint64_t(65535));
@@ -141,12 +141,14 @@ NativeMemoryRange NativeMemory::commit_allocate(uint64_t address, uint64_t size,
 
 NativeMemoryRange NativeMemory::commit_map_view(int descriptor, uint64_t offset, uint64_t size, uint32_t access, bool charged)
 {
+	auto lock=lock_commits();
 	settle();
+	refresh_commit_sample();
 	const auto permissions=protection(access);
 	if (permissions<0 || !size || (offset & 4095))
 		return {0,0,invalid};
 	const uint64_t length=(size+4095)&~uint64_t(4095);
-	if (charged && length>limit-used) return {0,0,commitment_limit};
+	if (charged && length>commit_headroom()) return {0,0,commitment_limit};
 	if (regions.size()>=10000)
 		return {0,0,no_memory};
 	const auto address=process.map_shared(descriptor,length,offset);
@@ -155,8 +157,7 @@ NativeMemoryRange NativeMemory::commit_map_view(int descriptor, uint64_t offset,
 		regions.emplace(address,Region{length,access,PageMap(length/4096,access),charged});
 	} catch (...) { process.unmap_memory(address); throw; }
 	if (charged) used+=length;
-	peak=std::max(peak,used);
-	budget_windows();
+	commit_changed();
 	reserved_total+=length;
 	return {address,length};
 }

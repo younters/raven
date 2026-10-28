@@ -18,11 +18,12 @@ void commit_global_status_ex(ApiCall &call, NativeMemory &memory)
 	std::vector<uint8_t> bytes(64);
 	const auto host = host_memory();
 	const auto [total, available] = memory.address_space();
-	const uint64_t limit = memory.commit_limit(), charge = system_commit_charge(memory.committed());
+	memory.committed();
+	const uint64_t limit = memory.commit_limit();
 	const uint32_t length = 64, load = host.total ? 100 - host.available * 100 / host.total : 0;
 	std::memcpy(bytes.data(), &length, 4);
 	std::memcpy(bytes.data() + 4, &load, 4);
-	const uint64_t values[] = {host.total, host.available, limit, limit - std::min<uint64_t>(limit, charge), total, available, 0};
+	const uint64_t values[] = {host.total, host.available, limit, memory.commit_headroom(), total, available, 0};
 	std::memcpy(bytes.data() + 8, values, 56);
 	call.write(call[0], bytes);
 	call.ret(1);
@@ -34,8 +35,9 @@ void commit_global_status(ApiCall &call, NativeMemory &memory)
 	const uint64_t cap = width == 4 ? 0xffffffffULL : UINT64_MAX;
 	const auto host = host_memory();
 	const auto [total, available] = memory.address_space();
-	const uint64_t limit = memory.commit_limit(), charge = system_commit_charge(memory.committed());
-	const uint64_t values[] = {host.total, host.available, limit, limit - std::min<uint64_t>(limit, charge), total, available};
+	memory.committed();
+	const uint64_t limit = memory.commit_limit();
+	const uint64_t values[] = {host.total, host.available, limit, memory.commit_headroom(), total, available};
 	std::vector<uint8_t> bytes(8 + 6 * width);
 	const uint32_t length = uint32_t(bytes.size()), load = host.total ? 100 - host.available * 100 / host.total : 0;
 	std::memcpy(bytes.data(), &length, 4);
@@ -86,13 +88,6 @@ void commit_process_memory_info(ApiCall &call, KernelContext &context)
 		call.fail(call[1] ? 6 : 87);
 		return;
 	}
-	uint64_t pages = 0, resident = 0;
-#ifdef __APPLE__
-	auto statm = raven_darwin::proc_stream("/proc/self/statm");
-#else
-	std::ifstream statm("/proc/self/statm");
-#endif
-	statm >> pages >> resident;
 	const size_t width = call.pointer_width(), size = width == 4 ? 40 : 72;
 	std::vector<uint8_t> counters(call.u32(2) >= size + width ? size + width : std::min<size_t>(call.u32(2), size));
 	if (counters.size() < size) {
@@ -102,9 +97,9 @@ void commit_process_memory_info(ApiCall &call, KernelContext &context)
 	const uint32_t cb = uint32_t(counters.size());
 	std::memcpy(counters.data(), &cb, 4);
 	// Working set remains the host controller resident-size approximation.
-	const uint64_t working = resident * 4096, committed = context.memory.committed();
+	const uint64_t working = process_resident().bytes, committed = context.memory.committed();
 	const auto put = [&](size_t index, uint64_t value) {
-		std::memcpy(counters.data() + 8 + (width == 4 ? 0 : 0) + index * width, &value, width);
+		std::memcpy(counters.data() + 8 + index * width, &value, width);
 	};
 	put(0, working);
 	put(1, working);

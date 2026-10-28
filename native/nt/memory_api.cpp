@@ -270,6 +270,7 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("LocalReAlloc", 3, resize_block);
 	registry.add("GlobalReAlloc", 3, resize_block);
 	registry.add("GlobalMemoryStatusEx", 1, [&memory](ApiCall &call) {
+		// Fork hook; retain the upstream body for merge compatibility.
 		return commit_global_status_ex(call, memory);
 		std::vector<uint8_t> bytes(64);
 		const uint32_t length = 64, load = 20;
@@ -311,6 +312,7 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 	// MEMORYSTATUS: the same figures in SIZE_T fields; a 32-bit program sees them capped as Windows caps them, at 4 GiB less a byte for
 	// memory and at its 2 GiB address space.
 	registry.add("GlobalMemoryStatus", 1, [&memory](ApiCall &call) {
+		// Fork hook; retain the upstream body for merge compatibility.
 		return commit_global_status(call, memory);
 		const size_t width = call.pointer_width();
 		const uint64_t cap = width == 4 ? 0xffffffffULL : UINT64_MAX;

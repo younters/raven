@@ -286,10 +286,18 @@ python3 native/platform/darwin/tests/apps_test.py
 ## Windows commit accounting
 
 The system commit limit models RAM plus a system-managed page file of `min(max(3 × RAM, 4 GiB), volume / 8)` on the VM volume.
-`RAVEN_COMMIT_LIMIT_MB` overrides this system limit (including the value stored by the prefix control panel); it is no longer a fixed
-512 MiB private budget. Private committed pages and pagefile-backed or writable/copy-on-write views charge once, release and decommit
-return the charge, and reset/protection changes preserve it. Guest commit windows are bounded by remaining capacity, keeping their fast
-path within the same limit. Memory status and performance APIs use host physical availability plus guest commitment; the reported system
-charge includes host RAM use and swap and has a process-local peak. This is an approximation across independent Raven processes, with
-no shared global reservation ledger. Secondary stacks still commit their entire reservation; the bootstrap-owned main stack is included
-in virtual address occupancy but not private commit. Process working set remains the host controller resident-size approximation.
+`RAVEN_COMMIT_LIMIT_MB` now sets an optional **per-process private-commit quota**, like Windows' job-object process memory limit;
+this includes the setting exposed by the upstream prefix control panel. It does not replace the modeled system limit. Both limits
+are enforced, and `ullAvailPageFile` reports the smaller of process-quota and system headroom, while total page file and performance
+commit figures describe the modeled system. Host use excludes the controller's resident private pages before adding guest commit
+(Darwin approximates those private pages by controller RSS). The external charge is sampled on slow commits/window refills and reused
+by reporting and fast-path enforcement; independent Raven processes still have no shared reservation ledger. The process-local system
+peak is updated on commit/decommit using guest peak plus the cached external charge. Guest commit preludes and host log/window
+transactions acquire the same shared atomic lock; guest contention falls back unlocked, and guest critical sections never trap or
+wait for the host. Secondary stacks commit their entire reservation; the bootstrap-owned main stack is included in virtual occupancy
+but not private commit. Process working set remains the controller RSS approximation. **Section deviation:** pagefile-backed memfd
+sections are not charged at `CreateFileMapping(SEC_COMMIT)`; each mapped view (including read-only and duplicate views) charges its
+entire size independently and returns that charge at unmap. An unmapped section kept alive by handles has no charge. `SEC_RESERVE`
+is likewise treated as fully committed at map time rather than charging individual section pages as committed. Correct section-owned
+charges across the last handle and view require shared section-lifetime accounting and are deferred; read-only file-backed views
+remain uncharged, while writable/private or copy-on-write file views charge their private backing.

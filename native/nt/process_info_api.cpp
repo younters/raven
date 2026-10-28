@@ -864,7 +864,8 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	// PROCESS_MEMORY_COUNTERS from the host's accounting of this process.
-	registry.add("GetProcessMemoryInfo", 3, [is_self, &context](ApiCall &call) {
+	registry.add("GetProcessMemoryInfo", 3, [=, &context](ApiCall &call) {
+		// Fork hook; retain the upstream body for merge compatibility.
 		return commit_process_memory_info(call, context);
 		if (!is_self(call[0]) || !call[1]) {
 			call.fail(call[1] ? 6 : 87);
