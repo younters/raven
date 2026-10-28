@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <sys/file.h>
 #include <unistd.h>
+#include <dlfcn.h>
 #include <fstream>
 #include <vector>
 #include <string>
@@ -14,6 +15,18 @@
 #include "graphics/icon_bitmap.h"
 
 namespace {
+void update_registered_name(NSString *name)
+{
+	// WebKit uses this optional LaunchServices SPI for names of independently registered helper processes.
+	using Current = CFTypeRef (*)();
+	using Set = int32_t (*)(int32_t,CFTypeRef,CFStringRef,CFTypeRef,CFDictionaryRef *);
+	auto current=reinterpret_cast<Current>(dlsym(RTLD_DEFAULT,"_LSGetCurrentApplicationASN"));
+	auto set=reinterpret_cast<Set>(dlsym(RTLD_DEFAULT,"_LSSetApplicationInformationItem"));
+	auto key=reinterpret_cast<CFStringRef *>(dlsym(RTLD_DEFAULT,"_kLSDisplayNameKey"));
+	if (current && set && key) {
+		(void)set(-2,current(),*key,(__bridge CFStringRef)name,nullptr);
+	}
+}
 uint16_t word(std::span<const uint8_t> data, size_t at) {
 	return at+2<=data.size() ? uint16_t(data[at] | (uint16_t(data[at+1])<<8)) : 0;
 }
@@ -55,7 +68,9 @@ NSImage *program_icon(std::span<const uint8_t> file)
 	auto bitmap=raven::decode_icon_dib(bytes);
 	for (size_t i=0;i<bitmap.and_mask.size();++i)
 		bitmap.color.rgba[i*4+3]=bitmap.and_mask[i] ? 0 : bitmap.has_alpha ? bitmap.color.rgba[i*4+3] : 255;
-	CGDataProviderRef provider=CGDataProviderCreateWithData(nullptr,bitmap.color.rgba.data(),bitmap.color.rgba.size(),nullptr);
+	CFDataRef data=CFDataCreate(kCFAllocatorDefault,bitmap.color.rgba.data(),CFIndex(bitmap.color.rgba.size()));
+	CGDataProviderRef provider=CGDataProviderCreateWithCFData(data);
+	CFRelease(data);
 	CGColorSpaceRef colors=CGColorSpaceCreateDeviceRGB();
 	CGImageRef image=CGImageCreate(bitmap.color.width,bitmap.color.height,8,32,bitmap.color.width*4,colors,
 		kCGImageAlphaLast|kCGBitmapByteOrderDefault,provider,nullptr,false,kCGRenderingIntentDefault);
@@ -87,10 +102,12 @@ void raven_macos_program_identity()
 		}
 		NSString *fallback=[NSString stringWithUTF8String:path].lastPathComponent.stringByDeletingPathExtension;
 		NSProcessInfo.processInfo.processName=name ?: product ?: fallback;
+		update_registered_name(name ?: product ?: fallback);
 		if (NSImage *icon=program_icon(file)) NSApp.applicationIconImage=icon;
 	} catch (...) {
 		NSString *fallback=[NSString stringWithUTF8String:path].lastPathComponent.stringByDeletingPathExtension;
 		NSProcessInfo.processInfo.processName=fallback;
+		update_registered_name(fallback);
 	}
 }
 
