@@ -23,16 +23,16 @@ std::span<const std::string_view> NativeDesktop::control_exports()
 
 std::span<const std::string_view> NativeDesktop::user_exports()
 {
-	static constexpr std::array<std::string_view, 87> names{
+	static constexpr std::array<std::string_view, 89> names{
 		"AdjustWindowRect", "AdjustWindowRectEx", "BeginPaint", "CallWindowProcW", "ClientToScreen", "CopyIcon", "CreateIconFromResourceEx", "CreateWindowExW",
-		"DefWindowProcW", "DestroyIcon", "DestroyMenu", "DestroyWindow", "DispatchMessageW", "DrawIconEx", "EndPaint", "FillRect",
+		"DefWindowProcW", "DestroyIcon", "DestroyMenu", "DestroyWindow", "DispatchMessageW", "DrawIcon", "DrawIconEx", "EndPaint", "FillRect",
 		"FrameRect", "GetActiveWindow", "GetClassInfoExW", "GetClassInfoW", "GetClassLongA", "GetClassLongPtrA", "GetClassLongPtrW", "GetClassLongW",
 		"GetClassNameA", "GetClassNameW", "GetClientRect", "GetDC", "GetDlgCtrlID", "GetDlgItem", "GetFocus", "GetIconInfo",
 		"GetMenuItemCount", "GetMenuItemID", "GetMessageW", "GetParent", "GetSubMenu", "GetSysColor", "GetSysColorBrush", "GetSystemMetrics",
 		"GetUpdateRect", "GetWindowDC", "GetWindowLongA", "GetWindowLongPtrA", "GetWindowLongPtrW", "GetWindowLongW", "GetWindowRect", "GetWindowTextLengthW",
 		"GetWindowTextW", "InternalGetWindowText", "InvalidateRect", "IsChild", "IsMenu", "IsWindow", "IsWindowUnicode", "IsWindowVisible",
 		"LoadMenuW", "LoadStringW", "LookupIconIdFromDirectoryEx", "MapWindowPoints", "PeekMessageW", "PostMessageW", "PostQuitMessage", "PostThreadMessageW",
-		"PrivateExtractIconsW", "RegisterClassExW", "RegisterClassW", "ReleaseDC", "ScreenToClient", "SendMessageW", "SendNotifyMessageW", "SetClassLongA",
+		"PrivateExtractIconsW", "RegisterClassExW", "RegisterClassW", "ReleaseDC", "ScreenToClient", "SendMessageTimeoutW", "SendMessageW", "SendNotifyMessageW", "SetClassLongA",
 		"SetClassLongPtrA", "SetClassLongPtrW", "SetClassLongW", "SetFocus", "SetWindowLongA", "SetWindowLongPtrA", "SetWindowLongPtrW", "SetWindowLongW",
 		"SetWindowTextW", "ShowWindow", "TranslateMessage", "UnregisterClassW", "UpdateWindow", "ValidateRect", "WindowFromDC",
 	};
@@ -82,7 +82,7 @@ uint64_t NativeDesktop::lookup(std::span<const uint64_t> args)
 	return lookup_icon(entries, uint32_t(width), uint32_t(height), objects.display(), (uint32_t(args[4]) & 1U) != 0);
 }
 
-static void resize_icon(IconBitmap &image, uint32_t width, uint32_t height, bool monochrome)
+void resize_icon(IconBitmap &image, uint32_t width, uint32_t height, bool monochrome)
 {
 	const auto source_width = image.color.width, source_height = image.color.height;
 	const auto stretch = [&](std::span<const uint8_t> pixels, uint32_t channels, uint32_t planes = 1) {
@@ -538,6 +538,11 @@ bool NativeDesktop::dispatch(std::string_view name)
 		} catch (uint32_t error) { environment.set_last_error(error); }
 	} else if (name == "DrawIconEx") {
 		result = draw(process.api_arguments(9));
+	} else if (name == "DrawIcon") {
+		// DrawIcon is DrawIconEx at the icon's own size with both the image and the mask.
+		const auto args = process.api_arguments(4);
+		const std::array<uint64_t, 9> extended{args[0], args[1], args[2], args[3], 0, 0, 0, 0, 3};
+		result = draw(extended);
 	} else if (name == "GetObjectA" || name == "GetObjectW") {
 		result = get_object(process.api_arguments(3),name=="GetObjectA");
 	} else if (name == "GetBitmapBits") {

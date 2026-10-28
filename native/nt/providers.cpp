@@ -65,14 +65,14 @@ static std::vector<uint8_t> read_host_file(const std::filesystem::path &path)
 	return bytes;
 }
 
-// PathCchCombineEx and PathCchSkipRoot live in kernelbase.dll on Windows and are not in the import libraries the public lists come from.
-static constexpr std::array<std::string_view, 50> names{
+// The PathCch functions live in kernelbase.dll on Windows and are not in the public import libraries.
+static constexpr std::array<std::string_view, 51> names{
 	"CloseHandle","CreateEventA","CreateEventW","ExitProcess",
 	"FindResourceA", "FindResourceExA", "FindResourceExW", "FindResourceW", "FreeLibrary",
 	"GetACP", "GetCommandLineA", "GetCommandLineW", "GetCurrentProcessId", "GetCurrentThreadId", "GetFileType", "GetLastError", "GetModuleHandleA",
 	"GetModuleHandleW", "GetProcAddress", "GetProcessHeap", "GetStartupInfoA", "GetStartupInfoW", "GetStdHandle", "HeapAlloc", "HeapCreate", "HeapDestroy", "HeapFree", "HeapReAlloc", "HeapSize",
 	"LoadLibraryA", "LoadLibraryW", "LoadResource",
-	"LockResource", "MultiByteToWideChar", "OpenProcessToken", "OpenThreadToken", "PathCchCanonicalize", "PathCchCombineEx", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
+	"LockResource", "MultiByteToWideChar", "OpenProcessToken", "OpenThreadToken", "PathCchCanonicalize", "PathCchCanonicalizeEx", "PathCchCombineEx", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
 	"VirtualAlloc", "VirtualFree", "VirtualProtect", "VirtualQuery", "WaitForSingleObject", "WriteFile"
 };
 
@@ -135,6 +135,23 @@ const std::vector<FastStub> &fast_stubs()
 		// mov rax,[rcx]; mov r10,rax; and r10,3; cmp r10,2; jne slow; test r9,r9; jz done; and rax,-4; mov [r9],rax; done: mov eax,1; ret
 		{"InitOnceExecuteOnce", {0x48, 0x8b, 0x01, 0x49, 0x89, 0xc2, 0x49, 0x83, 0xe2, 0x03, 0x49, 0x83, 0xfa, 0x02, 0x75, 0x20,
 			0x4d, 0x85, 0xc9, 0x74, 0x07, 0x48, 0x83, 0xe0, 0xfc, 0x49, 0x89, 0x01, 0xb8, 1, 0, 0, 0, 0xc3}},
+		// Singly linked lists keep the served layout: the head in the first word, the depth in the low 16 bits of the second
+		// and a sequence above it that every change advances, so a 16-byte compare and exchange updates both at once.
+		// test cl,15; jnz slow; push rbx; mov r9,rcx; mov r8,rdx; mov rax,[r9]; mov rdx,[r9+8]
+		// retry: mov [r8],rax; mov rbx,r8; lea rcx,[rdx+0x10001]; lock cmpxchg16b [r9]; jnz retry; pop rbx; ret
+		{"InterlockedPushEntrySList", {0xf6, 0xc1, 0x0f, 0x75, 0x2b, 0x53, 0x49, 0x89, 0xc9, 0x49, 0x89, 0xd0, 0x49, 0x8b, 0x01,
+			0x49, 0x8b, 0x51, 0x08, 0x49, 0x89, 0x00, 0x4c, 0x89, 0xc3, 0x48, 0x8d, 0x8a, 0x01, 0x00, 0x01, 0x00,
+			0xf0, 0x49, 0x0f, 0xc7, 0x09, 0x75, 0xec, 0x5b, 0xc3}},
+		// test cl,15; jnz slow; push rbx; mov r9,rcx; mov rax,[r9]; mov rdx,[r9+8]
+		// retry: test rax,rax; jz done; mov rbx,[rax]; lea rcx,[rdx+0xffff]; lock cmpxchg16b [r9]; jnz retry; done: pop rbx; ret
+		{"InterlockedPopEntrySList", {0xf6, 0xc1, 0x0f, 0x75, 0x2b, 0x53, 0x49, 0x89, 0xc9, 0x49, 0x8b, 0x01, 0x49, 0x8b, 0x51, 0x08,
+			0x48, 0x85, 0xc0, 0x74, 0x11, 0x48, 0x8b, 0x18, 0x48, 0x8d, 0x8a, 0xff, 0xff, 0x00, 0x00,
+			0xf0, 0x49, 0x0f, 0xc7, 0x09, 0x75, 0xea, 0x5b, 0xc3}},
+		// test cl,15; jnz slow; push rbx; mov r9,rcx; mov rax,[r9]; mov rdx,[r9+8]
+		// retry: test rax,rax; jz done; xor ebx,ebx; mov rcx,rdx; xor cx,cx; add rcx,0x10000; lock cmpxchg16b [r9]; jnz retry; done: pop rbx; ret
+		{"InterlockedFlushSList", {0xf6, 0xc1, 0x0f, 0x75, 0x2b, 0x53, 0x49, 0x89, 0xc9, 0x49, 0x8b, 0x01, 0x49, 0x8b, 0x51, 0x08,
+			0x48, 0x85, 0xc0, 0x74, 0x16, 0x31, 0xdb, 0x48, 0x89, 0xd1, 0x66, 0x31, 0xc9, 0x48, 0x81, 0xc1, 0x00, 0x00, 0x01, 0x00,
+			0xf0, 0x49, 0x0f, 0xc7, 0x09, 0x75, 0xe5, 0x5b, 0xc3}},
 	};
 	return stubs;
 }
@@ -149,8 +166,12 @@ static bool served_api(std::string_view module, std::string_view name)
 		return name == "GetWindow" || name == "MonitorFromWindow";
 	if (module == "kernel32.dll" || module == "kernelbase.dll")
 		return name == "QueryPerformanceCounter" || name == "QueryPerformanceFrequency" || name == "WakeConditionVariable" ||
-			name == "WakeAllConditionVariable" || name == "ReleaseSemaphore" || name == "GetSystemTime" ||
-			name == "SystemTimeToFileTime";
+			name == "WakeAllConditionVariable" || name == "ReleaseSemaphore" || name == "CreateSemaphoreExW" ||
+			name == "WaitForSingleObject" || name == "WaitForSingleObjectEx" || name == "SetEvent" || name == "ResetEvent" || name == "CloseHandle";
+	// Reading a socket's recorded events polls the host sockets and never blocks.
+	if (module == "ws2_32.dll")
+		return name == "WSAEnumNetworkEvents" ||
+			name == "GetSystemTime" || name == "SystemTimeToFileTime";
 	// Waking marks the sleepers; they run when the scheduler next picks a thread.
 	if (module == "ntdll.dll")
 		return name == "RtlWakeConditionVariable" || name == "RtlWakeAllConditionVariable";
@@ -172,7 +193,7 @@ static bool served_api(std::string_view module, std::string_view name)
 // A served stub: it loads the block address from the provider's own pointer, which stays zero until the runtime maps the block, stores
 // RCX, RDX, R8, R9, RSP and the low halves of XMM0 to XMM3, publishes its own address and spins until the runtime clears it. After a
 // thousand rounds it stops at a breakpoint instead, which gives the processor to the runtime when the two compete for it.
-static constexpr size_t served_stub_size = 128, served_trap = 0x70, served_wait = 85, served_yield = 101;
+static constexpr size_t served_stub_size = 128, served_trap = 0x70, served_wait = 85, served_yield = 109;
 
 static std::vector<uint8_t> served_stub(int32_t to_pointer)
 {
@@ -183,8 +204,9 @@ static std::vector<uint8_t> served_stub(int32_t to_pointer)
 		// mov r11d, 1000; spin: pause; cmp qword [r10], 0; je done; dec r11d; jnz spin; int3; jmp to the compare; nop
 		0x41, 0xbb, 0xe8, 0x03, 0x00, 0x00, 0xf3, 0x90, 0x49, 0x83, 0x3a, 0x00, 0x74, 0x0a, 0x41, 0xff, 0xcb, 0x75, 0xf3, 0xcc, 0xeb, 0xf2,
 		0x66, 0x90,
-		// done: mov rax, [r10+80]; cmp qword [r10+88], 0; je return; int3; return: ret
-		0x49, 0x8b, 0x42, 0x50, 0x49, 0x83, 0x7a, 0x58, 0x00, 0x74, 0x01, 0xcc, 0xc3};
+		// done: mov rax, [r10+80]; mov r11, [r10+88]; test r11, r11; je return; cmp r11d, 2; je fallback; int3; return: ret
+		// A declined call (2) takes the fallback trap that follows, with the argument registers as the caller left them.
+		0x49, 0x8b, 0x42, 0x50, 0x4d, 0x8b, 0x5a, 0x58, 0x4d, 0x85, 0xdb, 0x74, 0x07, 0x41, 0x83, 0xfb, 0x02, 0x74, 0x03, 0xcc, 0xc3};
 	const int32_t displacement = to_pointer - 7;
 	std::memcpy(code.data() + 3, &displacement, 4);
 	code.resize(served_trap + 2);
@@ -1578,7 +1600,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		if (std::find(native_modules.begin(), native_modules.end(), library) == native_modules.end())
 			native_modules.push_back(library);
 #ifdef RAVEN_OPENGL
-	if (OpenGLBridge::enabled()) native_modules.push_back("opengl32.dll");
+	// The bridge is the program's OpenGL unless the program brings its own opengl32.dll and the bridge was not asked for.
+	const bool native_opengl = OpenGLBridge::enabled() && (OpenGLBridge::requested() || !modules.all().contains("opengl32.dll"));
+	if (native_opengl) native_modules.push_back("opengl32.dll");
 #endif
 #ifdef RAVEN_VULKAN
 	native_modules.push_back("vulkan-1.dll");
@@ -1586,7 +1610,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	load_initial_dependencies(modules,source,native_modules);
 	std::map<uint64_t, std::string> traps;
 #ifdef RAVEN_OPENGL
-	if (OpenGLBridge::enabled()) {
+	if (native_opengl) {
 		if (modules.all().contains("opengl32.dll")) throw std::runtime_error("native OpenGL cannot share a supplied opengl32.dll");
 		const auto symbols = OpenGLBridge::exports();
 		const auto bytes = runtime_provider("opengl32.dll", 0x180000000ULL, symbols, false, {}, {}, guest_paths());
@@ -1639,7 +1663,20 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"RtlInitializeSListHead", "RtlInterlockedPushEntrySList", "RtlInterlockedPopEntrySList", "RtlInterlockedFlushSList",
 		"RtlQueryDepthSList",
 		// What Wine's builds of the Direct3D 10.1 and Direct2D libraries import from ntdll.
-		"_vsnprintf"})
+		"_vsnprintf",
+		// The registry natives, which libraries loaded after start (the Click-to-Run integration of Office among them) import by name.
+		"NtCreateKey", "NtOpenKey", "NtOpenKeyEx", "NtQueryKey", "NtQueryValueKey", "NtSetValueKey", "NtDeleteValueKey", "NtSetInformationKey",
+		// Looked up by diagnostics code that records where a call came from.
+		"RtlCaptureStackBackTrace",
+		// What the virtualization layer of Click-to-Run Office imports from ntdll: more of the registry and the objects, counted strings,
+		// file name expressions, and the generic tables, which the guest RTL holds.
+		"NtDuplicateObject", "NtEnumerateKey", "NtEnumerateValueKey", "NtFlushKey", "NtNotifyChangeKey", "NtNotifyChangeMultipleKeys",
+		"NtOpenJobObject", "NtQuerySecurityObject", "NtRenameKey", "NtSetSecurityObject", "RtlInitUnicodeString", "RtlCompareUnicodeString",
+		"RtlCopyUnicodeString", "RtlEqualUnicodeString", "RtlPrefixUnicodeString", "RtlIntegerToUnicodeString", "RtlIsNameInExpression",
+		"RtlInitializeGenericTableAvl", "RtlInsertElementGenericTableAvl", "RtlInsertElementGenericTableFullAvl", "RtlIsGenericTableEmptyAvl",
+		"RtlNumberGenericTableElementsAvl", "RtlLookupElementGenericTableAvl", "RtlLookupElementGenericTableFullAvl", "RtlEnumerateGenericTableAvl",
+		"RtlEnumerateGenericTableWithoutSplayingAvl", "RtlLookupFirstMatchingElementGenericTableAvl", "RtlGetElementGenericTableAvl",
+		"RtlDeleteElementGenericTableAvl"})
 		if (std::find(nt_names.begin(),nt_names.end(),name)==nt_names.end()) nt_names.push_back(name);
 	std::sort(nt_names.begin(),nt_names.end());
 	// Every Windows system library that a program may import gets a provider; names without a handler stop visibly when called.
@@ -1740,17 +1777,20 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				{"ole32.dll", "raven-shell.dll", "raven-shell."}, {"shell32.dll", "raven-shell.dll", "raven-shell."},
 				{"shlwapi.dll", "raven-shell.dll", "raven-shell."}, {"setupapi.dll", "raven-setupapi.dll", "raven-setupapi."},
 				{"ole32.dll", "raven-storage.dll", "raven-storage."}, {"combase.dll", "raven-shell.dll", "raven-shell."},
-				{"uiautomationcore.dll", "raven-shell.dll", "raven-shell."},
+				{"uiautomationcore.dll", "raven-shell.dll", "raven-shell."}, {"runtimeobject.dll", "raven-shell.dll", "raven-shell."},
 				// The heap, critical sections and the free paths of SRW locks and condition variables run in the guest RTL.
-				{"kernel32.dll", "raven-rtl.dll", "raven-rtl."}, {"kernelbase.dll", "raven-rtl.dll", "raven-rtl."}};
+				{"kernel32.dll", "raven-rtl.dll", "raven-rtl."}, {"kernelbase.dll", "raven-rtl.dll", "raven-rtl."},
+				// The generic AVL tables of ntdll; its heap stays with the host, which calls the guest RTL itself.
+				{"ntdll.dll", "raven-rtl.dll", "raven-rtl."}};
 			for (const auto &overlay_rule : overlays) {
 				if (name != overlay_rule.library)
 					continue;
+				const bool tables_only = name == "ntdll.dll";
 				const auto overlay = modules.all().find(overlay_rule.component);
 				if (overlay == modules.all().end() || overlay->second->runtime_api)
 					continue;
 				for (auto &symbol : provider->exports)
-					if (!symbol.names.empty() && !host_device_export(name, symbol.names.at(0)) && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
+					if (!symbol.names.empty() && !host_device_export(name, symbol.names.at(0)) && (!tables_only || symbol.names.at(0).find("GenericTable") != std::string::npos) && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
 							return candidate.forwarder.empty() && std::find(candidate.names.begin(), candidate.names.end(), symbol.names.at(0)) != candidate.names.end();
 						}))
 						symbol.forwarder = overlay_rule.prefix + symbol.names.at(0);
@@ -1860,6 +1900,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	adopt_inherited(kernel_objects,launch->inherited);
 	std::array<uint64_t,3> standard_handles{UINT64_MAX,UINT64_MAX,UINT64_MAX};
 	for (size_t i=0;i<3;++i) {
+		// A standard handle the creator also let the child inherit is that inherited object, under its own value.
+		const auto shared=std::find_if(launch->inherited.begin(),launch->inherited.end(),[&](const InheritedHandle &record) {
+			return (record.standard & (1U << i)) && kernel_objects.object(record.handle);
+		});
+		if (shared!=launch->inherited.end()) { standard_handles[i]=shared->handle; continue; }
 		if (launch->standard_fds[i]<0) continue;
 		const auto inherited=kernel_objects.inherit_file(launch->standard_fds[i]);
 		if (inherited.status) throw std::runtime_error("cannot inherit native standard file");
@@ -1897,7 +1942,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 #endif
 #ifdef RAVEN_OPENGL
 	std::unique_ptr<OpenGLBridge> opengl;
-	if (OpenGLBridge::enabled()) opengl = std::make_unique<OpenGLBridge>(process, modules, desktop_objects, windows);
+	if (native_opengl) opengl = std::make_unique<OpenGLBridge>(process, modules, desktop_objects, windows);
 #endif
 	desktop.set_updated([&](uint64_t window) { windows.drawing(window); });
 #ifdef RAVEN_VULKAN
@@ -2114,8 +2159,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				result=process.resume(budget);
 				continue;
 			}
+			// Calls that stopped the guest are counted apart from served ones: a stop costs far more than the call.
 			if (RuntimeProfile::instance().enabled() && profile_start != std::chrono::steady_clock::time_point{})
-				RuntimeProfile::instance().api(api_name, std::chrono::steady_clock::now() - profile_start);
+				RuntimeProfile::instance().api("(stop) " + api_name, std::chrono::steady_clock::now() - profile_start);
 			if (!dispatched && std::getenv("RAVEN_SURVEY_MISSING")) {
 				// Survey aid: report each missing API once and fail it, so one run lists every API a program reaches.
 				static std::set<std::string> reported;
@@ -2200,6 +2246,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		return result;
 	};
 	const auto prefix = NativePrefix::from_environment();
+	prefix.place_runtime_components(std::filesystem::path(bootstrap).parent_path());
 	NativePaths paths(prefix);
 	if (launch && !launch->directory.empty())
 		paths.set_current(launch->directory);
@@ -2284,9 +2331,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		if (!module->runtime_api)
 			continue;
 		for (const auto &symbol : module->exports) {
-			// The clock only reads calibration; its separate pointer is safe while other threads run.
+			// The clock and the tick counts only read calibration; their pointers are safe while other threads run.
 			if (symbol.address && !symbol.names.empty() && symbol.forwarder.empty() &&
-				(guest_clock_api(module_name, symbol.names.at(0)) || (!process.parallel() && block_prelude(module_name, symbol.names.at(0)))) &&
+				(guest_clock_api(module_name, symbol.names.at(0)) || block_prelude(module_name, symbol.names.at(0)) == &tick_prelude() ||
+					(!process.parallel() && block_prelude(module_name, symbol.names.at(0)))) &&
 				served_stub_rva(module->loaded.data(), module_name, symbol.names.at(0), symbol.address) != symbol.address) {
 				auto image = module->loaded.data();
 				int32_t displacement = 0;
@@ -2464,17 +2512,22 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_security_api(api_registry, kernel);
 	register_child_process_api(api_registry, kernel);
 	register_winsock_api(api_registry, kernel);
+#ifdef RAVEN_OPENSSL
+	register_wininet_api(api_registry, kernel);
+#endif
 	register_host_api(api_registry, kernel);
 	register_pipe_api(api_registry, kernel);
 	register_job_api(api_registry, kernel);
 	register_wave_api(api_registry, kernel);
 	register_mmio_api(api_registry, kernel);
 	register_crypt32_api(api_registry, kernel);
+	register_bcrypt_api(api_registry, kernel);
 	register_process_info_api(api_registry, kernel);
 	register_font_service(api_registry, kernel);
 	register_canvas_service(api_registry, kernel);
 	register_sync_api(api_registry, kernel);
 	register_thread_api(api_registry, kernel);
+	NativeObjectAPI::register_served(api_registry, kernel.objects);
 	register_text_api(api_registry, kernel);
 	register_memory_api(api_registry, kernel);
 	register_file_api(api_registry, kernel);
@@ -2499,6 +2552,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	desktop.register_print_api(desktop_api, kernel);
 	NativeRegistry hive(prefix.registry_file());
 	apply_registry_settings(hive);
+	paths.set_package_roots([&hive] { return virtual_package_roots(hive); });
 	register_registry_api(api_registry, kernel, hive);
 	register_service_api(api_registry, kernel, hive);
 	NativeProfile profile(process, environment, prefix);

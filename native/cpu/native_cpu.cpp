@@ -542,6 +542,7 @@ struct NativeProcess::State {
 	// Cumulative counters can be sampled between debugger attaches without tracing the guest's syscalls.
 	uint64_t slice_interrupts = 0, slice_deferrals = 0, slice_yield_requests = 0;
 	uint64_t served_calls = 0, served_waits = 0, served_yields = 0;
+	bool served_declined = false;
 	uint64_t queued_calls = 0;
 	std::optional<std::vector<uint64_t>> translated_words;
 	// How deep in guest callbacks the translated call was made: a callback the handler starts makes real calls of its own.
@@ -574,7 +575,8 @@ struct NativeProcess::State {
 	// Where the served stubs start, in order, and how many bytes each covers before its fallback trap.
 	std::vector<uint64_t> served_stubs;
 	std::vector<uint64_t> queued_stubs;
-	std::map<uint64_t, uint64_t *> queued_blocks;
+	// Walked at every synchronous served call, so it is kept flat.
+	std::vector<std::pair<uint64_t, uint64_t *>> queued_blocks;
 	std::map<uint64_t *, uint64_t> served_owners;
 	std::vector<uint64_t> served_yield_traps;
 	size_t served_stub_size = 0;
@@ -1193,7 +1195,7 @@ void NativeProcess::unmap_memory(uint64_t address)
 		throw std::runtime_error("native release requires a dynamic allocation base");
 	const uint64_t end = address + owned->second;
 	memory_syscall(SYS_munmap, address, owned->second);
-	state->queued_blocks.erase(address);
+	std::erase_if(state->queued_blocks, [address](const auto &entry) { return entry.first == address; });
 	if (const auto view = state->shared_views.find(address); view != state->shared_views.end())
 		state->served_owners.erase(static_cast<uint64_t *>(view->second->host));
 	state->shared_views.erase(address);
@@ -1837,7 +1839,10 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 			while (!observed && std::chrono::steady_clock::now() < until) {
 				// A fixed count parks too early when an empty event probe avoids the mutex; leave a short window for a guest reply.
 				const auto spin_until = std::min(until, std::chrono::steady_clock::now() + std::chrono::microseconds(5));
-				while (!ready() && std::chrono::steady_clock::now() < spin_until) {}
+				// The clock is read every few probes: reading it at each one was the costliest part of the spin. The pause keeps the probes
+				// from taking the lines the guest is writing its request to.
+				for (unsigned spins = 1; !ready() && (spins++ % 4 || std::chrono::steady_clock::now() < spin_until);)
+					__builtin_ia32_pause();
 				if (!ready())
 					state->execution_wait(ready, until);
 				if (command() || queued_pending())
@@ -2043,7 +2048,7 @@ void NativeProcess::make_served_block(uint64_t teb, uint64_t &guest, uint64_t *&
 		state->served_owners.emplace(host, teb);
 		if (state->mode == NativeMode::x64 && std::getenv("RAVEN_QUEUED_GRAPHICS")) {
 			host[ServedQueue::enabled] = 1;
-			state->queued_blocks.emplace(guest, host);
+			state->queued_blocks.emplace_back(guest, host);
 		}
 	} catch (...) {
 		close(descriptor);
@@ -2059,6 +2064,18 @@ uint64_t NativeProcess::serving_teb() const
 	const auto found = state->served_owners.find(state->thread_served_block);
 	if (found == state->served_owners.end()) throw std::runtime_error("served call has no thread-block owner");
 	return found->second;
+}
+
+bool NativeProcess::serving() const
+{
+	return state->serving;
+}
+
+void NativeProcess::decline_served()
+{
+	if (!state->serving || state->serving_queued)
+		throw std::runtime_error("only a synchronous served call can be declined");
+	state->served_declined = true;
 }
 
 bool NativeProcess::serving_queued() const
@@ -2173,6 +2190,8 @@ bool NativeProcess::drain_queued_calls(bool all)
 		try {
 			for (const auto &[guest, block] : state->queued_blocks) {
 				(void)guest;
+				if (__atomic_load_n(&block[ServedQueue::head], __ATOMIC_ACQUIRE) == block[ServedQueue::tail])
+					continue;
 				state->thread_served_block = block;
 				drained |= drain_queued_calls();
 			}
@@ -2214,16 +2233,19 @@ bool NativeProcess::serve_pending()
 	if (!stub && !queued)
 		return false;
 	// A synchronous call observes every earlier queued record on this thread.
+	bool declined = false;
 	if (stub) {
 		drain_queued_calls(true);
+		state->served_declined = false;
 		block[10] = serve_call(stub, {block[1], block[2], block[3], block[4]}, {block[6], block[7], block[8], block[9]}, block[5] + 40);
+		declined = std::exchange(state->served_declined, false);
 	}
 	if (state->resume_hook)
 		state->resume_hook();
 	// The stub saves its result in RAX before obeying this request; later threads may then overwrite the shared result slot.
 	const bool due = state->slice.count() > 0 && state->slice_yield &&
 		std::chrono::steady_clock::now() - state->slice_started >= state->slice;
-	block[11] = !parallel() && !state->served_yield_traps.empty() && due;
+	block[11] = declined ? 2 : !parallel() && !state->served_yield_traps.empty() && due;
 	if (stub)
 		__atomic_store_n(&block[0], 0, __ATOMIC_RELEASE);
 	// Parallel threads own their results, so another host frame can run as soon as this reply is published.

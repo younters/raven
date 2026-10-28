@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <fstream>
 #include <stdexcept>
+#include <utility>
 
 namespace raven {
 
@@ -119,19 +120,40 @@ NativeRegistry::NativeRegistry(std::filesystem::path file) : file(std::move(file
 	stamp = current_stamp();
 	seed();
 	register_runtime_classes();
+	register_event_logs();
+	register_system_environment();
 }
 
-// The .NET runtime's classes that Windows registers with the system's mscoree in both registry views: the metadata dispensers, the
-// runtime hosts, the meta host and strong names, which programs and the Framework's own libraries create through COM. A hive that lacks
-// them, a new one or one made before they were registered, gets them.
+// The classes Windows registers in both registry views whose libraries the runtime brings: the .NET runtime's metadata dispensers, runtime
+// hosts, meta host and strong names in mscoree, which programs and the Framework's own libraries create through COM, and the Task
+// Scheduler, which installers use to start a program once they finish, the accessibility annotation services of oleacc, which
+// programs create for their windows' controls, the MSXML 6.0 classes, which the XML component serves beside its own, the network list,
+// which programs ask whether they are online, and the package manager of the Windows Runtime. A hive that lacks them, a new one or one
+// made before they were registered, gets them.
 void NativeRegistry::register_runtime_classes()
 {
-	static constexpr const char16_t *classes[] = {u"{E5CB7A31-7512-11D2-89CE-0080C792E5D8}", u"{1EC2DE53-75CC-11D2-9775-00A0C9B4D50C}",
-		u"{CB2F6723-AB3A-11D2-9C40-00C04FA30A3E}", u"{90F1A06E-7712-4762-86B5-7A5EBA6BDB02}", u"{9280188D-0E8E-4867-B30C-7FA83884E8DE}",
-		u"{B79B0ACD-F5CD-409B-B5A5-A16244610B92}"};
+	static constexpr std::pair<const char16_t *, const char16_t *> classes[] = {{u"{E5CB7A31-7512-11D2-89CE-0080C792E5D8}", u"mscoree.dll"},
+		{u"{1EC2DE53-75CC-11D2-9775-00A0C9B4D50C}", u"mscoree.dll"}, {u"{CB2F6723-AB3A-11D2-9C40-00C04FA30A3E}", u"mscoree.dll"},
+		{u"{90F1A06E-7712-4762-86B5-7A5EBA6BDB02}", u"mscoree.dll"}, {u"{9280188D-0E8E-4867-B30C-7FA83884E8DE}", u"mscoree.dll"},
+		{u"{B79B0ACD-F5CD-409B-B5A5-A16244610B92}", u"mscoree.dll"}, {u"{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}", u"taskschd.dll"},
+		{u"{B5F8350B-0548-48B1-A6EE-88BD00B4A5E7}", u"raven-accprop.dll"}, {u"{88D96A05-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"},
+		{u"{88D96A06-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{88D96A07-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"},
+		{u"{88D96A08-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{88D96A0A-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"},
+		{u"{88D96A0B-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{88D96A0C-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"},
+		{u"{88D96A0E-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{88D96A0F-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"},
+		{u"{88D96A11-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{DCB00C01-570F-4A9B-8D69-199FDBA5723B}", u"raven-netlist.dll"}};
 	register_animation_classes();
+	const auto store = [&](uint64_t key, const char16_t *name, std::u16string_view value) {
+		std::vector<uint8_t> data;
+		for (const auto character : value) {
+			data.push_back(uint8_t(character));
+			data.push_back(uint8_t(character >> 8));
+		}
+		data.insert(data.end(), {0, 0});
+		set(key, name, 1, data);
+	};
 	for (const bool wow : {false, true})
-		for (const auto *clsid : classes) {
+		for (const auto &[clsid, library] : classes) {
 			const std::u16string path = std::u16string(wow ? u"Wow6432Node\\CLSID\\" : u"CLSID\\") + clsid + u"\\InprocServer32";
 			if (keys.contains(fold(u"HKEY_CLASSES_ROOT\\" + path)))
 				continue;
@@ -139,19 +161,99 @@ void NativeRegistry::register_runtime_classes()
 			uint32_t disposition = 0;
 			if (create(0x80000000ULL, path, key, disposition))
 				continue;
-			const auto store = [&](const char16_t *name, std::u16string_view value) {
-				std::vector<uint8_t> data;
-				for (const auto character : value) {
-					data.push_back(uint8_t(character));
-					data.push_back(uint8_t(character >> 8));
-				}
-				data.insert(data.end(), {0, 0});
-				set(key, name, 1, data);
-			};
-			store(u"", wow ? u"C:\\Windows\\SysWOW64\\mscoree.dll" : u"C:\\Windows\\System32\\mscoree.dll");
-			store(u"ThreadingModel", u"Both");
+			store(key, u"", std::u16string(wow ? u"C:\\Windows\\SysWOW64\\" : u"C:\\Windows\\System32\\") + library);
+			store(key, u"ThreadingModel", u"Both");
 			close(key);
 		}
+	// Scripts create the scheduler, and programs the MSXML 6.0 classes, by name.
+	static constexpr std::pair<const char16_t *, const char16_t *> names[] = {{u"Schedule.Service", u"{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}"},
+		{u"Msxml2.DOMDocument.6.0", u"{88D96A05-F192-11D4-A65F-0040963251E5}"}, {u"Msxml2.FreeThreadedDOMDocument.6.0", u"{88D96A06-F192-11D4-A65F-0040963251E5}"},
+		{u"Msxml2.XMLSchemaCache.6.0", u"{88D96A07-F192-11D4-A65F-0040963251E5}"}, {u"Msxml2.XSLTemplate.6.0", u"{88D96A08-F192-11D4-A65F-0040963251E5}"},
+		{u"Msxml2.XMLHTTP.6.0", u"{88D96A0A-F192-11D4-A65F-0040963251E5}"}, {u"Msxml2.ServerXMLHTTP.6.0", u"{88D96A0B-F192-11D4-A65F-0040963251E5}"},
+		{u"Msxml2.SAXXMLReader.6.0", u"{88D96A0C-F192-11D4-A65F-0040963251E5}"}, {u"Msxml2.SAXAttributes.6.0", u"{88D96A0E-F192-11D4-A65F-0040963251E5}"},
+		{u"Msxml2.MXXMLWriter.6.0", u"{88D96A0F-F192-11D4-A65F-0040963251E5}"}, {u"Msxml2.MXNamespaceManager.6.0", u"{88D96A11-F192-11D4-A65F-0040963251E5}"}};
+	for (const auto &[name, clsid] : names) {
+		const std::u16string path = std::u16string(name) + u"\\CLSID";
+		if (keys.contains(fold(u"HKEY_CLASSES_ROOT\\" + path)))
+			continue;
+		uint64_t key = 0;
+		uint32_t disposition = 0;
+		if (!create(0x80000000ULL, path, key, disposition)) {
+			store(key, u"", clsid);
+			close(key);
+		}
+	}
+	// The Windows Runtime classes the runtime brings, in-process (activation type 0) and callable from any apartment (threading 0):
+	// installers ask the package manager whether a packaged version of what they install is present.
+	static constexpr std::pair<const char16_t *, const char16_t *> runtime_classes[] = {
+		{u"Windows.Management.Deployment.PackageManager", u"raven-deployment.dll"}};
+	for (const bool wow : {false, true})
+		for (const auto &[name, library] : runtime_classes) {
+			const std::u16string path = std::u16string(wow ? u"SOFTWARE\\Wow6432Node" : u"SOFTWARE") +
+				u"\\Microsoft\\WindowsRuntime\\ActivatableClassId\\" + name;
+			if (keys.contains(fold(u"HKEY_LOCAL_MACHINE\\" + path)))
+				continue;
+			uint64_t key = 0;
+			uint32_t disposition = 0;
+			if (create(0x80000002ULL, path, key, disposition))
+				continue;
+			store(key, u"DllPath", std::u16string(wow ? u"C:\\Windows\\SysWOW64\\" : u"C:\\Windows\\System32\\") + library);
+			static constexpr uint8_t zero[4]{};
+			for (const auto *word : {u"ActivationType", u"Threading", u"TrustLevel"})
+				set(key, word, 4, zero);
+			close(key);
+		}
+}
+
+// The machine's environment, which installers extend (a program's folder added to Path) and the system reads when it starts a session.
+// A hive that lacks the key gets the variables every installation has there.
+void NativeRegistry::register_system_environment()
+{
+	const std::u16string path = u"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment";
+	if (keys.contains(fold(u"HKEY_LOCAL_MACHINE\\" + path)))
+		return;
+	uint64_t key = 0;
+	uint32_t disposition = 0;
+	if (create(0x80000002ULL, path, key, disposition))
+		return;
+	static constexpr std::pair<const char16_t *, const char16_t *> values[] = {{u"ComSpec", u"%SystemRoot%\\system32\\cmd.exe"},
+		{u"OS", u"Windows_NT"}, {u"Path", u"%SystemRoot%\\system32;%SystemRoot%;%SystemRoot%\\System32\\Wbem"},
+		{u"PATHEXT", u".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC"}, {u"PROCESSOR_ARCHITECTURE", u"AMD64"},
+		{u"TEMP", u"%SystemRoot%\\TEMP"}, {u"TMP", u"%SystemRoot%\\TEMP"}, {u"windir", u"%SystemRoot%"}};
+	for (const auto &[name, value] : values) {
+		std::vector<uint8_t> data;
+		for (const char16_t *at = value; *at; ++at) {
+			data.push_back(uint8_t(*at));
+			data.push_back(uint8_t(*at >> 8));
+		}
+		data.insert(data.end(), {0, 0});
+		const std::u16string_view text(value);
+		set(key, name, text.find(u'%') != text.npos ? 2 : 1, data);
+	}
+	close(key);
+}
+
+// The event logs every Windows installation keeps, under the service that writes them: programs register their event sources as subkeys
+// of a log and fail when the log's key is missing. A hive that lacks them, a new one or one made before they were added, gets them.
+void NativeRegistry::register_event_logs()
+{
+	for (const std::u16string log : {u"Application", u"Security", u"System"}) {
+		const auto path = u"SYSTEM\\CurrentControlSet\\Services\\EventLog\\" + log;
+		if (keys.contains(fold(u"HKEY_LOCAL_MACHINE\\" + path)))
+			continue;
+		uint64_t key = 0;
+		uint32_t disposition = 0;
+		if (create(0x80000002ULL, path, key, disposition))
+			continue;
+		std::vector<uint8_t> data;
+		for (const auto character : u"%SystemRoot%\\System32\\Winevt\\Logs\\" + log + u".evtx") {
+			data.push_back(uint8_t(character));
+			data.push_back(uint8_t(character >> 8));
+		}
+		data.insert(data.end(), {0, 0});
+		set(key, u"File", 2, data);
+		close(key);
+	}
 }
 
 // The Windows Animation classes of UIAnimation.dll (the manager, the transition library, the transition factory and the timer), which the runtime's own component
@@ -185,10 +287,17 @@ void NativeRegistry::register_animation_classes()
 
 void NativeRegistry::seed()
 {
-	// A hive that already has the program directories keeps whatever it holds.
-	if (keys.contains(fold(u"HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion")))
-		return;
 	seeding = true;
+	// A hive that has some of these already, such as one imported from an installation, keeps what it holds and gains only what it lacks.
+	bool added = false;
+	const auto fill = [&](uint64_t key, std::u16string_view name, uint32_t type, std::span<const uint8_t> data) {
+		uint32_t present_type = 0;
+		std::vector<uint8_t> present;
+		if (query(key, name, present_type, present) == 2) {
+			set(key, name, type, data);
+			added = true;
+		}
+	};
 	const auto bytes_of = [](std::u16string_view text) {
 		std::vector<uint8_t> data;
 		for (const auto character : text) {
@@ -204,7 +313,7 @@ void NativeRegistry::seed()
 		uint32_t disposition = 0;
 		if (create(0x80000002ULL, path, key, disposition))
 			return;
-		set(key, name, 1, bytes_of(value));
+		fill(key, name, 1, bytes_of(value));
 		close(key);
 	};
 	const auto number = [&](const char16_t *path, const char16_t *name, uint32_t value) {
@@ -213,7 +322,7 @@ void NativeRegistry::seed()
 		if (create(0x80000002ULL, path, key, disposition))
 			return;
 		const uint8_t data[4] = {uint8_t(value), uint8_t(value >> 8), uint8_t(value >> 16), uint8_t(value >> 24)};
-		set(key, name, 4, data);
+		fill(key, name, 4, data);
 		close(key);
 	};
 	// The 64-bit view of the machine hive, and the 32-bit view that 32-bit programs reach through Wow6432Node.
@@ -255,7 +364,7 @@ void NativeRegistry::seed()
 		uint32_t disposition = 0;
 		if (!create(0x80000002ULL, directx, key, disposition)) {
 			const uint8_t installed[8] = {0, 0, 0, 9, 0, 0, 0, 0};
-			set(key, u"InstalledVersion", 3, installed);
+			fill(key, u"InstalledVersion", 3, installed);
 			close(key);
 		}
 	}
@@ -271,12 +380,13 @@ void NativeRegistry::seed()
 		uint64_t key = 0;
 		uint32_t disposition = 0;
 		if (!create(0x80000002ULL, service, key, disposition)) {
-			set(key, u"ImagePath", 2, bytes_of(u"%systemroot%\\system32\\msiexec.exe /V"));
+			fill(key, u"ImagePath", 2, bytes_of(u"%systemroot%\\system32\\msiexec.exe /V"));
 			close(key);
 		}
 	}
 	seeding = false;
-	save();
+	if (added)
+		save();
 }
 
 bool NativeRegistry::resolve(uint64_t parent, std::u16string_view path, std::u16string &folded, std::u16string &display) const
@@ -514,10 +624,11 @@ uint32_t NativeRegistry::enum_value(uint64_t key, uint32_t index, std::u16string
 uint32_t NativeRegistry::info(uint64_t key, Info &result) const
 {
 	refresh();
-	std::u16string folded;
+	std::u16string folded, shown;
 	if (predefined(key)) {
 		static const char16_t *const names[] = {u"HKEY_CLASSES_ROOT", u"HKEY_CURRENT_USER", u"HKEY_LOCAL_MACHINE", u"HKEY_USERS"};
-		folded = fold(names[uint32_t(key) - 0x80000000U]);
+		shown = names[uint32_t(key) - 0x80000000U];
+		folded = fold(shown);
 	} else {
 		const auto found = open_keys.find(key);
 		if (found == open_keys.end())
@@ -525,13 +636,15 @@ uint32_t NativeRegistry::info(uint64_t key, Info &result) const
 		folded = found->second;
 	}
 	result = {};
+	const auto own = keys.find(folded);
+	result.path = own != keys.end() ? own->second.path : shown.empty() ? folded : shown;
 	for (const auto &child : children(folded)) {
 		++result.subkeys;
 		const auto &display = keys.at(child).path;
 		result.longest_subkey = std::max<uint32_t>(result.longest_subkey, uint32_t(display.size() - display.find_last_of(u'\\') - 1));
 	}
-	if (const auto entry = keys.find(folded); entry != keys.end())
-		for (const auto &[unused, value] : entry->second.values) {
+	if (own != keys.end())
+		for (const auto &[unused, value] : own->second.values) {
 			++result.values;
 			result.longest_name = std::max<uint32_t>(result.longest_name, uint32_t(value.name.size()));
 			result.longest_data = std::max<uint32_t>(result.longest_data, uint32_t(value.data.size()));
@@ -688,6 +801,22 @@ void NativeRegistry::apply(const std::string &line)
 	} else if (!line.empty()) {
 		throw std::runtime_error("registry hive contains an unknown record");
 	}
+}
+
+std::vector<std::u16string> virtual_package_roots(NativeRegistry &registry)
+{
+	std::vector<std::u16string> roots;
+	uint64_t key = 0;
+	if (registry.open(0x80000002ULL, u"Software\\Microsoft\\AppVISV", key))
+		return roots;
+	std::u16string name;
+	uint32_t type = 0;
+	std::vector<uint8_t> data;
+	for (uint32_t index = 0; !registry.enum_value(key, index, name, type, data); ++index)
+		if (name.size() > 2 && name[1] == u':')
+			roots.push_back(name);
+	registry.close(key);
+	return roots;
 }
 
 }

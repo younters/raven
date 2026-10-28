@@ -16,6 +16,8 @@
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <sys/inotify.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -124,7 +126,8 @@ FindObject::Entry entry_of(const std::filesystem::path &path, const std::u16stri
 	const bool link = S_ISLNK(metadata.st_mode);
 	if (link && !::stat(path.c_str(), &target))
 		metadata = target;
-	entry.attributes = attributes_of(metadata, path);
+	// A link reports what it points at, marked as the reparse point it is.
+	entry.attributes = attributes_of(metadata, path) | (link ? attribute_reparse : 0);
 	entry.creation = filetime(metadata.st_ctim);
 	entry.access = filetime(metadata.st_atim);
 	entry.write = filetime(metadata.st_mtim);
@@ -171,6 +174,32 @@ std::vector<uint8_t> attribute_data(const FindObject::Entry &entry)
 
 }
 
+// A change notification handle: an inotify instance watching a directory, and the directories below it when the caller asked for the
+// tree. It is signaled while changes wait to be taken in by FindNextChangeNotification. Nothing announces a change to a waiter, so a
+// waiter looks again at a short interval.
+class ChangeNotificationObject : public KernelObject {
+public:
+	explicit ChangeNotificationObject(int descriptor) : descriptor(descriptor) {}
+	~ChangeNotificationObject() override { ::close(descriptor); }
+	int signaled(uint32_t thread) const override
+	{
+		(void)thread;
+		pollfd entry{descriptor, POLLIN, 0};
+		return ::poll(&entry, 1, 0) > 0 ? 1 : 0;
+	}
+	std::optional<std::chrono::steady_clock::time_point> wakes_at() const override
+	{
+		return std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+	}
+	void take_changes()
+	{
+		char buffer[4096];
+		while (::read(descriptor, buffer, sizeof buffer) > 0) {
+		}
+	}
+	const int descriptor;
+};
+
 void register_file_api(ApiRegistry &registry, KernelContext &context)
 {
 	auto &paths = context.paths;
@@ -185,9 +214,9 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	};
 	const auto missing = [&](const NativePaths::Resolved &resolved) { return resolved.parent_exists ? 2U : 3U; };
 
-	registry.add("CreateFileW", 7, [&, resolve, missing, file_of](ApiCall &call) {
-		const auto name = call.wide(call[0]);
-		const uint32_t access = call.u32(1), disposition = call.u32(4), flags = call.u32(5);
+	// CreateFileW and CreateFile2 open the same way; each reads its own arguments, the security attributes among them.
+	const auto create_file = [&, resolve, missing](ApiCall &call, const std::u16string &name, uint32_t access, uint32_t disposition, uint32_t flags,
+		uint64_t security) {
 		if (open_pipe_client(context, call, name, access, flags))
 			return;
 		call.ret(invalid_handle);
@@ -198,7 +227,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		if (NativePaths::device(name)) {
 			const int descriptor = ::open("/dev/null", O_RDWR | O_CLOEXEC);
 			const auto made = objects.add_object(std::make_shared<FileObject>(descriptor, access, false, "/dev/null", u"NUL", 0));
-			{ if (!made.status && inheritable_handle(call, optional_argument(call, 3))) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
+			{ if (!made.status && inheritable_handle(call, security)) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
 			return;
 		}
 		const auto resolved = resolve(call, name);
@@ -219,7 +248,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 				return;
 			}
 			const auto made = objects.add_object(std::make_shared<FileObject>(descriptor, access, true, resolved->host, paths.full(name), flags));
-			{ if (!made.status && inheritable_handle(call, optional_argument(call, 3))) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
+			{ if (!made.status && inheritable_handle(call, security)) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
 			return;
 		}
 		int mode = want_read && want_write ? O_RDWR : want_write ? O_WRONLY : O_RDONLY;
@@ -266,7 +295,21 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		if (disposition == 2 && exists && !want_write)
 			::ftruncate(descriptor, 0);
 		const auto made = objects.add_object(std::make_shared<FileObject>(descriptor, access, false, resolved->host, paths.full(name), flags));
-		{ if (!made.status && inheritable_handle(call, optional_argument(call, 3))) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
+		{ if (!made.status && inheritable_handle(call, security)) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
+	};
+	registry.add("CreateFileW", 7, [create_file](ApiCall &call) {
+		create_file(call, call.wide(call[0]), call.u32(1), call.u32(4), call.u32(5), optional_argument(call, 3));
+	});
+	// The extended parameters hold the attributes, the flags and the quality-of-service bits that CreateFileW takes in one word, and the
+	// security attributes.
+	registry.add("CreateFile2", 5, [create_file](ApiCall &call) {
+		uint32_t flags = 0;
+		uint64_t security = 0;
+		if (call[4]) {
+			flags = call.load<uint32_t>(call[4] + 4) | call.load<uint32_t>(call[4] + 8) | call.load<uint32_t>(call[4] + 12);
+			security = call.pointer_width() == 8 ? call.load<uint64_t>(call[4] + 16) : call.load<uint32_t>(call[4] + 16);
+		}
+		create_file(call, call.wide(call[0]), call.u32(1), call.u32(3), flags, security);
 	});
 	registry.add("ReadFile", 5, [&, resolve, missing, file_of](ApiCall &call) {
 		if (transfer_pipe(context, call, true))
@@ -490,7 +533,8 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 				file->directory_scan = std::move(scan);
 			}
 			const auto &scan = file->directory_scan;
-			size_t next = call.u32(10) ? 0 : scan->next;
+			// ReturnSingleEntry and RestartScan are BOOLEANs: only the low byte of their argument words is set by the caller.
+			size_t next = uint8_t(call[10]) ? 0 : scan->next;
 			if (next == scan->entries.size()) { finish(first ? 0xc000000fU : 0x80000006U); return; }
 			std::vector<uint8_t> bytes;
 			size_t previous = 0;
@@ -517,7 +561,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 				if (copied < size) { status = 0x80000005U; break; }
 				++next;
 				previous = start;
-				if (call.u32(8)) break;
+				if (uint8_t(call[8])) break;
 			}
 			call.write(call[5], bytes);
 			finish(status, bytes.size());
@@ -892,6 +936,15 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 	});
+	// The volume keeps no code integrity signing levels with its files, as one without extended attributes: a program that caches a level
+	// it checked is told the file system cannot, and checks the signature again next time.
+	const auto signing_level = [file_of](ApiCall &call) {
+		call.fail(file_of(call[0]) ? 50 : 6);
+	};
+	registry.add("GetCachedSigningLevel", 6, signing_level);
+	registry.add("SetCachedSigningLevel", 4, [file_of](ApiCall &call) {
+		call.fail(file_of(call[3]) ? 50 : 6);
+	});
 	registry.add("GetFileInformationByHandleEx", 4, [&, resolve, missing, file_of](ApiCall &call) {
 		const auto file = file_of(call[0]);
 		const auto pipe = std::dynamic_pointer_cast<PipeObject>(file);
@@ -975,12 +1028,16 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			call.ret(attribute_archive);
 			return;
 		}
-		if (!resolved->exists || ::stat(resolved->host.c_str(), &metadata)) {
+		struct stat own{};
+		if (!resolved->exists || ::lstat(resolved->host.c_str(), &own)) {
 			call.set_last_error(missing(*resolved));
 			return;
 		}
+		const bool link = S_ISLNK(own.st_mode);
+		if (!link || ::stat(resolved->host.c_str(), &metadata))
+			metadata = own;
 		call.set_last_error(0);
-		call.ret(attributes_of(metadata, resolved->host));
+		call.ret(attributes_of(metadata, resolved->host) | (link ? attribute_reparse : 0));
 	});
 	registry.add("GetFileAttributesExW", 3, [&, resolve, missing, file_of](ApiCall &call) {
 		const auto name = call.wide(call[0]);
@@ -1051,6 +1108,53 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		if (::unlink(resolved->host.c_str())) {
 			call.fail(errno == EISDIR ? 5 : error_of(errno, !resolved->parent_exists));
+			return;
+		}
+		call.ret(1);
+	});
+	// A symbolic link becomes a host one. A relative target stays relative to the link's directory, so the tree it lives in can move;
+	// the target is spelled as the host names it, since the host lookup through the link does not ignore case.
+	registry.add("CreateSymbolicLinkW", 3, [&, resolve](ApiCall &call) {
+		const auto link_name = paths.full(call.wide(call[0]));
+		const auto target_name = call.wide(call[1]);
+		const auto link = link_name.empty() ? std::nullopt : resolve(call, link_name);
+		if (!link)
+			return;
+		if (target_name.empty()) {
+			call.fail(87);
+			return;
+		}
+		const bool relative = !(target_name.size() > 1 && target_name[1] == u':') && target_name[0] != u'\\';
+		const auto separator = link_name.find_last_of(u'\\');
+		const auto target = resolve(call, relative ? paths.full(link_name.substr(0, separator + 1) + target_name) : target_name);
+		if (!target)
+			return;
+		if (link->exists) {
+			call.set_last_error(183);
+			return;
+		}
+		const auto content = relative ? target->host.lexically_relative(link->host.parent_path()) : target->host;
+		if (::symlink(content.c_str(), link->host.c_str())) {
+			call.fail(error_of(errno, !link->parent_exists));
+			return;
+		}
+		call.ret(1);
+	});
+	registry.add("CreateHardLinkW", 3, [&, resolve, missing](ApiCall &call) {
+		const auto link = resolve(call, call.wide(call[0]));
+		const auto existing = link ? resolve(call, call.wide(call[1])) : std::nullopt;
+		if (!link || !existing)
+			return;
+		if (!existing->exists) {
+			call.set_last_error(missing(*existing));
+			return;
+		}
+		if (link->exists) {
+			call.set_last_error(183);
+			return;
+		}
+		if (::link(existing->host.c_str(), link->host.c_str())) {
+			call.fail(error_of(errno, !link->parent_exists));
 			return;
 		}
 		call.ret(1);
@@ -1264,12 +1368,15 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		call.put_wide(call[1], text, capacity);
 		call.ret(capacity > text.size() ? text.size() : text.size() + 1);
 	});
-	registry.add("GetTempPathW", 2, [&, resolve, missing, file_of, copy_file](ApiCall &call) {
+	// GetTempPath2W differs only for SYSTEM processes, which get a folder of their own; a program never runs as one here.
+	const auto temporary_path = [&](ApiCall &call) {
 		auto text = paths.temporary();
 		const size_t capacity = call.u32(0);
 		call.put_wide(call[1], text, capacity);
 		call.ret(capacity > text.size() ? text.size() : text.size() + 1);
-	});
+	};
+	registry.add("GetTempPathW", 2, temporary_path);
+	registry.add("GetTempPath2W", 2, temporary_path);
 	// The classic form reports clusters of eight 512-byte sectors, each count clamped to what a 32-bit field holds.
 	registry.add("GetDiskFreeSpaceW", 5, [&, resolve, missing, file_of, copy_file](ApiCall &call) {
 		const auto resolved = call[0] ? resolve(call, call.wide(call[0])) : paths.resolve(paths.current());
@@ -1290,6 +1397,90 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		if (call[3]) call.store<uint32_t>(call[3], clamp(uint64_t(info.f_bavail) * info.f_frsize / cluster));
 		if (call[4]) call.store<uint32_t>(call[4], clamp(uint64_t(info.f_blocks) * info.f_frsize / cluster));
 		call.ret(1);
+	});
+	// The volume of an open file, as GetVolumeInformationW and GetDiskFreeSpaceW describe it: one NTFS disk volume without a label.
+	registry.add("NtQueryVolumeInformationFile", 5, [file_of](ApiCall &call) {
+		constexpr uint32_t volume_class = 1, size_class = 3, device_class = 4, attribute_class = 5, full_size_class = 7;
+		constexpr uint32_t invalid_handle = 0xc0000008U, length_mismatch = 0xc0000004U, buffer_overflow = 0x80000005U, invalid_class = 0xc0000003U;
+		const size_t width = call.pointer_width();
+		const auto finish = [&](uint32_t status, uint64_t information) {
+			call.store_pointer(call[1], status);
+			call.store_pointer(call[1] + width, information);
+			call.ret(status);
+		};
+		const auto file = file_of(call[0]);
+		if (!file) {
+			call.ret(invalid_handle);
+			return;
+		}
+		const uint32_t capacity = call.u32(3), kind = call.u32(4);
+		struct statvfs info{};
+		if ((kind == size_class || kind == full_size_class) && ::fstatvfs(file->descriptor, &info)) {
+			finish(0xc0000001U, 0);
+			return;
+		}
+		constexpr uint64_t cluster = 8 * 512;
+		const uint64_t total = uint64_t(info.f_blocks) * info.f_frsize / cluster, available = uint64_t(info.f_bavail) * info.f_frsize / cluster;
+		std::vector<uint8_t> bytes;
+		size_t fixed = 0;
+		const auto put = [&bytes](size_t at, const auto value) {
+			if (bytes.size() < at + sizeof(value)) bytes.resize(at + sizeof(value));
+			std::memcpy(bytes.data() + at, &value, sizeof(value));
+		};
+		const auto put_name = [&bytes](size_t at, std::u16string_view name) {
+			bytes.resize(at + name.size() * 2);
+			std::memcpy(bytes.data() + at, name.data(), name.size() * 2);
+		};
+		switch (kind) {
+		case volume_class:
+			// Creation time, serial number, label length, object support, then the label.
+			fixed = 18;
+			put(0, uint64_t(0));
+			put(8, uint32_t(0x52415645));
+			put(12, uint32_t(0));
+			put(16, uint8_t(0));
+			bytes.resize(fixed);
+			break;
+		case size_class:
+			fixed = 24;
+			put(0, total);
+			put(8, available);
+			put(16, uint32_t(8));
+			put(20, uint32_t(512));
+			break;
+		case device_class:
+			// FILE_DEVICE_DISK, no characteristics.
+			fixed = 8;
+			put(0, uint32_t(7));
+			put(4, uint32_t(0));
+			break;
+		case attribute_class:
+			fixed = 12;
+			put(0, uint32_t(0x0000000f));
+			put(4, int32_t(255));
+			put(8, uint32_t(8));
+			put_name(12, u"NTFS");
+			break;
+		case full_size_class:
+			fixed = 32;
+			put(0, total);
+			put(8, available);
+			put(16, available);
+			put(24, uint32_t(8));
+			put(28, uint32_t(512));
+			break;
+		default:
+			call.ret(invalid_class);
+			return;
+		}
+		if (capacity < fixed) {
+			finish(length_mismatch, 0);
+			return;
+		}
+		// A name that does not fit is cut at the buffer's end.
+		const size_t written = std::min<size_t>(bytes.size(), capacity);
+		call.write(call[2], std::span<const uint8_t>(bytes.data(), written));
+		finish(written < bytes.size() ? buffer_overflow : 0, written);
 	});
 	// GetTempFileName: a zero unique value picks a free name and creates the file; any other value only forms the name.
 	registry.add("GetTempFileNameW", 4, [&, resolve, missing, file_of, copy_file](ApiCall &call) {
@@ -1479,8 +1670,9 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.write(call[data_argument], find_data(found->entries[0]));
 		found->next = 1;
+		// Search handles take no security attributes; the fourth argument of FindFirstFileExW is the search operation.
 		const auto made = objects.add_object(found);
-		{ if (!made.status && inheritable_handle(call, optional_argument(call, 3))) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
+		call.ret(made.status ? invalid_handle : made.value);
 		call.set_last_error(0);
 	};
 	registry.add("FindFirstFileW", 2, [find_first](ApiCall &call) { find_first(call, 0, 1); });
@@ -1506,6 +1698,75 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	});
 	registry.add("FindClose", 1, [&, resolve, missing, file_of, copy_file, find_first](ApiCall &call) {
 		if (!objects.object_as<FindObject>(call[0])) {
+			call.fail(6);
+			return;
+		}
+		objects.close(call[0]);
+		call.ret(1);
+	});
+	// FILE_NOTIFY_CHANGE_* filters: names (1, 2), attributes (4), size (8), last write (0x10), last access (0x20), creation (0x40) and
+	// security (0x100).
+	registry.add("FindFirstChangeNotificationW", 3, [&, resolve, missing](ApiCall &call) {
+		const uint32_t filter = call.u32(2);
+		call.ret(invalid_handle);
+		if (!filter || (filter & ~0x17fU)) {
+			call.set_last_error(87);
+			return;
+		}
+		const auto resolved = resolve(call, call.wide(call[0]));
+		if (!resolved)
+			return;
+		std::error_code error;
+		if (!std::filesystem::is_directory(resolved->host, error)) {
+			call.set_last_error(resolved->exists ? 267 : missing(*resolved));
+			return;
+		}
+		uint32_t mask = IN_ONLYDIR;
+		if (filter & 3)
+			mask |= IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE_SELF | IN_MOVE_SELF;
+		if (filter & 0x104)
+			mask |= IN_ATTRIB;
+		if (filter & 0x18)
+			mask |= IN_MODIFY | IN_CLOSE_WRITE;
+		if (filter & 0x20)
+			mask |= IN_ACCESS;
+		if (filter & 0x40)
+			mask |= IN_CREATE;
+		const int descriptor = ::inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+		if (descriptor < 0) {
+			call.set_last_error(8);
+			return;
+		}
+		auto object = std::make_shared<ChangeNotificationObject>(descriptor);
+		if (::inotify_add_watch(descriptor, resolved->host.c_str(), mask) < 0) {
+			call.set_last_error(error_of(errno, false));
+			return;
+		}
+		// inotify watches one directory: the tree is the directories found below it now, as many as the host's watch limit leaves room for.
+		if (uint32_t(call[1]) & 0xff) {
+			for (std::filesystem::recursive_directory_iterator walk(resolved->host, std::filesystem::directory_options::skip_permission_denied, error), end;
+				!error && walk != end; walk.increment(error))
+				if (walk->is_directory(error) && !walk->is_symlink(error) && ::inotify_add_watch(descriptor, walk->path().c_str(), mask) < 0)
+					break;
+		}
+		const auto made = objects.add_object(object);
+		if (made.status) {
+			call.set_last_error(4);
+			return;
+		}
+		call.ret(made.value);
+	});
+	registry.add("FindNextChangeNotification", 1, [&](ApiCall &call) {
+		const auto object = objects.object_as<ChangeNotificationObject>(call[0]);
+		if (!object) {
+			call.fail(6);
+			return;
+		}
+		object->take_changes();
+		call.ret(1);
+	});
+	registry.add("FindCloseChangeNotification", 1, [&](ApiCall &call) {
+		if (!objects.object_as<ChangeNotificationObject>(call[0])) {
 			call.fail(6);
 			return;
 		}
@@ -1661,6 +1922,23 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		if ((call.u32(6) & close_source) && call[1] != UINT64_MAX && call[1] != UINT64_MAX - 1)
 			objects.close(call[1]);
 		call.ret(1);
+	});
+	// NtDuplicateObject takes the arguments of DuplicateHandle, with OBJ_INHERIT among the attributes, and answers with a status.
+	registry.add("NtDuplicateObject", 7, [duplicate = registry.find("DuplicateHandle")->second](ApiCall &call) {
+		ApiCall inner(call.process, call.environment, {call[0], call[1], call[2], call[3], call[4], (call.u32(5) & 0x2) ? 1u : 0u, call[6]});
+		duplicate(inner);
+		if (inner.result) {
+			call.ret(0);
+			return;
+		}
+		switch (inner.last_error()) {
+		case 5: call.ret(0xc0000022U); break;
+		case 6: call.ret(0xc0000008U); break;
+		case 8: call.ret(0xc000009aU); break;
+		case 87: call.ret(0xc000000dU); break;
+		case 50: call.ret(0xc00000bbU); break;
+		default: call.ret(0xc0000001U); break;
+		}
 	});
 	// Power requests keep the machine awake while a program works, as during a download; the host's own power management decides here, so a
 	// request is a handle that setting and clearing accept.

@@ -1048,7 +1048,28 @@ CRT double _wcstod_l(const wchar_t *text, wchar_t **end, _locale_t locale) { ret
 
 /* ---- strings and conversions ---- */
 
-CRT unsigned long long _wcstoui64(const wchar_t *text, wchar_t **end, int base) { return (unsigned long long)_wcstoi64(text, end, base); }
+/* The unsigned 64-bit form reads the whole range through the narrow conversion, as the digits are ASCII. */
+CRT unsigned long long wcstoull(const wchar_t *text, wchar_t **end, int base)
+{
+	char narrow[80];
+	size_t index = 0;
+	char *narrow_end;
+	unsigned long long value;
+	while (text[index] && text[index] < 128 && index < sizeof(narrow) - 1)
+		narrow[index] = (char)text[index], ++index;
+	narrow[index] = 0;
+	value = strtoull(narrow, &narrow_end, base);
+	if (end)
+		*end = (wchar_t *)text + (narrow_end - narrow);
+	return value;
+}
+
+CRT unsigned long long _wcstoui64(const wchar_t *text, wchar_t **end, int base) { return wcstoull(text, end, base); }
+CRT long long wcstoll(const wchar_t *text, wchar_t **end, int base) { return _wcstoi64(text, end, base); }
+CRT long long _wcstoll_l(const wchar_t *text, wchar_t **end, int base, _locale_t locale) { return _wcstoi64(text, end, base); }
+CRT unsigned long long _wcstoull_l(const wchar_t *text, wchar_t **end, int base, _locale_t locale) { return wcstoull(text, end, base); }
+CRT long double wcstold(const wchar_t *text, wchar_t **end) { return raven_wcstod(text, end); }
+CRT long long _wtoll(const wchar_t *text) { return _wcstoi64(text, NULL, 10); }
 CRT long _wtol(const wchar_t *text) { return wcstol(text, NULL, 10); }
 CRT long long atoll(const char *text) { return strtoll(text, NULL, 10); }
 CRT long long _atoi64(const char *text) { return strtoll(text, NULL, 10); }
@@ -1107,23 +1128,6 @@ CRT char *strtok(char *text, const char *delimiters)
 {
 	static char *context;
 	return strtok_s(text, delimiters, &context);
-}
-
-CRT wchar_t *wcstok_s(wchar_t *text, const wchar_t *delimiters, wchar_t **context)
-{
-	wchar_t *start;
-	if (!delimiters || !context || (!text && !*context)) {
-		*_errno() = 22;
-		_invalid_parameter_noinfo();
-		return NULL;
-	}
-	if (!text) text = *context;
-	while (*text && wcschr(delimiters, *text)) ++text;
-	start = text;
-	while (*text && !wcschr(delimiters, *text)) ++text;
-	if (*text) *text++ = 0;
-	*context = text;
-	return *start ? start : NULL;
 }
 
 /* strncpy_s copies at most count characters and always terminates; _TRUNCATE copies what fits. */
@@ -1188,40 +1192,6 @@ RavenDivision raven_div(int numerator, int denominator)
 
 /* ---- math ---- */
 
-/* MinGW's reentrant gamma implementation uses the same double ABI as the Windows CRT. Windows long double is also a double. */
-extern double __lgamma_r(double, int *);
-__asm__(".section .drectve\n\t.ascii \" -export:lgamma=raven_lgamma\"\n\t.text");
-double raven_lgamma(double x) { int sign; volatile double result = __lgamma_r(x, &sign); return result; }
-CRT float lgammaf(float x) { int sign; return (float)__lgamma_r(x, &sign); }
-CRT double lgammal(double x) { return raven_lgamma(x); }
-
-/* log1p preserves the small arguments; the large-argument forms avoid squaring values that would overflow. */
-CRT double acosh(double x)
-{
-	if (x > 1e154) return log(x) + 0.69314718055994530942;
-	return log1p(x - 1 + sqrt(x - 1) * sqrt(x + 1));
-}
-
-CRT double asinh(double x)
-{
-	const double magnitude = fabs(x);
-	if (magnitude < 1e-154) return x;
-	const double result = magnitude > 1e154 ? log(magnitude) + 0.69314718055994530942 :
-		log1p(magnitude + magnitude * magnitude / (1 + sqrt(1 + magnitude * magnitude)));
-	return copysign(result, x);
-}
-
-CRT double atanh(double x)
-{
-	const double magnitude = fabs(x);
-	if (magnitude < 1e-154) return x;
-	return copysign(0.5 * log1p(2 * magnitude / (1 - magnitude)), x);
-}
-
-CRT float acoshf(float x) { return (float)acosh(x); }
-CRT float asinhf(float x) { return (float)asinh(x); }
-CRT float atanhf(float x) { return (float)atanh(x); }
-
 /* Rounding to an integer in the current mode: adding and removing 2^52 leaves no fraction bits. Larger values are integers already. */
 CRT double rint(double x)
 {
@@ -1281,116 +1251,289 @@ CRT int _fdsign(float x) { return __builtin_signbit(x) ? 0x8000 : 0; }
 /* No floating point exception is pending when a program asks; operations here do not record them for the C library. */
 CRT unsigned _statusfp(void) { return 0; }
 
-/* MinGW provides these with its extended precision ABI; the public exports use Windows doubles. */
-extern long double cbrtl(long double), fmal(long double, long double, long double), remainderl(long double, long double);
-CRT double cbrt(double x) { return (double)cbrtl(x); }
-CRT float cbrtf(float x) { return (float)cbrtl(x); }
-CRT double fma(double x, double y, double z) { return (double)fmal(x, y, z); }
-CRT float fmaf(float x, float y, float z) { return (float)fmal(x, y, z); }
-CRT double remainder(double x, double y) { return (double)remainderl(x, y); }
-CRT int fegetround(void)
+/* ---- what the Office Click-to-Run client imports besides ---- */
+CRT int _ui64toa_s(unsigned long long value, char *buffer, size_t size, int radix)
 {
-	unsigned short control;
-	__asm__("fnstcw %0" : "=m"(control));
-	return control & 0xc00;
+	wchar_t wide[66];
+	size_t at = 0;
+	if (!buffer || !size)
+		return 22;
+	const int result = integer_to_wide(value, 0, wide, size < 66 ? size : 66, radix);
+	if (result) {
+		buffer[0] = 0;
+		return result;
+	}
+	do
+		buffer[at] = (char)wide[at];
+	while (wide[at++]);
+	return 0;
 }
-CRT double nextafter(double x, double y)
-{
-	union { double number; unsigned long long bits; } value = {x};
-	if (x != x || y != y) return x + y;
-	if (x == y) return y;
-	if (x == 0) { value.bits = 1 | (y < 0 ? 1ULL << 63 : 0); return value.number; }
-	if ((x < y) == (x > 0)) ++value.bits; else --value.bits;
-	return value.number;
-}
-CRT float nextafterf(float x, float y)
-{
-	union { float number; unsigned bits; } value = {x};
-	if (x != x || y != y) return x + y;
-	if (x == y) return y;
-	if (x == 0) { value.bits = 1 | (y < 0 ? 1U << 31 : 0); return value.number; }
-	if ((x < y) == (x > 0)) ++value.bits; else --value.bits;
-	return value.number;
-}
-CRT double hypot(double x, double y) { return _hypot(x, y); }
-CRT float coshf(float x) { return (float)cosh(x); }
-CRT float sinhf(float x) { return (float)sinh(x); }
-CRT float tanhf(float x) { return (float)tanh(x); }
-CRT float nearbyintf(float x) { return (float)nearbyint(x); }
-CRT double scalbn(double x, int exponent) { return ldexp(x, exponent); }
-CRT float scalbnf(float x, int exponent) { return (float)ldexp(x, exponent); }
-extern double nextafter(double, double);
-CRT double nexttoward(double x, double y) { return nextafter(x, y); }
 
-CRT long *__timezone(void) { return &_timezone; }
-static char **timezone_names = _tzname;
-CRT char ***__tzname(void) { return &timezone_names; }
-CRT void setbuf(void *stream, char *buffer) { setvbuf(stream, buffer, buffer ? 0 : 4, 512); }
-CRT char *_fullpath(char *buffer, const char *path, size_t size)
+/* A larger block keeps its contents and has the new part cleared. */
+CRT void *_recalloc(void *block, size_t count, size_t size)
 {
-	const DWORD needed = GetFullPathNameA(path, 0, NULL, NULL);
-	if (!needed) return NULL;
-	if (!buffer) { buffer = malloc(needed); size = needed; }
-	if (!buffer || size < needed) { set_errno(34); return NULL; }
-	return GetFullPathNameA(path, (DWORD)size, buffer, NULL) ? buffer : NULL;
+	if (size && count > (size_t)-1 / size) {
+		set_errno(12);
+		return NULL;
+	}
+	const size_t before = block ? _msize(block) : 0, after = count * size;
+	char *grown = realloc(block, after);
+	if (grown && after > before)
+		memset(grown + before, 0, after - before);
+	return grown;
 }
-CRT char *_i64toa(long long value, char *to, int radix)
+
+/* Guard pages are not consumed by an overflow here, so there is nothing to restore. */
+CRT int _resetstkoflw(void) { return 1; }
+
+struct timespec_64 {
+	long long seconds;
+	long nanoseconds;
+};
+struct timespec_32 {
+	long seconds;
+	long nanoseconds;
+};
+
+/* TIME_UTC (1) is the only base: seconds and nanoseconds since 1970. */
+static int utc_now(int base, long long *seconds, long *nanoseconds)
 {
-	return digits_of(value < 0 && radix == 10 ? 0ULL - (unsigned long long)value : (unsigned long long)value,
-		value < 0 && radix == 10, to, radix);
+	FILETIME now;
+	if (base != 1)
+		return 0;
+	GetSystemTimePreciseAsFileTime(&now);
+	const unsigned long long ticks = (((unsigned long long)now.dwHighDateTime << 32) | now.dwLowDateTime) - 116444736000000000ULL;
+	*seconds = (long long)(ticks / 10000000);
+	*nanoseconds = (long)(ticks % 10000000 * 100);
+	return base;
 }
-CRT char *_ui64toa(unsigned long long value, char *to, int radix) { return digits_of(value, 0, to, radix); }
-typedef struct { long long quotient, remainder; } RavenLongDivision;
-__asm__(".section .drectve\n\t.ascii \" -export:lldiv=raven_lldiv -export:imaxdiv=raven_lldiv\"\n\t.text");
-RavenLongDivision raven_lldiv(long long numerator, long long denominator)
+CRT int _timespec64_get(struct timespec_64 *time, int base)
 {
-	RavenLongDivision result = {numerator / denominator, numerator % denominator};
+	if (!time) {
+		set_errno(22);
+		return 0;
+	}
+	return utc_now(base, &time->seconds, &time->nanoseconds);
+}
+CRT int _timespec32_get(struct timespec_32 *time, int base)
+{
+	long long seconds;
+	if (!time) {
+		set_errno(22);
+		return 0;
+	}
+	if (!utc_now(base, &seconds, &time->nanoseconds))
+		return 0;
+	time->seconds = (long)seconds;
+	return base;
+}
+
+/* Case changes in place within a buffer of known size; a string with no terminator inside it is emptied and refused. */
+static int change_case_s(wchar_t *text, size_t size, wchar_t *(*change)(wchar_t *))
+{
+	size_t length = 0;
+	if (!text || !size) {
+		set_errno(22);
+		return 22;
+	}
+	while (length < size && text[length])
+		++length;
+	if (length == size) {
+		text[0] = 0;
+		set_errno(22);
+		return 22;
+	}
+	change(text);
+	return 0;
+}
+CRT int _wcslwr_s(wchar_t *text, size_t size) { return change_case_s(text, size, _wcslwr); }
+/* One part of a split path into its own buffer; a part that does not fit fails the whole split. */
+static int path_part(wchar_t *to, size_t size, const wchar_t *from, size_t length)
+{
+	if (!to)
+		return size ? 22 : 0;
+	if (!size)
+		return 22;
+	if (length >= size)
+		return 34;
+	memcpy(to, from, length * sizeof(wchar_t));
+	to[length] = 0;
+	return 0;
+}
+
+CRT int _wsplitpath_s(const wchar_t *path, wchar_t *drive, size_t drive_size, wchar_t *directory, size_t directory_size, wchar_t *name,
+	size_t name_size, wchar_t *extension, size_t extension_size)
+{
+	const wchar_t *at = path, *last_slash = NULL, *last_dot = NULL;
+	size_t drive_length = 0;
+	int result;
+	if (!path) {
+		result = 22;
+		goto failed;
+	}
+	if (path[0] && path[1] == L':')
+		drive_length = 2;
+	for (at = path + drive_length; *at; ++at)
+		if (*at == L'\\' || *at == L'/')
+			last_slash = at;
+		else if (*at == L'.')
+			last_dot = at;
+	const wchar_t *base = last_slash ? last_slash + 1 : path + drive_length;
+	if (last_dot && last_dot < base)
+		last_dot = NULL;
+	const wchar_t *end = last_dot ? last_dot : at;
+	if ((result = path_part(drive, drive_size, path, drive_length)) ||
+		(result = path_part(directory, directory_size, path + drive_length, (size_t)(base - path - drive_length))) ||
+		(result = path_part(name, name_size, base, (size_t)(end - base))) ||
+		(result = path_part(extension, extension_size, end, (size_t)(at - end))))
+		goto failed;
+	return 0;
+failed:
+	if (drive && drive_size)
+		drive[0] = 0;
+	if (directory && directory_size)
+		directory[0] = 0;
+	if (name && name_size)
+		name[0] = 0;
+	if (extension && extension_size)
+		extension[0] = 0;
+	set_errno(result);
 	return result;
 }
-CRT int _mktemp_s(char *name, size_t capacity)
+
+/* A drive letter gains its colon, a directory its trailing separator and an extension its dot. */
+CRT int _wmakepath_s(wchar_t *path, size_t size, const wchar_t *drive, const wchar_t *directory, const wchar_t *name, const wchar_t *extension)
 {
-	if (!name || !capacity || strnlen(name, capacity) == capacity) {
-		if (name && capacity) name[0] = 0;
-		set_errno(22); _invalid_parameter_noinfo(); return 22;
+	size_t length = 0;
+	if (!path || !size) {
+		set_errno(22);
+		return 22;
 	}
-	if (_mktemp(name)) return 0;
-	name[0] = 0;
-	return *_errno();
-}
-CRT int _wmktemp_s(wchar_t *name, size_t capacity)
-{
-	if (!name || !capacity || wcsnlen(name, capacity) == capacity) {
-		if (name && capacity) name[0] = 0;
-		set_errno(22); _invalid_parameter_noinfo(); return 22;
+#define PUT(character) do { if (length + 1 >= size) goto overflow; path[length++] = (character); } while (0)
+	if (drive && *drive) {
+		PUT(drive[0]);
+		PUT(L':');
 	}
-	const size_t length = wcslen(name);
-	if (length < 6 || memcmp(name + length - 6, L"XXXXXX", 12)) {
-		name[0] = 0; set_errno(22); return 22;
+	if (directory && *directory) {
+		const wchar_t *at = directory;
+		for (; *at; ++at)
+			PUT(*at);
+		if (at[-1] != L'\\' && at[-1] != L'/')
+			PUT(L'\\');
 	}
-	wchar_t *suffix = name + length - 6;
-	unsigned number = GetCurrentThreadId() % 100000;
-	for (int at = 5; at; --at) { suffix[at] = L'0' + number % 10; number /= 10; }
-	for (wchar_t letter = L'a'; letter <= L'z'; ++letter) {
-		suffix[0] = letter;
-		if (GetFileAttributesW(name) == INVALID_FILE_ATTRIBUTES) return 0;
+	for (const wchar_t *at = name; at && *at; ++at)
+		PUT(*at);
+	if (extension && *extension) {
+		if (*extension != L'.')
+			PUT(L'.');
+		for (const wchar_t *at = extension; *at; ++at)
+			PUT(*at);
 	}
-	name[0] = 0; set_errno(17); return 17;
-}
-CRT void _wassert(const wchar_t *expression, const wchar_t *file, unsigned line)
-{
-	ExitProcess(3);
+#undef PUT
+	path[length] = 0;
+	return 0;
+overflow:
+	path[0] = 0;
+	set_errno(34);
+	return 34;
 }
 
-CRT int _i64tow_s(long long value, wchar_t *buffer, size_t capacity, int radix)
+CRT int isblank(int c) { return c == ' ' || c == '\t'; }
+CRT int isgraph(int c) { return c > 0x20 && c < 0x7f; }
+/* The bounded conversions: the count includes the terminator, _TRUNCATE keeps what fits and reports STRUNCATE (80), and a result that
+   does not fit otherwise empties the destination. */
+static int bounded_result(size_t *converted, size_t length, size_t size, size_t count, size_t *kept)
 {
-	char text[72];
-	if (!buffer || !capacity || radix < 2 || radix > 36) {
-		if (buffer && capacity) buffer[0] = 0;
-		set_errno(22); _invalid_parameter_noinfo(); return 22;
+	int result = 0;
+	if (count != (size_t)-1 && count < length)
+		length = count;
+	if (length >= size) {
+		if (count != (size_t)-1)
+			return 34;
+		length = size - 1;
+		result = 80;
 	}
-	_i64toa(value, text, radix);
-	const size_t length = strlen(text);
-	if (length >= capacity) { buffer[0] = 0; set_errno(34); return 34; }
-	for (size_t at = 0; at <= length; ++at) buffer[at] = (unsigned char)text[at];
-	return 0;
+	*kept = length;
+	if (converted)
+		*converted = length + 1;
+	return result;
+}
+
+CRT int mbstowcs_s(size_t *converted, wchar_t *to, size_t size, const char *text, size_t count)
+{
+	if (converted)
+		*converted = 0;
+	if (!text || (!to && size) || (to && !size)) {
+		if (to && size)
+			to[0] = 0;
+		set_errno(22);
+		return 22;
+	}
+	const int needed = MultiByteToWideChar(CP_ACP, 0, text, -1, NULL, 0);
+	if (needed <= 0) {
+		if (to)
+			to[0] = 0;
+		set_errno(42);
+		return 42;
+	}
+	if (!to) {
+		if (converted)
+			*converted = (size_t)needed;
+		return 0;
+	}
+	wchar_t *whole = malloc((size_t)needed * sizeof(wchar_t));
+	size_t kept;
+	if (!whole)
+		return 12;
+	MultiByteToWideChar(CP_ACP, 0, text, -1, whole, needed);
+	const int result = bounded_result(converted, (size_t)needed - 1, size, count, &kept);
+	if (result == 34) {
+		to[0] = 0;
+		set_errno(34);
+	} else {
+		memcpy(to, whole, kept * sizeof(wchar_t));
+		to[kept] = 0;
+	}
+	free(whole);
+	return result;
+}
+
+CRT int wcstombs_s(size_t *converted, char *to, size_t size, const wchar_t *text, size_t count)
+{
+	BOOL lost = FALSE;
+	if (converted)
+		*converted = 0;
+	if (!text || (!to && size) || (to && !size)) {
+		if (to && size)
+			to[0] = 0;
+		set_errno(22);
+		return 22;
+	}
+	const int needed = WideCharToMultiByte(CP_ACP, 0, text, -1, NULL, 0, NULL, &lost);
+	if (needed <= 0 || lost) {
+		if (to)
+			to[0] = 0;
+		set_errno(42);
+		return 42;
+	}
+	if (!to) {
+		if (converted)
+			*converted = (size_t)needed;
+		return 0;
+	}
+	char *whole = malloc((size_t)needed);
+	size_t kept;
+	if (!whole)
+		return 12;
+	WideCharToMultiByte(CP_ACP, 0, text, -1, whole, needed, NULL, NULL);
+	const int result = bounded_result(converted, (size_t)needed - 1, size, count, &kept);
+	if (result == 34) {
+		to[0] = 0;
+		set_errno(34);
+	} else {
+		memcpy(to, whole, kept);
+		to[kept] = 0;
+	}
+	free(whole);
+	return result;
 }

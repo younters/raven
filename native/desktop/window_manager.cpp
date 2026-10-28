@@ -505,6 +505,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			drop_surfaces(drop_surfaces, call[0]);
 		window = objects.window(call[0]);
 		window->parent = call[1];
+		window->shown_on = !call[1] && previous ? objects.window_root(previous) : 0;
 		if (call[1]) window->style = (window->style & ~0x80000000U) | 0x40000000U;
 		else window->style = (window->style & ~0x40000000U) | 0x80000000U;
 		shift_window(call[0], new_x - old_x, new_y - old_y);
@@ -647,6 +648,28 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		}
 		call.ret(found);
 	});
+	// RealChildWindowFromPoint looks through what is transparent to the mouse, as a group box is: a child that answers WM_NCHITTEST with
+	// HTTRANSPARENT gives way to the one below it.
+	registry.add("RealChildWindowFromPoint", 2, [this](ApiCall &call) {
+		const auto *parent = objects.window(call[0]);
+		if (!parent) {
+			call.fail(1400);
+			return;
+		}
+		const int32_t x = int32_t(call[1]) + parent->x, y = int32_t(call[1] >> 32) + parent->y;
+		uint64_t found = call[0];
+		const auto children = objects.child_windows(call[0]);
+		for (auto child = children.rbegin(); child != children.rend(); ++child) {
+			const auto *record = objects.window(*child);
+			if (!record || !record->visible || x < record->outer.left || y < record->outer.top || x >= record->outer.right || y >= record->outer.bottom)
+				continue;
+			if (int32_t(send(*child, 0x84, 0, uint32_t(uint16_t(x)) | uint32_t(uint16_t(y)) << 16)) == -1)
+				continue;
+			found = *child;
+			break;
+		}
+		call.ret(found);
+	});
 	registry.add("WindowFromPoint", 1, [this](ApiCall &call) { call.ret(window_at(int32_t(call[0]), int32_t(call[0] >> 32))); });
 	const auto enumerate = [this](ApiCall &call, const std::vector<uint64_t> &handles, uint64_t procedure, uint64_t parameter) {
 		for (const auto handle : handles) {
@@ -685,48 +708,50 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		enumerate(call, all, call[1], call[2]);
 	});
 
-	registry.add("SetPropW", 3, [this](ApiCall &call) {
-		auto *window = objects.window(call[0]);
-		if (!window) {
-			call.fail(1400);
-			return;
-		}
-		std::u16string key = call[1] <= 0xffff ? u"#" + widen_ascii(std::to_string(call[1])) : call.wide(call[1], 255);
+	// A property is named by an atom or by text, wide or ANSI, compared without case.
+	const auto property_key = [](ApiCall &call, bool wide) {
+		std::u16string key = call[1] <= 0xffff ? u"#" + widen_ascii(std::to_string(call[1])) :
+			wide ? call.wide(call[1], 255) : from_ansi(call.narrow(call[1], 255), 1252);
 		for (auto &character : key)
 			character = upper_case(character);
-		window->properties[key] = call[2];
-		call.ret(1);
-	});
-	registry.add("GetPropW", 2, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
-		if (!window) {
-			call.ret(0);
-			return;
-		}
-		std::u16string key = call[1] <= 0xffff ? u"#" + widen_ascii(std::to_string(call[1])) : call.wide(call[1], 255);
-		for (auto &character : key)
-			character = upper_case(character);
-		const auto found = window->properties.find(key);
-		call.ret(found == window->properties.end() ? 0 : found->second);
-	});
-	registry.add("RemovePropW", 2, [this](ApiCall &call) {
-		auto *window = objects.window(call[0]);
-		if (!window) {
-			call.fail(1400);
-			return;
-		}
-		std::u16string key = call[1] <= 0xffff ? u"#" + widen_ascii(std::to_string(call[1])) : call.wide(call[1], 255);
-		for (auto &character : key)
-			character = upper_case(character);
-		const auto found = window->properties.find(key);
-		if (found == window->properties.end()) {
-			call.ret(0);
-			return;
-		}
-		const auto value = found->second;
-		window->properties.erase(found);
-		call.ret(value);
-	});
+		return key;
+	};
+	for (const bool wide : {true, false}) {
+		const std::string suffix = wide ? "W" : "A";
+		registry.add("SetProp" + suffix, 3, [this, property_key, wide](ApiCall &call) {
+			auto *window = objects.window(call[0]);
+			if (!window) {
+				call.fail(1400);
+				return;
+			}
+			window->properties[property_key(call, wide)] = call[2];
+			call.ret(1);
+		});
+		registry.add("GetProp" + suffix, 2, [this, property_key, wide](ApiCall &call) {
+			const auto *window = objects.window(call[0]);
+			if (!window) {
+				call.ret(0);
+				return;
+			}
+			const auto found = window->properties.find(property_key(call, wide));
+			call.ret(found == window->properties.end() ? 0 : found->second);
+		});
+		registry.add("RemoveProp" + suffix, 2, [this, property_key, wide](ApiCall &call) {
+			auto *window = objects.window(call[0]);
+			if (!window) {
+				call.fail(1400);
+				return;
+			}
+			const auto found = window->properties.find(property_key(call, wide));
+			if (found == window->properties.end()) {
+				call.ret(0);
+				return;
+			}
+			const auto value = found->second;
+			window->properties.erase(found);
+			call.ret(value);
+		});
+	}
 
 	registry.add("SetWindowPos", 7, [this](ApiCall &call) {
 		const auto *window = objects.window(call[0]);
@@ -949,6 +974,23 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		if (call[2]) call.store<uint8_t>(call[2], uint8_t(found->second[1]));
 		if (call[3]) call.store<uint32_t>(call[3], found->second[2]);
 		call.ret(1);
+	});
+	// Of the attributes the compositor keeps for a window, the dark frame changes what is drawn; the others are accepted and ignored.
+	registry.add("DwmSetWindowAttribute", 4, [this](ApiCall &call) {
+		auto *window = objects.window(call[0]);
+		if (!window) {
+			call.ret(0x80070006U);
+			return;
+		}
+		// DWMWA_USE_IMMERSIVE_DARK_MODE is 20, and 19 on Windows 10 before build 18985.
+		if ((call.u32(1) == 20 || call.u32(1) == 19) && call[2] && call.u32(3) == 4) {
+			const bool dark = call.load<uint32_t>(call[2]) != 0;
+			if (window->dark_frame != dark) {
+				window->dark_frame = dark;
+				drawing(call[0]);
+			}
+		}
+		call.ret(0);
 	});
 	// The compositor shows the frame through the client area within these margins, wherever the program left it black (see present).
 	registry.add("DwmExtendFrameIntoClientArea", 2, [this](ApiCall &call) {

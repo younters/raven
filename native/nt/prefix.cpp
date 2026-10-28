@@ -1,4 +1,5 @@
 #include "prefix.h"
+#include "system_exports.h"
 
 #include <cctype>
 #include <cstdlib>
@@ -17,7 +18,8 @@ NativePrefix::NativePrefix(std::filesystem::path root) : directory(std::move(roo
 	if (directory.empty())
 		throw std::runtime_error("native prefix requires a directory");
 	// The folders every Windows installation has, so that programs can put files in the places they expect.
-	for (const char *folder : {"windows", "windows/system32", "windows/syswow64", "Program Files", "Program Files (x86)", "ProgramData/Microsoft/Windows/Start Menu/Programs",
+	for (const char *folder : {"windows", "windows/system32", "windows/syswow64", "Program Files/Common Files", "Program Files (x86)/Common Files",
+			"ProgramData/Microsoft/Windows/Start Menu/Programs",
 			"Users/Public/Desktop", "Users/Public/Documents"})
 		std::filesystem::create_directories(directory / "drive_c" / folder);
 	// The Fonts folder holds the installed fonts, as on Windows: links to the host's font files, made once when the folder is new.
@@ -41,6 +43,20 @@ NativePrefix::NativePrefix(std::filesystem::path root) : directory(std::move(roo
 					std::filesystem::create_symlink(walk->path(), fonts / walk->path().filename(), error);
 			}
 	}
+}
+
+void NativePrefix::place_runtime_components(const std::filesystem::path &runtime) const
+{
+	// The loader takes these libraries from beside the runtime whatever the prefix holds: the copies only answer programs that search for,
+	// read or hash them. A newer runtime refreshes them.
+	const auto windows = directory / "drive_c" / "windows";
+	for (const auto &[source, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}})
+		for (const auto name : runtime_components) {
+			std::error_code error;
+			const auto from = source / name;
+			if (std::filesystem::is_regular_file(from, error))
+				std::filesystem::copy_file(from, windows / folder / name, std::filesystem::copy_options::update_existing, error);
+		}
 }
 
 NativePrefix NativePrefix::from_environment()

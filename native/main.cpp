@@ -213,7 +213,7 @@ int main(int argc, char **argv)
 	}
 	// A program started by another one carries the command line and the directory its parent chose.
 	std::optional<std::string> command_line_text, directory_text;
-	int environment_fd=-1,suspended_fd=-1,inherit_fd=-1,handle_channel_fd=-1,process_token_fd=-1;
+	int environment_fd=-1,suspended_fd=-1,inherit_fd=-1,handle_channel_fd=-1,process_token_fd=-1,guest_error_fd=2;
 	bool elevated=false,noninteractive=false;
 	for (bool more=run_process;more && argc>first_file;) {
 		const std::string_view option=argv[first_file];
@@ -227,6 +227,15 @@ int main(int argc, char **argv)
 		else if (option.starts_with("--inherit-fd=")) inherit_fd=std::atoi(std::string(option.substr(13)).c_str());
 		else if (option.starts_with("--process-token-fd=")) process_token_fd=std::atoi(std::string(option.substr(19)).c_str());
 		else if (option.starts_with("--handle-channel-fd=")) handle_channel_fd=std::atoi(std::string(option.substr(20)).c_str());
+		else if (option.starts_with("--diagnostics-fd=")) {
+			// The runtime's own messages go where the parent runtime writes its own; the program's standard error moves out of their way
+			// to a descriptor of its own, so nothing the runtime says ever lands in a pipe the program reads.
+			const int diagnostics=std::atoi(std::string(option.substr(17)).c_str());
+			const int moved=::fcntl(2,F_DUPFD_CLOEXEC,64);
+			if (moved>=0 && ::dup2(diagnostics,2)==2) guest_error_fd=moved;
+			else if (moved>=0) ::close(moved);
+			::close(diagnostics);
+		}
 #ifdef RAVEN_NATIVE_CPU
 		else if (option.starts_with("--exit-code-fd=")) {
 			exit_code_fd=std::atoi(std::string(option.substr(15)).c_str());
@@ -287,6 +296,17 @@ int main(int argc, char **argv)
 							character = char(character + ('a' - 'A'));
 					raven::set_process_noninteractive(noninteractive || (program == "msiexec.exe" && command_line_text &&
 						command_line_text->find("-Embedding") != std::string::npos));
+					// RAVEN_PARALLEL_PROGRAM runs only the named program's threads in parallel; each program it starts decides again.
+					if (const char *parallel = std::getenv("RAVEN_PARALLEL_PROGRAM")) {
+						std::string wanted = parallel;
+						for (auto &character : wanted)
+							if (character >= 'A' && character <= 'Z')
+								character = char(character + ('a' - 'A'));
+						if (program == wanted)
+							::setenv("RAVEN_PARALLEL", "1", 1);
+						else
+							::unsetenv("RAVEN_PARALLEL");
+					}
 				}
 			}
 			if (run_modules || run_process) {
@@ -456,13 +476,17 @@ int main(int argc, char **argv)
 #endif
 						// The Direct3D libraries a Windows installation provides come from RAVEN_D3D_DIRECTORY (a DXVK build of the program's width)
 						// or from beside the runtime.
-						if (!selected && (name=="dxgi.dll" || name=="d3d11.dll" || name=="d3d10core.dll" || name=="d3d9.dll" || name=="d3d8.dll")) {
+						if (!selected && (name=="dxgi.dll" || name=="d3d11.dll" || name=="d3d10core.dll" || name=="d3d10_1.dll" || name=="d3d9.dll" || name=="d3d8.dll")) {
 							std::vector<std::filesystem::path> places;
 							if (const char *directory = std::getenv("RAVEN_D3D_DIRECTORY")) places.emplace_back(directory);
 							places.emplace_back(std::filesystem::read_symlink("/proc/self/exe").parent_path());
 							for (const auto &place : places)
 								if (std::filesystem::exists(place / name))
 									return read_module((place / name).c_str());
+							// Direct3D 10.1 is the runtime's own library over the d3d10core.dll found here, when no build carries one.
+							if (name=="d3d10_1.dll")
+								if (const auto component = component_directory / "raven-d3d10_1.dll"; std::filesystem::exists(component))
+									return read_module(component.c_str());
 						}
 						// Then the system directory, where installers put the libraries programs share. The system's own libraries are the
 						// runtime's whatever files there carry their names.
@@ -487,7 +511,7 @@ int main(int argc, char **argv)
 						if (std::filesystem::exists(component))
 							modules.add("raven-rtl.dll", read_file(component.c_str()));
 					}
-					// The libraries the program and the DLLs shipped beside it import, by lowercase file name.
+					// The libraries the program and the DLLs shipped beside it import, at once or lazily, by lowercase file name.
 					const auto imported_libraries = [&] {
 						std::set<std::string> names;
 						std::vector<std::string> pending;
@@ -504,8 +528,11 @@ int main(int argc, char **argv)
 								if (names.insert(lower(symbol.module)).second)
 									pending.push_back(lower(symbol.module));
 						};
-						for (const auto &item : modules.all())
+						for (const auto &item : modules.all()) {
 							visit(item.second->imports);
+							for (const auto &descriptor : item.second->image.delay_imports())
+								visit(descriptor.imports);
+						}
 						while (!pending.empty()) {
 							const auto name = pending.back();
 							pending.pop_back();
@@ -567,16 +594,18 @@ int main(int argc, char **argv)
 					// The user32 component supplies the built-in control classes and dialog manager to programs that use user32.
 					load_component("raven-user32.dll", {"user32.dll"});
 					// The shell component serves every graphical program, as libraries it loads later, such as a setup program's engine, import the
-					// shell, the setup API and the dialogs that the program itself may not.
-					load_component("raven-shell.dll", {"comdlg32.dll", "ole32.dll", "shell32.dll", "shlwapi.dll", "user32.dll"});
+					// shell, the setup API and the dialogs that the program itself may not. A program that imports automation creates classes
+					// through COM too, even when it loads ole32 only later.
+					load_component("raven-shell.dll", {"comdlg32.dll", "ole32.dll", "oleaut32.dll", "shell32.dll", "shlwapi.dll", "user32.dll"});
 					// The setup API component: setup information files, file queues and cabinets, for the programs that import it and for
 					// installers, whose engines and the advpack they load import it later.
 					if (const auto setup = component_directory / "raven-setupapi.dll"; !modules.all().contains("raven-setupapi.dll") &&
 						std::filesystem::exists(setup) && (imports_any({"setupapi.dll", "advpack.dll"}) ||
 						raven::installer_like(entry->image, std::filesystem::path(argv[first_file]).filename().string())))
 						modules.add("raven-setupapi.dll", read_file(setup.c_str()));
-					// Structured storage, the compound files installer packages are made of.
-					load_component("raven-storage.dll", {"ole32.dll"});
+					// Structured storage, the compound files installer packages are made of, and the memory streams of COM, which programs that
+					// import automation use too.
+					load_component("raven-storage.dll", {"ole32.dll", "oleaut32.dll"});
 					// Automation (variants, safe arrays, BSTRs, type libraries) is the component's for every program: libraries loaded later, such
 					// as the XML component, use it as much as the program does.
 					if (const auto automation = component_directory / "oleaut32.dll"; !modules.all().contains("oleaut32.dll") && std::filesystem::exists(automation))
@@ -639,7 +668,7 @@ int main(int argc, char **argv)
 							std::memcpy(block.data(),bytes.data(),block.size()*2);
 							launch->environment=std::move(block);
 						}
-						if (inherited_stdio) launch->standard_fds={0,1,2};
+						if (inherited_stdio) launch->standard_fds={0,1,guest_error_fd};
 					}
 					if (!entry->image.is_64)
 						return native_result(raven::run_native_process_x86(modules, *entry, bootstrap.string(), timeout, launch, presentation, source),true,inherited_stdio);

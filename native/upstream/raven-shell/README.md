@@ -14,6 +14,10 @@ public Windows headers. It supplies what the system libraries of the guest canno
 - the OLE clipboard (`clipboard.c`): `OleSetClipboard` renders a data object's global-memory formats onto the Win32
   clipboard, `OleGetClipboard` answers with a data object reading it, and `ReleaseStgMedium` frees every kind of medium.
 - streams over registry values (`SHOpenRegStream`, `SHOpenRegStream2`, `OpenRegStream`), written back when a writable one is released.
+- the network address control that `InitNetworkAddressControl` registers (`netaddress.c`): an edit field that reads a host name or an
+  IPv4 or IPv6 address with an optional port.
+- the known folder manager (`knownfolder.c`): `IKnownFolderManager` and `IKnownFolder` for the standard folders, with their
+  canonical names, categories, CSIDL numbers and paths, and the lookup of the folder that holds a path.
 
 Its exports replace the same-named exports of `comdlg32.dll`, `ole32.dll`, `shell32.dll` and `uiautomationcore.dll`
 for programs that import those libraries. Setting `RAVEN_TRACE_SHELL` to a guest file path appends one line per

@@ -51,6 +51,8 @@ struct DesktopBitmap {
 	// DIB sections keep the format their creator asked for: bytes per row, and the color table of indexed depths (COLORREF).
 	uint32_t stride = 0;
 	std::vector<uint32_t> palette{};
+	// The physical size a program records with SetBitmapDimensionEx, in 0.1 mm; GDI keeps it and never uses it.
+	int32_t dimension_x = 0, dimension_y = 0;
 	std::span<uint8_t> pixels() { return shared ? std::span<uint8_t>(shared->data(), shared->size()) : std::span<uint8_t>(bits); }
 	std::span<const uint8_t> pixels() const { return shared ? std::span<const uint8_t>(shared->data(), shared->size()) : std::span<const uint8_t>(bits); }
 };
@@ -236,6 +238,10 @@ struct DesktopWindow {
 	bool painted = false;
 	// The frame extended into the client area by DwmExtendFrameIntoClientArea: left, right, top and bottom widths, a negative one for all of it.
 	std::optional<std::array<int32_t,4>> glass{};
+	// The dark caption and border DWMWA_USE_IMMERSIVE_DARK_MODE asks for.
+	bool dark_frame = false;
+	// A child whose program answered its last WM_NCPAINT without the default handling, drawing its border itself.
+	bool own_frame = false;
 	uint64_t instance = 0,userdata = 0;
 	// The guest thread that created the window: its messages go to that thread's queue and its procedure runs on it.
 	uint32_t thread = 0;
@@ -253,6 +259,9 @@ struct DesktopWindow {
 	bool client_ready = true;
 	// Owner of a top-level window (a different relation from the parent of a child) and the sibling order, bottom to top.
 	uint64_t owner = 0;
+	// A child moved to the desktop (SetParent with no parent, as a drop-down list is) keeps no owner, but is shown on the host window
+	// of the root it came from: a host window of its own would be placed by the compositor rather than where the program put it.
+	uint64_t shown_on = 0;
 	uint64_t order = 0;
 	// Outer rectangle to return to when a maximized or minimized window is restored.
 	DesktopRect restore{};

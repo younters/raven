@@ -15,6 +15,9 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#ifdef __APPLE__
+#include <mutex>
+#endif
 #include <sstream>
 #include <tuple>
 #include <fcntl.h>
@@ -102,6 +105,31 @@ uint32_t wsa_error(int host)
 	case EHOSTUNREACH: return wsaehostunreach;
 	default: return wsaeinval;
 	}
+}
+
+// RAVEN_TRACE_SOCKETS: how many bytes a socket received, from whom and when, without the content.
+void trace_received(int descriptor, ssize_t count, const char *path)
+{
+	static const bool traced = std::getenv("RAVEN_TRACE_SOCKETS");
+	if (!traced || count <= 0)
+		return;
+	sockaddr_storage peer{};
+	socklen_t size = sizeof(peer);
+	char text[INET6_ADDRSTRLEN] = "?";
+	uint16_t port = 0;
+	if (!::getpeername(descriptor, reinterpret_cast<sockaddr *>(&peer), &size)) {
+		if (peer.ss_family == AF_INET) {
+			const auto &address = reinterpret_cast<const sockaddr_in &>(peer);
+			::inet_ntop(AF_INET, &address.sin_addr, text, sizeof(text));
+			port = ntohs(address.sin_port);
+		} else if (peer.ss_family == AF_INET6) {
+			const auto &address = reinterpret_cast<const sockaddr_in6 &>(peer);
+			::inet_ntop(AF_INET6, &address.sin6_addr, text, sizeof(text));
+			port = ntohs(address.sin6_port);
+		}
+	}
+	std::fprintf(stderr, "raven: socket %d received %zd bytes from %s:%u at %lld ms (%s)\n", descriptor, count, text, port,
+		(long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(), path);
 }
 
 constexpr uint16_t windows_inet6 = 23;
@@ -323,7 +351,12 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 	auto &objects = context.objects;
 	auto &threads = context.threads;
 	const auto socket_of = [&objects](uint64_t handle) { return objects.object_as<SocketObject>(handle); };
-	const auto fail = [](ApiCall &call, uint32_t error, uint64_t value = UINT64_MAX) { call.fail(error, value); };
+	const auto fail = [](ApiCall &call, uint32_t error, uint64_t value = UINT64_MAX) {
+		static const bool traced = std::getenv("RAVEN_TRACE_SOCKETS");
+		if (traced && error != 10035)
+			std::fprintf(stderr, "raven: %s on socket %llx fails with %u\n", api_in_progress, (unsigned long long)call[0], error);
+		call.fail(error, value);
+	};
 
 	// Waits until the descriptor is ready for the events or the time is up; true when it is ready. Other guest threads run meanwhile.
 	const auto wait_ready = [&threads](int descriptor, short events, std::optional<std::chrono::steady_clock::time_point> wake) {
@@ -354,18 +387,30 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("socket", 3, [make_socket](ApiCall &call) { call.ret(make_socket(call, call.i32(0), call.i32(1), call.i32(2))); });
 	const auto make_wsa = [make_socket](ApiCall &call) {
-		const int family = call.i32(0) ? call.i32(0) : AF_INET, type = call.i32(1) ? call.i32(1) : SOCK_STREAM;
-		call.ret(make_socket(call, family, type, call.i32(2)));
+		int family = call.i32(0) ? call.i32(0) : AF_INET, type = call.i32(1) ? call.i32(1) : SOCK_STREAM, protocol = call.i32(2);
+		// FROM_PROTOCOL_INFO (-1) takes the value from the WSAPROTOCOL_INFO given, as WSAEnumProtocols describes the provider.
+		if (call[3]) {
+			if (family == -1)
+				family = call.load<int32_t>(call[3] + 76);
+			if (type == -1)
+				type = call.load<int32_t>(call[3] + 88);
+			if (protocol == -1)
+				protocol = call.load<int32_t>(call[3] + 92);
+		}
+		call.ret(make_socket(call, family, type, protocol));
 	};
 	registry.add("WSASocketA", 6, make_wsa);
 	registry.add("WSASocketW", 6, make_wsa);
-	registry.add("closesocket", 1, [&objects, socket_of, fail](ApiCall &call) {
+	registry.add("closesocket", 1, [&objects, &context, socket_of, fail](ApiCall &call) {
 		if (!socket_of(call[0])) {
 			fail(call, wsaenotsock, UINT64_MAX);
 			return;
 		}
 		socket_of(call[0])->closed = true;
 		objects.close(call[0]);
+		// Transfers still pending on the socket end as aborted now: a busy process may not look at them again until their descriptor
+		// turns ready, which for a quiet connection can be the server's own timeout.
+		context.reactor->poll();
 		call.ret(0);
 	});
 	registry.add("shutdown", 2, [socket_of, fail](ApiCall &call) {
@@ -503,8 +548,7 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 				reinterpret_cast<sockaddr *>(from), from_length);
 			if (count >= 0) {
 				call.write(buffer, std::span<const uint8_t>(bytes.data(), size_t(count)));
-				if (count > 0 && std::getenv("RAVEN_TRACE_SOCKETS"))
-					std::fprintf(stderr, "raven: socket received %zd bytes: %.*s\n", count, int(std::min<ssize_t>(count, 600)), reinterpret_cast<const char *>(bytes.data()));
+				trace_received(socket->descriptor, count, "direct");
 				return count;
 			}
 			if (errno == EINTR)
@@ -649,6 +693,7 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 				bytes = 0;
 				return 0;
 			}
+			trace_received(socket.descriptor, count, "overlapped");
 			size_t offset = 0;
 			for (const auto &buffer : transfer.buffers) {
 				const size_t part = std::min<size_t>(buffer.length, size_t(count) - offset);
@@ -733,7 +778,7 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 		finish(transfer.socket, transfer.overlapped, transfer.width, status, bytes, at_once);
 	};
 	// Starts a transfer for the WSA calls; returns the call's result (0 or SOCKET_ERROR) with the byte count stored when it finished.
-	const auto start = [attempt, complete, &reactor](ApiCall &call, Transfer transfer, uint64_t bytes_out) {
+	const auto start = [attempt, complete, &reactor, &objects](ApiCall &call, Transfer transfer, uint64_t bytes_out) {
 		transfer.width = call.pointer_width();
 		uint32_t status = 0;
 		uint64_t bytes = 0;
@@ -741,6 +786,10 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(wsaeopnotsupp, UINT32_MAX);
 			return;
 		}
+		// Starting an operation resets the OVERLAPPED's event, which only its completion sets: a program that reuses the structure
+		// must not see the previous transfer's signal as this one's.
+		if (const auto event = call.load_pointer(transfer.overlapped + 2 * transfer.width + 8) & ~uint64_t(1))
+			objects.set_event(event, false);
 		if (attempt(transfer, status, bytes) == 0) {
 			if (status) {
 				call.fail(status, UINT32_MAX);
@@ -765,9 +814,16 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 		reactor.add([shared, attempt, complete]() {
 			uint32_t result = 0;
 			uint64_t count = 0;
-			if (attempt(*shared, result, count) != 0)
-				return false;
-			complete(*shared, result, count, false);
+			// A program may release the memory of a transfer still pending, as one that frees a fiber's stack does after closing the
+			// socket; the kernel then fails the copy into it and the operation ends unseen, without harm to the process.
+			try {
+				if (attempt(*shared, result, count) != 0)
+					return false;
+				complete(*shared, result, count, false);
+			} catch (const std::runtime_error &failure) {
+				if (std::getenv("RAVEN_TRACE_SOCKETS"))
+					std::fprintf(stderr, "raven: pending transfer on socket %d dropped: %s\n", shared->socket->descriptor, failure.what());
+			}
 			return true;
 		}, descriptor, events);
 		call.fail(997, UINT32_MAX);
@@ -993,6 +1049,25 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 		} catch (const uint32_t &error) {
 			fail(call, error);
 		}
+	});
+
+	// WSARecvMsg(socket, message, received, overlapped, routine): WSARecvFrom over the parts of WSAMSG (the name and its length, the
+	// buffers, the control buffer and the flags). No control data is delivered, so its length comes back as zero.
+	registry.add("WSARecvMsg", 5, [&registry, fail](ApiCall &call) {
+		if (!call[1]) {
+			fail(call, wsaefault);
+			return;
+		}
+		const size_t width = call.pointer_width(), buffers_at = width == 4 ? 8 : 16, control_at = width == 4 ? 16 : 32,
+			flags_at = width == 4 ? 24 : 48;
+		const uint64_t message = call[1];
+		const auto receive_from = registry.find("WSARecvFrom");
+		ApiCall inner(call.process, call.environment, {call[0], call.load_pointer(message + buffers_at), call.load<uint32_t>(message + buffers_at + width),
+			call[2], message + flags_at, call.load_pointer(message), call.load_pointer(message) ? message + width : 0, call[3], call[4]});
+		receive_from->second(inner);
+		if (inner.result != uint64_t(UINT64_MAX) || call.last_error() == 997)
+			call.store<uint32_t>(message + control_at, 0);
+		call.ret(inner.result);
 	});
 
 	// The extension functions of Winsock are found through WSAIoctl by GUID; each is an export the runtime answers like any other.
@@ -1353,6 +1428,12 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			std::memcpy(&seconds, value.data() + 2, 2);
 			linger setting{on, seconds};
 			result = ::setsockopt(socket->descriptor, option->level, option->name, &setting, sizeof(setting));
+		} else if (!value.empty() && value.size() < sizeof(int)) {
+			// Winsock reads a Boolean option from as little as one byte, which Linux refuses as shorter than an int.
+			int widened = 0;
+			for (size_t at = 0; at < value.size(); ++at)
+				widened |= int(value[at]) << (8 * at);
+			result = ::setsockopt(socket->descriptor, option->level, option->name, &widened, sizeof(widened));
 		} else {
 			result = ::setsockopt(socket->descriptor, option->level, option->name, value.data(), socklen_t(value.size()));
 		}
@@ -1670,6 +1751,7 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 				{0xb5367df2, 0xcbac, 0x11cf, {0x95, 0xca, 0x00, 0x80, 0x5f, 0x48, 0xa1, 0x92}, "GetAcceptExSockaddrs"},
 				{0x7fda2e11, 0x8630, 0x436f, {0xa0, 0x31, 0xf5, 0x36, 0xa6, 0xee, 0xc1, 0x57}, "DisconnectEx"},
 				{0xa441e712, 0x754f, 0x43ca, {0x84, 0xa7, 0x0d, 0xee, 0x44, 0xcf, 0x60, 0x6d}, "WSASendMsg"},
+				{0xf689d7c8, 0x6f1f, 0x436b, {0x8a, 0x53, 0xe5, 0x4f, 0xe3, 0x51, 0xc3, 0x22}, "WSARecvMsg"},
 			};
 			const auto guid = call.read(call[2], 16);
 			const char *name = nullptr;
@@ -1918,6 +2000,54 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 		call.put_narrow(*text_block, text, 32);
 		call.ret(*text_block);
 	});
+	// getservbyname and getservbyport answer from the services database into one SERVENT the process reuses, as Winsock's per-thread
+	// one is reused; the 64-bit layout keeps the protocol before the port.
+	auto service_block = std::make_shared<uint64_t>(0);
+	const auto service = [&context, service_block](ApiCall &call, const servent *found) {
+		if (!found) {
+			call.fail(11004, 0);
+			return;
+		}
+		if (!*service_block)
+			*service_block = context.allocator.allocate(256, true);
+		const uint64_t block = *service_block, aliases = block + 32, name = block + 48, protocol = block + 160;
+		const bool narrow = call.pointer_width() == 4;
+		call.put_narrow(name, std::string(found->s_name).substr(0, 111), 112);
+		call.put_narrow(protocol, std::string(found->s_proto).substr(0, 31), 32);
+		call.store_pointer(aliases, 0);
+		call.store_pointer(block, name);
+		call.store_pointer(block + (narrow ? 4 : 8), aliases);
+		call.store<uint16_t>(block + (narrow ? 8 : 24), uint16_t(found->s_port));
+		call.store_pointer(block + (narrow ? 12 : 16), protocol);
+		call.ret(block);
+	};
+	registry.add("getservbyname", 2, [service](ApiCall &call) {
+		const auto name = call.narrow(call[0], 256);
+		const auto protocol = call[1] ? call.narrow(call[1], 32) : std::string();
+		servent entry{}, *found = nullptr;
+		std::array<char, 1024> buffer{};
+#ifdef __APPLE__
+        static std::mutex services_mutex;
+        const std::lock_guard lock(services_mutex);
+        found = ::getservbyname(name.c_str(), call[1] ? protocol.c_str() : nullptr);
+#else
+		getservbyname_r(name.c_str(), call[1] ? protocol.c_str() : nullptr, &entry, buffer.data(), buffer.size(), &found);
+#endif
+		service(call, found);
+	});
+	registry.add("getservbyport", 2, [service](ApiCall &call) {
+		const auto protocol = call[1] ? call.narrow(call[1], 32) : std::string();
+		servent entry{}, *found = nullptr;
+		std::array<char, 1024> buffer{};
+#ifdef __APPLE__
+        static std::mutex services_mutex;
+        const std::lock_guard lock(services_mutex);
+        found = ::getservbyport(int(uint16_t(call.u32(0))), call[1] ? protocol.c_str() : nullptr);
+#else
+		getservbyport_r(int(uint16_t(call.u32(0))), call[1] ? protocol.c_str() : nullptr, &entry, buffer.data(), buffer.size(), &found);
+#endif
+		service(call, found);
+	});
 	registry.add("htons", 1, [](ApiCall &call) { call.ret(uint16_t(call.u32(0) << 8 | (call.u32(0) >> 8 & 0xff))); });
 	registry.add("ntohs", 1, [](ApiCall &call) { call.ret(uint16_t(call.u32(0) << 8 | (call.u32(0) >> 8 & 0xff))); });
 	registry.add("htonl", 1, [](ApiCall &call) { call.ret(__builtin_bswap32(call.u32(0))); });
@@ -1978,33 +2108,78 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			if (call[5]) call.store<uint32_t>(call[5],10022);
 			call.fail(10022,UINT32_MAX);
 		});
-	for (const auto *name : {"WSCEnumProtocols","WSAEnumProtocolsW","WSAEnumProtocolsA"})
-		registry.add(name,std::string_view(name)=="WSCEnumProtocols"?4:3,[name](ApiCall &call) {
-			const bool narrow=std::string_view(name).ends_with('A');
-			const uint32_t stride=narrow?372:628, needed=2*stride;
-			if (!call[2]) { call.fail(10014,UINT32_MAX); return; }
-			const auto capacity=call.load<uint32_t>(call[2]); call.store<uint32_t>(call[2],needed);
-			if (!call[1] || capacity<needed) {
-				if (std::string_view(name)=="WSCEnumProtocols" && call[3]) call.store<uint32_t>(call[3],10055);
-				call.fail(10055,UINT32_MAX); return;
-			}
-			for (uint32_t i=0;i<2;++i) {
-				const auto at=call[1]+i*stride;
-				call.write(at,std::vector<uint8_t>(stride));
-				call.store<uint32_t>(at+40,1); // one entry in WSAPROTOCOLCHAIN
-				call.store<uint32_t>(at+72,2); // Winsock version
-				call.store<uint32_t>(at+76,2); // AF_INET
-				call.store<uint32_t>(at+80,16);
-				call.store<uint32_t>(at+84,16);
-				call.store<uint32_t>(at+88,i?2:1); // datagram or stream
-				call.store<uint32_t>(at+92,i?17:6); // UDP or TCP
-				if (narrow) call.put_narrow(at+116,i?"UDP/IP":"TCP/IP",256);
-				else call.put_wide(at+116,i?u"UDP/IP":u"TCP/IP",256);
-			}
-			if (std::string_view(name)=="WSCEnumProtocols" && call[3]) call.store<uint32_t>(call[3],0);
-			call.ret(2);
-		});
+	// WSAEnumProtocols uses the upstream provider records below.
 #endif
+	// WSAEnumProtocols(protocols, buffer, length): the base TCP and UDP providers of IPv4 and IPv6, each as a WSAPROTOCOL_INFO with
+	// the service flags, provider identifiers and names the Microsoft provider publishes; a list of protocol numbers narrows them.
+	const auto enumerate_protocols = [](ApiCall &call, bool wide) {
+		struct Protocol {
+			uint32_t service_flags, catalog;
+			bool version6;
+			int32_t type, protocol;
+			uint32_t message_size;
+			const char *name;
+		};
+		static constexpr Protocol protocols[] = {
+			{0x20066, 1001, false, 1, 6, 0, "MSAFD Tcpip [TCP/IP]"},
+			{0x20609, 1002, false, 2, 17, 0xfff7, "MSAFD Tcpip [UDP/IP]"},
+			{0x20066, 1003, true, 1, 6, 0, "MSAFD Tcpip [TCP/IPv6]"},
+			{0x20609, 1004, true, 2, 17, 0xfff7, "MSAFD Tcpip [UDP/IPv6]"},
+		};
+		static constexpr std::array<uint8_t, 16> provider4{0xa0, 0x1a, 0x0f, 0xe7, 0x8b, 0xab, 0xcf, 0x11, 0x8c, 0xa3, 0x00, 0x80, 0x5f, 0x48, 0xa1, 0x92};
+		static constexpr std::array<uint8_t, 16> provider6{0xc0, 0xb0, 0xea, 0xf9, 0xd4, 0x26, 0xd0, 0x11, 0xbb, 0xbf, 0x00, 0xaa, 0x00, 0x6c, 0x34, 0xe4};
+		std::vector<int32_t> wanted;
+		if (call[0])
+			for (uint64_t at = call[0];; at += 4) {
+				const auto value = call.load<int32_t>(at);
+				if (!value || wanted.size() == 64)
+					break;
+				wanted.push_back(value);
+			}
+		const size_t entry = wide ? 628 : 372;
+		std::vector<uint8_t> bytes;
+		size_t count = 0;
+		for (const auto &protocol : protocols) {
+			if (call[0] && std::find(wanted.begin(), wanted.end(), protocol.protocol) == wanted.end())
+				continue;
+			std::vector<uint8_t> info(entry);
+			const auto put = [&info](size_t at, uint32_t value) { std::memcpy(info.data() + at, &value, 4); };
+			put(0, protocol.service_flags);
+			put(16, 0x8);
+			std::memcpy(info.data() + 20, (protocol.version6 ? provider6 : provider4).data(), 16);
+			put(36, protocol.catalog);
+			put(40, 1);
+			put(72, 2);
+			put(76, protocol.version6 ? 23 : 2);
+			put(80, protocol.version6 ? 28 : 16);
+			put(84, protocol.version6 ? 28 : 16);
+			put(88, uint32_t(protocol.type));
+			put(92, uint32_t(protocol.protocol));
+			put(108, protocol.message_size);
+			for (size_t at = 0; protocol.name[at]; ++at) {
+				if (wide)
+					info[116 + at * 2] = uint8_t(protocol.name[at]);
+				else
+					info[116 + at] = uint8_t(protocol.name[at]);
+			}
+			bytes.insert(bytes.end(), info.begin(), info.end());
+			++count;
+		}
+		const uint32_t capacity = call[2] ? call.load<uint32_t>(call[2]) : 0;
+		if (!call[2]) {
+			call.fail(wsaefault, UINT64_MAX);
+			return;
+		}
+		if (!call[1] || capacity < bytes.size()) {
+			call.store<uint32_t>(call[2], uint32_t(bytes.size()));
+			call.fail(10055, UINT64_MAX);
+			return;
+		}
+		call.write(call[1], bytes);
+		call.ret(count);
+	};
+	registry.add("WSAEnumProtocolsW", 3, [enumerate_protocols](ApiCall &call) { enumerate_protocols(call, true); });
+	registry.add("WSAEnumProtocolsA", 3, [enumerate_protocols](ApiCall &call) { enumerate_protocols(call, false); });
 	registry.add("WSAStartup", 2, [](ApiCall &call) {
 		if (!call[1]) {
 			call.ret(10014);

@@ -17,8 +17,8 @@ constexpr std::array exported{
 	Export{"kernel32.dll", "InitializeSRWLock", 1}, Export{"kernel32.dll", "TryAcquireSRWLockExclusive", 1},
 	Export{"kernel32.dll", "TryAcquireSRWLockShared", 1}, Export{"kernel32.dll", "InitializeConditionVariable", 1},
 	Export{"kernel32.dll", "SleepConditionVariableSRW", 4}, Export{"kernel32.dll", "WakeConditionVariable", 1},
-	Export{"kernel32.dll", "WakeAllConditionVariable", 1}, Export{"kernel32.dll", "TlsAlloc", 0}, Export{"kernel32.dll", "TlsFree", 1},
-	Export{"kernel32.dll", "WaitOnAddress", 4}, Export{"kernel32.dll", "WakeByAddressSingle", 1}, Export{"kernel32.dll", "WakeByAddressAll", 1},
+	Export{"kernel32.dll", "WakeAllConditionVariable", 1}, Export{"kernel32.dll", "WaitOnAddress", 4}, Export{"kernel32.dll", "WakeByAddressSingle", 1},
+	Export{"kernel32.dll", "WakeByAddressAll", 1}, Export{"kernel32.dll", "TlsAlloc", 0}, Export{"kernel32.dll", "TlsFree", 1},
 	Export{"kernel32.dll", "GetCurrentThreadStackLimits", 2}, Export{"kernel32.dll", "SetProcessWorkingSetSize", 3},
 	Export{"kernel32.dll", "TlsGetValue", 1}, Export{"kernel32.dll", "TlsSetValue", 2}, Export{"kernel32.dll", "CreateSemaphoreA", 4},
 	Export{"kernel32.dll", "CreateSemaphoreW", 4}, Export{"kernel32.dll", "ReleaseSemaphore", 3},
@@ -28,7 +28,7 @@ constexpr std::array exported{
 	Export{"kernel32.dll", "DeviceIoControl", 8}, Export{"kernel32.dll", "GetProcessAffinityMask", 3},
 	Export{"kernel32.dll", "SetProcessAffinityMask", 2}, Export{"kernel32.dll", "GetSystemInfo", 1}, Export{"kernel32.dll", "VirtualQuery", 3},
 	Export{"kernel32.dll", "DuplicateHandle", 7}, Export{"kernel32.dll", "VirtualQueryEx", 4}, Export{"kernel32.dll", "SetProcessDEPPolicy", 1},
-	Export{"user32.dll", "ChangeDisplaySettingsExW", 5}, Export{"user32.dll", "CreateIconIndirect", 1},
+	Export{"user32.dll", "ChangeDisplaySettingsExW", 5},
 	Export{"user32.dll", "DisplayConfigGetDeviceInfo", 1}, Export{"user32.dll", "EnumDisplayDevicesA", 4},
 	Export{"user32.dll", "SetProcessDPIAware", 0},
 	Export{"gdi32.dll", "D3DKMTCloseAdapter", 1}, Export{"gdi32.dll", "D3DKMTCreateDCFromMemory", 1}, Export{"gdi32.dll", "D3DKMTCreateDevice", 1},
@@ -90,6 +90,7 @@ uint32_t NativeX86System::wait(const std::vector<uint64_t> &handles, bool all, u
 			result.push_back(objects.signaled(handle, id));
 		return result;
 	};
+	bool looked = false;
 	for (;;) {
 		const auto current = states();
 		if (std::any_of(current.begin(), current.end(), [](int state) { return state < 0; })) {
@@ -109,13 +110,27 @@ uint32_t NativeX86System::wait(const std::vector<uint64_t> &handles, bool all, u
 					return uint32_t(index);
 				}
 		}
-		if (milliseconds == 0 || (wake && std::chrono::steady_clock::now() >= *wake))
-			return wait_timeout;
-		threads.block([&] {
+		const auto ready = [&] {
 			const auto now = states();
 			return all ? std::all_of(now.begin(), now.end(), [](int state) { return state == 1; })
 					   : std::any_of(now.begin(), now.end(), [](int state) { return state == 1; });
-		}, wake);
+		};
+		if (milliseconds == 0 || (wake && std::chrono::steady_clock::now() >= *wake)) {
+			// Once, a wait that has run out still takes in what the host finished meanwhile.
+			if (!looked) {
+				looked = true;
+				if (threads.block(ready, std::chrono::steady_clock::now()))
+					continue;
+			}
+			return wait_timeout;
+		}
+		// An object that turns signaled by itself, such as a timer, is looked at again when it says.
+		auto until = wake;
+		for (const auto handle : handles)
+			if (const auto object = objects.object(handle))
+				if (const auto due = object->wakes_at(); due && (!until || *due < *until))
+					until = due;
+		threads.block(ready, until);
 	}
 }
 
@@ -217,21 +232,20 @@ bool NativeX86System::dispatch(std::string_view name)
 		}
 		process.return_api(0);
 	} else if (name == "WaitOnAddress") {
-		// As for 64-bit programs: a waiting thread looks at the memory itself, so a wake needs no bookkeeping.
-		const size_t size = uint32_t(args[2]);
+		// The waiter wakes once the memory no longer holds the value it compared with, so the wake calls need do nothing.
+		const auto size = uint32_t(args[2]);
 		if (size != 1 && size != 2 && size != 4 && size != 8) {
 			fail(87);
-		} else {
-			const uint64_t address = uint32_t(args[0]);
-			const auto expected = process.read_memory(uint32_t(args[1]), size);
-			std::optional<std::chrono::steady_clock::time_point> wake;
-			if (uint32_t(args[3]) != UINT32_MAX)
-				wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(uint32_t(args[3]));
-			auto &memory = process;
-			if (threads.block([&memory, address, size, expected] { return memory.read_memory(address, size) != expected; }, wake))
-				process.return_api(1);
-			else
-				fail(1460);
+			return true;
+		}
+		const uint64_t address = uint32_t(args[0]);
+		const auto expected = process.read_memory(uint32_t(args[1]), size);
+		std::optional<std::chrono::steady_clock::time_point> wake;
+		if (uint32_t(args[3]) != UINT32_MAX)
+			wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(uint32_t(args[3]));
+		if (!threads.block([this, address, size, expected] { return process.read_memory(address, size) != expected; }, wake)) {
+			fail(1460);
+			return true;
 		}
 	} else if (name == "GetCurrentThreadStackLimits") {
 		// The whole reservation, from the TEB: DeallocationStack (0xe0c) is its bottom, StackBase (4) its top; StackLimit (8) stands in
@@ -421,8 +435,6 @@ bool NativeX86System::dispatch(std::string_view name)
 	} else if (name == "ChangeDisplaySettingsExW") {
 		// A mode change is accepted without changing anything: the host shows the program's window at its own size.
 		process.return_api(0);
-	} else if (name == "CreateIconIndirect") {
-		fail(50);
 	} else if (name == "DisplayConfigGetDeviceInfo") {
 		process.return_api(50);
 	} else if (name == "EnumDisplayDevicesA") {

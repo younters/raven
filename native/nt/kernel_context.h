@@ -83,8 +83,12 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context);
 void register_text_api(ApiRegistry &registry, KernelContext &context);
 void register_process_api(ApiRegistry &registry, KernelContext &context);
 void register_security_api(ApiRegistry &registry, KernelContext &context);
+// The Schannel TLS client of SSPI over the host's OpenSSL.
+void register_schannel_api(ApiRegistry &registry, KernelContext &context);
 void register_child_process_api(ApiRegistry &registry, KernelContext &context);
 void register_winsock_api(ApiRegistry &registry, KernelContext &context);
+// WinINet's synchronous HTTP client over host sockets and the host's OpenSSL.
+void register_wininet_api(ApiRegistry &registry, KernelContext &context);
 // SetFileCompletionNotificationModes for a socket handle; false when the handle is not a socket.
 bool set_socket_completion_modes(NativeObjects &objects, uint64_t handle, uint32_t modes);
 void register_host_api(ApiRegistry &registry, KernelContext &context);
@@ -94,6 +98,7 @@ void register_wave_api(ApiRegistry &registry, KernelContext &context);
 void register_mmio_api(ApiRegistry &registry, KernelContext &context);
 void register_process_info_api(ApiRegistry &registry, KernelContext &context);
 void register_crypt32_api(ApiRegistry &registry, KernelContext &context);
+void register_bcrypt_api(ApiRegistry &registry, KernelContext &context);
 void register_font_service(ApiRegistry &registry, KernelContext &context);
 void register_canvas_service(ApiRegistry &registry, KernelContext &context);
 // Starts the program an application name or command line names, looked up the way Windows does; null with the Windows error otherwise.

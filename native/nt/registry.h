@@ -36,6 +36,8 @@ public:
 	uint32_t enum_value(uint64_t key, uint32_t index, std::u16string &name, uint32_t &type, std::vector<uint8_t> &data) const;
 	struct Info {
 		uint32_t subkeys = 0, longest_subkey = 0, values = 0, longest_name = 0, longest_data = 0;
+		// The key's full path as the hive shows it, starting with its predefined root name.
+		std::u16string path;
 	};
 	uint32_t info(uint64_t key, Info &result) const;
 
@@ -81,7 +83,12 @@ private:
 	void seed();
 	void register_runtime_classes();
 	void register_animation_classes();
+	void register_event_logs();
+	void register_system_environment();
 	bool seeding = false;
 };
+
+// The roots of the App-V packages that Click-to-Run registers, one value named after each root under HKLM\Software\Microsoft\AppVISV.
+std::vector<std::u16string> virtual_package_roots(NativeRegistry &registry);
 
 }

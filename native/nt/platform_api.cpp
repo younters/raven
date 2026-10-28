@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cstdio>
 #include "elevation.h"
 #include "hash.h"
@@ -16,6 +17,8 @@
 #include <cstring>
 #include <map>
 #include <set>
+#include <memory>
+#include <mutex>
 #include <unistd.h>
 
 namespace raven {
@@ -215,8 +218,8 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("BufferedPaintStopAllAnimations", 1, [](ApiCall &call) { call.ret(s_ok); });
 	registry.add("BufferedPaintRenderAnimation", 2, [](ApiCall &call) { call.ret(0); });
 
-	// dwmapi: attribute requests are accepted and ignored; the frame extended into the client area is the desktop's (window_manager.cpp).
-	registry.add("DwmSetWindowAttribute", 4, [](ApiCall &call) { call.ret(s_ok); });
+	// dwmapi: attribute reads are refused; setting attributes and the frame extended into the client area are the desktop's
+	// (window_manager.cpp).
 	registry.add("DwmGetWindowAttribute", 4, [](ApiCall &call) { call.ret(e_invalidarg); });
 	// Composition is always on since Windows 8.
 	registry.add("DwmIsCompositionEnabled", 1, [](ApiCall &call) {
@@ -340,12 +343,94 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(0);
 	});
 	registry.add("IsDestinationReachableW", 2, [](ApiCall &call) { call.ret(0); });
+
+	// The Restart Manager, which installers ask which processes hold the files they replace: sessions are kept with their keys, and no
+	// process is reported holding a registered file, so there is nothing to shut down or restart. The functions answer with error codes.
+	struct RestartSessions {
+		std::mutex lock;
+		uint32_t next = 0;
+		std::map<uint32_t, std::u16string> keys;
+	};
+	auto sessions = std::make_shared<RestartSessions>();
+	const auto known = [sessions](uint32_t handle) {
+		std::lock_guard guard(sessions->lock);
+		return sessions->keys.contains(handle);
+	};
+	registry.add("RmStartSession", 3, [sessions](ApiCall &call) {
+		if (!call[0] || !call[2]) {
+			call.ret(87);
+			return;
+		}
+		uint8_t random[16];
+		if (getrandom(random, sizeof random, 0) != sizeof random) {
+			call.ret(29);
+			return;
+		}
+		std::u16string key;
+		for (const auto byte : random)
+			for (const int shift : {4, 0})
+				key += u"0123456789abcdef"[(byte >> shift) & 15];
+		std::lock_guard guard(sessions->lock);
+		const uint32_t handle = sessions->next++;
+		sessions->keys[handle] = key;
+		call.store<uint32_t>(call[0], handle);
+		call.put_wide(call[2], key, key.size() + 1);
+		call.ret(0);
+	});
+	registry.add("RmJoinSession", 2, [sessions](ApiCall &call) {
+		if (!call[0] || !call[1]) {
+			call.ret(87);
+			return;
+		}
+		const auto key = call.wide(call[1], 33);
+		std::lock_guard guard(sessions->lock);
+		if (std::none_of(sessions->keys.begin(), sessions->keys.end(), [&](const auto &item) { return item.second == key; })) {
+			call.ret(87);
+			return;
+		}
+		const uint32_t handle = sessions->next++;
+		sessions->keys[handle] = key;
+		call.store<uint32_t>(call[0], handle);
+		call.ret(0);
+	});
+	registry.add("RmEndSession", 1, [sessions](ApiCall &call) {
+		std::lock_guard guard(sessions->lock);
+		call.ret(sessions->keys.erase(call.u32(0)) ? 0 : 6);
+	});
+	registry.add("RmGetList", 5, [known](ApiCall &call) {
+		if (!known(call.u32(0))) {
+			call.ret(6);
+			return;
+		}
+		if (!call[1] || !call[2]) {
+			call.ret(87);
+			return;
+		}
+		call.store<uint32_t>(call[1], 0);
+		call.store<uint32_t>(call[2], 0);
+		if (call[4])
+			call.store<uint32_t>(call[4], 0);
+		call.ret(0);
+	});
+	registry.add("RmGetFilterList", 4, [known](ApiCall &call) {
+		if (!known(call.u32(0))) {
+			call.ret(6);
+			return;
+		}
+		if (call[3])
+			call.store<uint32_t>(call[3], 0);
+		call.ret(0);
+	});
+	for (const auto &[name, words] : std::initializer_list<std::pair<const char *, uint32_t>>{{"RmRegisterResources", 7}, {"RmShutdown", 3},
+		{"RmRestart", 3}, {"RmCancelCurrentTask", 1}, {"RmAddFilter", 5}, {"RmRemoveFilter", 4}})
+		registry.add(name, words, [known](ApiCall &call) { call.ret(known(call.u32(0)) ? 0 : 6); });
 	registry.add("ImageNtHeader", 1, [](ApiCall &call) {
 		const auto offset = call.load<uint32_t>(call[0] + 0x3c);
 		call.ret(call[0] + offset);
 	});
 
-	// wininet: URL cracking is pure text processing.
+#ifndef RAVEN_OPENSSL
+	// wininet: URL cracking is pure text processing; with the HTTP client the WinINet layer cracks URLs in both character sets.
 	registry.add("InternetCrackUrlW", 4, [](ApiCall &call) {
 		const auto url = call.wide(call[0], 4096);
 		const auto scheme_end = url.find(u"://");
@@ -403,6 +488,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.store<uint16_t>(components + (x86 ? 24 : 36), uint16_t(port));
 		call.ret(1);
 	});
+#endif
 
 	// COM: no class registry exists, so object creation reports "class not registered".
 	auto com = std::make_shared<ComState>();
@@ -463,6 +549,11 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(s_ok);
 	});
 	registry.add("OleInitialize", 1, [initialize](ApiCall &call) { initialize(call, false, false); });
+	// CoInitializeSecurity sets the process's COM security once: the first call succeeds and any later one is too late, as on Windows.
+	registry.add("CoInitializeSecurity", 9, [](ApiCall &call) {
+		static std::atomic<bool> done{false};
+		call.ret(done.exchange(true) ? 0x80010119U : s_ok);
+	});
 	const auto uninitialize = [com, &context, ole_flags](ApiCall &call) {
 		const uint64_t thread = context.environment.teb();
 		auto found = com->threads.find(thread);
@@ -488,6 +579,9 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(s_ok);
 	});
+	// The lock keeps an object alive for clients in other processes. Nothing here hands an object outside the process, so its own references
+	// are all that keep it, and locking or unlocking leaves it as it is.
+	registry.add("CoLockObjectExternal", 3, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
 	// APTTYPE: STA 0, MTA 1, main STA 3. A thread that never initialized COM is in the multithreaded apartment implicitly while any
 	// thread of the process holds it (qualifier APTTYPEQUALIFIER_IMPLICIT_MTA).
 	registry.add("CoGetApartmentType", 2, [com, &context](ApiCall &call) {
@@ -539,6 +633,10 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	});
 	registry.add("CoUninitialize", 0, uninitialize);
 	registry.add("OleUninitialize", 0, uninitialize);
+	// The dialog a program shows when the application it calls into is busy: no other application serves its calls here, so the
+	// answer is to try again at once (OLEUI_BZ_RETRYNOW).
+	for (const char *name : {"OleUIBusyW", "OleUIBusyA"})
+		registry.add(name, 1, [](ApiCall &call) { call.ret(118); });
 	registry.add("CoCreateInstance", 5, [&context](ApiCall &call) {
 #ifdef __APPLE__
 		if (raven_darwin::create_audio_instance(call)) return;
@@ -846,17 +944,9 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		else
 			call.ret(1);
 	});
-	registry.add("BCryptGenRandom", 4, [random_bytes](ApiCall &call) {
-		// Only the system generator exists: the pseudo handle BCRYPT_RNG_ALG_HANDLE (0x81), or no handle with the preferred-generator flag.
-		const bool generator = call[0] == 0x81 || (!call[0] && (call.u32(3) & 2));
-		if (!generator || !call[1]) {
-			call.ret(0xc0000008U);
-			return;
-		}
-		call.ret(random_bytes(call, call[1], call.u32(2)) ? 0 : 0xc0000001U);
-	});
-	// Windows Runtime strings: a string handle points at a header (flags, length, pointer to the characters). A copy owns its characters in the
-	// same block; a reference points at the caller's.
+	// Windows Runtime strings: a string handle points at a header (flags, length, two unused words, pointer to the characters), the layout
+	// programs built with C++/WinRT write themselves for references. A copy owns its characters in the same block; a reference points at
+	// the caller's.
 	const auto make_hstring = [&context](ApiCall &call, uint64_t source, uint32_t length, uint64_t out) -> uint32_t {
 		if (!out)
 			return 0x80070057U;
@@ -864,14 +954,14 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 			call.store_pointer(out, 0);
 			return 0;
 		}
-		const size_t width = call.pointer_width(), head = 8 + width;
+		const size_t width = call.pointer_width(), head = 16 + width;
 		const auto block = context.allocator.allocate(head + (size_t(length) + 1) * 2, true);
 		if (!block)
 			return 0x8007000eU;
 		std::vector<uint8_t> image(head + (size_t(length) + 1) * 2);
 		const uint64_t characters = block + head;
 		std::memcpy(image.data() + 4, &length, 4);
-		std::memcpy(image.data() + 8, &characters, width);
+		std::memcpy(image.data() + 16, &characters, width);
 		const auto text = call.read(source, size_t(length) * 2);
 		std::memcpy(image.data() + head, text.data(), text.size());
 		call.write(block, image);
@@ -887,7 +977,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const size_t width = call.pointer_width();
-		call.ret(make_hstring(call, call.load_pointer(call[0] + 8), call.load<uint32_t>(call[0] + 4), call[1]));
+		call.ret(make_hstring(call, call.load_pointer(call[0] + 16), call.load<uint32_t>(call[0] + 4), call[1]));
 		(void)width;
 	});
 	registry.add("WindowsCreateStringReference", 4, [](ApiCall &call) {
@@ -901,12 +991,12 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const size_t width = call.pointer_width();
-		std::vector<uint8_t> header(8 + width);
+		std::vector<uint8_t> header(16 + width);
 		header[0] = 1;
 		const uint32_t length = call.u32(1);
 		std::memcpy(header.data() + 4, &length, 4);
 		const uint64_t source = call[0];
-		std::memcpy(header.data() + 8, &source, width);
+		std::memcpy(header.data() + 16, &source, width);
 		call.write(call[2], header);
 		call.store_pointer(call[3], call[2]);
 		call.ret(0);
@@ -927,7 +1017,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		}
 		if (call[1])
 			call.store<uint32_t>(call[1], call.load<uint32_t>(call[0] + 4));
-		call.ret(call.load_pointer(call[0] + 8));
+		call.ret(call.load_pointer(call[0] + 16));
 	});
 	registry.add("WindowsGetStringLen", 1, [](ApiCall &call) { call.ret(call[0] ? call.load<uint32_t>(call[0] + 4) : 0); });
 	registry.add("WindowsIsStringEmpty", 1, [](ApiCall &call) { call.ret(!call[0] || !call.load<uint32_t>(call[0] + 4)); });
@@ -937,7 +1027,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 			if (!handle)
 				return std::u16string();
 			const uint32_t length = call.load<uint32_t>(handle + 4);
-			const auto bytes = call.read(call.load_pointer(handle + 8), size_t(length) * 2);
+			const auto bytes = call.read(call.load_pointer(handle + 16), size_t(length) * 2);
 			std::u16string value(length, u'\0');
 			std::memcpy(value.data(), bytes.data(), bytes.size());
 			return value;
@@ -955,6 +1045,15 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("RoParseTypeName", 3, [](ApiCall &call) { call.ret(0x80004001U); });
 	registry.add("RoResolveNamespace", 8, [](ApiCall &call) { call.ret(0x80004001U); });
 	registry.add("RoGetParameterizedTypeInstanceIID", 5, [](ApiCall &call) { call.ret(0x80004001U); });
+	// No HLSL compiler stands behind d3dcompiler_47 yet: a compile is refused with no code and no message blob, so a program falls back to
+	// what it does without a GPU path instead of running an empty shader.
+	registry.add("D3DCompile", 11, [](ApiCall &call) {
+		if (call[9])
+			call.store_pointer(call[9], 0);
+		if (call[10])
+			call.store_pointer(call[10], 0);
+		call.ret(0x80004001U);
+	});
 	// No Windows Runtime class exists here: initialization joins the thread to a COM apartment like CoInitializeEx (RO_INIT_MULTITHREADED
 	// is 1), and every activation reports that the class is not registered.
 	registry.add("RoInitialize", 1, [initialize](ApiCall &call) { initialize(call, call.u32(0) == 1, true); });
@@ -1097,6 +1196,8 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		context.objects.close(call[0]);
 		call.ret(1);
 	});
+#ifndef RAVEN_OPENSSL
+	// Without the HTTP client, sessions open and close and nothing more.
 	struct WinHttpSession : KernelObject {};
 	registry.add("WinHttpOpen", 5, [&context](ApiCall &call) {
 		const auto made = context.objects.add_object(std::make_shared<WinHttpSession>());
@@ -1115,6 +1216,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	registry.add("WinHttpSetTimeouts", 5, [](ApiCall &call) { call.ret(1); });
+#endif
 	registry.add("WinHttpGetIEProxyConfigForCurrentUser", 1, [](ApiCall &call) {
 		if (!call[0]) {
 			call.fail(87);

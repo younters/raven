@@ -4,6 +4,7 @@
 #include "pe/resources.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <cwctype>
 #include <functional>
@@ -14,6 +15,23 @@ namespace raven {
 namespace {
 
 constexpr uint32_t locale_return_number = 0x20000000;
+
+// Locale names and their identifiers, as the public locale identifier reference lists them: the languages programs ship translations
+// for, and the neutral names of the most common. Formats and texts stay US English whatever locale a program names.
+constexpr std::pair<std::u16string_view, uint32_t> known_locales[]{{u"ar", 0x01}, {u"de", 0x07}, {u"en", 0x09}, {u"es", 0x0a}, {u"fr", 0x0c},
+	{u"it", 0x10}, {u"ja", 0x11}, {u"ko", 0x12}, {u"nl", 0x13}, {u"pl", 0x15}, {u"pt", 0x16}, {u"ru", 0x19}, {u"sv", 0x1d}, {u"tr", 0x1f},
+	{u"zh-Hans", 0x04}, {u"zh-Hant", 0x7c04}, {u"ar-SA", 0x401}, {u"bg-BG", 0x402}, {u"ca-ES", 0x403}, {u"zh-TW", 0x404}, {u"cs-CZ", 0x405},
+	{u"da-DK", 0x406}, {u"de-DE", 0x407}, {u"el-GR", 0x408}, {u"en-US", 0x409}, {u"fi-FI", 0x40b}, {u"fr-FR", 0x40c}, {u"he-IL", 0x40d},
+	{u"hu-HU", 0x40e}, {u"is-IS", 0x40f}, {u"it-IT", 0x410}, {u"ja-JP", 0x411}, {u"ko-KR", 0x412}, {u"nl-NL", 0x413}, {u"nb-NO", 0x414},
+	{u"pl-PL", 0x415}, {u"pt-BR", 0x416}, {u"ro-RO", 0x418}, {u"ru-RU", 0x419}, {u"hr-HR", 0x41a}, {u"sk-SK", 0x41b}, {u"sq-AL", 0x41c},
+	{u"sv-SE", 0x41d}, {u"th-TH", 0x41e}, {u"tr-TR", 0x41f}, {u"ur-PK", 0x420}, {u"id-ID", 0x421}, {u"uk-UA", 0x422}, {u"be-BY", 0x423},
+	{u"sl-SI", 0x424}, {u"et-EE", 0x425}, {u"lv-LV", 0x426}, {u"lt-LT", 0x427}, {u"fa-IR", 0x429}, {u"vi-VN", 0x42a}, {u"hy-AM", 0x42b},
+	{u"eu-ES", 0x42d}, {u"mk-MK", 0x42f}, {u"af-ZA", 0x436}, {u"ka-GE", 0x437}, {u"hi-IN", 0x439}, {u"ms-MY", 0x43e}, {u"kk-KZ", 0x43f},
+	{u"sw-KE", 0x441}, {u"bn-IN", 0x445}, {u"pa-IN", 0x446}, {u"gu-IN", 0x447}, {u"ta-IN", 0x449}, {u"te-IN", 0x44a}, {u"kn-IN", 0x44b},
+	{u"ml-IN", 0x44c}, {u"mr-IN", 0x44e}, {u"gl-ES", 0x456}, {u"zh-CN", 0x804}, {u"de-CH", 0x807}, {u"en-GB", 0x809}, {u"es-MX", 0x80a},
+	{u"fr-BE", 0x80c}, {u"it-CH", 0x810}, {u"nl-BE", 0x813}, {u"nn-NO", 0x814}, {u"pt-PT", 0x816}, {u"zh-HK", 0xc04}, {u"de-AT", 0xc07},
+	{u"en-AU", 0xc09}, {u"es-ES", 0xc0a}, {u"fr-CA", 0xc0c}, {u"en-CA", 0x1009}, {u"fr-CH", 0x100c}, {u"en-IE", 0x1809}, {u"sr-Latn-RS", 0x241a},
+	{u"sr-Cyrl-RS", 0x281a}, {u"en-IN", 0x4009}, {u"es-US", 0x540a}};
 
 const std::map<uint32_t, std::u16string> &locale_strings()
 {
@@ -84,6 +102,85 @@ std::u16string counted_wide(ApiCall &call, uint64_t address, int32_t count)
 	return text;
 }
 
+// The Latin letters with one combining mark, from the Unicode character database: the letter, its base and the mark.
+constexpr std::array<std::array<char16_t, 3>, 161> latin_marks{{
+	{0x00c0, 0x0041, 0x0300}, {0x00c1, 0x0041, 0x0301}, {0x00c2, 0x0041, 0x0302}, {0x00c3, 0x0041, 0x0303}, {0x00c4, 0x0041, 0x0308}, {0x00c5, 0x0041, 0x030a}, {0x00c7, 0x0043, 0x0327}, {0x00c8, 0x0045, 0x0300},
+	{0x00c9, 0x0045, 0x0301}, {0x00ca, 0x0045, 0x0302}, {0x00cb, 0x0045, 0x0308}, {0x00cc, 0x0049, 0x0300}, {0x00cd, 0x0049, 0x0301}, {0x00ce, 0x0049, 0x0302}, {0x00cf, 0x0049, 0x0308}, {0x00d1, 0x004e, 0x0303},
+	{0x00d2, 0x004f, 0x0300}, {0x00d3, 0x004f, 0x0301}, {0x00d4, 0x004f, 0x0302}, {0x00d5, 0x004f, 0x0303}, {0x00d6, 0x004f, 0x0308}, {0x00d9, 0x0055, 0x0300}, {0x00da, 0x0055, 0x0301}, {0x00db, 0x0055, 0x0302},
+	{0x00dc, 0x0055, 0x0308}, {0x00dd, 0x0059, 0x0301}, {0x00e0, 0x0061, 0x0300}, {0x00e1, 0x0061, 0x0301}, {0x00e2, 0x0061, 0x0302}, {0x00e3, 0x0061, 0x0303}, {0x00e4, 0x0061, 0x0308}, {0x00e5, 0x0061, 0x030a},
+	{0x00e7, 0x0063, 0x0327}, {0x00e8, 0x0065, 0x0300}, {0x00e9, 0x0065, 0x0301}, {0x00ea, 0x0065, 0x0302}, {0x00eb, 0x0065, 0x0308}, {0x00ec, 0x0069, 0x0300}, {0x00ed, 0x0069, 0x0301}, {0x00ee, 0x0069, 0x0302},
+	{0x00ef, 0x0069, 0x0308}, {0x00f1, 0x006e, 0x0303}, {0x00f2, 0x006f, 0x0300}, {0x00f3, 0x006f, 0x0301}, {0x00f4, 0x006f, 0x0302}, {0x00f5, 0x006f, 0x0303}, {0x00f6, 0x006f, 0x0308}, {0x00f9, 0x0075, 0x0300},
+	{0x00fa, 0x0075, 0x0301}, {0x00fb, 0x0075, 0x0302}, {0x00fc, 0x0075, 0x0308}, {0x00fd, 0x0079, 0x0301}, {0x00ff, 0x0079, 0x0308}, {0x0100, 0x0041, 0x0304}, {0x0101, 0x0061, 0x0304}, {0x0102, 0x0041, 0x0306},
+	{0x0103, 0x0061, 0x0306}, {0x0104, 0x0041, 0x0328}, {0x0105, 0x0061, 0x0328}, {0x0106, 0x0043, 0x0301}, {0x0107, 0x0063, 0x0301}, {0x0108, 0x0043, 0x0302}, {0x0109, 0x0063, 0x0302}, {0x010a, 0x0043, 0x0307},
+	{0x010b, 0x0063, 0x0307}, {0x010c, 0x0043, 0x030c}, {0x010d, 0x0063, 0x030c}, {0x010e, 0x0044, 0x030c}, {0x010f, 0x0064, 0x030c}, {0x0112, 0x0045, 0x0304}, {0x0113, 0x0065, 0x0304}, {0x0114, 0x0045, 0x0306},
+	{0x0115, 0x0065, 0x0306}, {0x0116, 0x0045, 0x0307}, {0x0117, 0x0065, 0x0307}, {0x0118, 0x0045, 0x0328}, {0x0119, 0x0065, 0x0328}, {0x011a, 0x0045, 0x030c}, {0x011b, 0x0065, 0x030c}, {0x011c, 0x0047, 0x0302},
+	{0x011d, 0x0067, 0x0302}, {0x011e, 0x0047, 0x0306}, {0x011f, 0x0067, 0x0306}, {0x0120, 0x0047, 0x0307}, {0x0121, 0x0067, 0x0307}, {0x0122, 0x0047, 0x0327}, {0x0123, 0x0067, 0x0327}, {0x0124, 0x0048, 0x0302},
+	{0x0125, 0x0068, 0x0302}, {0x0128, 0x0049, 0x0303}, {0x0129, 0x0069, 0x0303}, {0x012a, 0x0049, 0x0304}, {0x012b, 0x0069, 0x0304}, {0x012c, 0x0049, 0x0306}, {0x012d, 0x0069, 0x0306}, {0x012e, 0x0049, 0x0328},
+	{0x012f, 0x0069, 0x0328}, {0x0130, 0x0049, 0x0307}, {0x0134, 0x004a, 0x0302}, {0x0135, 0x006a, 0x0302}, {0x0136, 0x004b, 0x0327}, {0x0137, 0x006b, 0x0327}, {0x0139, 0x004c, 0x0301}, {0x013a, 0x006c, 0x0301},
+	{0x013b, 0x004c, 0x0327}, {0x013c, 0x006c, 0x0327}, {0x013d, 0x004c, 0x030c}, {0x013e, 0x006c, 0x030c}, {0x0143, 0x004e, 0x0301}, {0x0144, 0x006e, 0x0301}, {0x0145, 0x004e, 0x0327}, {0x0146, 0x006e, 0x0327},
+	{0x0147, 0x004e, 0x030c}, {0x0148, 0x006e, 0x030c}, {0x014c, 0x004f, 0x0304}, {0x014d, 0x006f, 0x0304}, {0x014e, 0x004f, 0x0306}, {0x014f, 0x006f, 0x0306}, {0x0150, 0x004f, 0x030b}, {0x0151, 0x006f, 0x030b},
+	{0x0154, 0x0052, 0x0301}, {0x0155, 0x0072, 0x0301}, {0x0156, 0x0052, 0x0327}, {0x0157, 0x0072, 0x0327}, {0x0158, 0x0052, 0x030c}, {0x0159, 0x0072, 0x030c}, {0x015a, 0x0053, 0x0301}, {0x015b, 0x0073, 0x0301},
+	{0x015c, 0x0053, 0x0302}, {0x015d, 0x0073, 0x0302}, {0x015e, 0x0053, 0x0327}, {0x015f, 0x0073, 0x0327}, {0x0160, 0x0053, 0x030c}, {0x0161, 0x0073, 0x030c}, {0x0162, 0x0054, 0x0327}, {0x0163, 0x0074, 0x0327},
+	{0x0164, 0x0054, 0x030c}, {0x0165, 0x0074, 0x030c}, {0x0168, 0x0055, 0x0303}, {0x0169, 0x0075, 0x0303}, {0x016a, 0x0055, 0x0304}, {0x016b, 0x0075, 0x0304}, {0x016c, 0x0055, 0x0306}, {0x016d, 0x0075, 0x0306},
+	{0x016e, 0x0055, 0x030a}, {0x016f, 0x0075, 0x030a}, {0x0170, 0x0055, 0x030b}, {0x0171, 0x0075, 0x030b}, {0x0172, 0x0055, 0x0328}, {0x0173, 0x0075, 0x0328}, {0x0174, 0x0057, 0x0302}, {0x0175, 0x0077, 0x0302},
+	{0x0176, 0x0059, 0x0302}, {0x0177, 0x0079, 0x0302}, {0x0178, 0x0059, 0x0308}, {0x0179, 0x005a, 0x0301}, {0x017a, 0x007a, 0x0301}, {0x017b, 0x005a, 0x0307}, {0x017c, 0x007a, 0x0307}, {0x017d, 0x005a, 0x030c},
+	{0x017e, 0x007a, 0x030c},
+}};
+
+// FoldStringW's mappings, applied in turn to each character: the compatibility zone, digits, ligatures, then composition.
+std::u16string fold_string(std::u16string_view text, uint32_t flags)
+{
+	constexpr uint32_t fold_zone = 0x10, precomposed = 0x20, composite = 0x40, fold_digits = 0x80, expand_ligatures = 0x2000;
+	// Each block of decimal digits starts at its zero.
+	static constexpr char16_t digit_zeros[]{0x0660, 0x06f0, 0x07c0, 0x0966, 0x09e6, 0x0a66, 0x0ae6, 0x0b66, 0x0be6, 0x0c66, 0x0ce6, 0x0d66,
+		0x0de6, 0x0e50, 0x0ed0, 0x0f20, 0x1040, 0x1090, 0x17e0, 0x1810, 0x1946, 0x19d0, 0x2080, 0xff10};
+	std::u16string folded;
+	for (char16_t character : text) {
+		if (flags & fold_zone) {
+			if (character >= 0xff01 && character <= 0xff5e) character = char16_t(character - 0xfee0);
+			else if (character == 0x3000) character = u' ';
+		}
+		if (flags & fold_digits) {
+			for (const auto zero : digit_zeros)
+				if (character >= zero && character < zero + 10) character = char16_t(u'0' + (character - zero));
+			if (character == 0x00b9) character = u'1';
+			else if (character == 0x00b2 || character == 0x00b3) character = char16_t(u'2' + (character - 0x00b2));
+			else if (character == 0x2070) character = u'0';
+			else if (character >= 0x2074 && character <= 0x2079) character = char16_t(u'4' + (character - 0x2074));
+		}
+		if (flags & expand_ligatures) {
+			static constexpr std::pair<char16_t, std::u16string_view> ligatures[]{{0x00c6, u"AE"}, {0x00e6, u"ae"}, {0x0152, u"OE"}, {0x0153, u"oe"},
+				{0x00df, u"ss"}, {0x0132, u"IJ"}, {0x0133, u"ij"}, {0xfb00, u"ff"}, {0xfb01, u"fi"}, {0xfb02, u"fl"}, {0xfb03, u"ffi"}, {0xfb04, u"ffl"},
+				{0xfb05, u"st"}, {0xfb06, u"st"}};
+			const auto found = std::find_if(std::begin(ligatures), std::end(ligatures), [character](const auto &item) { return item.first == character; });
+			if (found != std::end(ligatures)) {
+				folded += found->second;
+				continue;
+			}
+		}
+		if (flags & composite) {
+			const auto found = std::find_if(latin_marks.begin(), latin_marks.end(), [character](const auto &item) { return item[0] == character; });
+			if (found != latin_marks.end()) {
+				folded += (*found)[1];
+				folded += (*found)[2];
+				continue;
+			}
+		}
+		if ((flags & precomposed) && !folded.empty()) {
+			const char16_t base = folded.back();
+			const auto found = std::find_if(latin_marks.begin(), latin_marks.end(), [base, character](const auto &item) {
+				return item[1] == base && item[2] == character;
+			});
+			if (found != latin_marks.end()) {
+				folded.back() = (*found)[0];
+				continue;
+			}
+		}
+		folded += character;
+	}
+	return folded;
+}
+
 std::string counted_narrow(ApiCall &call, uint64_t address, int32_t count)
 {
 	if (count < 0)
@@ -96,6 +193,8 @@ std::u16string decode_ansi(std::string_view text, uint32_t code_page)
 {
 	if (code_page == 65001)
 		return from_utf8(text);
+	if (const auto *page = native_single_byte_page(code_page))
+		return decode_single_byte(*page, text);
 	std::u16string result;
 	for (const auto byte : text) {
 		const auto value = static_cast<unsigned char>(byte);
@@ -357,6 +456,195 @@ std::optional<std::u16string> module_message(KernelContext &context, uint64_t ba
 	return std::nullopt;
 }
 
+// Punycode, RFC 3492: the bias adaptation after each code point is written.
+uint32_t punycode_adapt(uint32_t delta, uint32_t points, bool first)
+{
+	delta = first ? delta / 700 : delta / 2;
+	delta += delta / points;
+	uint32_t k = 0;
+	for (; delta > 35 * 26 / 2; k += 36)
+		delta /= 35;
+	return k + 36 * delta / (delta + 38);
+}
+
+std::optional<std::string> punycode_encode(const std::u32string &input)
+{
+	const auto digit = [](uint32_t value) { return char(value < 26 ? 'a' + value : '0' + value - 26); };
+	std::string output;
+	for (const auto point : input)
+		if (point < 0x80)
+			output.push_back(char(point));
+	const uint32_t basic = uint32_t(output.size());
+	uint32_t handled = basic, n = 0x80, delta = 0, bias = 72;
+	if (basic)
+		output.push_back('-');
+	while (handled < input.size()) {
+		uint32_t next = UINT32_MAX;
+		for (const auto point : input)
+			if (point >= n && point < next)
+				next = point;
+		if (uint64_t(next - n) * (handled + 1) > UINT32_MAX - delta)
+			return std::nullopt;
+		delta += (next - n) * (handled + 1);
+		n = next;
+		for (const auto point : input) {
+			if (point < n && !++delta)
+				return std::nullopt;
+			if (point != n)
+				continue;
+			uint32_t q = delta;
+			for (uint32_t k = 36;; k += 36) {
+				const uint32_t t = k <= bias ? 1 : k >= bias + 26 ? 26 : k - bias;
+				if (q < t)
+					break;
+				output.push_back(digit(t + (q - t) % (36 - t)));
+				q = (q - t) / (36 - t);
+			}
+			output.push_back(digit(q));
+			bias = punycode_adapt(delta, handled + 1, handled == basic);
+			delta = 0;
+			++handled;
+		}
+		++delta;
+		++n;
+	}
+	return output;
+}
+
+std::optional<std::u32string> punycode_decode(std::string_view input)
+{
+	std::u32string output;
+	const auto last = input.rfind('-');
+	if (last != std::string_view::npos) {
+		for (const char character : input.substr(0, last))
+			output.push_back(char32_t(uint8_t(character)));
+		input.remove_prefix(last + 1);
+	}
+	uint32_t n = 0x80, i = 0, bias = 72;
+	for (size_t at = 0; at < input.size();) {
+		const uint32_t old = i;
+		for (uint32_t weight = 1, k = 36;; k += 36) {
+			if (at >= input.size())
+				return std::nullopt;
+			const char c = input[at++];
+			const uint32_t value = c >= '0' && c <= '9' ? c - '0' + 26 : c >= 'a' && c <= 'z' ? c - 'a' : c >= 'A' && c <= 'Z' ? c - 'A' : 36;
+			if (value >= 36 || uint64_t(value) * weight > UINT32_MAX - i)
+				return std::nullopt;
+			i += value * weight;
+			const uint32_t t = k <= bias ? 1 : k >= bias + 26 ? 26 : k - bias;
+			if (value < t)
+				break;
+			if (uint64_t(weight) * (36 - t) > UINT32_MAX)
+				return std::nullopt;
+			weight *= 36 - t;
+		}
+		const uint32_t count = uint32_t(output.size()) + 1;
+		bias = punycode_adapt(i - old, count, old == 0);
+		if (i / count > 0x10ffff - n)
+			return std::nullopt;
+		n += i / count;
+		i %= count;
+		output.insert(output.begin() + i, char32_t(n));
+		++i;
+	}
+	return output;
+}
+
+// The labels of a domain name; IDNA also separates them with the ideographic and full-width full stops.
+std::vector<std::u16string> domain_labels(const std::u16string &name)
+{
+	std::vector<std::u16string> labels(1);
+	for (const auto character : name) {
+		if (character == u'.' || character == 0x3002 || character == 0xff0e || character == 0xff61)
+			labels.emplace_back();
+		else
+			labels.back().push_back(character);
+	}
+	return labels;
+}
+
+// IdnToAscii: labels with characters beyond ASCII become "xn--" and their Punycode, after case folding; empty when the name is invalid.
+std::optional<std::u16string> idn_to_ascii(const std::u16string &name)
+{
+	const auto labels = domain_labels(name);
+	std::u16string result;
+	for (size_t index = 0; index < labels.size(); ++index) {
+		const auto &label = labels[index];
+		// Only the last label may be empty, the root of a fully qualified name.
+		if (label.empty() && (index + 1 < labels.size() || labels.size() == 1))
+			return std::nullopt;
+		std::u32string points;
+		bool ascii = true;
+		for (size_t at = 0; at < label.size(); ++at) {
+			char32_t point = label[at];
+			if (point >= 0xd800 && point < 0xdc00 && at + 1 < label.size() && label[at + 1] >= 0xdc00 && label[at + 1] < 0xe000)
+				point = 0x10000 + ((point - 0xd800) << 10) + (label[++at] - 0xdc00);
+			else if (point >= 0xd800 && point < 0xe000)
+				return std::nullopt;
+			ascii &= point < 0x80;
+			points.push_back(point);
+		}
+		std::string encoded;
+		if (ascii) {
+			for (const auto point : points)
+				encoded.push_back(char(point));
+		} else {
+			for (auto &point : points)
+				if (point < 0x10000)
+					point = fold_case(char16_t(point));
+			const auto punycode = punycode_encode(points);
+			if (!punycode)
+				return std::nullopt;
+			encoded = "xn--" + *punycode;
+		}
+		if (encoded.size() > 63)
+			return std::nullopt;
+		if (index)
+			result.push_back(u'.');
+		result.append(encoded.begin(), encoded.end());
+	}
+	if (result.size() > 255)
+		return std::nullopt;
+	return result;
+}
+
+// IdnToUnicode: an ASCII name whose "xn--" labels are decoded; empty when the name is not ASCII or a label does not decode.
+std::optional<std::u16string> idn_to_unicode(const std::u16string &name)
+{
+	const auto labels = domain_labels(name);
+	std::u16string result;
+	for (size_t index = 0; index < labels.size(); ++index) {
+		const auto &label = labels[index];
+		if ((label.empty() && (index + 1 < labels.size() || labels.size() == 1)) || label.size() > 63)
+			return std::nullopt;
+		std::string ascii;
+		for (const auto character : label) {
+			if (character >= 0x80)
+				return std::nullopt;
+			ascii.push_back(char(character));
+		}
+		if (index)
+			result.push_back(u'.');
+		const bool encoded = ascii.size() > 4 && (ascii[0] | 0x20) == 'x' && (ascii[1] | 0x20) == 'n' && ascii[2] == '-' && ascii[3] == '-';
+		if (!encoded) {
+			result += label;
+			continue;
+		}
+		const auto points = punycode_decode(std::string_view(ascii).substr(4));
+		if (!points)
+			return std::nullopt;
+		for (const auto point : *points) {
+			if (point >= 0x10000) {
+				result.push_back(char16_t(0xd800 + ((point - 0x10000) >> 10)));
+				result.push_back(char16_t(0xdc00 + ((point - 0x10000) & 0x3ff)));
+			} else {
+				result.push_back(char16_t(point));
+			}
+		}
+	}
+	return result;
+}
+
 }
 
 std::vector<uint8_t> locale_table()
@@ -445,6 +733,14 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 		bool replaced = false;
 		if (page == 65001) {
 			encoded = encode_utf8(source, true);
+		} else if (const auto *single = native_single_byte_page(page)) {
+			// WC_NO_BEST_FIT_CHARS keeps only characters the page has a byte of their own for.
+			const bool exact = call.u32(1) & 0x400;
+			for (const auto character : source) {
+				const auto byte = encode_single_byte(*single, character, exact);
+				encoded.push_back(byte < 0 ? '?' : char(byte));
+				replaced |= byte < 0;
+			}
 		} else if (page == 1252 || page == 437 || page == 850 || page == 28591 || page == 20127) {
 			encoded = encode_ansi(source, 1252);
 			for (size_t at = 0; at < source.size(); ++at)
@@ -560,6 +856,64 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 		map_string(call, call.u32(1), text, call[4], call.i32(5));
 		if (length < 0 && call.result) call.ret(call.result + 1);
 	});
+	registry.add("FoldStringW", 5, [](ApiCall &call) {
+		const uint32_t flags = call.u32(0);
+		const int32_t length = call.i32(2), capacity = call.i32(4);
+		constexpr uint32_t known = 0x10 | 0x20 | 0x40 | 0x80 | 0x2000;
+		const bool composing = flags & 0x20, decomposing = flags & 0x40;
+		if (!flags || (flags & ~known) || (composing && decomposing) || ((flags & 0x2000) && (composing || decomposing))) {
+			call.fail(1004);
+			return;
+		}
+		if (!call[1] || !length || length < -1 || capacity < 0 || (capacity && !call[3]) || (capacity && call[1] == call[3])) {
+			call.fail(87);
+			return;
+		}
+		auto text = fold_string(counted_wide(call, call[1], length), flags);
+		// A string given with its terminator is answered with one.
+		if (length < 0) text.push_back(u'\0');
+		if (!capacity) {
+			call.ret(text.size());
+			return;
+		}
+		if (text.size() > size_t(capacity)) {
+			call.fail(122);
+			return;
+		}
+		std::vector<uint8_t> bytes(text.size() * 2);
+		std::memcpy(bytes.data(), text.data(), bytes.size());
+		call.write(call[3], bytes);
+		call.ret(text.size());
+	});
+	// The input is counted or terminated, and a terminated one is answered with its terminator.
+	const auto convert_name = [](ApiCall &call, const std::function<std::optional<std::u16string>(const std::u16string &)> &convert) {
+		const int32_t length = call.i32(2), capacity = call.i32(4);
+		if (!call[1] || !length || length < -1 || capacity < 0 || (capacity && !call[3])) {
+			call.fail(87);
+			return;
+		}
+		auto result = convert(counted_wide(call, call[1], length));
+		if (!result) {
+			call.fail(123);
+			return;
+		}
+		if (length < 0)
+			result->push_back(u'\0');
+		if (!capacity) {
+			call.ret(result->size());
+			return;
+		}
+		if (result->size() > size_t(capacity)) {
+			call.fail(122);
+			return;
+		}
+		std::vector<uint8_t> bytes(result->size() * 2);
+		std::memcpy(bytes.data(), result->data(), bytes.size());
+		call.write(call[3], bytes);
+		call.ret(result->size());
+	};
+	registry.add("IdnToAscii", 5, [convert_name](ApiCall &call) { convert_name(call, idn_to_ascii); });
+	registry.add("IdnToUnicode", 5, [convert_name](ApiCall &call) { convert_name(call, idn_to_unicode); });
 	registry.add("LCMapStringA", 6, [&, map_string, ansi_page](ApiCall &call) {
 		const int32_t length = call.i32(3);
 		const auto narrow = counted_narrow(call, call[2], length);
@@ -645,7 +999,9 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 
 	struct CodePage { uint32_t id, maximum; const char *name; };
 	static constexpr CodePage code_pages[] = {
-		{437, 1, "OEM United States"}, {850, 1, "OEM Multilingual Latin 1"}, {1252, 1, "Western European (Windows)"},
+		{437, 1, "OEM United States"}, {850, 1, "OEM Multilingual Latin 1"}, {1250, 1, "Central European (Windows)"}, {1251, 1, "Cyrillic (Windows)"},
+		{1252, 1, "Western European (Windows)"}, {1253, 1, "Greek (Windows)"}, {1254, 1, "Turkish (Windows)"}, {1255, 1, "Hebrew (Windows)"},
+		{1256, 1, "Arabic (Windows)"}, {1257, 1, "Baltic (Windows)"}, {1258, 1, "Vietnamese (Windows)"},
 		{28591, 1, "Western European (ISO)"}, {20127, 1, "US-ASCII"}, {65001, 4, "Unicode (UTF-8)"}
 	};
 	const auto code_page = [](uint32_t page) -> const CodePage * {
@@ -688,7 +1044,8 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 	}
 	registry.add("IsValidCodePage", 1, [](ApiCall &call) {
 		const uint32_t page = call.u32(0);
-		call.ret(page == 437 || page == 850 || page == 1252 || page == 28591 || page == 20127 || page == 65001 || page == 1200 || page == 1201);
+		call.ret(page == 437 || page == 850 || page == 1252 || page == 28591 || page == 20127 || page == 65001 || page == 1200 || page == 1201 ||
+			native_single_byte_page(page) != nullptr);
 	});
 	registry.add("GetOEMCP", 0, [](ApiCall &call) { call.ret(437); });
 	registry.add("GetConsoleOutputCP", 0, [](ApiCall &call) { call.ret(437); });
@@ -730,9 +1087,42 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("GetUserDefaultLocaleName", 2, [locale_name](ApiCall &call) { locale_name(call, call[0], call.i32(1)); });
 	registry.add("GetSystemDefaultLocaleName", 2, [locale_name](ApiCall &call) { locale_name(call, call[0], call.i32(1)); });
-	registry.add("LocaleNameToLCID", 2, [](ApiCall &call) { call.ret(0x409); });
+	// A name the table does not know, as the culture-neutral "x-none" programs use, is not a locale. No name is the user's, the empty one
+	// the invariant locale.
+	registry.add("LocaleNameToLCID", 2, [](ApiCall &call) {
+		if (!call[0]) {
+			call.ret(0x409);
+			return;
+		}
+		const auto name = call.wide(call[0], 85);
+		if (name.empty()) {
+			call.ret(0x7f);
+			return;
+		}
+		if (name == u"!x-sys-default-locale") {
+			call.ret(0x409);
+			return;
+		}
+		for (const auto &[known, locale] : known_locales)
+			if (!compare_fold(name, known)) {
+				call.ret(locale);
+				return;
+			}
+		call.fail(87);
+	});
 	registry.add("LCIDToLocaleName", 4, [](ApiCall &call) {
-		const std::u16string name = u"en-US";
+		const uint32_t locale = call.u32(0);
+		std::u16string name;
+		if (locale == 0 || locale == 0x400 || locale == 0x800)
+			name = u"en-US";
+		else if (locale != 0x7f) {
+			const auto known = std::find_if(std::begin(known_locales), std::end(known_locales), [locale](const auto &entry) { return entry.second == locale; });
+			if (known == std::end(known_locales)) {
+				call.fail(87);
+				return;
+			}
+			name = known->first;
+		}
 		const int32_t capacity = call.i32(2);
 		if (capacity && size_t(capacity) <= name.size()) {
 			call.fail(122);
@@ -1057,6 +1447,103 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("GetDateFormatEx", 7, [format_date_time](ApiCall &call) { format_date_time(call, true, 1, 2, 3, 4, 5); });
 	registry.add("GetTimeFormatW", 6, [format_date_time](ApiCall &call) { format_date_time(call, false, 1, 2, 3, 4, 5); });
 	registry.add("GetTimeFormatEx", 6, [format_date_time](ApiCall &call) { format_date_time(call, false, 1, 2, 3, 4, 5); });
+
+	// GetNumberFormat: a plain number ("-1234.5") laid out with the locale's digits after the separator, grouping and negative form. The
+	// locale is the English (United States) one the dates use; a NUMBERFMT the caller passes replaces it as a whole.
+	const auto format_number = [](ApiCall &call) {
+		const uint32_t flags = call.u32(1);
+		const auto value = call.wide(call[2]);
+		uint32_t digits = 2, leading_zero = 1, grouping = 3, negative_order = 1;
+		std::u16string decimal = u".", thousand = u",";
+		if (call[3]) {
+			if (flags) {
+				call.fail(1004);
+				return;
+			}
+			const size_t width = call.pointer_width();
+			digits = call.load<uint32_t>(call[3]);
+			leading_zero = call.load<uint32_t>(call[3] + 4);
+			grouping = call.load<uint32_t>(call[3] + 8);
+			decimal = call.wide(call.load_pointer(call[3] + 12 + (width == 8 ? 4 : 0)), 4);
+			thousand = call.wide(call.load_pointer(call[3] + 12 + width + (width == 8 ? 4 : 0)), 4);
+			negative_order = call.load<uint32_t>(call[3] + 12 + 2 * width + (width == 8 ? 4 : 0));
+			if (digits > 9 || leading_zero > 1 || negative_order > 4 || (grouping > 9 && grouping != 32)) {
+				call.fail(87);
+				return;
+			}
+		}
+		// The value is digits with an optional leading minus and at most one decimal point.
+		const bool negative = !value.empty() && value[0] == u'-';
+		std::u16string whole, fraction;
+		bool point = false;
+		for (size_t index = negative ? 1 : 0; index < value.size(); ++index) {
+			const auto character = value[index];
+			if (character == u'.' && !point)
+				point = true;
+			else if (character >= u'0' && character <= u'9')
+				(point ? fraction : whole).push_back(character);
+			else {
+				call.fail(87);
+				return;
+			}
+		}
+		if (whole.empty() && fraction.empty()) {
+			call.fail(87);
+			return;
+		}
+		// Digits past the ones shown round half up into the rest.
+		const bool round_up = fraction.size() > digits && fraction[digits] >= u'5';
+		fraction.resize(digits, u'0');
+		if (round_up) {
+			auto number = whole + fraction;
+			size_t index = number.size();
+			while (index > 0 && number[index - 1] == u'9')
+				number[--index] = u'0';
+			if (index == 0)
+				number.insert(number.begin(), u'1');
+			else
+				++number[index - 1];
+			whole = number.substr(0, number.size() - digits);
+			fraction = number.substr(number.size() - digits);
+		}
+		whole.erase(0, std::min(whole.find_first_not_of(u'0'), whole.size()));
+		std::u16string grouped;
+		if (whole.empty()) {
+			if (leading_zero || !digits)
+				grouped = u"0";
+		} else {
+			// Grouping 32 is three digits next to the separator and two in every group beyond.
+			size_t size = grouping == 32 ? 3 : grouping, count = 0;
+			for (size_t index = whole.size(); index > 0; --index) {
+				if (size && count == size) {
+					grouped.insert(0, thousand);
+					count = 0;
+					if (grouping == 32)
+						size = 2;
+				}
+				grouped.insert(grouped.begin(), whole[index - 1]);
+				++count;
+			}
+		}
+		std::u16string text = grouped + (digits ? decimal + fraction : u"");
+		if (negative && text.find_first_not_of(u"0.,") != std::u16string::npos) {
+			static constexpr std::u16string_view before[] = {u"(", u"-", u"- ", u"", u""}, after[] = {u")", u"", u"", u"-", u" -"};
+			text = std::u16string(before[negative_order]) + text + std::u16string(after[negative_order]);
+		}
+		const int32_t capacity = call.i32(5);
+		if (!capacity) {
+			call.ret(text.size() + 1);
+			return;
+		}
+		if (size_t(capacity) <= text.size()) {
+			call.fail(122);
+			return;
+		}
+		call.put_wide(call[4], text, size_t(capacity));
+		call.ret(text.size() + 1);
+	};
+	registry.add("GetNumberFormatW", 6, format_number);
+	registry.add("GetNumberFormatEx", 6, format_number);
 
 	// The message comes from the text given, a module's message table or the system's; its inserts from an array of arguments or from the
 	// caller's va_list, one pointer-wide slot each.

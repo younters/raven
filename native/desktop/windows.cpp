@@ -9,6 +9,7 @@
 
 #include <array>
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <new>
@@ -181,6 +182,31 @@ uint64_t NativeWindows::surface_dc(uint64_t handle)
 	} catch (...) { if (dc) objects.erase(dc); if (bitmap) objects.erase(bitmap); process.unmap_memory(address); throw; }
 }
 
+bool NativeWindows::blank_client(uint64_t handle) const
+{
+	const auto *window=objects.window(handle);
+	const auto *bitmap=window ? objects.bitmap(window->bitmap) : nullptr;
+	if (!window) return false;
+	if (!bitmap) return true;
+	// Only erased so far: no WM_PAINT finished on the window and no other process has drawn anything into it or one of its children.
+	if (!window->painted) {
+		bool drawn=false;
+		for (const auto drawn_window : foreign_content)
+			if (drawn_window==handle || objects.is_child(handle,drawn_window)) { drawn=true; break; }
+		if (!drawn) return true;
+	}
+	const auto pixels=bitmap->pixels();
+	const int64_t left=std::max<int64_t>(int64_t(window->x)-window->outer.left,0),top=std::max<int64_t>(int64_t(window->y)-window->outer.top,0);
+	const int64_t right=std::min<int64_t>(left+window->width,bitmap->width),bottom=std::min<int64_t>(top+window->height,bitmap->height);
+	if (pixels.size()<size_t(bitmap->width)*bitmap->height*4) return false;
+	for (int64_t y=top;y<bottom;++y) {
+		const auto *row=pixels.data()+(size_t(y)*bitmap->width+size_t(left))*4;
+		for (int64_t x=left;x<right;++x,row+=4)
+			if (row[0] | row[1] | row[2] | row[3]) return false;
+	}
+	return true;
+}
+
 void NativeWindows::present(uint64_t handle, bool force)
 {
 	// The desktop is the screen itself; guest drawing on it never becomes a host window.
@@ -207,10 +233,14 @@ void NativeWindows::present(uint64_t handle, bool force)
 				break;
 			}
 		}
+		// A window whose client area nothing reached yet would show as a black rectangle too: a program that draws it from another
+		// process, as a browser's compositor does, ends WM_PAINT without drawing. In a program drawn that way its first frame waits a
+		// moment for that drawing. A window that hands its client area to a graphics driver shows that surface instead and is not held.
+		const bool blank=!pending && !waiting->presented && !foreign_content.empty() && !hosting_surface.contains(handle) && blank_client(handle);
 		const auto now=std::chrono::steady_clock::now();
-		if (pending) {
+		if (pending || blank) {
 			if (!waiting->present_waiting) waiting->present_waiting=now;
-			if (now-*waiting->present_waiting<std::chrono::milliseconds(waiting->presented ? 250 : 2000)) {
+			if (now-*waiting->present_waiting<std::chrono::milliseconds(blank ? 1000 : waiting->presented ? 250 : 2000)) {
 				dirty_roots.insert(handle);
 				return;
 			}
@@ -244,7 +274,7 @@ void NativeWindows::present(uint64_t handle, bool force)
 		const auto &margins=*window->glass;
 		const bool whole=margins[0]<0 || margins[1]<0 || margins[2]<0 || margins[3]<0;
 		paint::Canvas canvas{glazed.data(),width,height};
-		const uint32_t title=caption_color(active==handle);
+		const uint32_t title=caption_color(*window,active==handle);
 		for (int32_t y=top;y<bottom;++y)
 			for (int32_t x=left;x<right;++x) {
 				if (!whole && x>=left+margins[0] && x<right-margins[1] && y>=top+margins[2] && y<bottom-margins[3])
@@ -261,7 +291,7 @@ void NativeWindows::present(uint64_t handle, bool force)
 	}
 	// A popup without a caption that another window owns (a menu, a drop-down list), or an owned tool window (a palette), opens where the
 	// program placed it: as a popup of the owner's host window, since a host window of its own would be placed by the compositor.
-	const auto owner=window->owner ? objects.window_root(window->owner) : 0;
+	const auto owner=host_owner(*window);
 	const auto *owning=owner && owner!=handle ? objects.window(owner) : nullptr;
 	if (presentation.owned_popup && owning && shown_on_owner(*window)) {
 		try {
@@ -477,6 +507,14 @@ void NativeWindows::import_foreign_frames()
 		take_foreign_frame(handle,seen,[&](const uint8_t *pixels,uint32_t width,uint32_t height) {
 			const auto root=objects.window_root(handle);
 			if (!root) return;
+			// A browser's compositor hands a window frames of plain black before it has anything to show: first, and again while a page
+			// it navigates to loads. Only a frame with something on it counts as drawn. Black frames are left out, so the old page stays
+			// until the new one paints, as the browser keeps it, however long the network takes; a window never drawn waits four seconds.
+			bool black=true;
+			for (size_t at=0;at<size_t(width)*height*4 && black;at+=4)
+				black=!(pixels[at] | pixels[at+1] | pixels[at+2]);
+			if (!black) { foreign_content.insert(handle); foreign_black.erase(handle); }
+			else if (foreign_content.contains(handle) || now-foreign_black.try_emplace(handle,now).first->second<std::chrono::seconds(4)) return;
 			surface_dc(root);
 			const auto *top=objects.window(root);
 			const auto *window=objects.window(handle);
@@ -511,6 +549,11 @@ void NativeWindows::update_warp_lock(bool warped)
 	const int32_t x=cursor_x-window->outer.left,y=cursor_y-window->outer.top;
 	presentation.confine(active,std::array<int32_t,4>{x,y,x+1,y+1});
 	warp_lock_window=active;
+}
+
+void NativeWindows::show_cursor()
+{
+	sync_cursor();
 }
 
 void NativeWindows::flush_dirty(bool force)
@@ -620,8 +663,24 @@ void NativeWindows::finish_paint(uint64_t handle)
 	if (objects.window_visible(handle)) present(handle);
 }
 
+// A child with a border hears WM_NCPAINT as BeginPaint starts, as on Windows. A program that draws that border itself, answering
+// without the default handling, keeps what it drew: the frame the surface draws for children leaves that window out.
+void NativeWindows::paint_frame(uint64_t handle)
+{
+	const auto *window=objects.window(handle);
+	if (!window || !window->parent || !((window->ex_style & 0x20200U) || (window->style & 0x800000U))) return;
+	const auto saved=framing; const bool saved_default=framed_by_default;
+	framing=handle; framed_by_default=false;
+	send(handle,0x85,1,0);
+	const bool by_default=framed_by_default;
+	framing=saved; framed_by_default=saved_default;
+	if (auto *record=objects.window(handle)) record->own_frame=!by_default;
+}
+
 NativeWindows::PaintStart NativeWindows::start_paint(uint64_t handle)
 {
+	paint_frame(handle);
+	if (!objects.window(handle)) throw std::runtime_error("frame callback destroyed its painting window");
 	const auto dc=surface_dc(handle);
 	const bool erase=objects.start_paint(handle);
 	const auto rect=objects.dc(dc)->clip->bounds();
@@ -779,11 +838,7 @@ void NativeWindows::receive(const DesktopEvent &event)
 	else if (event.kind!=DesktopEventKind::keyboard_focus) settle_focus_leave(false);
 	if (menu_event(event)) return;
 	if (event.kind==DesktopEventKind::message) { post(event.window,event.message,event.wparam,event.lparam); return; }
-	if (event.kind==DesktopEventKind::keymap) {
-		if (std::any_of(key_down.begin(),key_down.end(),[](bool down) { return down; }))
-			throw std::runtime_error("keyboard map change with held keys requires qualification");
-		keyboard_map.load(event.keymap); key_translation.reset(); return;
-	}
+	if (event.kind==DesktopEventKind::keymap) { keyboard_map.load(event.keymap); key_translation.reset(); return; }
 	if (event.kind==DesktopEventKind::modifiers) {
 		keyboard_map.modifiers(event.message,uint32_t(event.wparam),uint32_t(event.lparam),uint32_t(event.lparam>>32));
 		// A virtual keyboard reports modifiers without key events; the guest still sees them go down and up.
@@ -869,10 +924,11 @@ void NativeWindows::receive(const DesktopEvent &event)
 		}
 		if (event.wparam>1 || event.message>=key_down.size() || messages.size()>=10000)
 			throw std::runtime_error("invalid native keyboard event or queue exhaustion");
-		const auto key=keyboard_map.decode(event.message);
 		const bool pressed=event.wparam!=0,previous=key_down[event.message];
 		if (!pressed && !previous) return;
+		const auto key=pressed || !key_pressed[event.message].code ? keyboard_map.decode(event.message) : key_pressed[event.message];
 		key_down[event.message]=pressed;
+		key_pressed[event.message]=pressed ? key : KeyboardKey{};
 		if (!key.code) return;
 		const bool modifier=key.code>=0x10 && key.code<=0x12;
 		// A modifier already reported through the keymap state is not announced twice.
@@ -986,9 +1042,14 @@ static bool trace_buttons_enabled()
 	return enabled;
 }
 
+uint64_t NativeWindows::host_owner(const DesktopWindow &window) const
+{
+	return window.owner ? objects.window_root(window.owner) : window.shown_on ? objects.window_root(window.shown_on) : 0;
+}
+
 bool NativeWindows::shown_on_owner(const DesktopWindow &window) const
 {
-	const auto owner=window.owner ? objects.window_root(window.owner) : 0;
+	const auto owner=host_owner(window);
 	if (!owner || window.parent || !objects.window_visible(owner))
 		return false;
 	return ((window.style & 0x80000000U) && (window.style & 0x00c00000U)!=0x00c00000U) || (window.ex_style & 0x80U);
@@ -1020,9 +1081,9 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 		fprintf(stderr,"button %x target %llx hit %llx visible %d\n",message,(unsigned long long)target,(unsigned long long)hit,
 			window && objects.window_visible(target) ? 1 : 0);
 	if (!window || !objects.window_visible(target) || !hit) return;
-	// Windows leaves the cursor to the capturing window until capture is released.
-	if (message==0x200 && !capture) {
-		send(target,0x20,target,uint16_t(hit) | (uint64_t(0x200)<<16));
+	// Unless the mouse is captured, the window under the pointer chooses the cursor before the mouse message arrives.
+	if (!capture && (message==0x200 || message==0x201 || message==0x204 || message==0x207)) {
+		send(target,0x20,target,uint16_t(hit)|(uint64_t(message)<<16));
 		window=objects.window(target);
 		if (!window || !objects.window_visible(target)) return;
 	}
@@ -1043,6 +1104,16 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 	// Over the frame the window hears WM_NCMOUSEMOVE; programs that draw their own caption light its buttons from it.
 	if (message==0x200 && hit!=1 && messages.size()<10000) post(target,0xa0,hit,uint16_t(x)|(uint64_t(uint16_t(y))<<16));
 	if (hit!=1) { nonclient_pointer(target,hit,message,int32_t(event.x),int32_t(event.y)); return; }
+	// A second press of the same button on the same window within the double-click time (500 ms) and rectangle (SM_CXDOUBLECLK, 4 by 4)
+	// is a double click when the window's class asks for them (CS_DBLCLKS); the press after a double click starts over.
+	if (message==0x201 || message==0x204 || message==0x207) {
+		const auto now=message_time();
+		const auto *type=objects.window_class(window->class_id);
+		const bool again=last_press.window==target && last_press.message==message && now-last_press.time<=500 &&
+			std::abs(int64_t(x)-last_press.x)<=2 && std::abs(int64_t(y)-last_press.y)<=2;
+		if (again && type && (type->style & 8)) { message+=2; last_press={}; }
+		else last_press={target,message,now,int32_t(x),int32_t(y)};
+	}
 	if ((message==0x201 || message==0x204 || message==0x207) && window->parent && !(window->ex_style & 4)) {
 		for (auto parent=window->parent;parent;) {
 			const auto *ancestor=objects.window(parent);if (!ancestor) break;
@@ -1367,6 +1438,10 @@ bool NativeWindows::destroy(uint64_t handle)
 	if (!window || window->destroying) throw uint32_t(5);
 	for (const auto owned:objects.window_handles())
 		if (objects.is_child(handle,owned) && objects.window(owned)->destroying) throw uint32_t(120);
+	// HCBT_DESTROYWND comes first and may veto the destruction.
+	if (has_hook(5) && call_hooks(5,4,handle,0)) return false;
+	window=objects.window(handle);
+	if (!window || window->destroying) throw uint32_t(5);
 	window->destroying=true;window->visible=false;window->style&=~0x10000000U;
 	withdraw_window(handle);
 	if (active==handle) activate(0);
@@ -1386,6 +1461,17 @@ bool NativeWindows::destroy(uint64_t handle)
 	}
 	release_surface(handle);
 	painted_frames.erase(handle);
+	// The window menu goes with its window.
+	if (const auto menu=system_menus.find(handle); menu!=system_menus.end()) {
+		if (objects.menu(menu->second)) objects.erase(menu->second);
+		system_menus.erase(menu);
+	}
+	unthemed_windows.erase(handle);
+	dark_windows.erase(handle);
+	named_windows.erase(handle);
+	dark_allowed_windows.erase(handle);
+	foreign_content.erase(handle);
+	foreign_black.erase(handle);
 	return objects.erase(handle);
 }
 
@@ -1408,6 +1494,12 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 	}
 	if (message==0x210 && (uint16_t(args[2])==1 || uint16_t(args[2])==2 || uint16_t(args[2])==0x201 || uint16_t(args[2])==0x204 || uint16_t(args[2])==0x207)) return 0;
 	if (message==0x86) return 1;
+	// WM_NOTIFYFORMAT: a window of DefWindowProcW takes Unicode notifications (NFR_UNICODE); NF_REQUERY asks the parent again.
+	if (message==0x55) {
+		if (uint32_t(args[3])==3) return 2;
+		if (uint32_t(args[3])==4 && window->parent) return send(window->parent,0x55,args[0],3);
+		return 0;
+	}
 	if (message==6) { if (uint16_t(args[2]) && !uint16_t(args[2]>>16)) set_focus(args[0]); return 0; }
 	if (message==7 || message==8) return 0;
 	if (message==0x81 || message==0x0c) {
@@ -1440,8 +1532,11 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 		return 1;
 	}
 	if (message==0x85) {
-		// The frame is repainted from window state each time the surface is presented.
-		if (objects.window_visible(args[0])) present(args[0]);
+		// The frame is repainted from window state each time the surface is presented; a child's waits for that, as its WM_NCPAINT
+		// comes while it starts painting.
+		if (args[0]==framing) framed_by_default=true;
+		if (window->parent) drawing(args[0]);
+		else if (objects.window_visible(args[0])) present(args[0]);
 		return 0;
 	}
 	if (message==0x84 && !window->parent && (frame_layout(*window).border || frame_layout(*window).caption_height || window->menu))
@@ -1452,6 +1547,27 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 		return x>=window->outer.left && y>=window->outer.top && x<window->outer.right && y<window->outer.bottom &&
 			x>=window->x && y>=window->y && int64_t(x)<int64_t(window->x)+window->width &&
 			int64_t(y)<int64_t(window->y)+window->height ? 1 : 0;
+	}
+	if (message==0x20) {
+		// WM_SETCURSOR: the parent of a child chooses first. The client area shows the class cursor, the frame the cursor of its edge
+		// and the rest the arrow.
+		if ((window->style & 0x40000000U) && window->parent && objects.window(window->parent) && send(window->parent,0x20,args[2],args[3])) return 1;
+		window=objects.window(args[0]);
+		if (!window) return 0;
+		const auto hit=int16_t(uint16_t(args[3]));
+		uint64_t cursor=desktop_stock_cursor;
+		if (hit==1) {
+			const auto *definition=objects.window_class(window->class_id);
+			if (!definition || !definition->cursor) return 0;
+			cursor=definition->cursor;
+		}
+		else if (hit==10 || hit==11) cursor=desktop_stock_cursor+(32644-32512);
+		else if (hit==12 || hit==15) cursor=desktop_stock_cursor+(32645-32512);
+		else if (hit==13 || hit==17) cursor=desktop_stock_cursor+(32642-32512);
+		else if (hit==14 || hit==16) cursor=desktop_stock_cursor+(32643-32512);
+		current_cursor=cursor;
+		show_cursor();
+		return hit==1 || (hit>=10 && hit<=17);
 	}
 	if (message==0x317) {
 		// WM_PRINT: the default procedure replays its flags as the erase and client-paint requests.
@@ -1491,6 +1607,12 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 		return 0;
 	}
 	if (message==0x112) {
+		if ((uint32_t(args[2]) & 0xfff0U)==0xf100U && args[3]==' ' && !window->parent) {
+			// SC_KEYMENU with a space is Alt+Space: the window menu opens under the caption icon.
+			const auto layout=frame_layout(*window);
+			system_menu_open(args[0],layout.icon.left,layout.caption.bottom+1);
+			return 0;
+		}
 		if ((uint32_t(args[2]) & 0xfff0U)==0xf100U && window->menu) {
 			// SC_KEYMENU: Alt plus a menu bar mnemonic opens that menu.
 			if (const auto *bar=objects.menu(window->menu)) {
@@ -1513,6 +1635,12 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 		if ((uint32_t(args[2]) & 0xfff0U)==0xf030U) { show_window(args[0],3); return 0; }
 		if ((uint32_t(args[2]) & 0xfff0U)==0xf020U) { show_window(args[0],6); return 0; }
 		if ((uint32_t(args[2]) & 0xfff0U)==0xf120U) { show_window(args[0],9); return 0; }
+		// SC_MOVE and SC_SIZE hand the window to the compositor, which moves or sizes host windows itself.
+		if (((uint32_t(args[2]) & 0xfff0U)==0xf010U || (uint32_t(args[2]) & 0xfff0U)==0xf000U) && presentation.interactive && !window->parent &&
+			!(window->style & 0x01000000U)) {
+			presentation.interactive(args[0],(uint32_t(args[2]) & 0xfff0U)==0xf010U ? 0 : 10);
+			return 0;
+		}
 		return 0;
 	}
 	if (message==0x21) return 1;
@@ -1635,6 +1763,18 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 		put(bytes,rect_at,uint32_t(x),4); put(bytes,rect_at+4,uint32_t(y),4);
 		put(bytes,rect_at+8,uint32_t(x+width),4); put(bytes,rect_at+12,uint32_t(y+height),4);
 		process.write_memory(scratch,bytes);
+		// A CBT hook sees the window before WM_NCCREATE (HCBT_CREATEWND with a CBT_CREATEWND of the create structure and the window to
+		// insert after); class libraries subclass their windows there, and a nonzero answer cancels the creation.
+		if (has_hook(5)) {
+			std::vector<uint8_t> cbt(narrow ? 8 : 16);
+			put(cbt,0,scratch,narrow ? 4 : 8);
+			const auto at=scratch+rect_at+16;
+			process.write_memory(at,cbt);
+			if (call_hooks(5,3,handle,at) || !objects.window(handle)) {
+				if (objects.window(handle)) { release_surface(handle); objects.erase(handle); }
+				process.unmap_memory(scratch); return 0;
+			}
+		}
 		const auto accepted=send(handle,0x81,0,scratch);
 		if (!objects.window(handle)) { process.unmap_memory(scratch); return 0; }
 		if (!accepted) {
@@ -2287,7 +2427,7 @@ bool NativeWindows::dispatch(std::string_view name)
 	const bool creation=name=="CreateWindowExW";
 	const bool coordinate=name=="ClientToScreen" || name=="ScreenToClient";
 	const bool adjustment=name=="AdjustWindowRect" || name=="AdjustWindowRectEx";
-	if (!adjustment && name!="GetSystemMetrics" && !coordinate && name!="MapWindowPoints" && !info && !data && name!="CallWindowProcW" && !registration && !creation && name!="DestroyWindow" && name!="SendMessageW" && name!="IsWindow" &&
+	if (!adjustment && name!="GetSystemMetrics" && !coordinate && name!="MapWindowPoints" && !info && !data && name!="CallWindowProcW" && !registration && !creation && name!="DestroyWindow" && name!="SendMessageW" && name!="SendMessageTimeoutW" && name!="IsWindow" &&
 		name!="IsWindowUnicode" && name!="UnregisterClassW" && name!="ShowWindow" && name!="GetDC" && name!="GetWindowDC" && name!="WindowFromDC" && name!="ReleaseDC" &&
 		name!="UpdateWindow" && name!="IsWindowVisible" && name!="BeginPaint" && name!="EndPaint" &&
 		name!="PostMessageW" && name!="SendNotifyMessageW" && name!="PostThreadMessageW" && name!="PeekMessageW" && name!="GetMessageW" && name!="DispatchMessageW" &&
@@ -2295,7 +2435,7 @@ bool NativeWindows::dispatch(std::string_view name)
 		name!="GetWindowTextW" && name!="InternalGetWindowText" && name!="GetWindowTextLengthW" && name!="SetWindowTextW" &&
 		name!="GetFocus" && name!="SetFocus" && name!="GetActiveWindow" && name!="GetClientRect" && name!="GetWindowRect" &&
 		name!="InvalidateRect" && name!="ValidateRect" && name!="GetUpdateRect") return false;
-	const auto args=process.api_arguments(adjustment ? (name=="AdjustWindowRectEx" ? 4 : 3) : coordinate ? 2 : name=="MapWindowPoints" ? 4 : info ? 3 : data ? (name.starts_with("Set") ? 3 : 2) : name=="CallWindowProcW" ? 5 : registration ? 1 : creation ? 12 : name=="SendMessageW" ? 4 :
+	const auto args=process.api_arguments(adjustment ? (name=="AdjustWindowRectEx" ? 4 : 3) : coordinate ? 2 : name=="MapWindowPoints" ? 4 : info ? 3 : data ? (name.starts_with("Set") ? 3 : 2) : name=="CallWindowProcW" ? 5 : registration ? 1 : creation ? 12 : name=="SendMessageW" ? 4 : name=="SendMessageTimeoutW" ? 7 :
 		name=="PostMessageW" || name=="SendNotifyMessageW" || name=="PostThreadMessageW" || name=="GetMessageW" || name=="DefWindowProcW" ? 4 : name=="PeekMessageW" ? 5 :
 		name=="GetWindowTextW" || name=="InternalGetWindowText" || name=="InvalidateRect" || name=="GetUpdateRect" ? 3 :
 		name=="SetWindowTextW" || name=="GetClientRect" || name=="GetWindowRect" || name=="ValidateRect" ? 2 :
@@ -2461,6 +2601,22 @@ bool NativeWindows::dispatch(std::string_view name)
 			result=objects.window_class(id)->atom;
 		} else if (creation) result=create(args);
 		else if (name=="SendMessageW") result=send(args[0],uint32_t(args[1]),args[2],args[3]);
+		// A broadcast, such as a changed setting announced to every window, needs no delivery as no other program's windows listen; a
+		// window of the process answers at once, so the time limit never runs out.
+		else if (name=="SendMessageTimeoutW") {
+			uint64_t answer=0;
+			if (args[0]!=0xffff && args[0]!=0xffffffffffffffffULL) {
+				if (!objects.window(args[0])) throw uint32_t(1400);
+				answer=send(args[0],uint32_t(args[1]),args[2],args[3]);
+			}
+			if (args[6]) {
+				const auto width=process.mode()==NativeMode::x86 ? 4 : 8;
+				std::vector<uint8_t> bytes(width);
+				for (size_t at=0;at<bytes.size();++at) bytes[at]=uint8_t(answer>>(8*at));
+				process.write_memory(args[6],bytes);
+			}
+			result=1;
+		}
 		else if (name=="DestroyWindow") result=destroy(args[0]);
 		else if (name=="WindowFromDC") {
 			// The window a device context belongs to: a window's own context names it, the screen's names the desktop, any other has none.

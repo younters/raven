@@ -228,9 +228,10 @@ def main():
     if not wanted & {"shell", "crt", "dwrite", "d2d1", "uianimation"}:
         print(output / "raven-user32.dll")
         return
-    # The shell component is Raven code on the public headers: the file dialogs and the class registry.
+    # The shell component is Raven code on the public headers: the file dialogs and the class registries of COM and the Windows Runtime.
     shell_support = repo / "native/upstream/raven-shell"
-    shell_objects = [objects / "shell.o", objects / "shell_link.o", objects / "shell_com.o", objects / "shell_crt.o", objects / "shell_stream.o", objects / "shell_dialog.o", objects / "shell_clipboard.o"]
+    shell_objects = [objects / "shell.o", objects / "shell_link.o", objects / "shell_com.o", objects / "shell_crt.o", objects / "shell_stream.o", objects / "shell_dialog.o",
+                     objects / "shell_netaddress.o", objects / "shell_winrt.o", objects / "shell_knownfolder.o", objects / "shell_clipboard.o"]
     shell_flags = ["-O2", "-w", "-ffreestanding", f"-ffile-prefix-map={repo}=raven"]
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "shell.c", "-o", shell_objects[0]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "link.c", "-o", shell_objects[1]])
@@ -238,15 +239,19 @@ def main():
     run([triple + "-gcc", "-c", *shell_flags, "-fno-builtin", support / "crt.c", "-o", shell_objects[3]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "stream.c", "-o", shell_objects[4]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "dialog.c", "-o", shell_objects[5]])
-    run([triple + "-gcc", "-c", *shell_flags, shell_support / "clipboard.c", "-o", shell_objects[6]])
+    run([triple + "-gcc", "-c", *shell_flags, shell_support / "netaddress.c", "-o", shell_objects[6]])
+    run([triple + "-gcc", "-c", *shell_flags, shell_support / "winrt.c", "-o", shell_objects[7]])
+    run([triple + "-gcc", "-c", *shell_flags, shell_support / "knownfolder.c", "-o", shell_objects[8]])
+    run([triple + "-gcc", "-c", *shell_flags, shell_support / "clipboard.c", "-o", shell_objects[9]])
     shell_defined = decorated(shell_objects)
     shell_names = ("CoCreateInstance", "CoGetClassObject", "CoGetMalloc", "SHCreateItemFromParsingName", "SHGetPropertyStoreForWindow", "SHGetPropertyStoreFromParsingName", "PropVariantClear", "SHAppBarMessage", "GetOpenFileNameW", "GetSaveFileNameW", "CommDlgExtendedError", "GetFileTitleW", "IUnknown_QueryService", "CLSIDFromProgID",
                    "SHCreateStreamOnFileA", "SHCreateStreamOnFileW", "SHCreateStreamOnFileEx", "PropVariantCopy", "CoGetContextToken", "CoGetObjectContext", "ExtractIconExW", "ExtractIconW", "UiaGetReservedNotSupportedValue", "UiaGetReservedMixedAttributeValue", "SHGetMalloc",
-                   "OpenRegStream", "SHOpenRegStreamW", "SHOpenRegStreamA", "SHOpenRegStream2W", "SHOpenRegStream2A", "SHBrowseForFolderW", "SHBrowseForFolderA",
+                   "OpenRegStream", "SHOpenRegStreamW", "SHOpenRegStreamA", "SHOpenRegStream2W", "SHOpenRegStream2A", "InitNetworkAddressControl",
+                   "RoGetActivationFactory", "RoActivateInstance", "SHBrowseForFolderW", "SHBrowseForFolderA",
                    "OleSetClipboard", "OleGetClipboard", "OleFlushClipboard", "OleIsCurrentClipboard", "ReleaseStgMedium")
     (output / "raven-shell.def").write_text("NAME raven-shell.dll\nEXPORTS\n" + "".join(definition_line(name, shell_defined.get(name)) for name in shell_names))
     run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['shell']:#x},--no-insert-timestamp", *link_extra,
-         "-o", output / "raven-shell.dll", *shell_objects, output / "raven-shell.def", "-luser32", "-lgdi32", "-ladvapi32", "-lkernel32", "-lole32", "-lshell32", "-luuid", "-lgcc"])
+         "-o", output / "raven-shell.dll", *shell_objects, output / "raven-shell.def", "-luser32", "-lgdi32", "-ladvapi32", "-lkernel32", "-lole32", "-luuid", "-lruntimeobject", "-lshell32", "-lgcc"])
     # control.exe: the control panel, a program on the public headers that asks for the common controls 6 in its manifest.
     control_support = repo / "native/upstream/raven-control"
     control_objects = [objects / "control.o", objects / "control_res.o"]
@@ -300,8 +305,9 @@ def main():
                       f"-ffile-prefix-map={repo}=raven"]
         run([triple + "-gcc", "-c", *d2d1_flags, "-I" + str(d2d1_support), d2d1_support / "d2d1.c", "-o", d2d1_objects[0]])
         run([triple + "-gcc", "-c", *d2d1_flags, repo / "native/upstream/raven-dwrite/crt.c", "-o", d2d1_objects[1]])
-        (output / "raven-d2d1.def").write_text("NAME raven-d2d1.dll\nEXPORTS\n" + "".join(name + "\n" for name in (
-            "D2D1ComputeMaximumScaleFactor", "D2D1ConvertColorSpace", "D2D1CreateDevice", "D2D1CreateDeviceContext", "D2D1CreateFactory",
+        # Office binds D2D1CreateFactory by number, as ordinal 1 of the system library.
+        (output / "raven-d2d1.def").write_text("NAME raven-d2d1.dll\nEXPORTS\nD2D1CreateFactory @1\n" + "".join(name + "\n" for name in (
+            "D2D1ComputeMaximumScaleFactor", "D2D1ConvertColorSpace", "D2D1CreateDevice", "D2D1CreateDeviceContext",
             "D2D1InvertMatrix", "D2D1IsMatrixInvertible", "D2D1MakeRotateMatrix", "D2D1MakeSkewMatrix", "D2D1SinCos", "D2D1Tan", "D2D1Vec3Length")))
         run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['d2d1']:#x},--no-insert-timestamp", *link_extra,
              "-o", output / "raven-d2d1.dll", *d2d1_objects, output / "raven-d2d1.def", "-L" + str(output), "-lravenhost", "-ldwrite",

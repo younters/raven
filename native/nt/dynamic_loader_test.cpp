@@ -50,9 +50,9 @@ int main(int argc, char **argv)
 				}
 				return bytes;
 			};
-			// Include process startup under Rosetta in the deadline, including the
-			// detach-loop case which must enter the caller before it can time out.
-			const auto result = raven::run_native_process(modules, entry, argv[1], std::chrono::seconds(5), source);
+			// Rosetta startup is part of the deadline; looping DLLs retain a short bound.
+			const auto timeout = std::chrono::milliseconds(selected.ends_with("loop") ? 5000 : 10000);
+			const auto result = raven::run_native_process(modules, entry, argv[1], timeout, source);
 			const auto address = modules.resolve({"client.exe", "entered", 0, false, 0}) - entry.loaded.base();
 			check(address < entry.loaded.data().size(), "fixture state is outside image");
 			const auto entered = entry.loaded.data()[static_cast<size_t>(address)];

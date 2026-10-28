@@ -158,6 +158,10 @@ private:
 	std::map<uint64_t,ForeignTarget> foreign_targets;
 	uint64_t foreign_dc(uint64_t window);
 	std::map<uint64_t,uint32_t> foreign_frames;
+	// Windows that received a frame from another process with something other than black on it.
+	std::set<uint64_t> foreign_content;
+	// Since when each window has been receiving frames of plain black.
+	std::map<uint64_t,std::chrono::steady_clock::time_point> foreign_black;
 	std::chrono::steady_clock::time_point foreign_checked{};
 	uint64_t foreign_stamp=UINT64_MAX;
 	void import_foreign_frames();
@@ -239,8 +243,13 @@ private:
 	// resizing the client area takes the surface along.
 	std::map<uint64_t,std::array<int64_t,5>> hosted_areas;
 	void place_host_surface(uint64_t root);
+	// Whether nothing has been drawn into the window's client area yet: its surface still holds only zeros or what erasing it left,
+	// or there is none.
+	bool blank_client(uint64_t handle) const;
 	KeyboardMap keyboard_map;
 	std::array<bool,256> key_down{};
+	// The key each held key went down as, so its release matches its press after a keymap change.
+	std::array<KeyboardKey,256> key_pressed{};
 	std::optional<Message> key_translation;
 	void activate(uint64_t window);
 	uint64_t set_focus(uint64_t window);
@@ -251,8 +260,12 @@ private:
 	// A tool window shown as a popup of its owner is moved by the program's side, as the compositor moves only toplevels: the window
 	// whose caption is being dragged, where the pointer started and where the window was then.
 	struct FrameDrag { uint64_t window=0; int32_t start_x=0,start_y=0; DesktopRect origin{}; } frame_drag;
+	// The last press in a client area, which the next press of the same button may turn into a double click.
+	struct LastPress { uint64_t window=0; uint32_t message=0,time=0; int32_t x=0,y=0; } last_press;
 	// True when the window appears as a popup of its owner's host window rather than as a host window of its own.
 	bool shown_on_owner(const DesktopWindow &window) const;
+	// The root whose host window shows a window placed by the program: its owner's, or the one a child moved to the desktop came from.
+	uint64_t host_owner(const DesktopWindow &window) const;
 	void place_pointer(const DesktopEvent &event,uint32_t message,uint32_t buttons,int64_t x,int64_t y);
 	void release_held_input();
 	std::deque<DesktopEvent> held_input;
@@ -272,7 +285,7 @@ private:
 	void paint_modern_frame(uint64_t handle,const DesktopWindow &window,const FrameLayout &layout,paint::Canvas &canvas,bool is_active,int32_t width,
 		int32_t height);
 	// The surface color of the Windows 11 caption, which also fills the frame a program extends into its client area.
-	uint32_t caption_color(bool is_active) const;
+	uint32_t caption_color(const DesktopWindow &window,bool is_active) const;
 	void paint_caption_buttons(uint64_t handle,const DesktopWindow &window,const FrameLayout &layout,paint::Canvas &canvas,bool is_active);
 	uint64_t nonclient_hit(const DesktopWindow &window,int32_t x,int32_t y) const;
 	// Menu bar item currently shown as pressed, and the window that owns it.
@@ -309,6 +322,9 @@ private:
 	uint64_t tracked_command=0;
 	uint64_t track_popup_menu(uint64_t menu,uint32_t flags,int32_t x,int32_t y,uint64_t window);
 	void nonclient_pointer(uint64_t window,uint64_t hit,uint32_t message,int32_t x,int32_t y);
+	// The window menu GetSystemMenu answers, made on first use; it opens from the caption and Alt+Space, and its choices are WM_SYSCOMMAND.
+	uint64_t system_menu(uint64_t window);
+	void system_menu_open(uint64_t window,int32_t x,int32_t y);
 	bool system_dispatch(std::string_view name);
 	void register_message_api(ApiRegistry &registry);
 	void register_manager_api(ApiRegistry &registry);
@@ -318,12 +334,16 @@ private:
 	void register_long_api(ApiRegistry &registry);
 	void register_ansi_api(ApiRegistry &registry);
 	void register_theme_api(ApiRegistry &registry);
-	// Visual styles: on unless RAVEN_THEME=classic; the open theme handles with their class, the theme each window opened last, and the
-	// windows SetWindowTheme took out of the styles.
+	// Visual styles: on unless RAVEN_THEME=classic; the open theme handles with their class, those drawn with the dark palette, the
+	// theme each window opened last, the windows SetWindowTheme took out of the styles, those it gave a dark variant and those it gave
+	// any application name; the windows a program allowed dark mode and the app mode it prefers (0 default, 1 allow dark, 2 force dark,
+	// 3 force light).
 	bool themed() const;
 	std::map<uint64_t, std::string> themes;
+	std::set<uint64_t> dark_themes;
 	std::map<uint64_t, uint64_t> window_themes;
-	std::set<uint64_t> unthemed_windows;
+	std::set<uint64_t> unthemed_windows, dark_windows, named_windows, dark_allowed_windows;
+	uint32_t app_mode = 0;
 	uint64_t next_theme = 0x7a000001;
 	// Layout of one non-client scroll bar in screen coordinates.
 	struct ScrollGeometry {
@@ -358,7 +378,9 @@ private:
 	void caret_sync();
 	void caret_idle();
 	// Hooks installed with SetWindowsHookEx, newest first; handles live in their own range.
-	struct Hook { uint64_t handle; int32_t id; uint64_t procedure; };
+	// A hook for one thread (thread non-zero) runs only for what happens on that thread.
+	struct Hook { uint64_t handle; int32_t id; uint64_t procedure; uint32_t thread; };
+	bool hook_applies(const Hook &hook) const;
 	std::vector<Hook> hooks;
 	uint64_t next_hook=0x7e000000;
 	bool has_hook(int32_t id) const;
@@ -411,10 +433,12 @@ private:
 	// its pointer, so the pointer is held on that window until the cursor shows again.
 	uint64_t warp_lock_window=0;
 	void update_warp_lock(bool warped);
+	// Hands the cursor the program shows to the host pointer.
+	void show_cursor();
 	std::map<uint64_t,std::array<int32_t,6>> raw_reports;
 	uint64_t next_raw_report=0x1000;
 	void raw_mouse_input(int64_t dx,int64_t dy,uint32_t button_flags,int16_t wheel);
-	uint64_t current_cursor=0;
+	uint64_t current_cursor=desktop_stock_cursor;
 	void set_cursor(uint64_t handle);
 	void sync_cursor();
 #ifdef __APPLE__
@@ -471,6 +495,10 @@ private:
 	struct PaintStart { uint64_t dc; DesktopRect rect; bool erase; };
 	PaintStart start_paint(uint64_t window);
 	void finish_paint(uint64_t window);
+	// WM_NCPAINT for a child with a border, and the window whose WM_NCPAINT is being sent, with whether it reached the default handling.
+	void paint_frame(uint64_t window);
+	uint64_t framing = 0;
+	bool framed_by_default = false;
 	std::string text(uint64_t address);
 	std::u16string window_text(uint64_t address);
 	uint64_t copy_window_text(uint64_t window,uint64_t output,uint64_t capacity);

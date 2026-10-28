@@ -444,6 +444,8 @@ CRT void *malloc(size_t size) { return HeapAlloc(GetProcessHeap(), 0, size ? siz
 CRT void *calloc(size_t count, size_t size) { return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, count * size ? count * size : 1); }
 CRT void free(void *block) { if (block) HeapFree(GetProcessHeap(), 0, block); }
 CRT size_t _msize(void *block) { return HeapSize(GetProcessHeap(), 0, block); }
+/* The CRT allocates from the process heap, so that is the heap it hands out. */
+CRT intptr_t _get_heap_handle(void) { return (intptr_t)GetProcessHeap(); }
 
 CRT void *realloc(void *block, size_t size)
 {
@@ -753,6 +755,8 @@ typedef struct {
 	Stream *stream;
 	char chunk[256];
 	size_t chunk_length;
+	/* The caller's _CRT_INTERNAL_PRINTF_* options, kept per call because threads format at the same time. */
+	unsigned long long options;
 } Sink;
 
 static void sink_flush(Sink *sink)
@@ -784,7 +788,6 @@ static void pad(Sink *sink, int count, wchar_t c)
 }
 
 /* One formatter serves narrow and wide formats; source characters are read through accessors. */
-static unsigned long long format_options;
 
 static int format(Sink *sink, const char *narrow_format, const wchar_t *wide_format, va_list arguments)
 {
@@ -856,10 +859,10 @@ static int format(Sink *sink, const char *narrow_format, const wchar_t *wide_for
 		} else if (spec == 's' || spec == 'S' || spec == 'Z') {
 			/* %s follows the format's width, %S the opposite; %ls and %hs force one. */
 			int wide_argument = size == 1 || size == 3 || (spec == 's' ? wide_format != NULL : wide_format == NULL);
-			/* The legacy wide specifier option makes %s in a wide format a narrow string, as in the classic wprintf. */
-			if (size == 0 && spec == 's' && wide_format && (format_options & 4))
+			/* Without the legacy wide specifier option a wide format follows ISO C: %s is a narrow string and %S a wide one. */
+			if (size == 0 && spec == 's' && wide_format && !(sink->options & 4))
 				wide_argument = 0;
-			else if (size == 0 && spec == 'S' && wide_format && (format_options & 4))
+			else if (size == 0 && spec == 'S' && wide_format && !(sink->options & 4))
 				wide_argument = 1;
 			const void *argument = va_arg(arguments, const void *);
 			size_t length = 0, index;
@@ -982,7 +985,7 @@ CRT int __stdio_common_vfprintf(unsigned long long options, void *stream, const 
 	Sink sink = {0};
 	if (!text)
 		return -1;
-	format_options = options;
+	sink.options = options;
 	sink.stream = stream;
 	format(&sink, text, NULL, arguments);
 	return finish(&sink);
@@ -993,7 +996,7 @@ CRT int __stdio_common_vfwprintf(unsigned long long options, void *stream, const
 	Sink sink = {0};
 	if (!text)
 		return -1;
-	format_options = options;
+	sink.options = options;
 	sink.stream = stream;
 	format(&sink, NULL, text, arguments);
 	return finish(&sink);
@@ -1025,7 +1028,7 @@ CRT int __stdio_common_vsprintf(unsigned long long options, char *buffer, size_t
 	Sink sink = {0};
 	if (!text)
 		return -1;
-	format_options = options;
+	sink.options = options;
 	sink.narrow = buffer;
 	sink.capacity = count;
 	format(&sink, text, NULL, arguments);
@@ -1037,7 +1040,7 @@ CRT int __stdio_common_vswprintf(unsigned long long options, wchar_t *buffer, si
 	Sink sink = {0};
 	if (!text)
 		return -1;
-	format_options = options;
+	sink.options = options;
 	sink.wide = buffer;
 	sink.capacity = count;
 	format(&sink, NULL, text, arguments);
@@ -1069,3 +1072,5 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 #include "ucrtbase_cpp.c"
 #include "ucrtbase_cxx.c"
 #include "ucrtbase_more.c"
+#include "ucrtbase_fiber.c"
+#include "ucrtbase_office.c"
