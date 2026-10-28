@@ -251,8 +251,8 @@ private:
 	// The key each held key went down as, so its release matches its press after a keymap change.
 	std::array<KeyboardKey,256> key_pressed{};
 	std::optional<Message> key_translation;
-	void activate(uint64_t window);
-	uint64_t set_focus(uint64_t window);
+	void activate(uint64_t window,bool notify_host=true);
+	uint64_t set_focus(uint64_t window,bool notify_host=true);
 	void receive(const DesktopEvent &event);
 	// Input that arrives while a button press is being placed in the queue (the program runs during its hit test and parent notifications
 	// and may pump): it is taken in after the press, so the program sees the input in the order it happened.

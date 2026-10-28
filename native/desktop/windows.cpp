@@ -910,7 +910,7 @@ void NativeWindows::receive(const DesktopEvent &event)
 		focus_leaving=false;
 		key_down=initial; key_translation.reset();
 		if (!event.window) { set_focus(0); activate(0); }
-		else if (!focus || objects.window_root(focus)!=event.window) set_focus(event.window);
+		else if (!focus || objects.window_root(focus)!=event.window) set_focus(event.window,false);
 		deliver_moving_keys();
 		return;
 	}
@@ -1389,10 +1389,10 @@ uint64_t NativeWindows::send(uint64_t handle, uint32_t message, uint64_t wparam,
 	return result.value;
 }
 
-void NativeWindows::activate(uint64_t handle)
+void NativeWindows::activate(uint64_t handle,bool notify_host)
 {
 	if (handle) handle=objects.window_root(handle);
-	if (handle && presentation.foreground) presentation.foreground(handle);
+	if (handle && notify_host && presentation.foreground) presentation.foreground(handle);
 	// A window that is activated while another activation is being delivered takes its turn when that one is done.
 	if (activating) { queued_activation=handle; has_queued_activation=true; return; }
 	for (;;) {
@@ -1417,10 +1417,10 @@ void NativeWindows::activate(uint64_t handle)
 	}
 }
 
-uint64_t NativeWindows::set_focus(uint64_t handle)
+uint64_t NativeWindows::set_focus(uint64_t handle,bool notify_host)
 {
 	if (handle && (!objects.window(handle) || objects.window(handle)->destroying)) throw uint32_t(1400);
-	if (handle) activate(handle);
+	if (handle) activate(handle,notify_host);
 	const auto previous=focus;
 	if (previous==handle) return previous;
 	// A handler may move the focus again; the nested change completes first and the outer one stops when it was superseded.

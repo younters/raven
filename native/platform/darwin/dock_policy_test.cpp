@@ -5,7 +5,7 @@
 int main()
 {
 	using raven::DesktopWindowPresence;
-	DesktopWindowPresence window{.visible=true,.top_level=true,.left=10,.top=10,.right=400,.bottom=300,.screen_width=1920,.screen_height=1080};
+	DesktopWindowPresence window{.visible=true,.top_level=true,.left=10,.top=10,.right=400,.bottom=300};
 	auto check=[](bool value) { if (!value) throw std::runtime_error("Dock eligibility contract failed"); };
 	check(raven::darwin::dock_eligible(window));
 	window.visible=false; check(!raven::darwin::dock_eligible(window)); window.visible=true;

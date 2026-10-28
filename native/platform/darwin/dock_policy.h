@@ -8,7 +8,6 @@ struct DesktopWindowPresence {
 	uint32_t style = 0, ex_style = 0;
 	uint64_t owner = 0;
 	int32_t left = 0, top = 0, right = 0, bottom = 0;
-	int32_t screen_width = 0, screen_height = 0;
 };
 
 }

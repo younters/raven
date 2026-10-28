@@ -335,7 +335,7 @@ struct CocoaPresentation::State {
 	{
 		Surface *target = surface(handle);
 		if (!target) return;
-		if (NSApp.active || raven_macos_claim_foreground()) {
+		if (NSApp.active || (dock_windows.contains(handle) && raven_macos_claim_foreground())) {
 			[target->window makeKeyAndOrderFront:nil];
 			[NSApp activateIgnoringOtherApps:YES];
 			[NSRunningApplication.currentApplication activateWithOptions:NSApplicationActivateAllWindows];
@@ -1142,10 +1142,10 @@ struct CocoaPresentation::State {
 		numbers[target.window.windowNumber] = handle;
 	}
 
-	void forget(uint64_t handle)
+	void forget(uint64_t handle, bool replacing = false)
 	{
 		visibility_intent.erase(handle);
-		if (dock_windows.erase(handle) && dock_windows.empty()) reconcile_dock = true;
+		if (!replacing && dock_windows.erase(handle) && dock_windows.empty()) reconcile_dock = true;
 		std::erase_if(numbers, [&](const auto &entry) { return entry.second == handle; });
 		std::erase_if(pending, [&](const DesktopEvent &event) { return event.window == handle; });
 		if (pointer_window == handle)
@@ -1162,7 +1162,7 @@ struct CocoaPresentation::State {
 		connect();
 		@autoreleasepool {
 			if (Surface *existing = surface(handle); existing && existing->popup)
-				forget(handle);
+				forget(handle, true);
 			const auto described = frames.find(handle);
 			const auto insets = described != frames.end() ? described->second.first : std::array<int32_t, 4>{};
 			const uint32_t style = described != frames.end() ? described->second.second : 0;
@@ -1599,8 +1599,7 @@ DesktopPresentation CocoaPresentation::callbacks()
 	result.window_state = [this](uint64_t handle, const DesktopObjects &objects) {
 		const auto *window = objects.window(handle);
 		if (!window) return;
-		const auto owner = objects.window_root(window->owner ? window->owner : window->shown_on);
-		const auto &screen = objects.nonclient_metrics();
+		const auto owner = window->owner;
 		const auto intended = state->visibility_intent.find(handle);
 		const bool visible = intended == state->visibility_intent.end() ? objects.window_visible(handle) : intended->second;
 		state->visibility_intent.erase(handle);
@@ -1617,8 +1616,7 @@ DesktopPresentation CocoaPresentation::callbacks()
 			.visible = visible, .top_level = !window->parent, .message_only = window->message_only,
 			.owner_visible = owning && objects.window_visible(owner) && state->surface(owner),
 			.style = window->style, .ex_style = window->ex_style, .owner = owner,
-			.left = window->outer.left, .top = window->outer.top, .right = window->outer.right, .bottom = window->outer.bottom,
-			.screen_width = screen.screen_x, .screen_height = screen.screen_y});
+			.left = window->outer.left, .top = window->outer.top, .right = window->outer.right, .bottom = window->outer.bottom});
 	};
 	result.present = [this](uint64_t handle, std::string_view title, uint32_t width, uint32_t height, std::span<const uint8_t> pixels) {
 		state->present(handle, title, width, height, pixels);
