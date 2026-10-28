@@ -286,7 +286,7 @@ void register_audio_api(ApiRegistry &registry, KernelContext &context) {
 	auto state = std::make_shared<State>(context); states[&context.process] = state;
 	// KernelContext is destroyed before NativeThreads unwinds its parked workers. The scheduler itself still lives here, so check it
 	// without dereferencing State::context before servicing audio during teardown.
-	context.threads.add_service([state, threads=&context.threads] {
+	context.threads.add_service([state,threads=&context.threads] {
 		if (threads->current().unwinding) return;
 		state->service_clients(); state->service_voices();
 		if (!state->mixer_) return;

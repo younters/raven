@@ -159,7 +159,8 @@ foreach(width IN ITEMS 64 32)
         add_test(NAME native_darwin_xaudio_x${width} COMMAND raven --run-process --execution=native --timeout-ms=10000 ${fixture})
         set_tests_properties(native_darwin_xaudio_x${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
             ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-xaudio-prefix${width};RAVEN_AUDIO_TRACE=1")
-        # Callbacks execute while Sleep(250) owns a scheduler wait. This also regresses nested execution waits clearing its deadline.
+        # Callbacks execute while Sleep(250) owns a scheduler wait. This also regresses nested execution waits
+        # clearing its deadline.
         add_test(NAME native_darwin_xaudio_parallel_x${width} COMMAND raven --run-process --execution=native --timeout-ms=10000 ${fixture})
         set_tests_properties(native_darwin_xaudio_parallel_x${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
             ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-xaudio-prefix${width};RAVEN_AUDIO_TRACE=1;RAVEN_PARALLEL=1")

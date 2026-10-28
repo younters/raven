@@ -13,8 +13,10 @@ std::map<uint64_t,XVoice> xvoices;
 float xmaster=1;
 void voice_callback(uint64_t callback, uint32_t index, uint64_t value=0) {
 	if (!callback) return;
-	// The service may be running inside a parked Sleep/Windows wait. A parallel callback's execution wait uses the same scheduler
-	// thread, so keep that outer wait alive across context.call without changing the common scheduler's wait contract.
+	// The service may be running inside a parked Sleep/Windows wait. A parallel
+	// callback's execution wait uses the same scheduler thread, so keep that
+	// outer wait alive across context.call without changing the common
+	// scheduler's wait contract.
 	auto &thread=context.threads.current();
 	struct RestoreWait {
 		GuestThread &thread;
@@ -40,8 +42,9 @@ void voice_callback(uint64_t callback, uint32_t index, uint64_t value=0) {
 }
 void service_voices() {
 	if (xvoices.empty()) return;
-	// A parallel guest may still be running when the host services its other threads. Calling into Windows code requires the
-	// stopped frame of an API call; keep the packets queued until the scheduler reaches one.
+	// A parallel guest may still be running when the host services its other
+	// threads. Calling into Windows code requires the stopped frame of an API
+	// call; keep the packets queued until the scheduler reaches one.
 	if (context.process.parallel() && !context.process.stopped()) return;
 	for (auto &[address,v]:xvoices) {
 		if (!v.voice || v.packets.empty()) continue;
