@@ -269,7 +269,9 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("LocalReAlloc", 3, resize_block);
 	registry.add("GlobalReAlloc", 3, resize_block);
-	registry.add("GlobalMemoryStatusEx", 1, [](ApiCall &call) {
+	registry.add("GlobalMemoryStatusEx", 1, [&memory](ApiCall &call) {
+		// Fork hook; retain the upstream body for merge compatibility.
+		return commit_global_status_ex(call, memory);
 		std::vector<uint8_t> bytes(64);
 		const uint32_t length = 64, load = 20;
 		std::memcpy(bytes.data(), &length, 4);
@@ -309,7 +311,9 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// MEMORYSTATUS: the same figures in SIZE_T fields; a 32-bit program sees them capped as Windows caps them, at 4 GiB less a byte for
 	// memory and at its 2 GiB address space.
-	registry.add("GlobalMemoryStatus", 1, [](ApiCall &call) {
+	registry.add("GlobalMemoryStatus", 1, [&memory](ApiCall &call) {
+		// Fork hook; retain the upstream body for merge compatibility.
+		return commit_global_status(call, memory);
 		const size_t width = call.pointer_width();
 		const uint64_t cap = width == 4 ? 0xffffffffULL : UINT64_MAX;
 		const uint64_t values[] = {16ULL << 30, 8ULL << 30, 32ULL << 30, 16ULL << 30,
@@ -621,7 +625,7 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 			const uint32_t access = rights & 0x2 ? ((rights & 0x20) ? 0x40 : 0x04) : rights & 0x1 ? 0x08 : (rights & 0x20) ? 0x20 : 0x02;
 			const auto view = memory.map_view(mapping->descriptor, offset, size, access);
 			if (view.status) {
-				call.fail(view.status == 0xc0000017U ? 8 : 87);
+				call.fail(view.status == 0xc000012dU ? 1455 : view.status == 0xc0000017U ? 8 : 87);
 				return;
 			}
 			views[view.address] = {mapping, offset, size, bool(rights & 2)};
@@ -646,7 +650,7 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 			struct stat status{};
 			if (::fstat(mapping->file->descriptor, &status) == 0 && offset + size <= uint64_t(status.st_size)) {
 				try {
-					const auto view = memory.map_view(mapping->file->descriptor, offset, size, call.u32(1) & 0x20 ? 0x20 : 0x02);
+					const auto view = memory.map_view(mapping->file->descriptor, offset, size, call.u32(1) & 0x20 ? 0x20 : 0x02, false);
 					if (!view.status) {
 						views[view.address] = {mapping, offset, size, false};
 						call.ret(view.address);
@@ -658,7 +662,7 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 		}
 		const auto range = memory.allocate(0, (size + 4095) & ~uint64_t(4095), 0x3000, 4);
 		if (range.status) {
-			call.fail(8);
+			call.fail(range.status == 0xc000012dU ? 1455 : 8);
 			return;
 		}
 		if (mapping->file) {
@@ -731,7 +735,7 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 		if (!inner.result) {
 			const uint32_t error = call.last_error();
 			call.set_last_error(before);
-			call.ret(error == 5 ? 0xc0000022U : error == 8 ? 0xc0000017U : error == 6 ? 0xc0000008U : 0xc000000dU);
+			call.ret(error == 5 ? 0xc0000022U : error == 1455 ? 0xc000012dU : error == 8 ? 0xc0000017U : error == 6 ? 0xc0000008U : 0xc000000dU);
 			return;
 		}
 		call.store_pointer(call[2], inner.result);

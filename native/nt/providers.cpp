@@ -9,6 +9,7 @@
 #include "exceptions.h"
 #include "resources.h"
 #include "memory.h"
+#include "commit_guest.h"
 #include "object_api.h"
 #include "heap.h"
 #include "api.h"
@@ -380,11 +381,11 @@ static bool guest_commit_api(std::string_view module, std::string_view name)
 	return guest_memory_api(module, name) != GuestMemoryApi::none;
 }
 
-static constexpr size_t commit_prelude_size = 192;
+static constexpr size_t commit_prelude_size = 384;
 
 static size_t commit_jump(GuestMemoryApi kind)
 {
-	return kind == GuestMemoryApi::commit ? 37 : 31;
+	return commit_guest_jump(kind == GuestMemoryApi::decommit);
 }
 
 // mov r10,[pointer]; test r10,r10; jz slow; test rcx,rcx; jz slow; test rdx,rdx; jz slow; cmp r8d,MEM_DECOMMIT; je main; slow: jmp trap;
@@ -393,6 +394,8 @@ static size_t commit_jump(GuestMemoryApi kind)
 // its low bit set and return TRUE; a full log or no range goes back to restore.
 static std::vector<uint8_t> decommit_prelude(int32_t to_pointer, int32_t to_trap)
 {
+	// Fork hook; retain the upstream body for merge compatibility.
+	return commit_guest_prelude(to_pointer,to_trap,true);
 	std::vector<uint8_t> code{0x4c, 0x8b, 0x15, 0, 0, 0, 0, 0x4d, 0x85, 0xd2, 0x74, 0x13, 0x48, 0x85, 0xc9, 0x74, 0x0e, 0x48, 0x85, 0xd2,
 		0x74, 0x09, 0x41, 0x81, 0xf8, 0x00, 0x40, 0x00, 0x00, 0x74, 0x0d, 0xe9, 0, 0, 0, 0, 0x41, 0xb8, 0x00, 0x40, 0x00, 0x00,
 		0xeb, 0xf3, 0x48, 0x81, 0xfa, 0x00, 0x00, 0x04, 0x00, 0x77, 0xea, 0x48, 0x89, 0xc8, 0x48, 0x25, 0x00, 0xf0, 0xff, 0xff, 0x4c,
@@ -662,6 +665,8 @@ static const std::vector<uint8_t> &locale_prelude()
 // base and size are written back and STATUS_SUCCESS returned; anything else goes to the runtime with the arguments as they came.
 static const std::vector<uint8_t> &nt_commit_prelude()
 {
+	// Fork hook; retain the upstream body for merge compatibility.
+	return commit_guest_nt_prelude(false);
 	static const std::vector<uint8_t> code{
 		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0xce, 0x00, 0x00, 0x00, 0x48, 0x83, 0xf9, 0xff, 0x0f, 0x85, 0xc4, 0x00,
 		0x00, 0x00, 0x4d, 0x85, 0xc0, 0x0f, 0x85, 0xbb, 0x00, 0x00, 0x00, 0x48, 0x85, 0xd2, 0x0f, 0x84, 0xb2, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xc9, 0x0f,
@@ -682,6 +687,8 @@ static const std::vector<uint8_t> &nt_commit_prelude()
 // zeroed in place and logged with the low bit set, and the rounded base and size are written back.
 static const std::vector<uint8_t> &nt_decommit_prelude()
 {
+	// Fork hook; retain the upstream body for merge compatibility.
+	return commit_guest_nt_prelude(true);
 	static const std::vector<uint8_t> code{
 		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0xe5, 0x00, 0x00, 0x00, 0x48, 0x83, 0xf9, 0xff, 0x0f, 0x85, 0xdb, 0x00,
 		0x00, 0x00, 0x48, 0x85, 0xd2, 0x0f, 0x84, 0xd2, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xc0, 0x0f, 0x84, 0xc9, 0x00, 0x00, 0x00, 0x41, 0x81, 0xf9, 0x00,
@@ -1180,6 +1187,8 @@ static size_t string_prelude_slot(const GuestPrelude &prelude)
 
 static std::vector<uint8_t> commit_prelude(int32_t to_pointer, int32_t to_trap)
 {
+	// Fork hook; retain the upstream body for merge compatibility.
+	return commit_guest_prelude(to_pointer,to_trap,false);
 	// mov r10,[pointer]; test r10,r10; jz slow; test rcx,rcx; jz slow; test rdx,rdx; jz slow; cmp r8d,MEM_COMMIT; jne slow;
 	// cmp r9d,PAGE_READWRITE; je main; slow: jmp trap; restore: mov r8d,MEM_COMMIT; mov r9d,PAGE_READWRITE; jmp slow;
 	// main: rax = first page, r11 = end page; jbe slow; look through the open ranges at commit_windows for one holding [rax, r11),
@@ -1922,8 +1931,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	NativeTLS tls(process, environment, tls_order);
 	NativeModuleAPI module_api(process, environment, modules, entry);
 	NativeResources resources(process, environment, modules, entry);
-	// What a program may commit: 512 MiB by default, as set by RAVEN_COMMIT_LIMIT_MB (large programs, a browser engine for one, need more).
-	const size_t commit_limit=(std::getenv("RAVEN_COMMIT_LIMIT_MB") ? size_t(std::strtoull(std::getenv("RAVEN_COMMIT_LIMIT_MB"),nullptr,10)) : size_t(512))*1024*1024;
+	// Per-process private commit quota; the modeled system limit is enforced separately.
+	const size_t commit_limit=process_commit_limit();
 	NativeMemory memory(process,environment,commit_limit);
 	register_images(memory,modules);
 	NativeObjectAPI object_api(process,environment,kernel_objects,deadline);
@@ -2377,7 +2386,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			for (const auto &symbol : module->exports)
 				if (symbol.address && !symbol.names.empty() && symbol.forwarder.empty() && guest_commit_api(module_name, symbol.names.at(0)) &&
 					served_stub_rva(module->loaded.data(), module_name, symbol.names.at(0), symbol.address) != symbol.address)
-					for (const uint64_t piece : {uint64_t(0), uint64_t(served_trap)})
+					for (uint64_t piece=0; piece<commit_prelude_size; piece+=served_trap)
 						served_stubs.push_back(module->loaded.base() + symbol.address + piece);
 	// So must one between taking the screen context and reading which it is, or reading a window's record.
 	for (const auto &[module_name, module] : modules.all())

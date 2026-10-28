@@ -3,6 +3,7 @@
 #include "cpu/native_cpu.h"
 #include "inherit.h"
 
+#include <utility>
 #include <string_view>
 #include <string>
 #include <optional>
@@ -10,6 +11,8 @@
 #include <map>
 
 namespace raven {
+
+class NativeMemory;
 
 // The end of the user address range of a 64-bit Windows process. The host's own mappings in the guest sit near its top; a request
 // that meets one of them fails as any taken range does.
@@ -44,6 +47,7 @@ struct NativeLaunch {
 // Initial x64 thread fields only. Mappings belong to the process and survive this view.
 class NativeEnvironment {
 public:
+	NativeMemory *set_memory_accounting(NativeMemory *memory) { return std::exchange(memory_accounting,memory); }
 	NativeEnvironment(NativeProcess &process, uint64_t image_base, uint32_t process_id, uint32_t thread_id);
 	uint64_t teb() const { return thread_block; }
 	uint64_t peb() const { return process_block; }
@@ -71,6 +75,7 @@ public:
 	static std::span<const std::string_view> nt_exports();
 
 private:
+	NativeMemory *memory_accounting = nullptr;
 	NativeProcess &process;
 	uint64_t thread_block = 0;
 	uint64_t process_block = 0;

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "environment.h"
+#include "commit.h"
+#include "commit_guest.h"
 
 #include <map>
 #include <array>
@@ -21,12 +23,13 @@ struct NativeMemoryRange {
 // Windows reservation state above the existing stopped-process mapping owner.
 class NativeMemory {
 public:
-	NativeMemory(NativeProcess &process, NativeEnvironment &environment, size_t limit = 512*1024*1024);
+	NativeMemory(NativeProcess &process, NativeEnvironment &environment, size_t limit = process_commit_limit());
+	~NativeMemory();
 	NativeMemory(const NativeMemory &) = delete;
 	NativeMemory &operator=(const NativeMemory &) = delete;
 	NativeMemoryRange allocate(uint64_t address, uint64_t size, uint32_t type, uint32_t protection);
 	// Maps a view of a shared host file (a section) as committed memory with the given PAGE_* access; VirtualFree-style release unmaps it.
-	NativeMemoryRange map_view(int descriptor, uint64_t offset, uint64_t size, uint32_t access);
+	NativeMemoryRange map_view(int descriptor, uint64_t offset, uint64_t size, uint32_t access, bool charged = true);
 	NativeMemoryRange free(uint64_t address, uint64_t size, uint32_t type);
 	NativeMemoryRange protect(uint64_t address, uint64_t size, uint32_t protection);
 	std::optional<std::array<uint8_t,48>> query(uint64_t address) const;
@@ -38,6 +41,12 @@ public:
 	static std::span<const std::string_view> nt_exports();
 	// The address space held by reservations; commitment is counted separately and is what the limit applies to.
 	size_t bytes() const { return reserved_total; }
+	size_t committed() { settle(); return used; }
+	size_t peak_committed() { settle(); return peak; }
+	size_t commit_limit() const { return system_commit_limit(); }
+	size_t quota_limit() const { return limit; }
+	uint64_t commit_headroom() const;
+	std::pair<uint64_t,uint64_t> address_space() const;
 	size_t count() const { return regions.size(); }
 	// Where in the served block the open ranges and the guest's commit log sit, as byte offsets, and how many entries each holds: the
 	// ranges a count and then start and end pairs, the log a 32-bit count and then the start and end of each read-write commit, or of
@@ -98,6 +107,7 @@ private:
 		uint64_t size;
 		uint32_t allocation_protection;
 		PageMap pages;
+		bool charged = true;
 	};
 	struct Image {
 		uint64_t size;
@@ -113,11 +123,22 @@ private:
 	// Where searches for free space begin: after the last range handed out, and from the floor once the top is reached.
 	uint64_t next = 0x200000000ULL, floor = 0x200000000ULL;
 	uint64_t user_limit = native_user_limit;
-	size_t used = 0, reserved_total = 0;
+	size_t used = 0, peak = 0, reserved_total = 0;
 	size_t limit;
 	std::map<uint64_t,Region>::iterator region(uint64_t address, uint64_t size);
 	// Takes the guest's logged commits into the accounting; every operation that reads or changes it does this first.
 	void settle();
+	void budget_windows();
+	void commit_settle();
+	void commit_changed();
+	CommitBlockLock lock_commits() const { return CommitBlockLock(commit_block); }
+	void commit_open_window(uint64_t, uint64_t);
+	void commit_close_windows(uint64_t, uint64_t);
+	bool commit_window_holds(uint64_t, uint64_t) const;
+	NativeMemory *previous_accounting = nullptr;
+	std::vector<std::pair<uint64_t,uint64_t>> published_windows;
+	NativeMemoryRange commit_allocate(uint64_t, uint64_t, uint32_t, uint32_t);
+	NativeMemoryRange commit_map_view(int, uint64_t, uint64_t, uint32_t, bool);
 	void open_window(uint64_t from, uint64_t to);
 	void close_windows(uint64_t from, uint64_t to);
 	bool window_holds(uint64_t from, uint64_t to) const;

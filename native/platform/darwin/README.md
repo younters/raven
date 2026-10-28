@@ -314,3 +314,22 @@ serializes syncs. Parser and lifecycle contracts run without guest execution:
 python3 native/platform/darwin/tests/apps_test.py
 ```
 - **Audio:** WinMM playback uses CoreAudio AudioQueue on macOS; Linux retains PulseAudio. The other macOS Windows audio interfaces share a host mixer and are described in [audio/IMPLEMENTATION.md](audio/IMPLEMENTATION.md).
+
+## Windows commit accounting
+
+The system commit limit models RAM plus a system-managed page file of `min(max(3 × RAM, 4 GiB), volume / 8)` on the VM volume.
+`RAVEN_COMMIT_LIMIT_MB` now sets an optional **per-process private-commit quota**, like Windows' job-object process memory limit;
+this includes the setting exposed by the upstream prefix control panel. It does not replace the modeled system limit. Both limits
+are enforced, and `ullAvailPageFile` reports the smaller of process-quota and system headroom, while total page file and performance
+commit figures describe the modeled system. Host use excludes the controller's resident private pages before adding guest commit
+(Darwin approximates those private pages by controller RSS). The external charge is sampled on slow commits/window refills and reused
+by reporting and fast-path enforcement; independent Raven processes still have no shared reservation ledger. The process-local system
+peak is updated on commit/decommit using guest peak plus the cached external charge. Guest commit preludes and host log/window
+transactions acquire the same shared atomic lock; guest contention falls back unlocked, and guest critical sections never trap or
+wait for the host. Secondary stacks commit their entire reservation; the bootstrap-owned main stack is included in virtual occupancy
+but not private commit. Process working set remains the controller RSS approximation. **Section deviation:** pagefile-backed memfd
+sections are not charged at `CreateFileMapping(SEC_COMMIT)`; each mapped view (including read-only and duplicate views) charges its
+entire size independently and returns that charge at unmap. An unmapped section kept alive by handles has no charge. `SEC_RESERVE`
+is likewise treated as fully committed at map time rather than charging individual section pages as committed. Correct section-owned
+charges across the last handle and view require shared section-lifetime accounting and are deferred; read-only file-backed views
+remain uncharged, while writable/private or copy-on-write file views charge their private backing.
