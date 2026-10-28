@@ -415,14 +415,30 @@ endif()
 # asserts that its first poll follows drawing. A parallel guest's execution wait can poll during initialization. Keep
 # the upstream contracts unchanged; native_parallel_served_contract and the Darwin input contract below cover the
 # corresponding parallel behavior.
-if(TEST native_provider_contract)
+if(TEST native_provider_contract AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.22")
     set_property(TEST native_provider_contract APPEND PROPERTY ENVIRONMENT_MODIFICATION "RAVEN_PARALLEL=unset:")
 endif()
 if(TEST native_outer_surface_input)
-    set_property(TEST native_outer_surface_input APPEND PROPERTY ENVIRONMENT_MODIFICATION "RAVEN_PARALLEL=unset:")
+    if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.22")
+        set_property(TEST native_outer_surface_input APPEND PROPERTY ENVIRONMENT_MODIFICATION "RAVEN_PARALLEL=unset:")
+    else()
+        message(STATUS "Run upstream serial provider/input contracts with RAVEN_PARALLEL unset on CMake < 3.22")
+    endif()
     add_executable(darwin_outer_input_test ${RAVEN_DARWIN_DIR}/outer_input_test.cpp)
     target_link_libraries(darwin_outer_input_test PRIVATE raven_cpu)
     add_dependencies(darwin_outer_input_test outer_surface_input_fixture raven-bootstrap)
     add_test(NAME native_darwin_parallel_input COMMAND darwin_outer_input_test $<TARGET_FILE:raven-bootstrap> ${OUTER_SURFACE_INPUT})
     set_tests_properties(native_darwin_parallel_input PROPERTIES TIMEOUT 15 ENVIRONMENT "RAVEN_PARALLEL=1")
+    if(RAVEN_MINGW32)
+        set(input32 ${CMAKE_CURRENT_BINARY_DIR}/darwin-outer-surface-input32.exe)
+        add_custom_command(OUTPUT ${input32}
+            COMMAND ${RAVEN_MINGW32} -O2 -nostdlib -fno-stack-protector -DVISIBLE_SURFACE -DINPUT_SURFACE
+                -Wl,--entry,raven_entry,--image-base,0x1a400000,--no-insert-timestamp
+                -o ${input32} ${PROJECT_SOURCE_DIR}/testdata/native_loader/outer_surface_client.c -lkernel32 -luser32 -lgdi32
+            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/outer_surface_client.c ${PROJECT_SOURCE_DIR}/testdata/native_loader/icon_data.h VERBATIM)
+        add_custom_target(darwin_outer_input32_fixture ALL DEPENDS ${input32})
+        add_dependencies(darwin_outer_input_test darwin_outer_input32_fixture)
+        add_test(NAME native_darwin_parallel_input_x32 COMMAND darwin_outer_input_test $<TARGET_FILE:raven-bootstrap> ${input32})
+        set_tests_properties(native_darwin_parallel_input_x32 PROPERTIES TIMEOUT 15 ENVIRONMENT "RAVEN_PARALLEL=1")
+    endif()
 endif()

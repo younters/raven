@@ -261,12 +261,17 @@ struct State {
 		else wasapi(call,type,method);
 	}
 };
-std::map<NativeProcess *, std::weak_ptr<State>> states;
+std::map<const NativeProcess *, std::weak_ptr<State>> states;
 }
 std::span<const std::string_view> audio_method_names() {
 	static const auto names = com_names(methods); return names;
 }
 uint32_t audio_method_words(std::string_view name) { return com_words(methods,name); }
+bool pending_audio_callbacks(const NativeProcess &process) {
+	const auto found=states.find(&process);
+	const auto state=found==states.end() ? std::shared_ptr<State>{} : found->second.lock();
+	return state && state->pending_voices();
+}
 bool create_audio_instance(ApiCall &call) {
 	if (!call[0]) return false;
 	const auto bytes = call.read(call[0],16);
@@ -284,6 +289,7 @@ bool create_audio_instance(ApiCall &call) {
 }
 void register_audio_api(ApiRegistry &registry, KernelContext &context) {
 	auto state = std::make_shared<State>(context); states[&context.process] = state;
+	context.threads.add_external([state] { return state->pending_voices(); });
 	// KernelContext is destroyed before NativeThreads unwinds its parked workers. The scheduler itself still lives here, so check it
 	// without dereferencing State::context before servicing audio during teardown.
 	context.threads.add_service([state,threads=&context.threads] {

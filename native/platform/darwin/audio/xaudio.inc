@@ -3,7 +3,7 @@
 struct XVoice {
 	AudioFormat format{AudioMixer::device_rate(),2,32,8,true};
 	std::shared_ptr<AudioMixer::Voice> voice;
-	struct Packet { uint64_t begin, end, context; bool stream_end, started=false; };
+	struct Packet { uint64_t begin, end, context, id; bool stream_end, started=false; };
 	std::deque<Packet> packets;
 	uint64_t submitted=0, callback=0;
 	float volume=1, ratio=1;
@@ -11,6 +11,13 @@ struct XVoice {
 };
 std::map<uint64_t,XVoice> xvoices;
 float xmaster=1;
+uint64_t next_packet=1;
+bool servicing_voices=false;
+bool pending_voices() const {
+	return std::any_of(xvoices.begin(),xvoices.end(),[](const auto &entry) {
+		return entry.second.running && !entry.second.packets.empty();
+	});
+}
 void voice_callback(uint64_t callback, uint32_t index, uint64_t value=0) {
 	if (!callback) return;
 	// The service may be running inside a parked Sleep/Windows wait. A parallel
@@ -41,21 +48,41 @@ void voice_callback(uint64_t callback, uint32_t index, uint64_t value=0) {
 	} catch (const std::exception &error) { if (std::getenv("RAVEN_AUDIO_TRACE")) std::fprintf(stderr,"Raven audio: callback failed: %s\n",error.what()); }
 }
 void service_voices() {
-	if (xvoices.empty()) return;
-	// A parallel guest may still be running when the host services its other
-	// threads. Calling into Windows code requires the stopped frame of an API
-	// call; keep the packets queued until the scheduler reaches one.
+	if (servicing_voices || xvoices.empty()) return;
+	// Running guest code has no safe API callback frame; retain notifications until one is available.
 	if (context.process.parallel() && !context.process.stopped()) return;
-	for (auto &[address,v]:xvoices) {
-		if (!v.voice || v.packets.empty()) continue;
-		const auto presented=mixer().position(v.voice)/v.format.block;
-		if ((v.packets.front().started || presented<v.packets.front().begin) && presented<v.packets.front().end) continue;
-		for (auto &packet:v.packets)
-			if (v.running && !packet.started && presented>=packet.begin) { packet.started=true; voice_callback(v.callback,3,packet.context); }
-		while (!v.packets.empty() && presented>=v.packets.front().end) {
-			const auto packet=v.packets.front(); v.packets.pop_front();
-			voice_callback(v.callback,4,packet.context);
-			if (packet.stream_end) voice_callback(v.callback,2);
+	servicing_voices=true;
+	struct Leave { bool &active; ~Leave() { active=false; } } leave{servicing_voices};
+	std::vector<uint64_t> voices;
+	for (const auto &[address,v]:xvoices) voices.push_back(address);
+	for (const auto address:voices) {
+		auto found=xvoices.find(address);
+		if (found==xvoices.end() || !found->second.voice) continue;
+		std::vector<uint64_t> starts;
+		const auto presented=mixer().position(found->second.voice)/found->second.format.block;
+		for (const auto &packet:found->second.packets)
+			if (found->second.running && !packet.started && presented>=packet.begin) starts.push_back(packet.id);
+		for (const auto id:starts) {
+			found=xvoices.find(address);
+			if (found==xvoices.end()) break;
+			auto &v=found->second;
+			const auto packet=std::find_if(v.packets.begin(),v.packets.end(),[id](const auto &p) { return p.id==id; });
+			if (packet==v.packets.end() || packet->started) continue;
+			packet->started=true;
+			const auto callback=v.callback, value=packet->context;
+			// No packet iterator/reference survives guest code: it can flush, submit or destroy this voice.
+			voice_callback(callback,3,value);
+		}
+		for (;;) {
+			found=xvoices.find(address);
+			if (found==xvoices.end()) break;
+			auto &v=found->second;
+			if (v.packets.empty() || mixer().position(v.voice)/v.format.block<v.packets.front().end) break;
+			const auto packet=v.packets.front();
+			const auto callback=v.callback;
+			v.packets.pop_front();
+			voice_callback(callback,4,packet.context);
+			if (packet.stream_end && xvoices.contains(address)) voice_callback(callback,2);
 		}
 	}
 }
@@ -134,7 +161,7 @@ void xaudio(ApiCall &call,std::string_view type,std::string_view method) {
 		auto samples=call.read(data+uint64_t(begin)*v.format.block,uint64_t(frames)*v.format.block);
 		const auto begin_at=v.submitted;
 		mixer().enqueue(v.voice,std::move(samples)); v.submitted+=frames;
-		v.packets.push_back({begin_at,v.submitted,call.load_pointer(at+context_at),bool(call.load<uint32_t>(at)&0x40)});
+		v.packets.push_back({begin_at,v.submitted,call.load_pointer(at+context_at),next_packet++,bool(call.load<uint32_t>(at)&0x40)});
 	} else if (method=="FlushSourceBuffers" && v.voice) {
 		mixer().reset(v.voice); v.submitted=0; v.packets.clear(); if (v.running) mixer().play(v.voice);
 	} else if (method=="GetState" && v.voice && call[1]) {

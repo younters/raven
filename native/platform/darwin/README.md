@@ -84,6 +84,13 @@ XAudio callbacks currently run from a stopped API frame on the selected Windows 
 without entering an API can therefore delay them; there is no independent Windows XAudio engine callback thread yet. The parallel XAudio
 tests cover callbacks during a timed Windows wait, including preservation of that wait across nested callback execution. They do not
 establish Windows' asynchronous delivery guarantee for a computing guest.
+OnVoiceProcessingPassStart/End and OnVoiceError notifications remain unimplemented.
+
+Audio playback with queued buffers registers as external scheduler work, so an infinite callback-event wait is not mistaken for a
+deadlock. The Darwin controller declines blocking served single-object waits while playback is pending, using the existing stopped
+fallback handshake for callback delivery. Packet notifications use stable identities and a re-entry guard because callbacks may submit,
+flush or destroy voices. CMake versions before 3.22 omit the serial-contract environment modification; run those upstream serial
+provider/input contracts with `RAVEN_PARALLEL` unset on those versions.
 
 The version 4 control block has 256 thread channels and a separate service channel. A channel retains its registers, XSAVE state and stop
 reason until the host resumes that pthread; switching host coroutines selects a different channel without copying a running thread's

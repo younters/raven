@@ -30,7 +30,11 @@ int raven_entry(void) {
 	IXAudio2SourceVoice *voice=0;
 	CHECK(IXAudio2_CreateSourceVoice(engine,&voice,&format,0,XAUDIO2_DEFAULT_FREQ_RATIO,&callback,0,0)==S_OK && voice,4);
 	CHECK(IXAudio2SourceVoice_SetVolume(voice,0,0)==S_OK,5);
+	#ifdef AUDIO_LIFECYCLE
+	static BYTE silence[480000];
+#else
 	static BYTE silence[4800];
+#endif
 	XAUDIO2_BUFFER buffer={0}; buffer.AudioBytes=sizeof(silence); buffer.pAudioData=silence; buffer.Flags=XAUDIO2_END_OF_STREAM; buffer.pContext=(void*)0x1234;
 	CHECK(IXAudio2SourceVoice_SubmitSourceBuffer(voice,&buffer,0)==S_OK,6);
 	XAUDIO2_VOICE_STATE state={0}; IXAudio2SourceVoice_GetState(voice,&state,0);
@@ -39,6 +43,8 @@ int raven_entry(void) {
 #ifdef AUDIO_LIFECYCLE
 	CHECK(CreateThread(0,0,worker,0,0,0)!=0,12);
 	Sleep(20);
+	IXAudio2SourceVoice_GetState(voice,&state,0);
+	CHECK(state.BuffersQueued==1,13);
 	return 0; // Leave playback and a computing worker for process teardown to unwind.
 #endif
 	Sleep(250); IXAudio2SourceVoice_GetState(voice,&state,0);
