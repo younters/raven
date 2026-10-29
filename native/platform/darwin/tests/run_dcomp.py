@@ -10,6 +10,14 @@ import time
 from PIL import Image
 
 
+def capture_unavailable(process, detail):
+    # A capture failure skips only while the fixture is alive; a dead fixture is a failure, not a missing screen.
+    if process.poll() is not None:
+        raise RuntimeError(f'fixture exited {process.returncode} during capture')
+    print('screen capture unavailable:', detail)
+    return 77
+
+
 def green_box(path):
     image = Image.open(path).convert('RGB')
     # Window screenshots may contain two physical pixels per logical pixel.
@@ -69,14 +77,16 @@ def main():
                     capture = subprocess.run(['/usr/sbin/screencapture', '-x', '-o', '-l', str(info['id']), str(shot)],
                                              capture_output=True)
                     if capture.returncode or not shot.is_file():
-                        print('screen capture unavailable:', capture.stderr.decode(errors='replace'))
-                        return 77
+                        return capture_unavailable(process, capture.stderr.decode(errors='replace'))
                     try:
                         image = Image.open(shot).convert('RGB')
                         box = green_box(shot)
                     except OSError as error:
-                        print('screen capture unavailable:', error)
-                        return 77
+                        # A partly written capture is retried until the deadline.
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError(f'unreadable capture at stage {stage}: {error}')
+                        time.sleep(.05)
+                        continue
                     scale = image.width / info['bounds']['Width']
                     unit = 1 if hidpi else scale
                     if box:
@@ -131,8 +141,7 @@ def main():
                         result = subprocess.run(['/usr/sbin/screencapture', '-x', '-o', '-l', str(selected['id']), str(shot)],
                                                 capture_output=True)
                         if result.returncode or not shot.is_file():
-                            print('screen capture unavailable during retarget')
-                            return 77
+                            return capture_unavailable(process, 'during retarget')
                         found.append(green_box(shot))
                     if found[0] is None and found[1] is not None:
                         break
