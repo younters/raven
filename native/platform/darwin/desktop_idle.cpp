@@ -8,8 +8,7 @@ void NativeWindows::poll_idle(std::chrono::milliseconds budget)
 {
 	const auto until = std::chrono::steady_clock::now() + budget;
 	std::vector<pollfd> descriptors;
-	if (idle_descriptors)
-		idle_descriptors(descriptors);
+	const auto handles = idle_descriptors ? idle_descriptors(descriptors) : nullptr;
 	if (presentation.wait_descriptors)
 		presentation.wait_descriptors(descriptors);
 	const auto events = presentation.poll(budget);

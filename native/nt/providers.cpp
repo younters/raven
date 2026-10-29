@@ -2344,7 +2344,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		threads.block(std::move(ready),until);
 	});
 	windows.set_idle_sources([&threads](std::chrono::steady_clock::time_point limit) { return threads.idle_until(limit); },
-		[&threads](std::vector<pollfd> &descriptors) { threads.idle_descriptors(descriptors); }, [&threads] { threads.drain_wake(); });
+		[&threads](std::vector<pollfd> &descriptors) { return threads.idle_descriptors(descriptors); }, [&threads] { threads.drain_wake(); });
 	KernelContext kernel{process, environment, memory, allocator, kernel_objects, threads, paths, modules, entry, *launch, invoke};
 	if (launch->process_token_fd >= 0)
 		kernel.process_token = std::make_shared<AccessToken>(launch->process_token_fd);

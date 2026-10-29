@@ -15,6 +15,7 @@
 #include <vector>
 
 #include <poll.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -366,6 +367,35 @@ void remove_child_channel(HandleChannel *channel)
 {
 	std::lock_guard lock(channels_mutex);
 	children.erase(std::remove(children.begin(), children.end(), channel), children.end());
+}
+
+std::shared_ptr<void> watch_handles(std::vector<pollfd> &descriptors)
+{
+	struct Lease {
+		std::vector<int> descriptors;
+		~Lease() { for (int fd : descriptors) ::close(fd); }
+	};
+	auto lease = std::make_shared<Lease>();
+	const auto append = [&](int fd) {
+		const int duplicate = ::fcntl(fd, F_DUPFD_CLOEXEC, 0);
+		if (duplicate < 0) return; // The normal bounded scheduler sweep remains the fallback.
+		lease->descriptors.push_back(duplicate);
+		descriptors.push_back({duplicate, POLLIN, 0});
+	};
+	// Keep owners through the snapshot, including children whose last handles are being reaped.
+	const auto owners = retained_children();
+	{
+		std::lock_guard lock(channels_mutex);
+		for (const auto *channel : children)
+			if (channel->connected()) append(channel->host_descriptor());
+		if (parent && parent->connected()) append(parent->host_descriptor());
+	}
+	if (process_channels.listener >= 0) append(process_channels.listener);
+	for (const auto &channel : process_channels.accepted)
+		if (channel->connected()) append(channel->host_descriptor());
+	for (const auto &[pid, channel] : process_channels.outgoing)
+		if (channel && channel->connected()) append(channel->host_descriptor());
+	return lease;
 }
 
 void receive_handles(NativeObjects &objects)

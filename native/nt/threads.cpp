@@ -1,4 +1,5 @@
 #include "threads.h"
+#include "handle_channel.h"
 
 #include <cstdlib>
 #include <fcntl.h>
@@ -411,11 +412,8 @@ void NativeThreads::schedule()
 		if (poll) {
 			poll(std::chrono::ceil<std::chrono::milliseconds>(slice));
 		} else if (slice.count() > 0) {
-			std::vector<pollfd> descriptors{{this->wake, POLLIN, 0}};
-			if (process.execution_descriptor() >= 0)
-				descriptors.push_back({process.execution_descriptor(), POLLIN, 0});
-			if (watched)
-				watched(descriptors);
+			std::vector<pollfd> descriptors;
+			const auto handles = idle_descriptors(descriptors);
 			const timespec timeout{slice.count() / 1000000000, slice.count() % 1000000000};
 			::ppoll(descriptors.data(), descriptors.size(), &timeout, nullptr);
 			uint64_t drained = 0;
@@ -440,13 +438,14 @@ std::chrono::steady_clock::time_point NativeThreads::idle_until(std::chrono::ste
 	return unannounced ? std::min(limit, std::chrono::steady_clock::now() + std::chrono::milliseconds(20)) : limit;
 }
 
-void NativeThreads::idle_descriptors(std::vector<pollfd> &descriptors) const
+std::shared_ptr<void> NativeThreads::idle_descriptors(std::vector<pollfd> &descriptors) const
 {
 	descriptors.push_back({wake, POLLIN, 0});
 	if (process.execution_descriptor() >= 0)
 		descriptors.push_back({process.execution_descriptor(), POLLIN, 0});
 	if (watched)
 		watched(descriptors);
+	return watch_handles(descriptors);
 }
 
 void NativeThreads::drain_wake()

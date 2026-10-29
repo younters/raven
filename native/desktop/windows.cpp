@@ -1440,7 +1440,7 @@ void NativeWindows::wait_idle(std::chrono::steady_clock::time_point deadline)
 	until=idle_until(until);
 	if (until>now) {
 		std::vector<pollfd> descriptors{{presentation.descriptor(),POLLIN,0},{foreign_frames_descriptor(),POLLIN,0}};
-		idle_descriptors(descriptors);
+		const auto handles = idle_descriptors(descriptors);
 		const auto left=std::chrono::duration_cast<std::chrono::nanoseconds>(until-now).count();
 		const timespec timeout{left/1000000000,left%1000000000};
 		::ppoll(descriptors.data(),descriptors.size(),&timeout,nullptr);

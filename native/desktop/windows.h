@@ -48,7 +48,7 @@ public:
 	// How a thread waiting for messages sleeps when every other thread waits too: until the time `until` allows for the other threads,
 	// on their descriptors besides the display's, then `drain` takes back what woke it (see NativeThreads::idle_until).
 	void set_idle_sources(std::function<std::chrono::steady_clock::time_point(std::chrono::steady_clock::time_point)> until,
-		std::function<void(std::vector<pollfd> &)> descriptors, std::function<void()> drain)
+		std::function<std::shared_ptr<void>(std::vector<pollfd> &)> descriptors, std::function<void()> drain)
 	{
 		idle_until = std::move(until);
 		idle_descriptors = std::move(descriptors);
@@ -222,7 +222,7 @@ private:
 	std::chrono::steady_clock::time_point deadline;
 	std::function<void(std::function<bool()>,std::chrono::steady_clock::time_point)> message_wait;
 	std::function<std::chrono::steady_clock::time_point(std::chrono::steady_clock::time_point)> idle_until;
-	std::function<void(std::vector<pollfd> &)> idle_descriptors;
+	std::function<std::shared_ptr<void>(std::vector<pollfd> &)> idle_descriptors;
 	std::function<void()> idle_drain;
 	// Sleeps until the display, another thread or the next timer, caret blink or scroll repeat needs this thread.
 	void wait_idle(std::chrono::steady_clock::time_point deadline);

@@ -4,6 +4,7 @@
 #include "child_process.h"
 
 #include <array>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <fcntl.h>
@@ -40,6 +41,45 @@ static void send_event(int descriptor, raven::EventObject &event, uint64_t handl
 	check(::sendmsg(descriptor, &message, MSG_NOSIGNAL) == ssize_t(bytes.size()), "cannot queue event transfer");
 }
 
+static void test_idle_wake(raven::NativeObjects &objects)
+{
+	int pair[2];
+	check(!::socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0, pair), "cannot create wake channel");
+	auto channel = std::make_unique<raven::HandleChannel>(pair[0]);
+	raven::add_child_channel(channel.get());
+	std::vector<pollfd> descriptors;
+	auto lease = raven::watch_handles(descriptors);
+	raven::EventObject event(0, true);
+	std::thread sender([&] {
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		send_event(pair[1], event, 0x1020);
+	});
+	const auto start = std::chrono::steady_clock::now();
+	const int ready = ::poll(descriptors.data(), descriptors.size(), 500);
+	const auto elapsed = std::chrono::steady_clock::now() - start;
+	sender.join();
+	check(ready > 0 && elapsed < std::chrono::milliseconds(250), "incoming transfer did not wake idle wait");
+	check(objects.signaled(0x1020, 1) != 1, "wake callback dispatched a transfer");
+	raven::receive_handles(objects);
+	check(objects.signaled(0x1020, 1) == 1, "scheduler service lost wake transfer");
+	raven::remove_child_channel(channel.get());
+	channel.reset();
+	// Reuse the original descriptor for a readable pipe. An installed snapshot must still refer to the socket.
+	int pipe[2];
+	check(!::pipe2(pipe, O_CLOEXEC | O_NONBLOCK), "cannot create fd reuse pipe");
+	if (pipe[0] != pair[0]) check(::dup2(pipe[0], pair[0]) == pair[0], "cannot reuse original fd");
+	check(::write(pipe[1], "x", 1) == 1, "cannot signal reused fd");
+	check(::poll(descriptors.data(), descriptors.size(), 0) == 0, "stale watch followed a reused descriptor");
+	::close(pair[1]);
+	check(::poll(descriptors.data(), descriptors.size(), 100) > 0, "snapshot lost peer teardown readiness");
+	descriptors.clear();
+	lease = raven::watch_handles(descriptors);
+	check(::poll(descriptors.data(), descriptors.size(), 0) == 0, "refreshed watch kept removed channel");
+	if (pipe[0] != pair[0]) ::close(pair[0]);
+	::close(pipe[0]);
+	::close(pipe[1]);
+}
+
 int main(int argc, char **argv)
 {
 	try {
@@ -55,6 +95,7 @@ int main(int argc, char **argv)
 			return 0;
 		}
 		raven::NativeObjects objects;
+		test_idle_wake(objects);
 		std::array<std::unique_ptr<raven::HandleChannel>, 3> receivers;
 		std::array<int, 3> senders;
 		for (size_t index = 0; index < receivers.size(); ++index) {
@@ -65,9 +106,33 @@ int main(int argc, char **argv)
 			raven::add_child_channel(receivers[index].get());
 		}
 		raven::enable_process_requests();
-		const auto peer = raven::process_request_channel(::getpid());
+		std::vector<pollfd> watches;
+		auto lease = raven::watch_handles(watches);
+		auto peer = raven::process_request_channel(::getpid());
 		check(bool(peer), "cannot connect process request peer");
+		check(::poll(watches.data(), watches.size(), 100) > 0, "listener did not wake for new peer");
 		raven::receive_handles(objects);
+		watches.clear();
+		lease = raven::watch_handles(watches);
+		bool dispatched = false;
+		objects.process_request = [&](const raven::InheritedHandle &) { dispatched = true; return raven::InheritedHandle{}; };
+		raven::InheritedHandle probe;
+		probe.kind = "process:test";
+		probe.size = 999;
+		const auto packet = raven::serialize_inherited({probe});
+		check(::send(peer->host_descriptor(), packet.data(), packet.size(), MSG_NOSIGNAL) == ssize_t(packet.size()), "cannot send peer probe");
+		check(::poll(watches.data(), watches.size(), 100) > 0 && !dispatched, "accepted peer did not wake without dispatch");
+		raven::receive_handles(objects);
+		check(dispatched, "peer probe not dispatched at service point");
+		check(::shutdown(peer->host_descriptor(), SHUT_RDWR) == 0, "cannot disconnect peer");
+		raven::receive_handles(objects);
+		watches.clear();
+		lease = raven::watch_handles(watches);
+		peer = raven::process_request_channel(::getpid());
+		check(bool(peer) && ::poll(watches.data(), watches.size(), 100) > 0, "new peer after teardown did not wake listener");
+		raven::receive_handles(objects);
+		objects.process_request = {};
+		lease.reset();
 		for (size_t round = 0; round < 1000; ++round)
 			raven::receive_handles(objects);
 		if (argc == 1 || std::strcmp(argv[1], "--idle")) {

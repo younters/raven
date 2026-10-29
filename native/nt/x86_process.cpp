@@ -1369,7 +1369,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// Waits that also wake for messages ask the window system, and the window system sleeps as the scheduler does.
 	kernel.queue_status = [&windows](uint32_t thread,uint32_t mask,bool clear) { return windows.queue_status(thread,mask,clear); };
 	windows.set_idle_sources([&guest_threads](std::chrono::steady_clock::time_point limit) { return guest_threads.idle_until(limit); },
-		[&guest_threads](std::vector<pollfd> &descriptors) { guest_threads.idle_descriptors(descriptors); }, [&guest_threads] { guest_threads.drain_wake(); });
+		[&guest_threads](std::vector<pollfd> &descriptors) { return guest_threads.idle_descriptors(descriptors); }, [&guest_threads] { guest_threads.drain_wake(); });
 	register_file_api(shared_api, kernel);
 	register_memory_api(shared_api, kernel);
 	register_text_api(shared_api, kernel);

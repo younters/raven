@@ -118,7 +118,8 @@ public:
 	// sleep to, no later than `limit`, and the descriptors that end it early. A waiting thread whose condition nothing announces keeps
 	// it short, as the scheduler's own wait is. drain_wake() takes back what ended it.
 	std::chrono::steady_clock::time_point idle_until(std::chrono::steady_clock::time_point limit) const;
-	void idle_descriptors(std::vector<pollfd> &descriptors) const;
+	// Retain the returned descriptor lease until the idle wait and its callbacks have ended.
+	std::shared_ptr<void> idle_descriptors(std::vector<pollfd> &descriptors) const;
 	void drain_wake();
 
 	std::shared_ptr<GuestThread> create(uint64_t start, uint64_t parameter, uint64_t stack_size, bool suspended);

@@ -7,6 +7,8 @@
 #include <memory>
 #include <optional>
 #include <sys/types.h>
+#include <poll.h>
+#include <vector>
 
 namespace raven {
 
@@ -55,6 +57,10 @@ void add_child_channel(HandleChannel *channel);
 void remove_child_channel(HandleChannel *channel);
 // Takes in whatever the other processes have sent and answers what they asked.
 void receive_handles(NativeObjects &objects);
+// Appends POLLIN wake sources, including the process listener. Keep the returned lease alive until the idle watcher is replaced.
+// The lease owns duplicates: reaping a channel or reusing its original fd cannot redirect an installed idle callback.
+// Readiness only wakes the scheduler; receive_handles still dispatches at scheduler service points.
+std::shared_ptr<void> watch_handles(std::vector<pollfd> &descriptors);
 // Process queries can reach a runtime of this prefix even when it is neither the caller's parent nor its child.
 void enable_process_requests();
 std::shared_ptr<HandleChannel> process_request_channel(pid_t pid);
