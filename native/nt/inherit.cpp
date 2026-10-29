@@ -3,6 +3,7 @@
 #include "child_process.h"
 #include "event.h"
 #include "mutex.h"
+#include "semaphore.h"
 
 #include "file_objects.h"
 #include "kernel_context.h"
@@ -119,6 +120,8 @@ std::shared_ptr<KernelObject> object_from_record(const InheritedHandle &item)
 	}
 	if (item.kind == "mutex")
 		return std::make_shared<MutexObject>(item.descriptor);
+	if (item.kind == "semaphore")
+		return std::make_shared<SemaphoreObject>(item.descriptor);
 	if (item.kind == "event")
 		return std::make_shared<EventObject>(item.descriptor);
 	if (item.kind == "token")

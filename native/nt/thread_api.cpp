@@ -1,6 +1,7 @@
 #include "child_process.h"
 #include "kernel_context.h"
 #include "mutex.h"
+#include "semaphore.h"
 #include "event.h"
 #include "security_attributes.h"
 #include "shared_file.h"
@@ -43,29 +44,6 @@ uint32_t thread_access(uint32_t requested)
 	if (access & 0x20) access |= 0x400;
 	return access;
 }
-
-struct SemaphoreState {
-	std::atomic<int32_t> count{0};
-	int32_t maximum = 0;
-};
-
-class SemaphoreObject : public KernelObject {
-public:
-	std::u16string_view type_name() const override { return u"Semaphore"; }
-	int signaled(uint32_t) const override { return state->count.load() > 0; }
-	bool try_consume(uint32_t) override
-	{
-		auto current = state->count.load();
-		while (current > 0)
-			if (state->count.compare_exchange_weak(current, current - 1))
-				return true;
-		return false;
-	}
-	void consume(uint32_t thread) override { try_consume(thread); }
-	SemaphoreState local;
-	SemaphoreState *state = &local;
-	std::shared_ptr<SharedFile> shared;
-};
 
 // A named event: its state is shared memory, so a program in another process of the prefix sees it set.
 struct EventState {
@@ -1235,17 +1213,11 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 				return;
 			}
 		}
-		auto current = semaphore->state->count.load();
-		for (;;) {
-			if (amount <= 0 || int64_t(current) + amount > semaphore->state->maximum) {
-				call.fail(298);
-				return;
-			}
-			if (semaphore->state->count.compare_exchange_weak(current, current + amount))
-				break;
+		int32_t current = 0;
+		if (!semaphore->release(amount, current)) {
+			call.fail(298);
+			return;
 		}
-		if (semaphore->shared)
-			announce_shared_change();
 		if (call[2]) call.store<int32_t>(call[2], current);
 		call.ret(1);
 	});

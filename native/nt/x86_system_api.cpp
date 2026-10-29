@@ -46,14 +46,6 @@ constexpr std::array exported{
 	Export{"setupapi.dll", "SetupDiGetDeviceInterfaceDetailW", 6}, Export{"setupapi.dll", "SetupDiOpenDevRegKey", 6},
 };
 
-class SemaphoreObject : public KernelObject {
-public:
-	std::u16string_view type_name() const override { return u"Semaphore"; }
-	int signaled(uint32_t) const override { return count > 0; }
-	void consume(uint32_t) override { --count; }
-	int64_t count = 0, maximum = 0;
-};
-
 constexpr uint32_t wait_timeout = 0x102, wait_failed = UINT32_MAX, not_supported = 0xc00000bbU;
 constexpr uint64_t current_thread_pseudo = 0xfffffffeULL;
 
@@ -157,6 +149,8 @@ void NativeX86System::lock_shared(uint64_t address)
 
 bool NativeX86System::dispatch(std::string_view name)
 {
+	// Semaphore state and cross-process transfers use the same implementation in both widths.
+	if (name == "CreateSemaphoreA" || name == "CreateSemaphoreW" || name == "ReleaseSemaphore") return false;
 #ifdef __APPLE__
 	// Darwin handlers supply DPI and keyed-mutex behavior before the legacy fallback.
 	if (name=="SetProcessDPIAware" || darwin_keyed_mutex_api(name)) return false;
@@ -318,38 +312,6 @@ bool NativeX86System::dispatch(std::string_view name)
 				process.write_memory(environment.teb() + 0xe10 + index * 4,
 					std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&value), 4));
 			}
-			process.return_api(1);
-		}
-	} else if (name == "CreateSemaphoreA" || name == "CreateSemaphoreW") {
-		const int32_t initial = int32_t(args[1]), maximum = int32_t(args[2]);
-		if (args[0] || maximum <= 0 || initial < 0 || initial > maximum) {
-			fail(87);
-		} else {
-			auto semaphore = std::make_shared<SemaphoreObject>();
-			semaphore->count = initial;
-			semaphore->maximum = maximum;
-			const auto made = objects.add_object(semaphore);
-			if (made.status)
-				fail(8);
-			else
-				process.return_api(made.value);
-		}
-	} else if (name == "ReleaseSemaphore") {
-		const auto semaphore = objects.object_as<SemaphoreObject>(args[0]);
-		const int32_t amount = int32_t(args[1]);
-		if (!semaphore) {
-			fail(6);
-		} else if (amount <= 0 || semaphore->count + amount > semaphore->maximum) {
-			fail(298);
-		} else {
-			try {
-				if (args[2])
-					write32(args[2], uint32_t(semaphore->count));
-			} catch (const std::runtime_error &) {
-				fail(998);
-				return true;
-			}
-			semaphore->count += amount;
 			process.return_api(1);
 		}
 	} else if (name == "WaitForMultipleObjects") {
