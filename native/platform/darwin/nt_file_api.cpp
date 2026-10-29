@@ -221,6 +221,15 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 			const auto found = pipe ? Inner{0, 2} : run(*attributes, call, {text, 0, data});
 			const bool exists = found.result != 0;
 			const bool is_directory = exists && (call.load<uint32_t>(data) & directory_attribute);
+			// The parameters are checked before the name, and an existing name refuses FILE_CREATE before its type is looked at.
+			if ((options & directory_file) && (disposition == 0 || disposition == 4 || disposition == 5)) {
+				call.ret(status_invalid_parameter);
+				return;
+			}
+			if (exists && disposition == 2) {
+				call.ret(0xc0000035U);
+				return;
+			}
 			if (exists && is_directory && (options & non_directory)) {
 				call.ret(status_file_is_a_directory);
 				return;
@@ -229,12 +238,8 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 				call.ret(status_not_a_directory);
 				return;
 			}
-			if (exists && disposition == 2) {
-				call.ret(0xc0000035U);
-				return;
-			}
-			if (((options & directory_file) || is_directory) && (disposition == 0 || disposition == 4 || disposition == 5)) {
-				call.ret(options & directory_file ? status_invalid_parameter : 0xc0000022U);
+			if (is_directory && (disposition == 0 || disposition == 4 || disposition == 5)) {
+				call.ret(0xc0000022U);
 				return;
 			}
 			// A directory is made, not opened, when FILE_DIRECTORY_FILE asks for a new one.
@@ -396,11 +401,15 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 				call.ret(status_object_path_not_found);
 				return;
 			}
-			// Translate section rights to file-mapping rights; querying alone needs a readable mapping handle.
-			const uint32_t requested = call.u32(1);
-			uint32_t access = requested & (0x2 | 0x4);
+			// Expand generic rights by the section mapping, then keep the section rights; only SECTION_MAP_EXECUTE differs from
+			// FILE_MAP_EXECUTE. A query-only handle maps nothing, as on Windows.
+			uint32_t requested = call.u32(1);
+			if (requested & 0x80000000U) requested |= 0x20005;
+			if (requested & 0x40000000U) requested |= 0x20002;
+			if (requested & 0x20000000U) requested |= 0x20008;
+			if (requested & 0x12000000U) requested |= 0xf001f;
+			uint32_t access = requested & 0x001f0017U;
 			if (requested & 0x8) access |= 0x20;
-			if (!access && (requested & 0x1)) access = 0x4;
 			Scratch scratch(call.process);
 			Inner opened{0, 2};
 			for (const auto &candidate : names) {

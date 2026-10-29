@@ -91,6 +91,10 @@ void entry(void)
     if (!WriteFile(file, "hello", 5, &written, NULL) || written != 5) ExitProcess(22);
     CloseHandle(file);
     if (create(&file, NULL, L"\\??\\C:\\ntfile\\a.txt", GENERIC_READ, FILE_CREATE, 0, NULL) != (NTSTATUS)0xc0000035) ExitProcess(23);
+    if (create(&file, NULL, L"\\??\\C:\\ntfile\\a.txt", GENERIC_READ, FILE_CREATE, FILE_DIRECTORY_FILE, NULL) != (NTSTATUS)0xc0000035)
+        ExitProcess(85);
+    if (create(&file, NULL, L"\\??\\C:\\ntfile\\a.txt", GENERIC_WRITE, FILE_OVERWRITE, FILE_DIRECTORY_FILE, NULL) != (NTSTATUS)0xc000000d)
+        ExitProcess(86);
     if (create(&file, NULL, L"\\??\\C:\\ntfile\\a.txt", GENERIC_READ, FILE_OPEN, FILE_DIRECTORY_FILE, NULL) != (NTSTATUS)0xc0000103)
         ExitProcess(24);
     if (create(&file, NULL, L"\\??\\C:\\ntfile", GENERIC_READ, FILE_OPEN, FILE_NON_DIRECTORY_FILE, NULL) != (NTSTATUS)0xc00000ba)
@@ -175,6 +179,17 @@ void entry(void)
     if (NtOpenSection(&opened, SECTION_QUERY | SECTION_MAP_READ, &attributes)) ExitProcess(51);
     const char *seen = MapViewOfFile(opened, FILE_MAP_READ, 0, 0, 0);
     if (!seen || seen[0] != 'z') ExitProcess(52);
+    UnmapViewOfFile(seen);
+    CloseHandle(opened);
+    // A query-only handle maps no view; a generic read handle maps for reading but not writing.
+    if (NtOpenSection(&opened, SECTION_QUERY, &attributes)) ExitProcess(81);
+    if (MapViewOfFile(opened, FILE_MAP_READ, 0, 0, 0)) ExitProcess(82);
+    CloseHandle(opened);
+    if (NtOpenSection(&opened, GENERIC_READ, &attributes)) ExitProcess(83);
+    seen = MapViewOfFile(opened, FILE_MAP_READ, 0, 0, 0);
+    if (!seen || seen[0] != 'z' || MapViewOfFile(opened, FILE_MAP_WRITE, 0, 0, 0)) ExitProcess(84);
+    UnmapViewOfFile(seen);
+    CloseHandle(opened);
     UNICODE_STRING absent = text(L"\\Sessions\\1\\BaseNamedObjects\\RavenNoSection");
     InitializeObjectAttributes(&attributes, &absent, 0, NULL, NULL);
     if (NtOpenSection(&opened, SECTION_MAP_READ, &attributes) != (NTSTATUS)0xc0000034) ExitProcess(53);
