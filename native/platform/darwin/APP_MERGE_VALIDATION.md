@@ -1,5 +1,10 @@
 # Chrome and Steam merge validation (2026-10-27)
 
+Historical evidence from the source branch, retained during the 2026-10-29 salvage.
+Commands, local paths, build parallelism and application observations below describe
+that earlier session, not current qualification. See [COMPAT_SALVAGE.md](COMPAT_SALVAGE.md)
+for the changes retained and the tests run on current macos.
+
 This run did **not** establish that Chrome or Steam works after the merge.
 The worktree started at `5c7c304`. Fetching origin left `macos..origin/main` empty;
 the repository PR/issue search found no targeted Chrome/Steam/WinINet fix.
