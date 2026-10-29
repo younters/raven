@@ -368,12 +368,13 @@ struct DarwinDXMTPresentation::State {
 		}
 		if (content.surface) {IOSurfaceDecrementUseCount(content.surface);CFRelease(content.surface);content.surface=nullptr;}
 	}
-	void publish_composition(uint64_t stream,CompositionFrame &content,darwin::CompositionBinding binding)
+	void publish_composition(uint64_t stream,CompositionFrame &content,darwin::CompositionBinding binding,bool new_frame=false)
 	{
-		if (content.sent && same_binding(content.binding,binding)) return;
+		if (!new_frame && content.sent && same_binding(content.binding,binding)) return;
 		if (content.sent && content.binding.target!=binding.target) detach_composition(stream,content);
 		content.binding=binding;
 		if (!binding.target) return;
+		content.sent=false;
 		auto routed=content.frame;routed.window=binding.target;
 		if (const auto foreign=foreign_window_info(binding.target)) {
 			if (forward(routed,content.slot,pid_t(foreign->process),stream,binding,content.surface)) content.sent=true;
@@ -428,10 +429,10 @@ struct DarwinDXMTPresentation::State {
 					if (!surface) {__atomic_store_n(&frame.state,RAVEN_SURFACE_AVAILABLE,__ATOMIC_RELEASE);continue;}
 					auto &content=compositions[frame.window];
 					release_composition(content);
-					content={frame,index,surface,{},false};
+					content={frame,index,surface,content.binding,content.sent};
 					IOSurfaceIncrementUseCount(surface);
 					__atomic_store_n(&frame.state,RAVEN_SURFACE_DISPLAYED,__ATOMIC_RELEASE);
-					publish_composition(frame.window,content,*binding);
+					publish_composition(frame.window,content,*binding,true);
 					continue;
 				}
 				if (const auto foreign = foreign_window_info(routed.window); foreign && !windows.host_surface(routed.window)) {

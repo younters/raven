@@ -114,6 +114,32 @@ def main():
                 images.append(Image.open(shot).convert('RGB'))
                 units.append(unit)
                 (prefix / f'drive_c/dcomp-next{stage}').write_text('OK')
+            if kind in ('local', 'local-hidpi'):
+                old_info = info
+                ready = prefix / 'drive_c/dcomp-stage9'
+                deadline = time.monotonic() + 30
+                while not ready.exists():
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError('fixture did not reach retarget stage')
+                    time.sleep(.05)
+                deadline = time.monotonic() + 5
+                while True:
+                    new_info = json.loads(subprocess.check_output([str(info_tool), str(process.pid), 'Raven retarget']))
+                    found = []
+                    for name, selected in [('old', old_info), ('new', new_info)]:
+                        shot = work / f'retarget-{name}.png'
+                        result = subprocess.run(['/usr/sbin/screencapture', '-x', '-o', '-l', str(selected['id']), str(shot)],
+                                                capture_output=True)
+                        if result.returncode or not shot.is_file():
+                            print('screen capture unavailable during retarget')
+                            return 77
+                        found.append(green_box(shot))
+                    if found[0] is None and found[1] is not None:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(f'retarget did not detach old layer and display new frame: {found}')
+                    time.sleep(.05)
+                (prefix / 'drive_c/dcomp-next9').write_text('OK')
             if process.wait(timeout=10):
                 raise RuntimeError(f'fixture exited {process.returncode}')
         finally:

@@ -230,7 +230,19 @@ static void render(HWND window) {
 		ExitProcess(78);
 	pump();
 	stage('8');
-
+	if (!argument(L"--child") && !argument(L"--popup")) {
+		HWND next = CreateWindowExW(0, L"STATIC", L"Raven retarget", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+			800, 100, 640 * factor, 420 * factor, nullptr, nullptr, nullptr, nullptr);
+		IDCompositionTarget *next_target = nullptr;
+		check(desktop->CreateTargetForHwnd(next, TRUE, &next_target), 97);
+		check(target->SetRoot(nullptr), 98);
+		check(next_target->SetRoot(root), 99);
+		check(composition->Commit(), 100);
+		check(swap->Present(0, 0), 101);
+		stage('9');
+		next_target->Release();
+		DestroyWindow(next);
+	}
 	red_view->Release();
 	red_back->Release();
 	view->Release();
