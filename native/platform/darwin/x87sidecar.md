@@ -52,11 +52,11 @@ file exists and both MinGW compilers are available. Build `raven`,
 ```
 
 The checks compare the fixed checksum with direct execution, require both
-hook ranges and no fallback banner, test PE64 bypass and a PE32 CreateProcess parent/child pair, and exercise missing,
-unsupported and partially installed hook rollback paths. Guest QPC timing
-excludes launch and IPC setup; speedup is reported without a threshold.
-Stop after any timeout and inspect for exec state U before further x86
-launches. Never run this bootstrap under a debugger.
+hook ranges and no fallback banner, test PE64 bypass and a PE32 CreateProcess
+parent/child pair, and exercise missing, unsupported and partially installed
+hook rollback paths. Guest QPC timing excludes launch and IPC setup; speedup
+is reported without a threshold. Stop after any timeout and inspect for exec
+state U before further x86 launches. Never run this bootstrap under a debugger.
 
 `guest/coop_proto.h` is copied unchanged (apart from the license preamble)
 from x87sidecar v1.9.0 with its MIT notice. The implementation follows the
