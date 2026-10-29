@@ -277,7 +277,7 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 			}
 			constexpr uint64_t superseded = 0, opened_existing = 1, created = 2, overwritten = 3;
 			uint64_t information = opened_existing;
-			if (!exists && !(options & directory_file))
+			if (!exists && !pipe && !(options & directory_file))
 				information = created;
 			else if ((options & directory_file) && !exists)
 				information = created;
