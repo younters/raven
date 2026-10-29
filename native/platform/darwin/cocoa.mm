@@ -195,6 +195,7 @@ struct CocoaPresentation::State {
 	bool attention_on_present = false;
 	std::vector<DesktopEvent> pending;
 	uint64_t pointer_window = 0, keyboard_window = 0;
+	uint64_t delivered_keyboard_window = 0;
 	bool keyboard_known = false;
 	NSEvent *last_press = nil;
 	NSPoint cascade = NSZeroPoint;
@@ -499,7 +500,11 @@ struct CocoaPresentation::State {
 
 	void focus_changed()
 	{
-		const uint64_t now = handle_of(NSApp.keyWindow);
+		const uint64_t native = handle_of(NSApp.keyWindow);
+		if (native)
+			delivered_keyboard_window = 0;
+		const auto *delivered = surface(delivered_keyboard_window);
+		const uint64_t now = native ? native : delivered && delivered->window.visible ? delivered_keyboard_window : 0;
 		if (now == keyboard_window && keyboard_known)
 			return;
 		// Keys held when the keyboard went elsewhere are let go there.
@@ -547,14 +552,22 @@ struct CocoaPresentation::State {
 		case NSEventTypeKeyDown:
 		case NSEventTypeKeyUp: {
 			const bool down = event.type == NSEventTypeKeyDown;
+			if (trace) std::fprintf(stderr, "cocoa: key %u down %d window %llx focus %llx active %d\n", event.keyCode, int(down),
+				(unsigned long long)handle_of(event.window), (unsigned long long)keyboard_window, int(NSApp.active));
 			// The application's own shortcuts: Command-Q and Command-H.
 			if (down && (event.modifierFlags & NSEventModifierFlagCommand) && !(event.modifierFlags & NSEventModifierFlagControl)) {
 				NSString *character = event.charactersIgnoringModifiers.lowercaseString;
 				if ([character isEqualToString:@"q"] || [character isEqualToString:@"h"])
 					return true;
 			}
-			if (!keyboard_window)
-				focus_changed();
+			// Posted input can address a background window without making it AppKit's
+			// key window. Retain that focus across polls and modifier/key-up events.
+			if (!NSApp.keyWindow) {
+				const uint64_t handle = handle_of(event.window);
+				if (const auto *target = surface(handle); target && target->window.takesKeyboard && target->window.visible)
+					delivered_keyboard_window = handle;
+			}
+			focus_changed();
 			sync_modifiers(event.modifierFlags);
 			key(translate(event.keyCode), down, down && event.isARepeat);
 			return false;
@@ -855,6 +868,12 @@ struct CocoaPresentation::State {
 		Surface *target = surface(window);
 		if (!target)
 			return true;
+		// Custom client frames consume the press before AppKit's normal focus handling.
+		// Establish keyboard focus before the guest handles that click.
+		if (press && target->window.takesKeyboard && !target->window.keyWindow) {
+			[target->window makeKeyAndOrderFront:nil];
+			focus_changed();
+		}
 		// A press on the title bar or outside the content belongs to macOS, and so do its drag and release: the program never saw it
 		// go down, and moving the window must not look to it like a button held over its client area.
 		if (target->native && !dragging && !NSPointInRect(screen, content_of(target->window))) {
@@ -1148,6 +1167,8 @@ struct CocoaPresentation::State {
 		if (!replacing && dock_windows.erase(handle) && dock_windows.empty()) reconcile_dock = true;
 		std::erase_if(numbers, [&](const auto &entry) { return entry.second == handle; });
 		std::erase_if(pending, [&](const DesktopEvent &event) { return event.window == handle; });
+		if (delivered_keyboard_window == handle)
+			delivered_keyboard_window = 0;
 		if (pointer_window == handle)
 			pointer_window = 0;
 		if (constrained == handle)
@@ -1559,6 +1580,13 @@ struct CocoaPresentation::State {
 @end
 
 @implementation RavenApplicationDelegate
+- (void)applicationDidResignActive:(NSNotification *)notification
+{
+	if (self.state) {
+		self.state->delivered_keyboard_window = 0;
+		self.state->focus_changed();
+	}
+}
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)visible
 {
 	if (self.state && !visible)
