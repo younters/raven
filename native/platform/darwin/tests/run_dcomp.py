@@ -58,26 +58,58 @@ def main():
                     if time.monotonic() > deadline:
                         raise RuntimeError(f'timed out before stage {stage}')
                     time.sleep(.05)
-                # A committed visual update propagates without a new swap-chain Present.
-                time.sleep(.3)
-                selected_window = [str(info_tool), str(process.pid)]
-                if kind.startswith('popup'):
-                    selected_window += ['popup']
-                info = json.loads(subprocess.check_output(selected_window))
-                shot = work / f'stage{stage}.png'
-                subprocess.run(['/usr/sbin/screencapture', '-x', '-o', '-l', str(info['id']), str(shot)],
-                               check=True, capture_output=True)
-                box = green_box(shot)
-                if not box:
-                    raise RuntimeError(f'no rendered green surface in stage {stage}')
-                scale = Image.open(shot).width / info['bounds']['Width']
-                # DPI-aware guests use one Windows pixel per physical screenshot pixel.
-                # Unaware guests use logical coordinates and are enlarged by the backing scale.
-                unit = 1 if hidpi else scale
-                box = tuple(v / unit for v in box)
-                expected = (240, 50) if stage == 4 else (200, 120)
-                if abs((box[2] - box[0]) - expected[0]) > 2 or abs((box[3] - box[1]) - expected[1]) > 2:
-                    raise RuntimeError(f'incorrect surface size at stage {stage}: {box}')
+                # Wait for this stage's pixels, including updates without a new Present.
+                deadline = time.monotonic() + 5
+                while True:
+                    selected_window = [str(info_tool), str(process.pid)]
+                    if kind.startswith('popup'):
+                        selected_window += ['popup']
+                    info = json.loads(subprocess.check_output(selected_window))
+                    shot = work / f'stage{stage}.png'
+                    capture = subprocess.run(['/usr/sbin/screencapture', '-x', '-o', '-l', str(info['id']), str(shot)],
+                                             capture_output=True)
+                    if capture.returncode or not shot.is_file():
+                        print('screen capture unavailable:', capture.stderr.decode(errors='replace'))
+                        return 77
+                    try:
+                        image = Image.open(shot).convert('RGB')
+                        box = green_box(shot)
+                    except OSError as error:
+                        print('screen capture unavailable:', error)
+                        return 77
+                    scale = image.width / info['bounds']['Width']
+                    unit = 1 if hidpi else scale
+                    if box:
+                        box = tuple(v / unit for v in box)
+                        expected = (240, 50) if stage == 4 else (200, 120)
+                        matches = (abs(box[2] - box[0] - expected[0]) <= 2 and
+                                   abs(box[3] - box[1] - expected[1]) <= 2)
+                        if stage == 2:
+                            matches &= all(abs(a - b) <= 2 for a, b in zip(box, boxes[0]))
+                        if stage == 3:
+                            matches &= abs(box[0] - boxes[0][0] - 55) <= 2 and abs(box[1] - boxes[0][1] - 40) <= 2
+                        if stage == 4:
+                            matches &= abs(box[0] - boxes[2][0] - 30) <= 2 and abs(box[1] - boxes[2][1] - 5) <= 2
+                        if stage >= 5:
+                            origin = boxes[2][0] - 80, boxes[2][1] - 60
+                            def sample(x, y):
+                                return image.getpixel((round((origin[0] + x) * unit), round((origin[1] + y) * unit)))
+                            if stage == 5:
+                                r, g, _ = sample(82, 62)
+                                matches &= not (g > 220 and r < 50) and sample(110, 64)[1] >= 220
+                            if stage == 6:
+                                r, g, b = sample(150, 100)
+                                matches &= r >= 70 and g >= 70 and b <= 60 and abs(r - g) <= 55
+                            if stage >= 7:
+                                r, g, b = sample(150, 100)
+                                matches &= r <= 50 and g >= 220 and b <= 50
+                            if stage == 8:
+                                matches &= image.width >= images[6].width * 1.4
+                        if matches:
+                            break
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError(f'expected pixels did not arrive at stage {stage}: {box}')
+                    time.sleep(.05)
                 boxes.append(box)
                 images.append(Image.open(shot).convert('RGB'))
                 units.append(unit)
