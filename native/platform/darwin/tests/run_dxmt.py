@@ -14,7 +14,10 @@ import time
 def main():
     raven, workload, root, work = (Path(value).resolve() for value in sys.argv[1:5])
     kind = sys.argv[5]
-    backend = sys.argv[6] if len(sys.argv) > 6 else "DXMT"
+    local_compiler = kind == "d3d_compile_local"
+    if local_compiler:
+        kind = "d3d_compile"
+    backend = sys.argv[6] if len(sys.argv) > 6 and not local_compiler else "DXMT"
     if backend not in ("DXMT", "DXVK"):
         raise ValueError("backend must be DXMT or DXVK")
     if kind in ("shared_keyed", "self_share"):
@@ -40,6 +43,13 @@ def main():
         shutil.copy2(workload, run / workload.name)
         workload = run / workload.name
         env["DXVK_LOG_PATH"] = str(work)
+    elif local_compiler:
+        # This DLL exports only a marker. A System32 compiler load must ignore the application's namesake.
+        run = work / "run"
+        run.mkdir()
+        shutil.copy2(sys.argv[6], run / "d3dcompiler_47.dll")
+        shutil.copy2(workload, run / workload.name)
+        workload = run / workload.name
     command = [str(raven), "--run-process", "--execution=native", "--timeout-ms=90000"]
     if kind in ("fullscreen", "present_rate", "pacing", "device10", "d3d9"):
         command.append("--desktop=macos")

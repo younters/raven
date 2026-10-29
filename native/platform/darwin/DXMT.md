@@ -317,6 +317,11 @@ Compositor** after navigation and three window resizes using this source overlay
 RDD, socket, utility and GMP sandbox switches remain enabled. Test screenshots check actual rendering;
 the `about:support` feature report alone is insufficient.
 
+The integrated macOS runtime also selects hardware WebRender with a fresh Firefox profile, without
+`gfx.webrender.all` or a DirectComposition-disable preference, using the AMD identity that `raven-apps`
+sets for Firefox. Navigation and resize retain the 2× Retina scale and the child processes exit after
+the parent ends.
+
 This is a limited DirectComposition implementation. Device v1, animations, general transforms,
 effects, composition surfaces, nested rounded clips, frame statistics and completion waiting are
 unsupported and return failure. The private snapshot accepts at most 128 streams; presentation transport

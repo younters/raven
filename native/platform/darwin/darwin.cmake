@@ -109,6 +109,12 @@ if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
     add_test(NAME darwin_d3d_compile COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
         $<TARGET_FILE:raven> ${D3D_COMPILE_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/d3d-compile d3d_compile)
     set_tests_properties(darwin_d3d_compile PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+    if(TARGET local_library_64_fixture)
+        add_test(NAME darwin_d3d_compile_local COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+            $<TARGET_FILE:raven> ${D3D_COMPILE_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/d3d-compile-local
+            d3d_compile_local ${CMAKE_CURRENT_BINARY_DIR}/local-library-64/winhttp.dll)
+        set_tests_properties(darwin_d3d_compile_local PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+    endif()
     set(NT_FILE_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-nt-file.exe)
     add_custom_command(OUTPUT ${NT_FILE_EXE}
         COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/nt_file.c
