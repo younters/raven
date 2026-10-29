@@ -1,5 +1,6 @@
 // Exercise the real x86_64 allocator without windows or captured pixels.
 #include "presentation.m"
+#include "slot_state.h"
 #include <pthread.h>
 #include <stdlib.h>
 
@@ -29,6 +30,11 @@ static void *acknowledge(void *unused)
 int main(void)
 {
 	@autoreleasepool {
+		struct raven_surface_frame stale = {.state = RAVEN_SURFACE_DISPLAYED, .sequence = 9};
+		raven_surface_release(&stale, 8);
+		check(stale.state == RAVEN_SURFACE_DISPLAYED, "stale release preserves newer presentation");
+		raven_surface_release(&stale, 9);
+		check(stale.state == RAVEN_SURFACE_AVAILABLE, "matching release acknowledges presentation");
 		id<MTLDevice> device = MTLCreateSystemDefaultDevice();
 		if (!device) return 77;
 		pthread_t host;

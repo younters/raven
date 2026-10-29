@@ -1,4 +1,5 @@
 #include "presentation.h"
+#include "slot_state.h"
 #include "cpu/native_cpu.h"
 #include "desktop/windows.h"
 #include "nt/host_names.h"
@@ -116,9 +117,7 @@ struct DarwinDXMTPresentation::State {
 			mach_port_deallocate(mach_task_self(), frame.reply);
 			frame.reply = MACH_PORT_NULL;
 		} else if (auto *control = process.darwin_control(); acknowledge_frame && control) {
-			uint32_t expected = RAVEN_SURFACE_DISPLAYED;
-			__atomic_compare_exchange_n(&control->surfaces[frame.slot].state, &expected, RAVEN_SURFACE_AVAILABLE, false,
-				__ATOMIC_RELEASE, __ATOMIC_RELAXED);
+			raven_surface_release(&control->surfaces[frame.slot], frame.sequence);
 		}
 	}
 
