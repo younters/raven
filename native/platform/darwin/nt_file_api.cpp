@@ -285,8 +285,13 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 				information = superseded;
 			else if (disposition == 4 || disposition == 5)
 				information = overwritten;
-			call.store_pointer(out, opened.result);
-			put_io_status(call, io, status_success, information);
+			try {
+				call.store_pointer(out, opened.result);
+				put_io_status(call, io, status_success, information);
+			} catch (const raven::ApiFault &) {
+				objects.close(opened.result);
+				throw;
+			}
 			call.ret(status_success);
 		} catch (const raven::ApiFault &) {
 			call.ret(status_access_violation);
@@ -365,7 +370,7 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 
 	// NtOpenSection: a named section of the session's namespace (\Sessions\N\BaseNamedObjects, or a name relative to its directory) is
 	// the name CreateFileMapping was given, with or without Local\; one of the global namespace is Global\.
-	registry.add("NtOpenSection", 3, [=](ApiCall &call) {
+	registry.add("NtOpenSection", 3, [=, &objects](ApiCall &call) {
 		try {
 			const auto parsed = object_attributes(call, call[2]);
 			if (!call[0] || !parsed || parsed->name.empty()) {
@@ -407,7 +412,12 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 				call.ret(status_of(opened.error ? opened.error : 2));
 				return;
 			}
-			call.store_pointer(call[0], opened.result);
+			try {
+				call.store_pointer(call[0], opened.result);
+			} catch (const raven::ApiFault &) {
+				objects.close(opened.result);
+				throw;
+			}
 			call.ret(status_success);
 		} catch (const raven::ApiFault &) {
 			call.ret(status_access_violation);

@@ -104,6 +104,11 @@ void entry(void)
     IO_STATUS_BLOCK io;
     if (NtOpenFile(&file, GENERIC_READ | SYNCHRONIZE, &attributes, &io, FILE_SHARE_READ, FILE_SYNCHRONOUS_IO_NONALERT) || io.Information != 1)
         ExitProcess(29);
+    DWORD handles_before, handles_after;
+    if (!GetProcessHandleCount(GetCurrentProcess(), &handles_before)) ExitProcess(75);
+    if (create((HANDLE *)1, NULL, L"\\??\\C:\\ntfile\\a.txt", GENERIC_READ, FILE_OPEN, 0, NULL) != (NTSTATUS)0xc0000005)
+        ExitProcess(76);
+    if (!GetProcessHandleCount(GetCurrentProcess(), &handles_after) || handles_after != handles_before) ExitProcess(77);
     char buffer[8] = {0};
     DWORD read;
     if (!ReadFile(file, buffer, sizeof buffer, &read, NULL) || read != 5 || buffer[0] != 'h' || buffer[4] != 'o') ExitProcess(30);
@@ -163,6 +168,9 @@ void entry(void)
     view[0] = 'z';
     UNICODE_STRING section = text(L"\\Sessions\\1\\BaseNamedObjects\\RavenNtSection");
     InitializeObjectAttributes(&attributes, &section, 0, NULL, NULL);
+    if (!GetProcessHandleCount(GetCurrentProcess(), &handles_before)) ExitProcess(78);
+    if (NtOpenSection((HANDLE *)1, SECTION_MAP_READ, &attributes) != (NTSTATUS)0xc0000005) ExitProcess(79);
+    if (!GetProcessHandleCount(GetCurrentProcess(), &handles_after) || handles_after != handles_before) ExitProcess(80);
     HANDLE opened;
     if (NtOpenSection(&opened, SECTION_QUERY | SECTION_MAP_READ, &attributes)) ExitProcess(51);
     const char *seen = MapViewOfFile(opened, FILE_MAP_READ, 0, 0, 0);
