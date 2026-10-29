@@ -13,6 +13,7 @@ int raven_entry(void)
 	size=1;
 	if (!getsockopt(a,SOL_SOCKET,SO_EXCLUSIVEADDRUSE,(char *)&value,&size) || WSAGetLastError()!=WSAEFAULT) return 10;
 	size=sizeof(value);
+	value=0;
 	if (setsockopt(a,SOL_SOCKET,SO_EXCLUSIVEADDRUSE,(char *)&value,size)) return 11;
 	value=1;
 	if (setsockopt(a,SOL_SOCKET,SO_REUSEADDR,(char *)&value,size)) return 12;
