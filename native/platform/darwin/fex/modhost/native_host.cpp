@@ -5,6 +5,9 @@
 #include "raven_host.h"
 #include "abi.h"
 #include "crt.h"
+#include "sync.h"
+#include <thread>
+#include <atomic>
 #include <mach/mach_time.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -126,7 +129,8 @@ void *resolve_native(const char *dll, const char *name) {
   ENTRY("RtlLeaveCriticalSection", leave); ENTRY("RtlTryEnterCriticalSection", try_enter);
   ENTRY("RtlDeleteCriticalSection", delete_lock);
 #undef ENTRY
-  return RavenCRT::resolve(name);
+  if (auto *p = RavenCRT::resolve(name)) return p;
+  return RavenSync::resolve(name);
 }
 NativeJit import_jit;
 void *resolve(const char *dll, const char *name) {
@@ -135,6 +139,27 @@ void *resolve(const char *dll, const char *name) {
 }
 void self_test() {
   assert(page_size() == 16384);
+  uint64_t srw = 0, condition = 0;
+  RavenSync::init_rw(&srw); RavenSync::init_cv(&condition);
+  bool ready = false;
+  std::atomic<bool> started {false};
+  std::thread worker([&] {
+    RavenSync::acquire_ex(&srw); started = true;
+    while (!ready) {
+      int64_t timeout = -10000000;
+      auto result = RavenSync::sleep_cv(&condition, &srw, &timeout, 0);
+      assert(result == 0 || result == 0x102);
+    }
+    RavenSync::release_ex(&srw);
+  });
+  while (!started) std::this_thread::yield();
+  RavenSync::acquire_ex(&srw); ready = true; RavenSync::wake_cv(&condition); RavenSync::release_ex(&srw);
+  worker.join();
+  uint64_t address_value = 1, compare_value = 1;
+  int64_t immediate = 0;
+  assert(RavenSync::wait_address(&address_value, &compare_value, 8, &immediate) == 0x102);
+  compare_value = 2;
+  assert(RavenSync::wait_address(&address_value, &compare_value, 8, nullptr) == 0);
   char16_t text[] = u"4294967295!"; char16_t *end = nullptr;
   assert(RavenCRT::wide_ulong(text, &end, 10) == UINT32_MAX && *end == '!');
   errno = 0;
@@ -162,7 +187,7 @@ void self_test() {
   int key = 0; assert(initialize_lock(&key) == 0); assert(enter(&key) == 0);
   assert(try_enter(&key)); assert(leave(&key) == 0); assert(leave(&key) == 0); assert(delete_lock(&key) == 0);
   int64_t a, b, f; assert(qpc(&a, &f) == 1 && f > 0); assert(qpc(&b, nullptr) == 1 && b >= a);
-  std::cout << "PASS: native VM, heap, recursive locks, QPC substrate (not PE execution)\n";
+  std::cout << "PASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)\n";
 }
 }
 int main(int argc, char **argv) {

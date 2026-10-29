@@ -1,3 +1,4 @@
+add_subdirectory(${RAVEN_DARWIN_DIR}/fex/modhost ${CMAKE_CURRENT_BINARY_DIR}/fex-modhost)
 # macOS adjustments to targets native/CMakeLists.txt defines, applied after it so that file stays as upstream wrote it.
 
 if(RAVEN_KOSMICKRISP_ROOT)

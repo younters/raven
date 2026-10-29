@@ -58,6 +58,11 @@ uint32_t ansi_ulong(const char *s, char **end, int base) {
   // strtoull applies the sign at 64 bits. Parse sign separately for Windows width.
   auto *p = s; while (isspace(static_cast<unsigned char>(*p))) ++p;
   bool negative = *p == '-'; if (*p == '-' || *p == '+') ++p;
+  if (base && (base < 2 || base > 36)) { errno = EINVAL; if (end) *end = const_cast<char *>(s); return 0; }
+  if (*p == '+' || *p == '-' || isspace(static_cast<unsigned char>(*p))) {
+    if (end) *end = const_cast<char *>(s);
+    return 0;
+  }
   char *last; auto value = strtoull(p,&last,base);
   if (end) *end = last == p ? const_cast<char *>(s) : last;
   if (value > UINT32_MAX) { errno = ERANGE; return UINT32_MAX; }

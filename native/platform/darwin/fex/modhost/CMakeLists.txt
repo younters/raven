@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: MIT
+# Also supports standalone configuration, without provisioning Raven's fixtures.
+cmake_minimum_required(VERSION 3.20)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(RavenFexModhost LANGUAGES CXX ASM)
+    enable_testing()
+endif()
+if(NOT APPLE OR NOT CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+    return()
+endif()
+set(RAVEN_FEX_MODULE_ROOT "/Users/yount/Documents/Projects/raven-components/fex-modules" CACHE PATH "Provisioned FEX modules")
+if(NOT EXISTS "${RAVEN_FEX_MODULE_ROOT}/xtajit64.dll")
+    return()
+endif()
+enable_language(ASM)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_executable(fex_modhost_substrate native_host.cpp abi.S)
+add_executable(fex_modhost_abi abi_test.cpp abi.S abi_fixture.S)
+foreach(target fex_modhost_substrate fex_modhost_abi)
+    target_compile_features(${target} PRIVATE cxx_std_17)
+    target_compile_options(${target} PRIVATE -arch arm64 -ffixed-x18 -Wall -Wextra -Werror -mmacosx-version-min=11.0)
+    # Self-test predicates must remain active in Release builds.
+    target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-UNDEBUG>)
+    target_link_options(${target} PRIVATE -arch arm64 -Wl,-platform_version,macos,11.0,11.0)
+endforeach()
+get_filename_component(RAVEN_MODHOST_REPO "${CMAKE_CURRENT_SOURCE_DIR}/../../../../.." ABSOLUTE)
+add_test(NAME fex_modhost_substrate COMMAND ${Python3_EXECUTABLE}
+    "${RAVEN_MODHOST_REPO}/scripts/test-fex-modhost.py" --substrate-only
+    --host $<TARGET_FILE:fex_modhost_substrate> --abi $<TARGET_FILE:fex_modhost_abi>)
+set_tests_properties(fex_modhost_substrate PROPERTIES TIMEOUT 60 LABELS "fex;substrate")
