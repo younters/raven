@@ -34,14 +34,14 @@ void register_firmware_api(raven::ApiRegistry &registry)
 	});
 }
 
-// Raven exposes one processor group, with the same width limit as GetSystemInfo.
+// Raven exposes one processor group. The x86 dispatcher models four CPUs; x64 uses the host count.
 void register_processor_count_api(raven::ApiRegistry &registry)
 {
 	for (const auto *name : {"GetActiveProcessorCount", "GetMaximumProcessorCount"})
 		registry.add(name, 1, [](raven::ApiCall &call) {
 			const auto group = call.u32(0) & 0xffff;
 			if (group && group != 0xffff) { call.fail(87); return; }
-			call.ret(std::max(1U, std::min(call.pointer_width() == 4 ? 32U : 64U, std::thread::hardware_concurrency())));
+			call.ret(call.pointer_width() == 4 ? 4U : std::max(1U, std::min(64U, std::thread::hardware_concurrency())));
 		});
 }
 
