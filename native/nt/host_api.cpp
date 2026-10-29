@@ -869,7 +869,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		std::vector<uint8_t> data;
 		if (level == 11) {
 			// PROCESSOR_POWER_INFORMATION per processor: number, maximum, current and limit in MHz, idle states.
-			#ifdef __APPLE__
+#ifdef __APPLE__
 			const long count = darwin::processor_count(call.pointer_width() == 4);
 #else
 			const long count = std::max<long>(1, ::sysconf(_SC_NPROCESSORS_ONLN));

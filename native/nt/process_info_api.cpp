@@ -142,7 +142,7 @@ static InheritedHandle local_process_information(KernelContext &context, uint32_
 			answer.access = 0xc00000bbU;
 			return answer;
 		}
-		#ifdef __APPLE__
+#ifdef __APPLE__
 		const auto processors = darwin::processor_count(width == 4);
 #else
 		const auto processors = std::clamp<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1, width * 8);
