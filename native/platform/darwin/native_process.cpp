@@ -13,6 +13,7 @@
 #include "cpu/served_queue.h"
 #include "guest/protocol.h"
 #include "controller_profile.h"
+#include "x87sidecar.h"
 #include "shared_surface.h"
 #include "audio/api.h"
 #include "dxmt/identity.h"
@@ -105,7 +106,7 @@ int spawn_source(int descriptor)
 // The agent process and the channels to it.
 class GuestAgent {
 public:
-	GuestAgent(const std::string &bootstrap, std::chrono::milliseconds timeout);
+	GuestAgent(const std::string &bootstrap, std::chrono::milliseconds timeout, bool x86);
 	~GuestAgent();
 	GuestAgent(const GuestAgent &) = delete;
 	GuestAgent &operator=(const GuestAgent &) = delete;
@@ -158,7 +159,7 @@ private:
 	void reap(bool block);
 };
 
-GuestAgent::GuestAgent(const std::string &bootstrap, std::chrono::milliseconds timeout)
+GuestAgent::GuestAgent(const std::string &bootstrap, std::chrono::milliseconds timeout, bool x86)
 	: deadline(std::chrono::steady_clock::now() + timeout)
 {
 	try {
@@ -246,8 +247,6 @@ GuestAgent::GuestAgent(const std::string &bootstrap, std::chrono::milliseconds t
 		posix_spawnattr_setsigmask(&attributes, &none);
 		posix_spawnattr_setsigdefault(&attributes, &all);
 		// The x86_64 agent runs under Rosetta 2, which offers AVX to the guest only when asked.
-		std::string path = bootstrap;
-		char *arguments[] = {path.data(), const_cast<char *>(name.c_str()), nullptr};
 		char avx[] = "ROSETTA_ADVERTISE_AVX=1";
 		std::vector<std::string> native_environment{avx};
 		if (const auto gpu = darwin_dxgi::identity()) {
@@ -260,10 +259,7 @@ GuestAgent::GuestAgent(const std::string &bootstrap, std::chrono::milliseconds t
 			native_environment.emplace_back(std::string("DXMT_CONFIG_FILE=") + file);
 		for (const char *key : {"MTL_DEBUG_LAYER", "MTL_SHADER_VALIDATION", "MTL_CAPTURE_ENABLED"})
 			if (const char *value = std::getenv(key)) native_environment.emplace_back(std::string(key) + "=" + value);
-		std::vector<char *> environment;
-		for (auto &value : native_environment) environment.push_back(value.data());
-		environment.push_back(nullptr);
-		const int spawned = posix_spawn(&pid, path.c_str(), &actions, &attributes, arguments, environment.data());
+		const int spawned = spawn_x87_guest(&pid, bootstrap, name, x86, &actions, &attributes, std::move(native_environment));
 		posix_spawn_file_actions_destroy(&actions);
 		posix_spawnattr_destroy(&attributes);
 		close(guest_socket);
@@ -733,7 +729,7 @@ NativeProcess::NativeProcess(std::span<LoadedImage *const> images, const std::st
 		if (mapped_image->data().size() > state->limit() || mapped_image->base() > state->limit() - mapped_image->data().size())
 			throw std::runtime_error("native image does not fit the guest address space");
 	}
-	state->child = std::make_unique<GuestAgent>(bootstrap, setup_timeout);
+	state->child = std::make_unique<GuestAgent>(bootstrap, setup_timeout, mode == NativeMode::x86);
 	state->child->parallel = std::getenv("RAVEN_PARALLEL") != nullptr;
 	store(&state->child->control->parallel, state->child->parallel);
 	for (auto *mapped_image : images) {

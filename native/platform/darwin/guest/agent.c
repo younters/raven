@@ -6,6 +6,7 @@
 // and signal stack. A service thread handles memory and pthread operations, and a watcher ends the guest when the host goes away.
 
 #include "protocol.h"
+#include "x87sidecar.h"
 
 #include <architecture/i386/table.h>
 #include <dlfcn.h>
@@ -961,6 +962,7 @@ static void send_task_port(const char *name)
 
 int main(int argc, char **argv)
 {
+	raven_x87_handshake();
 	if (argc != 2)
 		return 2;
 	void *mapped = mmap(NULL, RAVEN_CONTROL_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, RAVEN_GUEST_CONTROL_FD, 0);
