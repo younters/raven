@@ -587,14 +587,13 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		const auto answer = owner->channel->request_process(objects, threads, std::move(request));
 		return answer ? answer->access : 0xc0000001U;
 	};
-	// The thread impersonates ANONYMOUS LOGON: an impersonation-level token without privileges, at untrusted integrity.
+	// The thread impersonates ANONYMOUS LOGON: an impersonation-level token with only SeChangeNotifyPrivilege, at untrusted integrity.
 	registry.add("NtImpersonateAnonymousToken", 1, [set_thread_token, &context, &objects](ApiCall &call) {
 		auto token = std::make_shared<AccessToken>(*context.process_token);
 		token->set_type(2);
 		token->set_impersonation_level(2);
 		token->set_integrity(0);
-		token->restrict_privileges(false, std::vector<uint64_t>{2, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
-			23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36});
+		token->restrict_privileges(true, {});
 		token->set_anonymous();
 		const auto made = objects.add_object(token);
 		if (made.status) { call.ret(made.status); return; }

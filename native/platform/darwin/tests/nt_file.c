@@ -137,6 +137,9 @@ void entry(void)
         !GetTokenInformation(token, TokenUser, user, sizeof user, &size)) ExitProcess(46);
     const SID *sid = (const SID *)((TOKEN_USER *)user)->User.Sid;
     if (sid->SubAuthorityCount != 1 || sid->IdentifierAuthority.Value[5] != 5 || sid->SubAuthority[0] != 7) ExitProcess(47);
+    TOKEN_PRIVILEGES privileges;
+    if (!GetTokenInformation(token, TokenPrivileges, &privileges, sizeof privileges, &size) || privileges.PrivilegeCount != 1 ||
+        privileges.Privileges[0].Luid.LowPart != 23 || privileges.Privileges[0].Luid.HighPart) ExitProcess(49);
     CloseHandle(token);
     if (!RevertToSelf() || OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &token)) ExitProcess(48);
 
