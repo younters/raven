@@ -3599,7 +3599,9 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
             endif()
             # The DXVK 64-bit DLLs are provisioned outside the tree (scripts/provision-graphics.py); the test needs a Vulkan driver too.
             set(RAVEN_DXVK_PE64_DIR "" CACHE PATH "Directory holding DXVK d3d11.dll, dxgi.dll and d3d10core.dll for 64-bit programs")
-            if(RAVEN_DXVK_PE64_DIR AND EXISTS ${RAVEN_DXVK_PE64_DIR}/d3d11.dll AND TARGET vulkan_bridge_test)
+            # macOS draws Direct3D through DXMT on Metal; these DXVK/vkd3d-proton runs over MoltenVK are opt-in comparisons there.
+            if(RAVEN_DXVK_PE64_DIR AND EXISTS ${RAVEN_DXVK_PE64_DIR}/d3d11.dll AND TARGET vulkan_bridge_test AND
+                (NOT APPLE OR RAVEN_DARWIN_DXVK_TESTS))
                 set(RAVEN_VULKAN_ICD "")
                 if(EXISTS /usr/share/vulkan/icd.d/lvp_icd.json)
                     set(RAVEN_VULKAN_ICD VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json)
