@@ -30,7 +30,9 @@
 #include "platform/darwin/unix_calls.h"
 #include "platform/darwin/audio/api.h"
 #include "platform/darwin/dxmt/presentation.h"
+#include "platform/darwin/dxmt/identity.h"
 #include "platform/darwin/dxmt/kernel_thunks.h"
+#include "platform/darwin/nt_file_api.h"
 #endif
 #ifdef RAVEN_OPENGL
 #include "graphics/opengl_bridge.h"
@@ -84,6 +86,8 @@ bool host_device_export(std::string_view library, std::string_view name)
 	// before the guest shell component's registry based COM activation path.
 	if (library == "ole32.dll" && name == "CoCreateInstance") return true;
 	if (library == "user32.dll" && name == "MessageBeep") return true;
+	if (library == "setupapi.dll" && name == "SetupDiGetDeviceRegistryPropertyW")
+		return darwin_dxgi::identity().has_value();
 #endif
 	return library == "setupapi.dll" && (name == "SetupDiGetClassDevsA" || name == "SetupDiGetClassDevsW" ||
 		name == "SetupDiEnumDeviceInfo" || name == "SetupDiEnumDeviceInterfaces" || name == "SetupDiDestroyDeviceInfoList");
@@ -1641,6 +1645,12 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 #ifdef __APPLE__
 	nt_names.push_back("__wine_dbg_output");
 	nt_names.push_back("__wine_unix_call_dispatcher");
+	nt_names.push_back("LdrGetDllHandle");
+	nt_names.push_back("RtlFindExportedRoutineByName");
+	// Chromium's sandbox resolves the natives it intercepts from ntdll's export table, not through GetProcAddress.
+	for (const auto name : {"NtCreateFile", "NtOpenFile", "NtQueryAttributesFile", "NtQueryFullAttributesFile", "NtSetInformationFile",
+		"NtImpersonateAnonymousToken", "NtOpenSection"})
+		nt_names.push_back(name);
 	nt_names.push_back("strncpy"); // winemetal.dll can be loaded after ntdll's export table was built.
 #endif
 	nt_names.insert(nt_names.end(),NativeEnvironment::nt_exports().begin(),NativeEnvironment::nt_exports().end());
@@ -1773,6 +1783,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		std::vector<std::pair<std::string_view, uint16_t>> ordinals(published_numbers.begin(), published_numbers.end());
 		if (const auto extra = unknown_ordinals.find(std::string(name)); extra != unknown_ordinals.end())
 			ordinals.insert(ordinals.end(), extra->second.begin(), extra->second.end());
+#ifdef __APPLE__
+		if (darwin_graphics_system_module(name, true))
+			continue; // The provisioned library loads in place of a stub.
+#endif
 		PEModule *provider = nullptr;
 		const auto found = modules.all().find(name);
 		if (found != modules.all().end() && found->second->runtime_api) {
@@ -2592,7 +2606,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	if (opengl) opengl->register_api(api_registry, threads);
 #endif
 #ifdef __APPLE__
-	register_darwin_d3dkmt(desktop_api, kernel_objects);
+	register_darwin_d3dkmt(desktop_api, kernel_objects, threads);
 #endif
 	windows.register_api(desktop_api);
 	desktop.register_gdi_api(desktop_api);
@@ -2608,6 +2622,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_profile_api(api_registry, profile);
 	register_ansi_adapters(api_registry);
 	register_legacy_file_api(api_registry);
+#ifdef __APPLE__
+	raven_darwin::register_nt_file_api(api_registry, kernel);
+#endif
 	write_native_api_inventory(modules, {&api_registry, &desktop_api});
 	std::vector<const PEModule *> attached;
 	attached.reserve(order.size());
@@ -2675,6 +2692,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		// managed code alone loads, as the runtime of .NET 2.0 loads its class library. A library loaded as a data file or for its
 		// resources is mapped the same way, whatever its width and even when it is a program, and stays out of the loader's list.
 		const uint32_t flags = module_api.load_flags();
+		bool system_requested = (flags & 0x1f00) == 0x800;
 		const bool as_data = flags & 0x62;
 		const bool unresolved = (flags & 1) || as_data;
 		if (name.empty()) {
@@ -2704,6 +2722,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 					character = static_cast<char>(character + ('a' - 'A'));
 			}
 			const bool system_folder = folder == "c:\\windows\\system32" || folder == "c:\\windows\\syswow64";
+			system_requested = system_requested || system_folder;
 			if (system_folder && modules.all().contains("system32-" + identity)) {
 				name = "system32-" + identity;
 			} else {
@@ -2733,7 +2752,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			name += ".dll";
 		if (const auto host = apiset_host(name); !host.empty())
 			name = host;
-		if ((flags & 0x1f00) == 0x800 && modules.all().contains("system32-" + name))
+		if (system_requested && modules.all().contains("system32-" + name))
 			name = "system32-" + name;
 		const auto existing = modules.all().find(name);
 		// Other threads waited above, so a load already under way is this thread's own: a library starting up loads another, as
@@ -2804,9 +2823,19 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			} else {
 				const auto system_names = system_library_names();
 				// COM graphics components have no Win32 import-library export list, but are system libraries too.
-				const bool component = identity == "dwrite.dll" || identity == "d2d1.dll" || identity == "uianimation.dll";
+				const bool component = identity == "dwrite.dll" || identity == "d2d1.dll" || identity == "uianimation.dll"
+#ifdef __APPLE__
+					|| darwin_graphics_system_module(identity, true)
+#endif
+					;
 				const bool system = std::find(system_names.begin(), system_names.end(), identity) != system_names.end() || component;
-				if ((!system || (has_launch && program_may_replace(identity))) && !activation_contexts().library_folder(identity)) {
+#ifdef __APPLE__
+				// System32 requests use the configured graphics family even when an app ships a library of the same name.
+				if (system_requested)
+					if (auto configured = darwin_graphics_module(identity, true))
+						bytes.emplace(std::move(*configured));
+#endif
+				if (!bytes && (!system || (has_launch && program_may_replace(identity))) && !activation_contexts().library_folder(identity)) {
 					if (const auto found = paths.find_library(launch->image_path, from_utf8(identity), true, flags)) {
 						bool system_copy = false;
 						if (system) {

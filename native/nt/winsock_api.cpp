@@ -17,6 +17,7 @@
 #include <map>
 #ifdef __APPLE__
 #include <mutex>
+#include "platform/darwin/socket_catalog.h"
 #endif
 #include <sstream>
 #include <tuple>
@@ -1269,7 +1270,7 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			if (milliseconds == 0 || (wake && std::chrono::steady_clock::now() >= *wake))
 				return std::nullopt;
 			HostWait waiting;
-			threads.block([&] { reactor.poll(); return !port->empty(); }, wake);
+			threads.block([&reactor, port] { reactor.poll(); return !port->empty(); }, wake);
 		}
 	};
 	registry.add("GetQueuedCompletionStatus", 5, [&objects, wait_packet](ApiCall &call) {
@@ -2180,6 +2181,9 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("WSAEnumProtocolsW", 3, [enumerate_protocols](ApiCall &call) { enumerate_protocols(call, true); });
 	registry.add("WSAEnumProtocolsA", 3, [enumerate_protocols](ApiCall &call) { enumerate_protocols(call, false); });
+#ifdef __APPLE__
+	darwin::register_socket_catalog(registry);
+#endif
 	registry.add("WSAStartup", 2, [](ApiCall &call) {
 		if (!call[1]) {
 			call.ret(10014);

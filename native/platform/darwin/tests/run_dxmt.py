@@ -17,6 +17,15 @@ def main():
     backend = sys.argv[6] if len(sys.argv) > 6 else "DXMT"
     if backend not in ("DXMT", "DXVK"):
         raise ValueError("backend must be DXMT or DXVK")
+    if kind in ("shared_keyed", "self_share"):
+        # The released fallback has no IDXGIKeyedMutex implementation.
+        count = root / "unix64/unix-call-count"
+        if not count.exists() or count.read_text().strip() != "146":
+            print("source DXMT overlay required for keyed texture test")
+            return 77
+    if kind == "d3d_compile" and not (root / "pe64/d3dcompiler_47.dll").exists():
+        print("provisioned d3dcompiler_47 required")
+        return 77
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
     prefix = work / "prefix"
@@ -56,7 +65,7 @@ def main():
         (work / "driver.log").write_text(diagnostics)
     if backend == "DXVK" and "DXVK:" not in diagnostics:
         raise RuntimeError("fixture did not identify the selected DXVK backend")
-    output = {"device": "dxmt-device", "shared": "dxmt-shared", "deferred": "triangle", "d3d9": "window"}.get(kind, kind)
+    output = {"device": "dxmt-device", "shared": "dxmt-shared", "shared_keyed": "dxmt-shared", "keyed": "dxmt-keyed", "self_share": "dxmt-self-share", "deferred": "triangle", "d3d9": "window"}.get(kind, kind)
     status = drive / f"{output}.txt"
     text = status.read_text() if status.exists() else "missing"
     if result.returncode or (kind not in ("present_rate", "pacing") and not text.startswith("OK")):
@@ -132,4 +141,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

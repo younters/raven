@@ -1,0 +1,28 @@
+diff --git a/meson.options b/meson.options
+index 715b176..a4c5d7d 100644
+--- a/meson.options
++++ b/meson.options
+@@ -8,4 +8,5 @@ option('wine_builtin_dll', type : 'boolean', value : true)
+ option('enable_tests', type : 'boolean', value : false)
+ option('enable_nvapi', type : 'boolean', value : false)
+ option('enable_nvngx', type : 'boolean', value : false)
+-option('enable_d3d12', type : 'boolean', value : false)
+\ No newline at end of file
++option('enable_d3d12', type : 'boolean', value : false)
++option('raven_adapter', type : 'string', value : '')
+diff --git a/src/winemetal/unix/meson.build b/src/winemetal/unix/meson.build
+index 3f20c2b..e8e1028 100644
+--- a/src/winemetal/unix/meson.build
++++ b/src/winemetal/unix/meson.build
+@@ -3,7 +3,10 @@ winemetal_unix_src = [
+   'cache.c',
+ ]
+ 
+-if wine_build_path != ''
++if get_option('raven_adapter') != ''
++  winemac_so = get_option('raven_adapter')
++  ntdll_so = get_option('raven_adapter')
++elif wine_build_path != ''
+   winemac_so = join_paths(wine_build_path, 'dlls/winemac.drv/winemac.so')
+   ntdll_so = join_paths(wine_build_path, 'dlls/ntdll/ntdll.so')
+ elif wine_install_path != ''

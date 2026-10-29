@@ -27,7 +27,7 @@ command -v brew >/dev/null || { echo "setup.sh: Homebrew is required (https://br
 step "Homebrew packages"
 # Only what is missing: installing a formula Homebrew already has would upgrade it and everything that depends on it.
 missing=
-for formula in cmake ninja python mingw-w64 lld llvm openssl@3 libpng freetype pixman libxkbcommon bison zstd; do
+for formula in cmake ninja meson python mingw-w64 lld llvm openssl@3 libpng freetype pixman libxkbcommon bison zstd; do
 	brew list --formula "$formula" >/dev/null 2>&1 || missing="$missing $formula"
 done
 # shellcheck disable=SC2086
@@ -45,7 +45,7 @@ if [ ! -x "$COMPONENTS/tools/bin/widl" ]; then
 	tar -xf "$archive" -C "$COMPONENTS/tools/wine-src" --strip-components 1
 	(cd "$COMPONENTS/tools/wine-build" && ../wine-src/configure --enable-win64 --disable-tests --without-x --without-freetype \
 		--without-gstreamer --without-pcap --without-sdl --without-usb --without-vulkan --without-cups --without-gnutls >/dev/null &&
-		make -j"$(sysctl -n hw.ncpu)" tools/widl/widl >/dev/null)
+		make -j4 tools/widl/widl >/dev/null)
 	cp "$COMPONENTS/tools/wine-build/tools/widl/widl" "$COMPONENTS/tools/bin/widl"
 fi
 
@@ -67,7 +67,14 @@ provision roots provision-roots.py --output "$COMPONENTS/roots"
 provision libpng provision-libpng.py --output "$COMPONENTS/libpng"
 provision graphics provision-graphics.py --destination "$COMPONENTS/graphics"
 # Direct3D 10/11 on Metal; its macOS library is built from native/platform/darwin/dxmt against the pinned release.
-provision dxmt provision-dxmt.py --destination "$COMPONENTS"
+if [ "${RAVEN_DXMT_SOURCE_BUILD:-0}" = 1 ]; then
+    : "${RAVEN_COMPONENTS:?source builds require an explicit private components destination}"
+    . "$SOURCE/native/platform/darwin/dxmt/setup_source.sh"
+    python3 "$SOURCE/scripts/provision-dxmt.py" --destination "$COMPONENTS" \
+        --source-llvm "$RAVEN_DXMT_LLVM15" --source-wine "$RAVEN_DXMT_WINE_BUILD"
+else
+    provision dxmt provision-dxmt.py --destination "$COMPONENTS"
+fi
 
 # Skia for the text of GDI, as native/upstream/skia/README.md qualifies it: CPU only, the custom empty font manager, system FreeType.
 if [ ! -f "$SKIA/out/libskia.a" ]; then

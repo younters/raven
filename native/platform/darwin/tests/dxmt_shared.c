@@ -5,6 +5,10 @@
 #include <dxgi.h>
 #include <dxgi1_2.h>
 
+#ifndef DXMT_SHARED_KEYED
+#define DXMT_SHARED_KEYED 0
+#endif
+
 static int verify(HANDLE shared, int nt)
 {
 	ID3D11Device *device = NULL;
@@ -13,6 +17,8 @@ static int verify(HANDLE shared, int nt)
 	ID3D11Texture2D *texture = NULL, *staging = NULL;
 	D3D11_TEXTURE2D_DESC desc;
 	D3D11_MAPPED_SUBRESOURCE mapped;
+	IDXGIKeyedMutex *mutex = NULL;
+	int acquired = 0;
 	int result = 10;
 	if (FAILED(D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0,
 		D3D11_SDK_VERSION, &device, NULL, &context))) return result;
@@ -21,6 +27,17 @@ static int verify(HANDLE shared, int nt)
 		if (FAILED(ID3D11Device_QueryInterface(device, &IID_ID3D11Device1, (void **)&device1)) ||
 			FAILED(ID3D11Device1_OpenSharedResource1(device1, shared, &IID_ID3D11Texture2D, (void **)&texture))) goto done;
 	} else if (FAILED(ID3D11Device_OpenSharedResource(device, shared, &IID_ID3D11Texture2D, (void **)&texture))) goto done;
+	if (DXMT_SHARED_KEYED) {
+		result = 50;
+        if (FAILED(ID3D11Texture2D_QueryInterface(texture, &IID_IDXGIKeyedMutex, (void **)&mutex))) goto done;
+        const ULONGLONG started = GetTickCount64();
+        if (IDXGIKeyedMutex_AcquireSync(mutex, 99, 25) != WAIT_TIMEOUT || GetTickCount64() - started < 15) {
+            result = 54;
+            goto done;
+        }
+        if (IDXGIKeyedMutex_AcquireSync(mutex, 1, INFINITE) != S_OK) goto done;
+        acquired = 1;
+	}
 	ID3D11Texture2D_GetDesc(texture, &desc);
 	desc.Usage = D3D11_USAGE_STAGING;
 	desc.BindFlags = 0;
@@ -36,6 +53,8 @@ static int verify(HANDLE shared, int nt)
 		((unsigned char *)mapped.pData)[2] == 191 && ((unsigned char *)mapped.pData)[3] == 255) result = 0;
 	ID3D11DeviceContext_Unmap(context, (ID3D11Resource *)staging, 0);
 done:
+	if (acquired && IDXGIKeyedMutex_ReleaseSync(mutex, 1) != S_OK) result = 51;
+	if (mutex) IDXGIKeyedMutex_Release(mutex);
 	if (staging) ID3D11Texture2D_Release(staging);
 	if (texture) ID3D11Texture2D_Release(texture);
 	if (device1) ID3D11Device1_Release(device1);
@@ -89,6 +108,7 @@ void entry(void)
 	ID3D11DeviceContext *context = NULL;
 	ID3D11Texture2D *texture = NULL;
 	ID3D11RenderTargetView *target = NULL;
+	IDXGIKeyedMutex *mutex = NULL;
 	IDXGIResource *resource = NULL;
 	IDXGIResource1 *resource1 = NULL;
 	HANDLE shared = NULL;
@@ -102,14 +122,20 @@ void entry(void)
 	desc.SampleDesc.Count = 1;
 	desc.Usage = D3D11_USAGE_DEFAULT;
 	desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-	desc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+	desc.MiscFlags = DXMT_SHARED_KEYED ? D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX : D3D11_RESOURCE_MISC_SHARED;
 	result = 2;
 	if (FAILED(ID3D11Device_CreateTexture2D(device, &desc, NULL, &texture))) goto done;
 	result = 3;
 	if (FAILED(ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, NULL, &target))) goto done;
+	if (DXMT_SHARED_KEYED) {
+		result = 52;
+		if (FAILED(ID3D11Texture2D_QueryInterface(texture, &IID_IDXGIKeyedMutex, (void **)&mutex)) ||
+			IDXGIKeyedMutex_AcquireSync(mutex, 0, 5000) != S_OK) goto done;
+	}
 	const float clear[] = {64.0f / 255, 128.0f / 255, 191.0f / 255, 1};
 	ID3D11DeviceContext_ClearRenderTargetView(context, target, clear);
 	ID3D11DeviceContext_Flush(context);
+	if (mutex && IDXGIKeyedMutex_ReleaseSync(mutex, 1) != S_OK) { result = 53; goto done; }
 	result = 4;
 	if (FAILED(ID3D11Texture2D_QueryInterface(texture, &IID_IDXGIResource, (void **)&resource))) goto done;
 	result = 5;
@@ -138,6 +164,10 @@ void entry(void)
 	CloseHandle(process.hThread);
 	CloseHandle(process.hProcess);
 	if (result) goto done;
+	if (DXMT_SHARED_KEYED) {
+		write_result("OK: DXMT keyed shared texture synchronized across processes with pixel readback");
+		goto done;
+	}
 	IDXGIResource_Release(resource); resource = NULL;
 	ID3D11RenderTargetView_Release(target); target = NULL;
 	ID3D11Texture2D_Release(texture); texture = NULL;
@@ -210,6 +240,7 @@ remote_done:
 	CloseHandle(shared);
 	if (!result) write_result("OK: DXMT legacy and NT shared textures, inheritance and DuplicateHandle across processes with pixel readback");
 done:
+	if (mutex) IDXGIKeyedMutex_Release(mutex);
 	if (resource1) IDXGIResource1_Release(resource1);
 	if (resource) IDXGIResource_Release(resource);
 	if (target) ID3D11RenderTargetView_Release(target);

@@ -27,7 +27,7 @@ if(TARGET raven_cpu)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/native_process.cpp ${RAVEN_DARWIN_DIR}/unix_calls.cpp)
     list(REMOVE_ITEM RAVEN_CPU_SOURCES desktop/shared_pixels.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/shared_pixels.cpp)
-    list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/system_api.cpp)
+    list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/system_api.cpp ${RAVEN_DARWIN_DIR}/nt_file_api.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/desktop_idle.cpp)
     list(APPEND RAVEN_CPU_SOURCES ${RAVEN_DARWIN_DIR}/dpi.cpp)
     set_property(TARGET raven_cpu PROPERTY SOURCES ${RAVEN_CPU_SOURCES})
@@ -82,6 +82,69 @@ if(TARGET vulkan_pe_fixture AND RAVEN_MINGW64)
 endif()
 
 if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
+    set(IDENTITY_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-identity.exe)
+    add_custom_command(OUTPUT ${IDENTITY_EXE}
+        COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/dxmt_identity.c
+            -o ${IDENTITY_EXE} -lsetupapi -ladvapi32 -luser32 -ldxgi -ldxguid -lkernel32 -lgcc
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/dxmt_identity.c VERBATIM)
+    add_custom_target(darwin_dxmt_identity_fixture ALL DEPENDS ${IDENTITY_EXE})
+    add_test(NAME darwin_dxmt_identity COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+        $<TARGET_FILE:raven> ${IDENTITY_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-identity identity)
+    set_tests_properties(darwin_dxmt_identity PROPERTIES TIMEOUT 120 ENVIRONMENT "RAVEN_DXGI_VENDOR=amd")
+    set(SELF_SHARE_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-self-share.exe)
+    add_custom_command(OUTPUT ${SELF_SHARE_EXE}
+        COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/dxmt_self_share.c
+            -o ${SELF_SHARE_EXE} -ld3d11 -ldxgi -ldxguid -lkernel32 -lgcc
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/dxmt_self_share.c VERBATIM)
+    add_custom_target(darwin_dxmt_self_share_fixture ALL DEPENDS ${SELF_SHARE_EXE})
+    add_test(NAME darwin_dxmt_self_share COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+        $<TARGET_FILE:raven> ${SELF_SHARE_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-self-share self_share)
+    set_tests_properties(darwin_dxmt_self_share PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+    set(D3D_COMPILE_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-d3d-compile.exe)
+    add_custom_command(OUTPUT ${D3D_COMPILE_EXE}
+        COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/d3d_compile.c
+            -o ${D3D_COMPILE_EXE} -lkernel32 -ldxguid -lgcc
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/d3d_compile.c VERBATIM)
+    add_custom_target(darwin_d3d_compile_fixture ALL DEPENDS ${D3D_COMPILE_EXE})
+    add_test(NAME darwin_d3d_compile COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+        $<TARGET_FILE:raven> ${D3D_COMPILE_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/d3d-compile d3d_compile)
+    set_tests_properties(darwin_d3d_compile PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+    set(NT_FILE_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-nt-file.exe)
+    add_custom_command(OUTPUT ${NT_FILE_EXE}
+        COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/nt_file.c
+            -o ${NT_FILE_EXE} -lntdll -ladvapi32 -lkernel32 -lgcc
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/nt_file.c VERBATIM)
+    add_custom_target(darwin_nt_file_fixture ALL DEPENDS ${NT_FILE_EXE})
+    add_test(NAME darwin_nt_file COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+        $<TARGET_FILE:raven> ${NT_FILE_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/nt-file nt_file)
+    set_tests_properties(darwin_nt_file PROPERTIES TIMEOUT 120)
+    foreach(width IN ITEMS 64 32)
+        if(width EQUAL 64)
+            set(KEYED_CC ${RAVEN_MINGW64})
+        else()
+            find_program(RAVEN_KEYED_MINGW32 NAMES i686-w64-mingw32-gcc REQUIRED)
+            set(KEYED_CC ${RAVEN_KEYED_MINGW32})
+        endif()
+        set(KEYED_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-keyed${width}.exe)
+        add_custom_command(OUTPUT ${KEYED_EXE}
+            COMMAND ${KEYED_CC} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/dxmt_keyed.c
+                -o ${KEYED_EXE} -lgdi32 -lkernel32 -lgcc
+            DEPENDS ${RAVEN_DARWIN_DIR}/tests/dxmt_keyed.c VERBATIM)
+        add_custom_target(darwin_dxmt_keyed${width}_fixture ALL DEPENDS ${KEYED_EXE})
+        add_test(NAME darwin_dxmt_keyed_x${width} COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+            $<TARGET_FILE:raven> ${KEYED_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-keyed${width} keyed)
+        set_tests_properties(darwin_dxmt_keyed_x${width} PROPERTIES TIMEOUT 120)
+        set(CATALOG_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-socket-catalog${width}.exe)
+        add_custom_command(OUTPUT ${CATALOG_EXE}
+            COMMAND ${KEYED_CC} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/socket_catalog.c
+                -o ${CATALOG_EXE} -lws2_32 -lkernel32 -lgcc
+            DEPENDS ${RAVEN_DARWIN_DIR}/tests/socket_catalog.c VERBATIM)
+        add_custom_target(darwin_socket_catalog${width}_fixture ALL DEPENDS ${CATALOG_EXE})
+        add_test(NAME darwin_socket_catalog_x${width} COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+            $<TARGET_FILE:raven> ${CATALOG_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/socket-catalog${width} socket_catalog)
+        set_tests_properties(darwin_socket_catalog_x${width} PROPERTIES TIMEOUT 120)
+        unset(KEYED_CC)
+    endforeach()
     set(RAVEN_DXMT_SHARED ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-shared.exe)
     add_custom_command(OUTPUT ${RAVEN_DXMT_SHARED}
         COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/dxmt_shared.c
@@ -91,6 +154,16 @@ if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
     add_test(NAME darwin_dxmt_shared COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
         $<TARGET_FILE:raven> ${RAVEN_DXMT_SHARED} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-shared shared)
     set_tests_properties(darwin_dxmt_shared PROPERTIES TIMEOUT 120)
+    set(KEYED_TEXTURE_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-shared-keyed.exe)
+    add_custom_command(OUTPUT ${KEYED_TEXTURE_EXE}
+        COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -DDXMT_SHARED_KEYED=1 -Wl,--entry,entry
+            ${RAVEN_DARWIN_DIR}/tests/dxmt_shared.c -o ${KEYED_TEXTURE_EXE}
+            -ld3d11 -ldxgi -ldxguid -lkernel32 -luser32 -lgcc
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/dxmt_shared.c VERBATIM)
+    add_custom_target(darwin_dxmt_shared_keyed_fixture ALL DEPENDS ${KEYED_TEXTURE_EXE})
+    add_test(NAME darwin_dxmt_shared_keyed COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+        $<TARGET_FILE:raven> ${KEYED_TEXTURE_EXE} ${RAVEN_DXMT_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/dxmt-shared-keyed shared_keyed)
+    set_tests_properties(darwin_dxmt_shared_keyed PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
     set(RAVEN_DXMT_DEVICE10 ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-device10.exe)
     add_custom_command(OUTPUT ${RAVEN_DXMT_DEVICE10}
         COMMAND ${RAVEN_MINGW64} -nostdlib -O2 -Wl,--entry,entry ${RAVEN_DARWIN_DIR}/tests/dxmt_device10.c
@@ -118,6 +191,23 @@ if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
             -o ${RAVEN_DXMT_WINDOW_INFO}
         DEPENDS ${RAVEN_DARWIN_DIR}/tests/window_info.m VERBATIM)
     add_custom_target(darwin_dxmt_window_info ALL DEPENDS ${RAVEN_DXMT_WINDOW_INFO})
+    find_program(RAVEN_MINGW64_CXX x86_64-w64-mingw32-g++)
+    if(RAVEN_MINGW64_CXX)
+        set(DCOMP_EXE ${CMAKE_CURRENT_BINARY_DIR}/raven-dcomp.exe)
+        add_custom_command(OUTPUT ${DCOMP_EXE}
+            COMMAND ${RAVEN_MINGW64_CXX} -nostdlib -O2 -Wl,--entry,entry
+                ${RAVEN_DARWIN_DIR}/tests/dcomp.cpp -o ${DCOMP_EXE}
+                -ldcomp -ld3d11 -ldxgi -ldxguid -luuid -lkernel32 -luser32 -lgcc
+            DEPENDS ${RAVEN_DARWIN_DIR}/tests/dcomp.cpp VERBATIM)
+        add_custom_target(darwin_dcomp_fixture ALL DEPENDS ${DCOMP_EXE})
+        foreach(kind local foreign local-hidpi foreign-hidpi)
+            add_test(NAME darwin_dcomp_${kind} COMMAND ${RAVEN_DXMT_IMAGE_PYTHON} ${RAVEN_DARWIN_DIR}/tests/run_dcomp.py
+                $<TARGET_FILE:raven> ${DCOMP_EXE} ${RAVEN_DXMT_ROOT} ${RAVEN_DXMT_WINDOW_INFO}
+                ${CMAKE_CURRENT_BINARY_DIR}/dcomp-${kind} ${kind})
+            set_tests_properties(darwin_dcomp_${kind} PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)
+        endforeach()
+    endif()
+
     foreach(workload device pool pacing triangle window deferred geometry tessellation textured msaa compute features fullscreen present_rate)
         if(workload STREQUAL "device")
             set(RAVEN_DXMT_FIXTURE ${RAVEN_DARWIN_DIR}/tests/dxmt_device.c)
@@ -268,7 +358,7 @@ endforeach()
 # The macOS desktop (--desktop=macos): AppKit windows, Metal surfaces for graphics drivers, and keymaps from xkbcommon.
 if(TARGET raven_cpu)
     enable_language(OBJCXX)
-    target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/print.mm)
+    target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/print.mm ${RAVEN_DARWIN_DIR}/loader_api.cpp)
     set_source_files_properties(${RAVEN_DARWIN_DIR}/print.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wall;-Wextra")
     target_link_libraries(raven_cpu PUBLIC "-framework AppKit" "-framework ApplicationServices")
     target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/dxmt/presentation.mm ${RAVEN_DARWIN_DIR}/dxmt/kernel_thunks.mm)

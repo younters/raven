@@ -4,6 +4,7 @@
 
 namespace raven {
 
+bool darwin_graphics_system_module(std::string_view name, bool x64);
 std::optional<ModuleBytes> darwin_graphics_module(std::string_view name, bool x64);
 
 // Wine's PE unixlib discovery ABI, restricted to the explicitly provisioned DXMT driver.

@@ -4,6 +4,10 @@
 #include <array>
 #include <chrono>
 #include <cstdio>
+#ifdef __APPLE__
+#include "../platform/darwin/dxmt/identity.h"
+#include "../platform/darwin/dxmt/kernel_thunks.h"
+#endif
 
 namespace raven {
 
@@ -154,8 +158,8 @@ void NativeX86System::lock_shared(uint64_t address)
 bool NativeX86System::dispatch(std::string_view name)
 {
 #ifdef __APPLE__
-	// The desktop's DPI handler changes the coordinate scale; the legacy no-op must not consume this call first.
-	if (name=="SetProcessDPIAware") return false;
+	// Darwin handlers supply DPI and keyed-mutex behavior before the legacy fallback.
+	if (name=="SetProcessDPIAware" || darwin_keyed_mutex_api(name)) return false;
 #endif
 	const auto known = std::find_if(exported.begin(), exported.end(), [&](const auto &item) { return item.name == name; });
 	if (known == exported.end())
@@ -454,9 +458,18 @@ bool NativeX86System::dispatch(std::string_view name)
 				text(168, "MONITOR\\RAVEN0000");
 			} else {
 				text(4, "\\\\.\\DISPLAY1");
+				#ifdef __APPLE__
+				const auto identity = darwin_dxgi::identity();
+				text(36, identity ? identity->description : "Raven Display");
+				#else
 				text(36, "Raven Display");
+				#endif
 				device[164] = 5;
+				#ifdef __APPLE__
+				text(168, identity ? darwin_dxgi::pci_id(*identity) : "PCI\\VEN_1AF4&DEV_1050");
+				#else
 				text(168, "PCI\\VEN_1AF4&DEV_1050");
+				#endif
 			}
 			process.write_memory(args[2], device);
 			process.return_api(1);

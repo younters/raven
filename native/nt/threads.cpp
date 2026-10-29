@@ -308,7 +308,7 @@ std::shared_ptr<GuestThread> NativeThreads::pick(bool include_current)
 		if (threads[index].get() == running)
 			start = index;
 	for (size_t step = 1; step <= count; ++step) {
-		const auto &thread = threads[(start + step) % count];
+		const auto thread = threads[(start + step) % count];
 		if (thread.get() == running && !include_current)
 			continue;
 		if (thread->state == GuestThread::State::done || thread->suspend_count > 0)
@@ -316,7 +316,9 @@ std::shared_ptr<GuestThread> NativeThreads::pick(bool include_current)
 		if (thread->state == GuestThread::State::ready)
 			return thread;
 		if (thread->state == GuestThread::State::waiting) {
-			if ((thread->ready && thread->ready()) || (thread->wake && now >= *thread->wake))
+			// Polling can reenter the scheduler; retain the predicate independently of its waiting frame.
+			const auto ready = thread->ready;
+			if ((ready && ready()) || (thread->wake && now >= *thread->wake))
 				return thread;
 		}
 	}

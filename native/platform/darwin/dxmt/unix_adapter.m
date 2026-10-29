@@ -98,7 +98,8 @@ static int32_t notify_event(void *args)
 
 void *raven_unixlib_wrap_table(void *original, uint32_t count)
 {
-	if (count != 132)
+	// Both pinned tables share the first 132 entries; the source pin appends 14.
+	if (count != 132 && count != 146)
 		return NULL;
 	void **table = malloc(count * sizeof(*table));
 	if (!table)

@@ -1,4 +1,5 @@
 #include "unix_calls.h"
+#include <fstream>
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -20,12 +21,21 @@ std::filesystem::path dxmt_root()
 }
 }
 
+bool darwin_graphics_system_module(std::string_view name, bool x64)
+{
+    if (!x64 || dxmt_root().empty()) return false;
+    if (name == "d3d11.dll" || name == "dxgi.dll" || name == "d3d10core.dll" || name == "winemetal.dll" || name == "d3d10.dll" ||
+        name == "d3d10_1.dll")
+        return true;
+    // Windows ships the HLSL compiler in System32; a provisioned build of it replaces the runtime's refusing stub.
+    static const bool compiler = std::filesystem::is_regular_file(dxmt_root() / "pe64/d3dcompiler_47.dll");
+    return (name == "d3dcompiler_47.dll" && compiler) || (name == "dcomp.dll" && std::filesystem::is_regular_file(dxmt_root() / "pe64/dcomp.dll"));
+}
+
 std::optional<ModuleBytes> darwin_graphics_module(std::string_view name, bool x64)
 {
-	const auto root = dxmt_root();
-	if (!x64 || root.empty() || (name != "d3d11.dll" && name != "dxgi.dll" && name != "d3d10core.dll" && name != "winemetal.dll" &&
-		name != "d3d10.dll" && name != "d3d10_1.dll"))
-		return std::nullopt;
+    if (!darwin_graphics_system_module(name, x64)) return std::nullopt;
+    const auto root = dxmt_root();
 	const auto path = root / "pe64" / name;
 	if (auto bytes = ModuleBytes::map(path))
 		return bytes;
@@ -84,9 +94,17 @@ bool DarwinUnixCalls::dispatch(std::string_view name)
 				if (args[5]) process.validate_write_memory(args[5], 8);
 				auto handle = handles.find(args[1]);
 				if (handle == handles.end()) {
-					// v0.80's table has 132 entries, including the reserved NULL at index 83.
+					// The provisioner validates the pinned table layout. Release overlays
+                    // predate the count file and have 132 entries; the source pin has 146.
+                    uint32_t count = 132;
+                    const auto count_path = root / "unix64" / "unix-call-count";
+                    if (std::filesystem::exists(count_path)) {
+                        std::ifstream input(count_path);
+                        if (!(input >> count) || (count != 132 && count != 146))
+                            throw std::runtime_error("unsupported DXMT unix table size");
+                    }
 					const auto path = root / "unix64" / "winemetal.so";
-					handle = handles.emplace(args[1], process.load_unix_library(path.string(), 132)).first;
+					handle = handles.emplace(args[1], process.load_unix_library(path.string(), count)).first;
 				}
 				process.write_memory(args[3], {reinterpret_cast<const uint8_t *>(&handle->second), 8});
 				if (args[5]) {

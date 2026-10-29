@@ -19,6 +19,7 @@
 #include <sys/mman.h>
 #include <sys/inotify.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 namespace raven {
@@ -83,7 +84,7 @@ static void sweep_windows(const std::filesystem::path &directory)
 		std::filesystem::remove(path, error);
 }
 
-void publish_window(uint64_t window, uint32_t width, uint32_t height, uint32_t thread)
+void publish_window(uint64_t window, uint32_t width, uint32_t height, uint32_t thread, uint64_t parent)
 {
 	const auto directory = window_directory();
 	static std::once_flag swept;
@@ -92,7 +93,7 @@ void publish_window(uint64_t window, uint32_t width, uint32_t height, uint32_t t
 	const auto temporary = directory / (window_name(window) + ".window." + std::to_string(::getpid()));
 	{
 		std::ofstream output(temporary, std::ios::trunc);
-		output << ::getpid() << ' ' << width << ' ' << height << ' ' << thread << '\n';
+		output << ::getpid() << ' ' << width << ' ' << height << ' ' << thread << ' ' << parent << '\n';
 	}
 	std::error_code error;
 	std::filesystem::rename(temporary, final_path, error);
@@ -104,6 +105,7 @@ void withdraw_window(uint64_t window)
 	std::error_code error;
 	std::filesystem::remove(directory / (window_name(window) + ".window"), error);
 	std::filesystem::remove(directory / (window_name(window) + ".pixels"), error);
+	std::filesystem::remove(directory / (window_name(window) + ".update"), error);
 }
 
 std::optional<ForeignWindowInfo> foreign_window_info(uint64_t window)
@@ -115,9 +117,42 @@ std::optional<ForeignWindowInfo> foreign_window_info(uint64_t window)
 		return std::nullopt;
 	if (::kill(pid_t(owner), 0) != 0 && errno == ESRCH)
 		return std::nullopt;
-	input >> info.thread; // Older published windows have no thread field.
+	input >> info.thread >> info.parent; // Older records have neither optional field.
 	info.process = uint32_t(owner);
 	return info;
+}
+
+bool request_window_update(uint64_t window, const ForeignWindowUpdate &update)
+{
+	if (!foreign_window_info(window)) return false;
+	const auto path=window_directory()/(window_name(window)+".update");
+	const int fd=::open(path.c_str(),O_RDWR|O_CREAT|O_CLOEXEC,0600);
+	if (fd<0) return false;
+	if (::flock(fd,LOCK_EX)!=0) { ::close(fd);return false; }
+	ForeignWindowUpdate pending{};
+	if (::pread(fd,&pending,sizeof(pending),0)!=sizeof(pending)) pending={};
+	if (update.mask&1) pending.parent=update.parent;
+	if (update.mask&2) {
+		pending.after=update.after;pending.flags=update.flags;
+		pending.x=update.x;pending.y=update.y;pending.width=update.width;pending.height=update.height;
+	}
+	pending.mask|=update.mask;
+	const bool ok=::pwrite(fd,&pending,sizeof(pending),0)==sizeof(pending);
+	::flock(fd,LOCK_UN);::close(fd);return ok;
+}
+
+std::optional<ForeignWindowUpdate> take_window_update(uint64_t window, bool consume)
+{
+	const auto path=window_directory()/(window_name(window)+".update");
+	const int fd=::open(path.c_str(),O_RDWR|O_CLOEXEC);
+	if (fd<0) return std::nullopt;
+	if (::flock(fd,LOCK_EX)!=0) { ::close(fd);return std::nullopt; }
+	ForeignWindowUpdate pending{};
+	const bool ready=::pread(fd,&pending,sizeof(pending),0)==sizeof(pending) && pending.mask;
+	const ForeignWindowUpdate empty{};
+	if (ready && consume && ::pwrite(fd,&empty,sizeof(empty),0)!=sizeof(empty)) pending.mask=0;
+	::flock(fd,LOCK_UN);::close(fd);
+	return pending.mask ? std::optional(pending) : std::nullopt;
 }
 
 std::optional<std::pair<uint32_t, uint32_t>> foreign_window_size(uint64_t window)

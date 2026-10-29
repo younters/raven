@@ -493,7 +493,7 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 			std::memcpy(data.data() + head, sid.data(), sid.size());
 		};
 		switch (call.u32(1)) {
-		case 1: with_sid(user_sid(), 0, true); break;
+		case 1: with_sid(value.anonymous ? make_sid(5, {7}) : user_sid(), 0, true); break;
 		case 3: {
 			data.assign(4 + 12 * value.privileges.size(), 0);
 			const auto count = uint32_t(value.privileges.size());
@@ -504,8 +504,8 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 			}
 			break;
 		}
-		case 4: with_sid(user_sid(), 0, false); break;
-		case 5: with_sid(make_sid(5, {21, 1000, 1000, 1000, 513}), 0, false); break;
+		case 4: with_sid(value.anonymous ? make_sid(5, {7}) : user_sid(), 0, false); break;
+		case 5: with_sid(value.anonymous ? make_sid(5, {7}) : make_sid(5, {21, 1000, 1000, 1000, 513}), 0, false); break;
 		case 6: {
 			data.assign(width, 0);
 			if (!value.default_dacl.empty()) {

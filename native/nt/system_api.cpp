@@ -14,6 +14,9 @@
 #include <tuple>
 #include <sys/mman.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include "../platform/darwin/dxmt/identity.h"
+#endif
 
 extern char **environ;
 
@@ -196,6 +199,15 @@ std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_envi
 		if (text.starts_with(prefix) && equals != text.npos && equals > prefix.size())
 			add(from_utf8(std::string(text.substr(prefix.size(), equals - prefix.size()))), from_utf8(std::string(text.substr(equals + 1))));
 	}
+#ifdef __APPLE__
+	if (const auto gpu = darwin_dxgi::identity()) {
+		std::string config;
+		if (const char *existing = std::getenv("RAVEN_GUEST_DXMT_CONFIG")) config = existing;
+		else if (const char *existing = std::getenv("DXMT_CONFIG")) config = existing;
+		if (!config.empty()) config += ';';
+		add(u"DXMT_CONFIG", from_utf8(config + darwin_dxgi::dxmt_config(*gpu)));
+	}
+#endif
 	return result;
 }
 

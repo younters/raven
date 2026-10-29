@@ -17,6 +17,7 @@
 #include <unistd.h>
 #ifdef __APPLE__
 #include <raven_darwin_system.h>
+#include "../platform/darwin/dxmt/identity.h"
 #endif
 
 namespace raven {
@@ -29,7 +30,10 @@ constexpr uint32_t windows_inet6 = 23;
 constexpr uint32_t if_type_ethernet = 6, if_type_loopback = 24, if_type_wireless = 71;
 
 // A set of device interfaces that SetupDi hands out; the host exposes no devices to the guest, so the set stays empty.
-class DeviceInfoSet : public KernelObject {};
+class DeviceInfoSet : public KernelObject {
+public:
+	bool display = false;
+};
 
 // An event log query: the log holds no records, so the query only ever reports that nothing more is there.
 class EventQuery : public KernelObject {};
@@ -693,21 +697,51 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("SetupDiClassGuidsFromNameExW", 6, [class_guids](ApiCall &call) { class_guids(call, false); });
 	registry.add("SetupDiClassGuidsFromNameExA", 6, [class_guids](ApiCall &call) { class_guids(call, true); });
 	registry.add("SetupDiGetClassDevsW", 4, [&objects](ApiCall &call) {
-		const auto made = objects.add_object(std::make_shared<DeviceInfoSet>());
+		auto set = std::make_shared<DeviceInfoSet>();
+#ifdef __APPLE__
+		if (const auto gpu = darwin_dxgi::identity(); gpu && call[1])
+			set->display = call.wide(call[1]) == from_utf8(darwin_dxgi::pci_id(*gpu));
+#endif
+		const auto made = objects.add_object(set);
 		if (made.status) {
 			call.fail(8, UINT64_MAX);
 			return;
 		}
 		call.ret(made.value);
 	});
-	// The device sets here are empty: enumerating their devices ends at once, and every interface list holds only its terminator.
+	// A configured display identity has one SetupAPI device; other device sets remain empty.
 	registry.add("SetupDiEnumDeviceInfo", 3, [&objects](ApiCall &call) {
-		if (!objects.object_as<DeviceInfoSet>(call[0])) {
+		const auto set = objects.object_as<DeviceInfoSet>(call[0]);
+		if (!set) {
 			call.fail(6, 0);
+			return;
+		}
+		if (set->display && call.u32(1) == 0 && call[2] && call.load<uint32_t>(call[2]) == 32) {
+			std::array<uint8_t, 32> info{};
+			info[0] = 32;
+			info[20] = 1;
+			call.write(call[2], info);
+			call.ret(1);
 			return;
 		}
 		call.fail(error_no_more_items, 0);
 	});
+#ifdef __APPLE__
+	registry.add("SetupDiGetDeviceRegistryPropertyW", 7, [&objects](ApiCall &call) {
+		const auto set = objects.object_as<DeviceInfoSet>(call[0]);
+		if (!set || !set->display || !call[1] || call.load<uint32_t>(call[1] + 20) != 1 || call.u32(2) != 9) {
+			call.fail(error_invalid_parameter, 0);
+			return;
+		}
+		constexpr std::u16string_view driver = u"{4d36e968-e325-11ce-bfc1-08002be10318}\\0000";
+		const uint32_t bytes = uint32_t((driver.size() + 1) * 2);
+		if (call[3]) call.store<uint32_t>(call[3], 1);
+		if (call[6]) call.store<uint32_t>(call[6], bytes);
+		if (!call[4] || call.u32(5) < bytes) return call.fail(122, 0);
+		call.put_wide(call[4], driver, call.u32(5) / 2);
+		call.ret(1);
+	});
+#endif
 	for (const char *name : {"CM_Get_Device_Interface_List_SizeW", "CM_Get_Device_Interface_List_SizeA"})
 		registry.add(name, 4, [](ApiCall &call) {
 			if (!call[0]) {

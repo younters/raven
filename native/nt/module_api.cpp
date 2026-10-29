@@ -35,7 +35,11 @@ uint64_t NativeModuleAPI::module_handle(uint64_t address, bool wide)
 {
 	if (!address)
 		return entry.loaded.base();
-	const auto decoded = guest_name(address, wide);
+	return module_handle_name(guest_name(address, wide));
+}
+
+uint64_t NativeModuleAPI::module_handle_name(std::optional<std::string> decoded)
+{
 	if (decoded && path_lookup && decoded->find_first_of("/\\:") != std::string::npos) {
 		const auto base = path_lookup(*decoded);
 		if (!base)
@@ -98,6 +102,9 @@ uint64_t NativeModuleAPI::procedure(uint64_t handle, uint64_t name)
 
 bool NativeModuleAPI::dispatch(std::string_view name)
 {
+#ifdef __APPLE__
+	if (dispatch_darwin(name)) return true;
+#endif
 	if (name == "LoadLibraryA" || name == "LoadLibraryW" || name == "LoadLibraryExA" || name == "LoadLibraryExW") {
 		if (!load)
 			return false;

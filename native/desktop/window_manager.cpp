@@ -10,6 +10,9 @@
 #include <memory>
 #include <cstring>
 #include <sys/mman.h>
+#ifdef __APPLE__
+#include "../platform/darwin/dxmt/identity.h"
+#endif
 
 namespace raven {
 
@@ -188,7 +191,7 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 		throw uint32_t(1400);
 	if (!window->visible && previous && window->parent) {
 		const auto *parent = objects.window(window->parent);
-		objects.invalidate(window->parent, {window->outer.left - parent->x, window->outer.top - parent->y, window->outer.right - parent->x,
+		if (parent) objects.invalidate(window->parent, {window->outer.left - parent->x, window->outer.top - parent->y, window->outer.right - parent->x,
 			window->outer.bottom - parent->y}, true);
 	}
 	send(handle, 0x18, window->visible, 0);
@@ -304,7 +307,7 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 		const auto old_client_x = window->x, old_client_y = window->y;
 		if (window->parent && was_visible) {
 			const auto *parent = objects.window(window->parent);
-			objects.invalidate(window->parent, {old.left - parent->x, old.top - parent->y, old.right - parent->x, old.bottom - parent->y}, true);
+			if (parent) objects.invalidate(window->parent, {old.left - parent->x, old.top - parent->y, old.right - parent->x, old.bottom - parent->y}, true);
 		}
 		if (window->parent || !resized) {
 			if (shifted)
@@ -331,7 +334,7 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 			// Moving a child in its parent changes where its whole subtree draws.
 			objects.update_window_dcs(handle);
 			const auto *parent = objects.window(window->parent);
-			send(handle, 3, 0, uint16_t(window->x - parent->x) | (uint64_t(uint16_t(window->y - parent->y)) << 16));
+			send(handle, 3, 0, uint16_t(window->x - (parent ? parent->x : 0)) | (uint64_t(uint16_t(window->y - (parent ? parent->y : 0))) << 16));
 		}
 		window = objects.window(handle);
 		if (window && window->parent && objects.window_visible(handle) && !(effective & swp_noredraw)) {
@@ -481,7 +484,14 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	});
 	registry.add("SetParent", 2, [this](ApiCall &call) {
 		auto *window = objects.window(call[0]);
-		if (!window || (call[1] && !objects.window(call[1]))) {
+		if (!window) {
+			const auto foreign=foreign_window_info(call[0]);
+			if (!foreign || call[0]==call[1] || (call[1]&&!objects.window(call[1])&&!foreign_window_info(call[1]))) { call.fail(1400);return; }
+			ForeignWindowUpdate update{};update.mask=1;update.parent=call[1];
+			if (!request_window_update(call[0],update)) {call.fail(1400);return;}
+			call.ret(foreign->parent);return;
+		}
+		if (call[1] && !objects.window(call[1]) && !foreign_window_info(call[1])) {
 			call.fail(1400);
 			return;
 		}
@@ -757,8 +767,11 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	registry.add("SetWindowPos", 7, [this](ApiCall &call) {
 		const auto *window = objects.window(call[0]);
 		if (!window) {
-			call.fail(1400);
-			return;
+			ForeignWindowUpdate update{};update.mask=2;update.after=call[1];update.flags=call.u32(6);
+			update.x=call.i32(2);update.y=call.i32(3);update.width=std::max(call.i32(4),0);update.height=std::max(call.i32(5),0);
+			if (update.x<-1000000||update.x>1000000||update.y<-1000000||update.y>1000000||update.width>32768||update.height>32768) {call.fail(87);return;}
+			if (!request_window_update(call[0],update)) {call.fail(1400);return;}
+			call.ret(1);return;
 		}
 		const uint32_t flags = call.u32(6);
 		const auto *parent = window->parent ? objects.window(window->parent) : nullptr;
@@ -1154,7 +1167,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	for (const auto name : system_export_names("gdi32.dll"))
 		if (name.starts_with("D3DKMT") && !registry.has(name))
 			registry.add(name, 1, [](ApiCall &call) { call.ret(0xC00000BBU); });
-	// One adapter, and one monitor on it, for programs that ask which display they are on.
+// One adapter, and one monitor on it, for programs that ask which display they are on.
 	const auto display_device = [](ApiCall &call, bool wide) {
 		const size_t size = wide ? 840 : 424;
 		if (call.u32(1) != 0 || !call[2] || call.load<uint32_t>(call[2]) != size) {
@@ -1172,9 +1185,21 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		record[1] = uint8_t(size >> 8);
 		const size_t name = 4, description = wide ? 68 : 36, flags = wide ? 324 : 164, identifier = wide ? 328 : 168;
 		put(name, monitor ? "\\\\.\\DISPLAY1\\Monitor0" : "\\\\.\\DISPLAY1");
+		#ifdef __APPLE__
+		const auto identity = darwin_dxgi::identity();
+		put(description, monitor ? "Raven Monitor" : identity ? identity->description : "Raven Display");
+		#else
 		put(description, monitor ? "Raven Monitor" : "Raven Display");
+		#endif
 		record[flags] = monitor ? 3 : 5;
+		#ifdef __APPLE__
+		const auto pci = identity ? darwin_dxgi::pci_id(*identity) : "PCI\\VEN_1AF4&DEV_1050";
+		put(identifier, monitor ? "MONITOR\\RAVEN0000" : pci);
+		if (!monitor && identity) put(wide ? 584 : 296,
+			"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0000");
+		#else
 		put(identifier, monitor ? "MONITOR\\RAVEN0000" : "PCI\\VEN_1AF4&DEV_1050");
+		#endif
 		call.write(call[2], record);
 		call.ret(1);
 	};

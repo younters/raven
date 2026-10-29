@@ -127,8 +127,9 @@ uint64_t NativeWindows::surface_dc(uint64_t handle)
 	auto *window=objects.window(handle);
 	if (!window) throw uint32_t(1400);
 	if (window->dc) return window->dc;
-	if (window->parent) {
-		const auto root=objects.window_root(handle);surface_dc(root);
+	const auto root=objects.window_root(handle);
+	if (window->parent && root!=handle) {
+		surface_dc(root);
 		window=objects.window(handle);const auto bitmap=objects.window(root)->bitmap;
 		DesktopDC device{bitmap,bitmap,handle};objects.configure_window_dc(handle,device,false);
 		const auto dc=objects.add(device);if (!dc) throw uint32_t(8);
@@ -213,6 +214,7 @@ void NativeWindows::present(uint64_t handle, bool force)
 	if (handle==desktop) return;
 	handle=objects.window_root(handle);
 	if (!handle) throw uint32_t(1400);
+	if (const auto *node=objects.window(handle); node && node->parent && foreign_window_info(node->parent)) return;
 	if (!presentation.present) throw uint32_t(120);
 	dirty_roots.erase(handle);
 	// The compositor does not show a window or its controls as empty rectangles: while the window or a visible child of the same thread
@@ -310,6 +312,28 @@ void NativeWindows::present(uint64_t handle, bool force)
 	}
 	presentation.present(handle,encode_utf8(window->title,true),bitmap->width,bitmap->height,pixels);
 	place_host_surface(handle);
+}
+
+std::optional<NativeWindows::CompositionBinding> NativeWindows::composition_binding(uint64_t handle) const
+{
+	const auto *window=objects.window(handle);
+	if (!window || !window->properties.contains(u"RAVENDCOMPSWAPCHAIN")) return std::nullopt;
+	const auto get=[&](const char16_t *name) { auto it=window->properties.find(name); return it==window->properties.end()?uint64_t(0):it->second; };
+	const auto number=[&](const char16_t *name) { uint32_t bits=uint32_t(get(name)); float f; std::memcpy(&f,&bits,4); return f; };
+	auto binding=CompositionBinding{get(u"RAVENDCOMPTARGET"),number(u"RAVENDCOMPX"),number(u"RAVENDCOMPY"),int32_t(get(u"RAVENDCOMPZ")),number(u"RAVENDCOMPSX"),number(u"RAVENDCOMPSY"),number(u"RAVENDCOMPCLIPL"),number(u"RAVENDCOMPCLIPT"),number(u"RAVENDCOMPCLIPR"),number(u"RAVENDCOMPCLIPB")};
+	// A GPU process owns its compositor child; the browser owns that child's parent.
+	// Positions above that foreign boundary are relative to the browser client area.
+	for (unsigned depth=0;depth<64;++depth) {
+		const auto *node=objects.window(binding.target);
+		if (!node || !node->parent) break;
+		if (!objects.window(node->parent) && foreign_window_info(node->parent)) {
+			binding.x+=node->x;binding.y+=node->y;
+			binding.left+=node->x;binding.top+=node->y;binding.right+=node->x;binding.bottom+=node->y;
+			binding.target=node->parent;break;
+		}
+		binding.target=node->parent;
+	}
+	return binding;
 }
 
 std::optional<HostSurface> NativeWindows::host_surface(uint64_t handle)
@@ -1152,6 +1176,7 @@ NativeWindows::Modifiers NativeWindows::modifier_state() const
 
 uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking)
 {
+	sync_window_updates();
 	const auto layout=message_layout(process.mode()==NativeMode::x86);
 	// A 32-bit (HWND)-1 selects thread messages exactly like its 64-bit sign extension.
 	const auto window=process.mode()==NativeMode::x86 && args[1]==UINT32_MAX ? UINT64_MAX : args[1];
@@ -1807,7 +1832,7 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 		}
 		if (child) parent_notify(handle,1);
 		if (!objects.window(handle)) return 0;
-		if (const auto *created=objects.window(handle)) publish_window(handle,uint32_t(std::max(created->width,0)),uint32_t(std::max(created->height,0)),created->thread);
+		if (const auto *created=objects.window(handle)) publish_window(handle,uint32_t(std::max(created->width,0)),uint32_t(std::max(created->height,0)),created->thread,created->parent);
 		if (effective_style & 0x10000000U) {
 #ifdef __APPLE__
 			initialize_window_dpi(handle);
@@ -2375,6 +2400,49 @@ void NativeWindows::publish_words()
 		__atomic_store_n(reinterpret_cast<uint64_t *>(screen_block+focus_window),focus,__ATOMIC_RELEASE);
 		__atomic_store_n(reinterpret_cast<uint64_t *>(screen_block+focus_published),uint64_t(1),__ATOMIC_RELEASE);
 	}
+}
+
+void NativeWindows::sync_window_updates()
+{
+	const auto now=std::chrono::steady_clock::now();
+	if (syncing_window_updates || now-window_updates_checked<std::chrono::milliseconds(8)) return;
+	window_updates_checked=now;syncing_window_updates=true;
+	try {
+		for (const auto handle:objects.window_handles()) {
+			const auto *owned=std::as_const(objects).window(handle);
+			if (!owned || (owned->thread && owned->thread!=environment.thread_id())) continue;
+			const auto pending=take_window_update(handle,false);
+			if (!pending) continue;
+			// Window positioning can invoke its procedure and map scratch memory. A
+			// synchronous served call retries at its trap before doing either.
+			if (process.serving() && !process.parallel()) {
+				process.decline_served();
+				window_updates_checked={};
+				break;
+			}
+			const auto update=take_window_update(handle);
+			if (!update) continue;
+			auto *window=objects.window(handle);
+			if (!window) continue;
+			if ((update->mask&1) && update->parent!=handle &&
+				(!update->parent || objects.window(update->parent) || foreign_window_info(update->parent))) {
+				const auto *old=objects.window(window->parent),*next=objects.window(update->parent);
+				const int32_t dx=(next?next->x:0)-(old?old->x:0),dy=(next?next->y:0)-(old?old->y:0);
+				release_host_surface(handle);
+				window=objects.window(handle);window->parent=update->parent;
+				window->style=update->parent?(window->style&~0x80000000U)|0x40000000U:(window->style&~0x40000000U)|0x80000000U;
+				shift_window(handle,dx,dy);
+				publish_window(handle,uint32_t(std::max(window->width,0)),uint32_t(std::max(window->height,0)),window->thread,window->parent);
+			}
+			if (update->mask&2) {
+				window=objects.window(handle);
+				const auto *parent=objects.window(window->parent);
+				const int32_t x=update->x+(parent?parent->x:0),y=update->y+(parent?parent->y:0);
+				try { place_window(handle,{x,y,x+update->width,y+update->height},update->after,update->flags); } catch (uint32_t) {}
+			}
+		}
+	} catch (...) { syncing_window_updates=false;throw; }
+	syncing_window_updates=false;
 }
 
 void NativeWindows::api_left()

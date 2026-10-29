@@ -10,10 +10,10 @@
 #include <architecture/i386/table.h>
 #include <dlfcn.h>
 #include <errno.h>
-#include <execinfo.h>
 #include <fcntl.h>
 #include <i386/user_ldt.h>
 #include <mach/mach.h>
+#include <mach/mach_vm.h>
 #include <os/os_sync_wait_on_address.h>
 #include <pthread.h>
 #include <servers/bootstrap.h>
@@ -60,6 +60,9 @@ struct unix_library {
 };
 static struct unix_library unix_libraries[32];
 static uint32_t unix_library_count;
+static __thread uint32_t active_unix_code;
+static __thread void *active_unix_args;
+static __thread uint64_t active_unix_guest_stack;
 
 int32_t raven_dispatch_unix_call(uint64_t handle, uint32_t code, void *args)
 {
@@ -70,8 +73,14 @@ int32_t raven_dispatch_unix_call(uint64_t handle, uint32_t code, void *args)
 		if ((uint64_t)library->functions != handle)
 			continue;
 		result = (int32_t)0xc000000dU; // STATUS_INVALID_PARAMETER
-		if (code < library->count && library->functions[code])
-			result = library->functions[code](args);
+		if (code < library->count && library->functions[code]) {
+            active_unix_code = code;
+            active_unix_args = args;
+            // The gate saved the Windows stack pointer above its 568-byte save area and eight registers.
+            active_unix_guest_stack = *(uint64_t *)((char *)__builtin_frame_address(0) + 16 + 568 + 64);
+            result = library->functions[code](args);
+            active_unix_args = NULL;
+        }
 		break;
 	}
 	return result;
@@ -805,8 +814,33 @@ void raven_agent_stop(int signal, siginfo_t *info, void *raw, uint32_t index)
 		fprintf(stderr, "raven-bootstrap: native fault %d in %s+0x%llx (%s) at %p\n", signal,
 			image.dli_fname ? image.dli_fname : "unknown", thread->registers.rip - (uint64_t)image.dli_fbase,
 			image.dli_sname ? image.dli_sname : "unknown", info->si_addr);
-		void *frames[32];
-		backtrace_symbols_fd(frames, backtrace(frames, 32), STDERR_FILENO);
+		fprintf(stderr, "raven-bootstrap: active unix call %u args=%p\n", active_unix_code, active_unix_args);
+		// The handler runs on the alternate stack, so the faulting code's callers come from its frame-pointer chain; the last ones
+		// are guest addresses, which the host's fault report names.
+		uint64_t frame = thread->registers.rbp;
+		for (int depth = 0; depth < 24 && frame && !(frame & 7); ++depth) {
+			uint64_t link[2];
+			mach_vm_size_t copied = 0;
+			if (mach_vm_read_overwrite(mach_task_self(), frame, sizeof link, (mach_vm_address_t)link, &copied) != KERN_SUCCESS ||
+				copied != sizeof link)
+				break;
+			Dl_info caller = {0};
+			dladdr((void *)link[1], &caller);
+			fprintf(stderr, "raven-bootstrap:   #%d %p %s+0x%llx (%s)\n", depth, (void *)link[1],
+				caller.dli_fname ? caller.dli_fname : "guest", link[1] - (uint64_t)caller.dli_fbase,
+				caller.dli_sname ? caller.dli_sname : "?");
+			if (link[0] <= frame) break;
+			frame = link[0];
+		}
+		uint64_t words[48];
+		mach_vm_size_t copied = 0;
+		if (active_unix_guest_stack && mach_vm_read_overwrite(mach_task_self(), active_unix_guest_stack, sizeof words,
+				(mach_vm_address_t)words, &copied) == KERN_SUCCESS) {
+			fprintf(stderr, "raven-bootstrap: guest stack %p:", (void *)active_unix_guest_stack);
+			for (size_t i = 0; i < copied / 8; ++i)
+				if (words[i] >= 0x10000 && words[i] < 0x700000000000ULL) fprintf(stderr, " %zu:%llx", i, words[i]);
+			fprintf(stderr, "\n");
+		}
 	}
 	thread->signal = signal == SIGUSR1 ? RAVEN_STOP_INTERRUPT : signal;
 	thread->code = info->si_code;
