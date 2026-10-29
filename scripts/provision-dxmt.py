@@ -119,8 +119,8 @@ def provision(destination, source_llvm=None, source_wine=None, hlsl_compiler="mi
         if not cpp:
             raise RuntimeError("DirectComposition needs mingw-w64 g++")
         subprocess.run([cpp, "-shared", "-nostdlib", "-O2", "-std=c++17", "-fno-exceptions", "-fno-rtti",
-                        "-fno-stack-protector", "-Wl,--entry,0", str(source.parent.parent / "dcomp/dcomp.cpp"),
-                        "-o", str(root / "pe64/dcomp.dll"), "-lkernel32", "-luser32", "-lgdi32", "-luuid", "-lgcc"], check=True)
+                        "-fno-stack-protector", "-fcheck-new", "-Wl,--entry,0", str(source.parent.parent / "dcomp/dcomp.cpp"),
+                        "-o", str(root / "pe64/dcomp.dll"), "-lkernel32", "-luser32", "-lgdi32", "-luuid", "-lmsvcrt", "-lgcc"], check=True)
     if hlsl_compiler == "microsoft":
         spec = importlib.util.spec_from_file_location("microsoft_hlsl", repository / "scripts/provision-d3dcompiler.py")
         compiler = importlib.util.module_from_spec(spec)

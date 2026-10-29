@@ -29,8 +29,10 @@ public:
 	// A host surface over the client area of a window for a graphics driver to present into, and its release; null when the host shows no such window.
 	std::optional<HostSurface> host_surface(uint64_t window);
 	void release_host_surface(uint64_t window);
-	struct CompositionBinding { uint64_t target=0; float x=0,y=0; int32_t order=0; float sx=1,sy=1; float left=-1000000,top=-1000000,right=1000000,bottom=1000000; };
+	struct CompositionBinding { uint64_t target=0; float x=0,y=0; int32_t order=0; float sx=1,sy=1; float left=-1000000,top=-1000000,right=1000000,bottom=1000000;
+		bool linear=false; std::array<float,4> rounded{}; std::array<float,8> radius{}; };
 	std::optional<CompositionBinding> composition_binding(uint64_t window) const;
+	bool commit_composition(ApiCall &call);
 	void *host_display() const { return presentation.host_display ? presentation.host_display() : nullptr; }
 	HostPlatform host_platform() const { return presentation.platform; }
 	void set_surface_cleanup(std::function<void(uint64_t)> cleanup) { surface_cleanup = std::move(cleanup); }

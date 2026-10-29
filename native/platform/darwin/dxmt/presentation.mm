@@ -49,9 +49,31 @@ std::string service_name(pid_t owner)
 	return "org.raven.dxmt." + prefix_tag() + "." + std::to_string(owner);
 }
 
-void acknowledge(mach_port_t reply, uint32_t slot, uint64_t sequence)
-{
-	if (!reply) return;
+CGPathRef rounded_path(CGRect rect, const std::array<float, 8> &radius, double unit_x, double unit_y) {
+	const double l = CGRectGetMinX(rect), t = CGRectGetMinY(rect), r = CGRectGetMaxX(rect), b = CGRectGetMaxY(rect);
+	double rx[4], ry[4];
+	for (size_t i = 0; i < 4; ++i) {
+		rx[i] = std::min<double>(radius[2 * i] * unit_x, rect.size.width / 2);
+		ry[i] = std::min<double>(radius[2 * i + 1] * unit_y, rect.size.height / 2);
+	}
+	constexpr double k = .5522847498307936;
+	CGMutablePathRef path = CGPathCreateMutable();
+	CGPathMoveToPoint(path, nullptr, l + rx[0], t);
+	CGPathAddLineToPoint(path, nullptr, r - rx[1], t);
+	CGPathAddCurveToPoint(path, nullptr, r - rx[1] * (1 - k), t, r, t + ry[1] * (1 - k), r, t + ry[1]);
+	CGPathAddLineToPoint(path, nullptr, r, b - ry[3]);
+	CGPathAddCurveToPoint(path, nullptr, r, b - ry[3] * (1 - k), r - rx[3] * (1 - k), b, r - rx[3], b);
+	CGPathAddLineToPoint(path, nullptr, l + rx[2], b);
+	CGPathAddCurveToPoint(path, nullptr, l + rx[2] * (1 - k), b, l, b - ry[2] * (1 - k), l, b - ry[2]);
+	CGPathAddLineToPoint(path, nullptr, l, t + ry[0]);
+	CGPathAddCurveToPoint(path, nullptr, l, t + ry[0] * (1 - k), l + rx[0] * (1 - k), t, l + rx[0], t);
+	CGPathCloseSubpath(path);
+	return path;
+}
+
+void acknowledge(mach_port_t reply, uint32_t slot, uint64_t sequence) {
+	if (!reply)
+		return;
 	ReleaseMessage message{};
 	message.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
 	message.header.msgh_size = sizeof(message);
@@ -220,14 +242,28 @@ struct DarwinDXMTPresentation::State {
 				fmax(0,binding.right-binding.left) * unit_x, fmax(0,binding.bottom-binding.top) * unit_y);
 			const CGRect clipped = CGRectIntersection(clip, layer.frame);
 			CAShapeLayer *mask = [CAShapeLayer layer];
-			const CGRect local = CGRectIsNull(clipped) ? CGRectZero : CGRectOffset(clipped, -layer.frame.origin.x, -layer.frame.origin.y);
+			const CGRect local = CGRectIsNull(clipped)
+									 ? CGRectZero
+									 : CGRectOffset(clipped, -layer.frame.origin.x, -layer.frame.origin.y);
 			CGPathRef path = CGPathCreateWithRect(local, nullptr);
+			if (std::any_of(binding.radius.begin(), binding.radius.end(), [](float r) { return r != 0; })) {
+				const CGRect rounded = CGRectMake(binding.rounded[0] * unit_x - layer.frame.origin.x,
+												  binding.rounded[1] * unit_y - layer.frame.origin.y,
+												  fmax(0, binding.rounded[2] - binding.rounded[0]) * unit_x,
+												  fmax(0, binding.rounded[3] - binding.rounded[1]) * unit_y);
+				CGPathRef round = rounded_path(rounded, binding.radius, unit_x, unit_y);
+				CGPathRef intersection = CGPathCreateCopyByIntersectingPath(path, round, false);
+				CGPathRelease(path);
+				CGPathRelease(round);
+				path = intersection;
+			}
 			mask.path = path;
 			CGPathRelease(path);
 			layer.mask = mask;
 		}
 		layer.contentsScale = parent.contentsScale;
-		layer.magnificationFilter = kCAFilterNearest;
+		layer.magnificationFilter = binding.linear ? kCAFilterLinear : kCAFilterNearest;
+		layer.minificationFilter = layer.magnificationFilter;
 		layer.autoresizingMask = layer_id ? 0 : kCALayerWidthSizable | kCALayerHeightSizable;
 		layer.contentsGravity = kCAGravityResize;
 		layer.opaque = layer_id ? NO : YES;
@@ -307,7 +343,7 @@ struct DarwinDXMTPresentation::State {
 	static bool same_binding(const NativeWindows::CompositionBinding &a,const NativeWindows::CompositionBinding &b)
 	{
 		return a.target==b.target && a.x==b.x && a.y==b.y && a.sx==b.sx && a.sy==b.sy && a.order==b.order &&
-			a.left==b.left && a.top==b.top && a.right==b.right && a.bottom==b.bottom;
+			a.left==b.left && a.top==b.top && a.right==b.right && a.bottom==b.bottom && a.linear==b.linear && a.rounded==b.rounded && a.radius==b.radius;
 	}
 	void detach_composition(uint64_t stream,CompositionFrame &content)
 	{
@@ -397,10 +433,6 @@ struct DarwinDXMTPresentation::State {
 					__atomic_store_n(&frame.state,RAVEN_SURFACE_DISPLAYED,__ATOMIC_RELEASE);
 					publish_composition(frame.window,content,*binding);
 					continue;
-				}
-				if (binding) {
-					if (!binding->target) { __atomic_store_n(&frame.state,RAVEN_SURFACE_AVAILABLE,__ATOMIC_RELEASE); continue; }
-					routed.window=binding->target;
 				}
 				if (const auto foreign = foreign_window_info(routed.window); foreign && !windows.host_surface(routed.window)) {
 					if (forward(routed, index, pid_t(foreign->process), binding?frame.window:0, binding.value_or(NativeWindows::CompositionBinding{}))) {

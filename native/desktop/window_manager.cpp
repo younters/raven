@@ -735,7 +735,14 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 				call.fail(1400);
 				return;
 			}
-			window->properties[property_key(call, wide)] = call[2];
+			const auto key = property_key(call, wide);
+#ifdef __APPLE__
+			if (key == u"RAVENDCOMPCOMMIT") {
+				call.ret(commit_composition(call));
+				return;
+			}
+#endif
+			window->properties[key] = call[2];
 			call.ret(1);
 		});
 		registry.add("GetProp" + suffix, 2, [this, property_key, wide](ApiCall &call) {
