@@ -164,25 +164,30 @@ std::shared_ptr<KernelObject> object_from_record(const InheritedHandle &item)
 void adopt_inherited(NativeObjects &objects, const std::vector<InheritedHandle> &handles)
 {
 	for (const auto &item : handles) {
+		// The descriptor is closed here, even on a throw, unless something takes it; an object's constructor owns it from the call.
+		struct Pending {
+			int descriptor;
+			~Pending() { if (descriptor >= 0) ::close(descriptor); }
+		} pending{item.descriptor};
 		if (item.descriptor >= 0)
 			::fcntl(item.descriptor, F_SETFD, FD_CLOEXEC);
 #ifdef __APPLE__
 		if (item.kind == "darwin-binding") {
-			if (raven_darwin_adopt_unix_binding(int(item.size), item.descriptor)) {
-				::close(item.descriptor);
+			if (raven_darwin_adopt_unix_binding(int(item.size), item.descriptor))
 				throw std::runtime_error("cannot adopt inherited pipe name");
-			}
+			pending.descriptor = -1;
 			continue;
 		}
 #endif
 		if (item.kind == "standard") {
 			const auto made = objects.inherit_file(item.descriptor, item.handle);
-			::close(item.descriptor);
 			if (made.status)
 				throw std::runtime_error("cannot adopt inherited standard handle");
 			objects.set_inherit(item.handle, true);
 			continue;
 		}
+		if (item.kind != "process")
+			pending.descriptor = -1;
 		const auto object = object_from_record(item);
 		if (!object) {
 			::close(item.descriptor);
