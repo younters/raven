@@ -6,6 +6,7 @@
 #include <cstdio>
 #ifdef __APPLE__
 #include "../platform/darwin/dxmt/identity.h"
+#include "platform/darwin/processor_count.h"
 #include "../platform/darwin/dxmt/kernel_thunks.h"
 #endif
 
@@ -345,15 +346,29 @@ bool NativeX86System::dispatch(std::string_view name)
 		fail(1);
 	} else if (name == "GetProcessAffinityMask") {
 		if (args[1])
+			#ifdef __APPLE__
+			write32(args[1], darwin::processor_count(true) == 32 ? ~0U : (1U << darwin::processor_count(true)) - 1);
+#else
 			write32(args[1], 0xf);
+#endif
 		if (args[2])
+			#ifdef __APPLE__
+			write32(args[2], darwin::processor_count(true) == 32 ? ~0U : (1U << darwin::processor_count(true)) - 1);
+#else
 			write32(args[2], 0xf);
+#endif
 		process.return_api(1);
 	} else if (name == "SetProcessAffinityMask") {
 		process.return_api(1);
 	} else if (name == "GetSystemInfo") {
 		std::vector<uint8_t> info(36);
+		#ifdef __APPLE__
+		const auto count = darwin::processor_count(true);
+		const auto mask = count == 32 ? ~0U : (1U << count) - 1;
+		const uint32_t fields[] = {0, 4096, 0x10000, 0x7ffeffff, mask, count, 586, 65536, 0x0a000006};
+#else
 		const uint32_t fields[] = {0, 4096, 0x10000, 0x7ffeffff, 0xf, 4, 586, 65536, 0x0a000006};
+#endif
 		for (size_t index = 0; index < 9; ++index)
 			for (size_t byte = 0; byte < 4; ++byte)
 				info[index * 4 + byte] = uint8_t(fields[index] >> (byte * 8));

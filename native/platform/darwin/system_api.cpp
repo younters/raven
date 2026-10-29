@@ -1,5 +1,6 @@
 #include <raven_darwin_system.h>
 #include "nt/api.h"
+#include "processor_count.h"
 #include "nt/registry.h"
 #include "nt/text.h"
 
@@ -34,14 +35,14 @@ void register_firmware_api(raven::ApiRegistry &registry)
 	});
 }
 
-// Raven exposes one processor group. The x86 dispatcher models four CPUs; x64 uses the host count.
+// All processor queries share the guest group model.
 void register_processor_count_api(raven::ApiRegistry &registry)
 {
 	for (const auto *name : {"GetActiveProcessorCount", "GetMaximumProcessorCount"})
 		registry.add(name, 1, [](raven::ApiCall &call) {
 			const auto group = call.u32(0) & 0xffff;
 			if (group && group != 0xffff) { call.fail(87); return; }
-			call.ret(call.pointer_width() == 4 ? 4U : std::max(1U, std::min(64U, std::thread::hardware_concurrency())));
+			call.ret(raven::darwin::processor_count(call.pointer_width() == 4));
 		});
 }
 
