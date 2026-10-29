@@ -6,6 +6,19 @@ foreach(width 64 32)
         set(entry _raven_entry)
     endif()
     if(compiler)
+        set(compiler_dir ${CMAKE_CURRENT_BINARY_DIR}/app-compiler${width})
+        set(compiler_fixture ${compiler_dir}/client.exe)
+        set(compiler_dll ${compiler_dir}/d3dcompiler_47.dll)
+        add_custom_command(OUTPUT ${compiler_fixture} ${compiler_dll}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${compiler_dir}
+            COMMAND ${compiler} -nostdlib -O1 -shared -DCOMPILER_DLL -Wl,--entry,0,--kill-at
+                -o ${compiler_dll} ${RAVEN_DARWIN_DIR}/tests/app_compiler.c
+            COMMAND ${compiler} -nostdlib -O1 -Wl,--entry,${entry}
+                -o ${compiler_fixture} ${RAVEN_DARWIN_DIR}/tests/app_compiler.c -lkernel32
+            DEPENDS ${RAVEN_DARWIN_DIR}/tests/app_compiler.c VERBATIM)
+        add_custom_target(darwin_app_compiler${width}_fixture ALL DEPENDS ${compiler_fixture} ${compiler_dll})
+        add_test(NAME native_darwin_app_compiler_x${width} COMMAND raven --run-process --execution=native --timeout-ms=5000 ${compiler_fixture})
+        set_tests_properties(native_darwin_app_compiler_x${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
         foreach(area sspi_ansi socket_exclusive processor_count)
             set(fixture ${CMAKE_CURRENT_BINARY_DIR}/darwin-${area}${width}.exe)
             add_custom_command(OUTPUT ${fixture}

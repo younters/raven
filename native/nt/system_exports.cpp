@@ -1,4 +1,7 @@
 #include "system_exports.h"
+#ifdef __APPLE__
+#include "platform/darwin/app_libraries.h"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -133,6 +136,10 @@ std::span<const std::string_view> system_library_names()
 
 bool program_may_replace(std::string_view dll)
 {
+#ifdef __APPLE__
+	if (darwin::program_may_replace(dll))
+		return true;
+#endif
 	static const bool prefer_local = [] {
 		const char *value = std::getenv("RAVEN_PREFER_LOCAL_DLLS");
 		return value && std::string_view(value) == "1";
