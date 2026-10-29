@@ -46,6 +46,15 @@ void register_processor_count_api(raven::ApiRegistry &registry)
 		});
 }
 
+// No approximate SID hashing: callers must observe that this service is absent.
+void register_appcontainer_api(raven::ApiRegistry &registry)
+{
+	registry.add("DeriveAppContainerSidFromAppContainerName", 2, [](raven::ApiCall &call) {
+		if (call[1]) call.store_pointer(call[1], 0);
+		call.fail(120, 0x80070078U); // HRESULT_FROM_WIN32(ERROR_CALL_NOT_IMPLEMENTED)
+	});
+}
+
 void seed_hardware_registry(raven::NativeRegistry &hive)
 {
 	for (long cpu = 0; cpu < sysconf(_SC_NPROCESSORS_ONLN); ++cpu) {

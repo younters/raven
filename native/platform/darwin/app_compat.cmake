@@ -19,11 +19,11 @@ foreach(width 64 32)
         add_custom_target(darwin_app_compiler${width}_fixture ALL DEPENDS ${compiler_fixture} ${compiler_dll})
         add_test(NAME native_darwin_app_compiler_x${width} COMMAND raven --run-process --execution=native --timeout-ms=5000 ${compiler_fixture})
         set_tests_properties(native_darwin_app_compiler_x${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
-        foreach(area sspi_ansi socket_exclusive processor_count)
+        foreach(area sspi_ansi socket_exclusive processor_count appcontainer_stub)
             set(fixture ${CMAKE_CURRENT_BINARY_DIR}/darwin-${area}${width}.exe)
             add_custom_command(OUTPUT ${fixture}
                 COMMAND ${compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${entry}
-                    -o ${fixture} ${RAVEN_DARWIN_DIR}/tests/${area}.c -lsecur32 -liphlpapi -lws2_32 -lkernel32 -lgcc
+                    -o ${fixture} ${RAVEN_DARWIN_DIR}/tests/${area}.c -lsecur32 -luserenv -liphlpapi -lws2_32 -lkernel32 -lgcc
                 DEPENDS ${RAVEN_DARWIN_DIR}/tests/${area}.c VERBATIM)
             add_custom_target(darwin_${area}${width}_fixture ALL DEPENDS ${fixture})
             add_test(NAME native_darwin_${area}_x${width} COMMAND raven --run-process --execution=native --timeout-ms=5000 ${fixture})

@@ -18,8 +18,8 @@ No push, Chrome/Steam installation, application launch, or source-branch modific
 | `3294bec` | keep | ANSI SSPI table remains stubbed; reuse existing W credential/context engine with ANSI adapters. | `1c7db72` |
 | `9887172` | keep, reapply | PR #27 supplies the loader machinery but its default allowlist excludes this compiler. Replace eager preload with a Darwin admission seam using that machinery. | `a7238c7` |
 | `dba8cc3` | drop | Executable-name-based elevation grants every msiexec client and immediate action an elevated token. Windows elevates selected service actions, not arbitrary clients. Session-ID addition is independent and not necessary for retained fixes. | — |
-| `edc8d41` | drop | Trace fix already in `16d2912`; arbitrary nested compiler scanning violates loader search order; starting Active Setup on every root program launch is not a Windows logon boundary, can block launches for ten minutes per stub and marks unsuccessful stubs current. Policy calls return fresh unowned mutexes rather than protecting shared policy state. | — |
-| `52fdd90` | keep counts; drop SIDs | Reapply processor counts independently of dropped policy calls. Match x64 host count and the x86 dispatcher's existing four-CPU model. SID code truncates at 256 characters and folds only ASCII, with no Windows golden SID vectors. Shape/equality tests cannot establish derivation correctness. | `3145edb`, corrected by `c6b48b5` |
+| `edc8d41` | drop | Chrome 156 system-install/startup feature is explicitly dropped, including automatic Active Setup. Trace fix already in `16d2912`; arbitrary nested compiler scanning violates loader search order; starting Active Setup on every root program launch is not a Windows logon boundary, can block launches for ten minutes per stub and marks unsuccessful stubs current. Policy calls return fresh unowned mutexes rather than protecting shared policy state. | — |
+| `52fdd90` | keep counts; drop SIDs | Reapply processor counts independently of dropped policy calls. Review correction: all sources now share host counts with a 32/64-bit affinity-mask cap; the inconsistent fixed four-CPU x86 model is removed. SID code truncates at 256 characters and folds only ASCII, with no Windows golden SID vectors. Shape/equality tests cannot establish derivation correctness. | `3145edb`, corrected by `c6b48b5` |
 | `08c7a95` | drop | WIP cannot suspend self, increments the current thread count outside normal suspension, has no limit/error handling, and only tests one child thread. Cross-process suspension needs a scheduler/handle-channel design with nested-count, multi-thread, access, exit-race and memory-read tests. | — |
 
 ## Overlaps checked
@@ -40,7 +40,7 @@ and semaphore-transfer (`f4f3fd6`, `4d4f0b3`) work is preserved.
 
 ## Windows contracts used
 
-- [CreateProcessAsUserW](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessasuserw): explicit primary-token creation; retained null-token path uses the process primary token, not an impersonation token. Invalid non-null handles still fail.
+- [MSI custom-action type 2](https://learn.microsoft.com/en-us/windows/win32/msi/custom-action-type-2) documents CreateProcessAsUser/CreateProcess for deferred EXE actions; [custom-action security](https://learn.microsoft.com/en-us/windows/win32/msi/custom-action-security) describes impersonation and elevation. Neither documents a NULL token. The NULL-token call motivating this fix was observed in Raven's Wine-derived MSI implementation (historical report), not established as a Windows MSI contract. Raven chooses its process primary token for that compatibility path. The [CreateProcessAsUserW](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessasuserw) page documents primary-token creation and GetLastError on failure, but does not establish NULL-token-to-caller behavior or ERROR_INVALID_HANDLE for our synthetic invalid value. The fixture asserts Raven's compatibility and validation choices; these are not claimed as Windows conformance evidence.
 - [SO_EXCLUSIVEADDRUSE](https://learn.microsoft.com/en-us/windows/win32/winsock/so-exclusiveaddruse) and [reuse/exclusive rules](https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse): configure before bind and prevent competing binds. This adapter retains BSD non-reuse enforcement; it does not implement all Windows wildcard/interface, cross-user or reuse-contender error distinctions.
 - [InitSecurityInterfaceA](https://learn.microsoft.com/en-us/windows/win32/api/sspi/nf-sspi-initsecurityinterfacea): returns the ANSI SSPI dispatch table. Credential/context handles and binary attributes share the W engine; strings use Raven's existing CP1252 convention. Unsupported provider functions remain unsupported.
 - [GetActiveProcessorCount](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getactiveprocessorcount): group number or ALL_PROCESSOR_GROUPS; failure returns zero with last error. Raven models one group; maximum equals active because it models no offline processors.
@@ -97,3 +97,38 @@ Evidence: `/tmp/raven-55e3-build.log`, `/tmp/raven-55e3-compiler-build-final.log
 no new runtime failure is hidden by continuation flags. Hardware/TCC integration
 is deliberately mocked for the permission regression, so the test changes no
 user permission state and opens no capture device.
+
+## Review corrections
+
+The fixed four-processor x86 model was a Raven deviation, never a Windows
+contract. It is now removed. A single Darwin helper supplies the host count,
+clamped to 32 logical processors for the x86 model's pointer-sized masks or 64
+for x64. This one-group cap remains a runtime limitation on larger machines;
+real WOW64 exposes host topology and supports additional Windows group semantics.
+KUSER_SHARED_DATA, NUMBER_OF_PROCESSORS, GetSystemInfo/GetNativeSystemInfo,
+active/maximum counts, topology, CPU-set information and affinity use that model.
+
+The [Winsock Boolean option contract](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-setsockopt)
+permits zero to disable reuse; rejecting it on an exclusive socket was incorrect.
+The adapter now accepts it. The [Microsoft bind table](https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse)
+specifies WSAEACCES for a reuse-enabled contender on the same specific address
+as an exclusive socket. Darwin still returns WSAEADDRINUSE in this case: this is
+an explicit error-code deviation, tested as such. It still rejects the competing
+bind. Reproducing every Windows error distinction across independent Raven
+processes needs shared endpoint ownership, not a per-socket flag. The fixture
+also binds another adapter's specific IPv4 address on the same port; a host
+without a second IPv4 interface reports that part as unavailable.
+
+AppContainer derivation is explicitly unsupported: it clears the output SID and
+returns HRESULT_FROM_WIN32(ERROR_CALL_NOT_IMPLEMENTED), with last error 120.
+No shape-only SID approximation is installed. ProgramLibraries checks bitness
+(PE32/PE32+), not the PE Machine value; the compiler admission comment now says so.
+
+The six W SSPI names identified in review appear in the dispatch table but have
+no registered handlers in this checkout. The ANSI adapter now forwards to a W
+handler if present and otherwise returns SEC_E_UNSUPPORTED_FUNCTION. The ANSI
+fixture calls each of these slots and checks a CP1252 TLS target's UTF-8 SNI.
+
+Namespace unification is deferred: raven_darwin spans compatibility headers,
+audio and system services beyond this salvage. Renaming it would add unrelated
+churn; new helpers retain the surrounding namespace conventions.
