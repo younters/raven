@@ -4,6 +4,7 @@
 #include "nt/text.h"
 #include <cmath>
 #include <cstring>
+#include <set>
 #include <utility>
 
 namespace raven {

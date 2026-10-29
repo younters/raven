@@ -48,6 +48,14 @@ int main()
 	bad=item;bad.linear=2;reject(bad);
 	for (auto &radius : item.radius) { radius=-1;reject(item);radius=0; }
 	check(objects.window(stream)->properties==snapshot);
+	// A batch is all or nothing: a valid first visual is not published when a later one fails.
+	const auto second=objects.add(DesktopWindow{});
+	objects.window(second)->properties[u"RAVENDCOMPSWAPCHAIN"]=1;
+	auto moved=item;moved.x+=5;
+	auto broken=item;broken.stream=second;broken.sx=0;
+	raven_dcomp_item mixed[]={moved,broken};
+	check(publish(RAVEN_DCOMP_COMMIT_MAGIC,2,mixed)==0x80070057U);
+	check(objects.window(stream)->properties==snapshot && !objects.window(second)->properties.contains(u"RAVENDCOMPDEVICE"));
 	check(publish(RAVEN_DCOMP_COMMIT_MAGIC,0,{})==0);
 	check(objects.window(stream)->properties.at(u"RAVENDCOMPTARGET")==0);
 	check(objects.window(other)->properties.at(u"RAVENDCOMPTARGET")==target);
