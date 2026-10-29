@@ -45,6 +45,36 @@ _Static_assert(sizeof(struct layer_props) == 40, "DXMT v0.80 layer ABI");
 }
 @end
 
+// A timed-out retirement owns its send right until the host acknowledges UNUSED.
+// The fixed array bounds quarantine even if the host stops responding entirely.
+static struct {
+	bool active;
+	uint64_t ticket;
+	mach_port_t port;
+} retiring_slots[RAVEN_SURFACE_SLOTS];
+static uint64_t retirement_ticket;
+
+// Called only under the allocator lock. Reaping may be done by another allocator
+// before the destructor resumes; its ticket prevents cleanup of a later lease.
+static void reap_retired_slot(unsigned slot)
+{
+	struct raven_surface_frame *frame = &raven_dxmt_control()->surfaces[slot];
+	if (!retiring_slots[slot].active || __atomic_load_n(&frame->state, __ATOMIC_ACQUIRE) != RAVEN_SURFACE_UNUSED) return;
+	if (retiring_slots[slot].port) mach_port_deallocate(mach_task_self(), retiring_slots[slot].port);
+	frame->port = 0;
+	retiring_slots[slot].active = false;
+}
+
+#ifndef RAVEN_DXMT_RETIRE_PUBLISHED
+#define RAVEN_DXMT_RETIRE_PUBLISHED(slot) ((void)0)
+#endif
+#ifndef RAVEN_DXMT_RETIRE_ACKNOWLEDGED
+#define RAVEN_DXMT_RETIRE_ACKNOWLEDGED(slot) ((void)0)
+#endif
+#ifndef RAVEN_DXMT_RETIRE_ATTEMPTS
+#define RAVEN_DXMT_RETIRE_ATTEMPTS 1000
+#endif
+
 @implementation RavenDXMTDrawable
 - (instancetype)initWithDevice:(id<MTLDevice>)device window:(uint64_t)target properties:(const struct layer_props *)props
 {
@@ -96,6 +126,8 @@ _Static_assert(sizeof(struct layer_props) == 40, "DXMT v0.80 layer ABI");
 		}
 		if (IOSurfaceIsInUse(surface)) return false;
 		for (unsigned i = 0; i < RAVEN_SURFACE_SLOTS; ++i) {
+			reap_retired_slot(i);
+			if (retiring_slots[i].active) continue;
 			struct raven_surface_frame *frame = &shared->surfaces[i];
 			uint32_t state = __atomic_load_n(&frame->state, __ATOMIC_ACQUIRE);
 			if (state != RAVEN_SURFACE_UNUSED && state != RAVEN_SURFACE_AVAILABLE && state != RAVEN_SURFACE_DISPLAYED) continue;
@@ -121,19 +153,31 @@ _Static_assert(sizeof(struct layer_props) == 40, "DXMT v0.80 layer ABI");
 - (void)dealloc
 {
 	struct raven_control *shared = raven_dxmt_control();
+	int retiring = -1;
+	uint64_t ticket = 0;
 	@synchronized([RavenDXMTDrawable class]) {
 		if (slot >= 0 && shared) {
-			struct raven_surface_frame *frame = &shared->surfaces[slot];
-			const mach_port_t port = frame->port;
-			__atomic_store_n(&frame->state, RAVEN_SURFACE_RETIRE, __ATOMIC_RELEASE);
-			// Keep guest allocators out until the old send right is destroyed:
-			// the host can publish UNUSED before this destructor resumes.
-			for (unsigned wait = 0; wait < 1000 && __atomic_load_n(&frame->state, __ATOMIC_ACQUIRE) != RAVEN_SURFACE_UNUSED; ++wait)
-				usleep(1000);
-			if (port) mach_port_deallocate(mach_task_self(), port);
-			frame->port = 0;
+			retiring = slot;
+			ticket = ++retirement_ticket;
+			retiring_slots[slot].active = true;
+			retiring_slots[slot].ticket = ticket;
+			retiring_slots[slot].port = shared->surfaces[slot].port;
 			slot_owners[slot] = nil;
+			__atomic_store_n(&shared->surfaces[slot].state, RAVEN_SURFACE_RETIRE, __ATOMIC_RELEASE);
 		}
+	}
+	if (retiring >= 0) {
+		RAVEN_DXMT_RETIRE_PUBLISHED((unsigned)retiring);
+		for (unsigned wait = 0; wait < RAVEN_DXMT_RETIRE_ATTEMPTS &&
+			__atomic_load_n(&shared->surfaces[retiring].state, __ATOMIC_ACQUIRE) != RAVEN_SURFACE_UNUSED; ++wait)
+			usleep(1000);
+		if (__atomic_load_n(&shared->surfaces[retiring].state, __ATOMIC_ACQUIRE) == RAVEN_SURFACE_UNUSED)
+			RAVEN_DXMT_RETIRE_ACKNOWLEDGED((unsigned)retiring);
+		@synchronized([RavenDXMTDrawable class]) {
+			if (retiring_slots[retiring].ticket == ticket) reap_retired_slot((unsigned)retiring);
+		}
+		// On timeout the slot and right stay quarantined. A later acquisition
+		// reaps them only after the host's UNUSED acknowledgement.
 	}
 	[texture release];
 	if (surface) CFRelease(surface);

@@ -352,6 +352,14 @@ HRESULT reaches the guest's Present call. The null texture callback rejects the
 request with STATUS_INVALID_PARAMETER. Full guest-level retry/HRESULT propagation
 requires a corresponding DXMT presenter change.
 
+Retirement marks the record RETIRE under the guest allocator lock, then waits
+outside that lock for up to one second. A timeout quarantines the slot and its
+send right; it never releases a right the host may still be copying. Subsequent
+allocations reap quarantined rights only after UNUSED. Quarantine is bounded by
+the 64 transport slots, and a permanently unresponsive host eventually produces
+nonblocking backpressure. Cleanup tickets prevent an old destructor from touching
+a replacement lease if another allocator reaps the acknowledgement first.
+
 `native_darwin_dxmt_drawable_pool` covers 128 live views, lazy growth/reuse,
 recycling records whose old surfaces remain in use, busy-slot protection,
 nonblocking pressure and retirement without screen capture. Build it with

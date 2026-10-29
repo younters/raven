@@ -1,11 +1,18 @@
 // Exercise the real x86_64 allocator without windows or captured pixels.
+static void retire_published(unsigned slot);
+static void retire_acknowledged(unsigned slot);
+#define RAVEN_DXMT_RETIRE_PUBLISHED(slot) retire_published(slot)
+#define RAVEN_DXMT_RETIRE_ACKNOWLEDGED(slot) retire_acknowledged(slot)
+#define RAVEN_DXMT_RETIRE_ATTEMPTS 20
 #include "presentation.m"
 #include "slot_state.h"
 #include <pthread.h>
 #include <stdlib.h>
 
 static struct raven_control control;
-static bool done;
+static bool acknowledge_retirement = true;
+static bool pause_retirement;
+static dispatch_semaphore_t paused, resume_retirement;
 struct raven_control *raven_dxmt_control(void) { return &control; }
 
 static void check(bool ok, const char *message)
@@ -13,18 +20,83 @@ static void check(bool ok, const char *message)
 	if (!ok) { fprintf(stderr, "%s\n", message); exit(1); }
 }
 
-static void *acknowledge(void *unused)
+// Normal acknowledgements are synchronous, independent of worker scheduling.
+static void retire_published(unsigned slot)
 {
-	(void)unused;
-	while (!__atomic_load_n(&done, __ATOMIC_ACQUIRE)) {
-		for (unsigned i = 0; i < RAVEN_SURFACE_SLOTS; ++i) {
-			uint32_t retire = RAVEN_SURFACE_RETIRE;
-			__atomic_compare_exchange_n(&control.surfaces[i].state, &retire, RAVEN_SURFACE_UNUSED, 0,
-				__ATOMIC_RELEASE, __ATOMIC_RELAXED);
-		}
-		usleep(1000);
-	}
+	if (acknowledge_retirement)
+		__atomic_store_n(&control.surfaces[slot].state, RAVEN_SURFACE_UNUSED, __ATOMIC_RELEASE);
+}
+
+static void retire_acknowledged(unsigned slot)
+{
+	(void)slot;
+	if (!pause_retirement) return;
+	dispatch_semaphore_signal(paused);
+	check(!dispatch_semaphore_wait(resume_retirement, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)), "resume paused destructor");
+}
+
+static void *destroy_drawable(void *object)
+{
+	@autoreleasepool { [(RavenDXMTDrawable *)object release]; }
 	return NULL;
+}
+
+static unsigned send_refs(mach_port_t port)
+{
+	mach_port_urefs_t refs = 0;
+	check(mach_port_get_refs(mach_task_self(), port, MACH_PORT_RIGHT_SEND, &refs) == KERN_SUCCESS, "read send right references");
+	return refs;
+}
+
+static void test_retirement(id<MTLDevice> device)
+{
+	struct layer_props props = {.width = 16, .height = 16, .format = 80};
+	RavenDXMTDrawable *old = [[RavenDXMTDrawable alloc] initWithDevice:device window:1001 properties:&props];
+	check([old acquireSlot], "reserve retirement victim");
+	const unsigned slot = old->slot;
+	mach_port_t port = IOSurfaceCreateMachPort(old->surface);
+	control.surfaces[slot].port = port;
+	check(mach_port_mod_refs(mach_task_self(), port, MACH_PORT_RIGHT_SEND, 1) == KERN_SUCCESS, "retain guard right");
+	check(send_refs(port) == 2, "one transport right plus guard");
+	paused = dispatch_semaphore_create(0);
+	resume_retirement = dispatch_semaphore_create(0);
+	pause_retirement = true;
+	pthread_t destructor;
+	check(!pthread_create(&destructor, NULL, destroy_drawable, old), "start destructor");
+	check(!dispatch_semaphore_wait(paused, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)), "wait for UNUSED before cleanup");
+	RavenDXMTDrawable *next = [[RavenDXMTDrawable alloc] initWithDevice:device window:1002 properties:&props];
+	check([next acquireSlot] && next->slot == (int)slot, "acquire while destructor paused outside lock");
+	check(send_refs(port) == 1, "allocator releases old right exactly once");
+	mach_port_t replacement = IOSurfaceCreateMachPort(next->surface);
+	control.surfaces[slot].port = replacement;
+	dispatch_semaphore_signal(resume_retirement);
+	pthread_join(destructor, NULL);
+	pause_retirement = false;
+	check(send_refs(port) == 1 && send_refs(replacement) == 1, "old destructor preserves guard and new lease right");
+	mach_port_deallocate(mach_task_self(), port);
+	[next release];
+	dispatch_release(paused);
+	dispatch_release(resume_retirement);
+
+	old = [[RavenDXMTDrawable alloc] initWithDevice:device window:1003 properties:&props];
+	check([old acquireSlot], "reserve unacknowledged victim");
+	const unsigned stuck = old->slot;
+	port = IOSurfaceCreateMachPort(old->surface);
+	control.surfaces[stuck].port = port;
+	check(mach_port_mod_refs(mach_task_self(), port, MACH_PORT_RIGHT_SEND, 1) == KERN_SUCCESS, "guard quarantined right");
+	acknowledge_retirement = false;
+	[old release];
+	check(retiring_slots[stuck].active && control.surfaces[stuck].state == RAVEN_SURFACE_RETIRE && send_refs(port) == 2,
+		"timeout quarantines transport right until acknowledgement");
+	next = [[RavenDXMTDrawable alloc] initWithDevice:device window:1004 properties:&props];
+	check([next acquireSlot] && next->slot != (int)stuck, "quarantine leaves other slots usable");
+	acknowledge_retirement = true;
+	[next release];
+	__atomic_store_n(&control.surfaces[stuck].state, RAVEN_SURFACE_UNUSED, __ATOMIC_RELEASE);
+	next = [[RavenDXMTDrawable alloc] initWithDevice:device window:1005 properties:&props];
+	check([next acquireSlot] && next->slot == (int)stuck && send_refs(port) == 1, "late ack reaps quarantine exactly once");
+	[next release];
+	mach_port_deallocate(mach_task_self(), port);
 }
 
 int main(void)
@@ -37,8 +109,7 @@ int main(void)
 		check(stale.state == RAVEN_SURFACE_AVAILABLE, "matching release acknowledges presentation");
 		id<MTLDevice> device = MTLCreateSystemDefaultDevice();
 		if (!device) return 77;
-		pthread_t host;
-		check(!pthread_create(&host, NULL, acknowledge, NULL), "start retirement worker");
+		test_retirement(device);
 		RavenDXMTLayer *layers[128];
 		for (unsigned i = 0; i < 128; ++i) {
 			layers[i] = [[RavenDXMTLayer alloc] init];
@@ -111,8 +182,6 @@ int main(void)
 			check(control.surfaces[i].state == RAVEN_SURFACE_UNUSED && !slot_owners[i] && !control.surfaces[i].port, "retire drains slots and owners");
 		uint64_t invalid[2] = {0, 123};
 		check(drawable_texture(invalid) == (int32_t)0xc000000dU && !invalid[1], "null drawable texture");
-		__atomic_store_n(&done, true, __ATOMIC_RELEASE);
-		pthread_join(host, NULL);
 		[device release];
 		puts("128 live views, lazy growth/reuse, 3x pool recycling, busy-state protection and retirement PASS");
 	}
