@@ -65,12 +65,17 @@ struct Device : IDCompositionDesktopDevice {
 		return r;
 	}
 	HRESULT STDMETHODCALLTYPE Commit() override;
-	HRESULT STDMETHODCALLTYPE WaitForCommitCompletion() override { return E_NOTIMPL; }
+	HRESULT STDMETHODCALLTYPE WaitForCommitCompletion() override { return S_OK; }
 	HRESULT STDMETHODCALLTYPE GetFrameStatistics(DCOMPOSITION_FRAME_STATISTICS *out) override {
 		if (!out)
 			return E_POINTER;
 		*out = {};
-		return E_NOTIMPL;
+		QueryPerformanceCounter(&out->currentTime);
+		QueryPerformanceFrequency(&out->timeFrequency);
+		out->currentCompositionRate = {60, 1};
+		out->lastFrameTime = out->currentTime;
+		out->nextEstimatedFrameTime.QuadPart = out->currentTime.QuadPart + out->timeFrequency.QuadPart / 60;
+		return S_OK;
 	}
 	HRESULT STDMETHODCALLTYPE CreateVisual(IDCompositionVisual2 **out) override;
 	HRESULT STDMETHODCALLTYPE CreateTargetForHwnd(HWND hwnd, BOOL top, IDCompositionTarget **out) override;
@@ -505,6 +510,9 @@ struct Visual : IDCompositionVisual2 {
 		return S_OK;
 	}
 	HRESULT STDMETHODCALLTYPE SetCompositeMode(DCOMPOSITION_COMPOSITE_MODE v) override {
+		if (v != DCOMPOSITION_COMPOSITE_MODE_SOURCE_OVER && v != DCOMPOSITION_COMPOSITE_MODE_DESTINATION_INVERT &&
+			v != DCOMPOSITION_COMPOSITE_MODE_MIN_BLEND && v != DCOMPOSITION_COMPOSITE_MODE_INHERIT)
+			return E_INVALIDARG;
 		return v == DCOMPOSITION_COMPOSITE_MODE_SOURCE_OVER || v == DCOMPOSITION_COMPOSITE_MODE_INHERIT ? S_OK
 																										: E_NOTIMPL;
 	}

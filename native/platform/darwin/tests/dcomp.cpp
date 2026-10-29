@@ -98,6 +98,25 @@ static void render(HWND window) {
 	check(visual->SetOffsetY(20.0f), 14);
 	check(target->SetRoot(visual), 15);
 	check(composition->Commit(), 16);
+	check(composition->WaitForCommitCompletion(), 91);
+	DCOMPOSITION_FRAME_STATISTICS stats{};
+	LARGE_INTEGER before, after, frequency;
+	QueryPerformanceCounter(&before);
+	check(composition->GetFrameStatistics(&stats), 92);
+	QueryPerformanceCounter(&after);
+	QueryPerformanceFrequency(&frequency);
+	if (composition->GetFrameStatistics(nullptr) != E_POINTER || stats.timeFrequency.QuadPart != frequency.QuadPart ||
+		stats.lastFrameTime.QuadPart < before.QuadPart || stats.currentTime.QuadPart > after.QuadPart ||
+		stats.lastFrameTime.QuadPart > stats.currentTime.QuadPart || !stats.currentCompositionRate.Numerator ||
+		!stats.currentCompositionRate.Denominator || stats.nextEstimatedFrameTime.QuadPart <= stats.currentTime.QuadPart)
+		ExitProcess(93);
+	if (visual->SetCompositeMode((DCOMPOSITION_COMPOSITE_MODE)3) != E_INVALIDARG ||
+		visual->SetCompositeMode((DCOMPOSITION_COMPOSITE_MODE)-2) != E_INVALIDARG ||
+		visual->SetCompositeMode(DCOMPOSITION_COMPOSITE_MODE_DESTINATION_INVERT) != E_NOTIMPL ||
+		visual->SetCompositeMode(DCOMPOSITION_COMPOSITE_MODE_MIN_BLEND) != E_NOTIMPL)
+		ExitProcess(94);
+	check(visual->SetCompositeMode(DCOMPOSITION_COMPOSITE_MODE_SOURCE_OVER), 95);
+	check(visual->SetCompositeMode(DCOMPOSITION_COMPOSITE_MODE_INHERIT), 96);
 	// Mutating a tree on another thread must not invalidate Commit's traversal.
 	IDCompositionVisual2 *concurrent_child = nullptr;
 	check(composition->CreateVisual(&concurrent_child), 84);
@@ -211,6 +230,7 @@ static void render(HWND window) {
 		ExitProcess(78);
 	pump();
 	stage('8');
+
 	red_view->Release();
 	red_back->Release();
 	view->Release();
