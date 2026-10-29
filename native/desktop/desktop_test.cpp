@@ -1,4 +1,9 @@
 #include "api.h"
+#include "windows.h"
+#include <thread>
+#include <csignal>
+#include <sys/wait.h>
+#include <unistd.h>
 #include "nt/providers.h"
 #include "pe/resources.h"
 #include "icon_data.h"
@@ -92,6 +97,56 @@ int main(int argc, char **argv)
 			const auto retained=budget.register_class({"x",1,2});
 			check(retained && !budget.add(raven::DesktopWindow{retained,2,u"",0,0,0,0}) &&
 				budget.window_class(retained) && !budget.unregister_class(retained),"window budget damaged class ownership");
+		}
+		{
+			raven::DesktopObjects hierarchy;
+			raven::NativeWindows windows(process,environment,hierarchy);
+			const auto root=hierarchy.add(raven::DesktopWindow{}),child=hierarchy.add(raven::DesktopWindow{}),leaf=hierarchy.add(raven::DesktopWindow{});
+			hierarchy.window(child)->parent=root;hierarchy.window(leaf)->parent=child;
+			raven::publish_window(root,1,1);
+			const auto message=process.map_memory(4096,PROT_READ | PROT_WRITE);
+			for (const auto parent:{root,child,leaf}) {
+				const auto writer=fork();
+				check(writer>=0,"parent update writer did not start");
+				if (!writer) _exit(raven::request_window_update(root,{.parent=parent,.mask=1})?0:1);
+				int status=0;
+				check(waitpid(writer,&status,0)==writer && WIFEXITED(status) && !WEXITSTATUS(status),"parent update was not queued");
+				std::this_thread::sleep_for(std::chrono::milliseconds(9));
+				const uint64_t args[]={message,0,0,0,0};
+				check(process.call(modules.resolve({"user32.dll","PeekMessageW",0,false,0}),args,std::chrono::seconds(1)).stop==raven::NativeStop::api,
+					"parent update retrieval did not trap");
+				check(windows.dispatch("PeekMessageW"),"parent update retrieval not dispatched");
+				check(process.resume(std::chrono::seconds(1)).stop==raven::NativeStop::returned,"parent update retrieval did not return");
+				check(!hierarchy.window(root)->parent && hierarchy.window(child)->parent==root && hierarchy.window(leaf)->parent==child,
+					"foreign parent update created a cycle");
+			}
+			// A cycle can also close through a window another process owns and publishes under one of these.
+			const uint64_t foreign=leaf+0x1000;
+			int ready[2];
+			check(::pipe(ready)==0,"foreign window pipe failed");
+			const auto owner=fork();
+			check(owner>=0,"foreign window owner did not start");
+			if (!owner) {
+				raven::publish_window(foreign,1,1,0,leaf);
+				(void)::write(ready[1],"",1);
+				::pause();
+				_exit(0);
+			}
+			char byte;
+			check(::read(ready[0],&byte,1)==1,"foreign window was not published");
+			const auto local_parent=[&](uint64_t handle)->std::optional<uint64_t> {
+				if (const auto *record=hierarchy.window(handle)) return record->parent;
+				return std::nullopt;
+			};
+			check(raven::window_under(root,foreign,local_parent) && raven::window_under(leaf,foreign,local_parent) &&
+				!raven::window_under(foreign,root,local_parent) && !raven::window_under(foreign,leaf,local_parent),
+				"ancestry does not follow a foreign window's published parent");
+			::kill(owner,SIGKILL);
+			waitpid(owner,nullptr,0);
+			::close(ready[0]);::close(ready[1]);
+			raven::withdraw_window(foreign);
+			raven::withdraw_window(root);
+			process.unmap_memory(message);
 		}
 		raven::NativeResources resources_api(process,environment,modules,entry);
 		raven::NativeDesktop desktop(process, environment, objects, resources_api);

@@ -30,7 +30,7 @@ struct SurfaceMessage {
 	uint64_t window, sequence;
 	uint32_t slot, width, height, format;
 	uint64_t layer;
-	NativeWindows::CompositionBinding binding;
+	darwin::CompositionBinding binding;
 };
 
 struct ReleaseMessage {
@@ -158,7 +158,7 @@ struct DarwinDXMTPresentation::State {
 			std::cerr << "raven DXMT: cannot register the IOSurface presentation service\n";
 	}
 
-	bool forward(const raven_surface_frame &frame, uint32_t slot, pid_t owner, uint64_t layer_id=0, NativeWindows::CompositionBinding binding={}, IOSurfaceRef retained=nullptr)
+	bool forward(const raven_surface_frame &frame, uint32_t slot, pid_t owner, uint64_t layer_id=0, darwin::CompositionBinding binding={}, IOSurfaceRef retained=nullptr)
 	{
 		name_t name{};
 		const auto text = service_name(owner);
@@ -214,7 +214,7 @@ struct DarwinDXMTPresentation::State {
 		mach_port_deallocate(mach_task_self(), destination);
 	}
 
-	bool show(IOSurfaceRef surface, const raven_surface_frame &frame, uint32_t slot, mach_port_t reply, uint64_t layer_id=0, NativeWindows::CompositionBinding binding={})
+	bool show(IOSurfaceRef surface, const raven_surface_frame &frame, uint32_t slot, mach_port_t reply, uint64_t layer_id=0, darwin::CompositionBinding binding={})
 	{
 		const auto host = windows.host_surface(frame.window);
 		if (!surface || !host || host->platform != HostPlatform::metal ||
@@ -336,11 +336,11 @@ struct DarwinDXMTPresentation::State {
 		raven_surface_frame frame{};
 		uint32_t slot=0;
 		IOSurfaceRef surface=nullptr;
-		NativeWindows::CompositionBinding binding{};
+		darwin::CompositionBinding binding{};
 		bool sent=false;
 	};
 	std::map<uint64_t,CompositionFrame> compositions;
-	static bool same_binding(const NativeWindows::CompositionBinding &a,const NativeWindows::CompositionBinding &b)
+	static bool same_binding(const darwin::CompositionBinding &a,const darwin::CompositionBinding &b)
 	{
 		return a.target==b.target && a.x==b.x && a.y==b.y && a.sx==b.sx && a.sy==b.sy && a.order==b.order &&
 			a.left==b.left && a.top==b.top && a.right==b.right && a.bottom==b.bottom && a.linear==b.linear && a.rounded==b.rounded && a.radius==b.radius;
@@ -368,12 +368,13 @@ struct DarwinDXMTPresentation::State {
 		}
 		if (content.surface) {IOSurfaceDecrementUseCount(content.surface);CFRelease(content.surface);content.surface=nullptr;}
 	}
-	void publish_composition(uint64_t stream,CompositionFrame &content,NativeWindows::CompositionBinding binding)
+	void publish_composition(uint64_t stream,CompositionFrame &content,darwin::CompositionBinding binding,bool new_frame=false)
 	{
-		if (content.sent && same_binding(content.binding,binding)) return;
+		if (!new_frame && content.sent && same_binding(content.binding,binding)) return;
 		if (content.sent && content.binding.target!=binding.target) detach_composition(stream,content);
 		content.binding=binding;
 		if (!binding.target) return;
+		content.sent=false;
 		auto routed=content.frame;routed.window=binding.target;
 		if (const auto foreign=foreign_window_info(binding.target)) {
 			if (forward(routed,content.slot,pid_t(foreign->process),stream,binding,content.surface)) content.sent=true;
@@ -428,14 +429,14 @@ struct DarwinDXMTPresentation::State {
 					if (!surface) {__atomic_store_n(&frame.state,RAVEN_SURFACE_AVAILABLE,__ATOMIC_RELEASE);continue;}
 					auto &content=compositions[frame.window];
 					release_composition(content);
-					content={frame,index,surface,{},false};
+					content={frame,index,surface,content.binding,content.sent};
 					IOSurfaceIncrementUseCount(surface);
 					__atomic_store_n(&frame.state,RAVEN_SURFACE_DISPLAYED,__ATOMIC_RELEASE);
-					publish_composition(frame.window,content,*binding);
+					publish_composition(frame.window,content,*binding,true);
 					continue;
 				}
 				if (const auto foreign = foreign_window_info(routed.window); foreign && !windows.host_surface(routed.window)) {
-					if (forward(routed, index, pid_t(foreign->process), binding?frame.window:0, binding.value_or(NativeWindows::CompositionBinding{}))) {
+					if (forward(routed, index, pid_t(foreign->process), binding?frame.window:0, binding.value_or(darwin::CompositionBinding{}))) {
 						expected = RAVEN_SURFACE_IMPORTING;
 						__atomic_compare_exchange_n(&frame.state, &expected, RAVEN_SURFACE_DISPLAYED, false,
 							__ATOMIC_RELEASE, __ATOMIC_RELAXED);
@@ -445,7 +446,7 @@ struct DarwinDXMTPresentation::State {
 				const mach_port_t port = process.copy_unix_port(frame.port);
 				IOSurfaceRef surface = port ? IOSurfaceLookupFromMachPort(port) : nullptr;
 				if (port) mach_port_deallocate(mach_task_self(), port);
-				if (!show(surface, routed, index, MACH_PORT_NULL, binding?frame.window:0, binding.value_or(NativeWindows::CompositionBinding{}))) {
+				if (!show(surface, routed, index, MACH_PORT_NULL, binding?frame.window:0, binding.value_or(darwin::CompositionBinding{}))) {
 					if (surface) CFRelease(surface);
 					++errors;
 					__atomic_fetch_add(&control->surface_errors, 1, __ATOMIC_RELAXED);

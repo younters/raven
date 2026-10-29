@@ -12,7 +12,11 @@ int main(int argc, char **argv)
 		for (NSDictionary *window in windows) {
 			if ([window[(id)kCGWindowOwnerPID] intValue] != pid || (argc == 2 && [window[(id)kCGWindowLayer] intValue] != 0))
 				continue;
-			if (argc == 3 && [window[(id)kCGWindowName] length]) continue;
+			if (argc == 3) {
+				NSString *selector = [NSString stringWithUTF8String:argv[2]];
+				NSString *name = window[(id)kCGWindowName];
+				if ([selector isEqualToString:@"popup"] ? name.length != 0 : ![name isEqualToString:selector]) continue;
+			}
 			NSDictionary *result = @{ @"id": window[(id)kCGWindowNumber], @"bounds": window[(id)kCGWindowBounds] };
 			NSData *json = [NSJSONSerialization dataWithJSONObject:result options:0 error:NULL];
 			fwrite(json.bytes, 1, json.length, stdout);

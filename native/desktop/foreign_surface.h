@@ -24,6 +24,9 @@ struct ForeignWindowInfo {
 	uint64_t parent=0;
 };
 std::optional<ForeignWindowInfo> foreign_window_info(uint64_t window);
+// Whether `window` lies under `ancestor`, following this process's windows through `local_parent` (empty for one it does not own) and
+// the parents other processes publish for theirs.
+bool window_under(uint64_t ancestor, uint64_t window, const std::function<std::optional<uint64_t>(uint64_t)> &local_parent);
 // Commands to the owning host. The locked mailbox merges reparent/position updates until its owner consumes them.
 struct ForeignWindowUpdate {
 	uint64_t parent=0, after=0;
