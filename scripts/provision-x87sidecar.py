@@ -2,6 +2,7 @@
 """Install the pinned, non-entitled cooperative x87sidecar outside the checkout."""
 import argparse
 import hashlib
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -37,11 +38,15 @@ def main():
             with package.extractfile(member) as source, binary.open("wb") as output:
                 shutil.copyfileobj(source, output)
         binary.chmod(0o755)
-        attributes = subprocess.check_output(["/usr/bin/xattr", str(binary)], text=True).splitlines()
-        if "com.apple.quarantine" in attributes:
-            subprocess.run(["/usr/bin/xattr", "-d", "com.apple.quarantine", str(binary)], check=True)
+        # urllib and tarfile set no quarantine attribute, so the binary needs no clearing. An unsupported Rosetta only means
+        # guests run without acceleration, so the probe warns rather than stops provisioning.
+        if subprocess.run([str(binary), "--probe"]).returncode:
+            print("warning: x87sidecar does not support this Rosetta; PE32 guests will run without x87 acceleration")
         destination.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(binary, destination / "x87sidecar")
+        # Replace atomically, so a sidecar already running from the destination is never truncated.
+        staged = destination / ".x87sidecar.new"
+        shutil.copy2(binary, staged)
+        os.replace(staged, destination / "x87sidecar")
     print(f"Installed flat x87sidecar v{VERSION}: {destination / 'x87sidecar'}")
     print(f"RAVEN_X87_SIDECAR={destination / 'x87sidecar'}")
 

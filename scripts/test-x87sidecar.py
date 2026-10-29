@@ -43,12 +43,15 @@ def main():
             absent = run(raven, fixture, None, HOME=home)
         assert absent[0] == baseline[0]
         assert "RUNNING WITHOUT X87 ACCELERATION" not in absent[2], absent[2]
+        assert "patched ranges invalidated" not in absent[2], absent[2]
         for path, knobs in [(sidecar, {"X87_FORCE_UNSUPPORTED": "1"}),
                             (sidecar, {"X87_FORCE_ABANDON": "entry"}),
                             ("/nonexistent/raven-x87sidecar", {})]:
             result = run(raven, fixture, path, **knobs)
             assert result[0] == baseline[0]
             assert "RUNNING WITHOUT X87 ACCELERATION" in result[2], result[2]
+            if "X87_FORCE_ABANDON" not in knobs:
+                assert "patched ranges invalidated" not in result[2], result[2]
         print("unsupported, rolled-back hook and missing sidecar all preserve PE32 execution")
         return
     hooked = run(raven, fixture, sidecar)

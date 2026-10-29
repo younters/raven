@@ -25,22 +25,25 @@ int spawn_x87_guest(pid_t *pid, const std::string &bootstrap, const std::string 
 			std::fprintf(stderr, "raven: RUNNING WITHOUT X87 ACCELERATION: sidecar unavailable: %s\n", sidecar.c_str());
 		sidecar.clear();
 	}
-	if (!sidecar.empty()) {
-		// The bootstrap otherwise receives a deliberately minimal native environment.
-		// Forward sidecar configuration, including its fallback test switches.
-		for (char **entry = *_NSGetEnviron(); *entry; ++entry)
-			if (std::string_view(*entry).starts_with("X87_") && !std::string_view(*entry).starts_with("X87_SIDECAR_BOOTSTRAP="))
-				environment.emplace_back(*entry);
-		if (const char *aot = std::getenv("ROSETTA_DISABLE_AOT"))
-			environment.emplace_back(std::string("ROSETTA_DISABLE_AOT=") + aot);
-		if (std::getenv("RAVEN_TRACE_API"))
-			environment.emplace_back("RAVEN_TRACE_API=1");
-	}
-	std::vector<char *> env;
-	for (auto &value : environment) env.push_back(value.data());
-	env.push_back(nullptr);
+	const auto pointers = [](std::vector<std::string> &values) {
+		std::vector<char *> env;
+		for (auto &value : values) env.push_back(value.data());
+		env.push_back(nullptr);
+		return env;
+	};
 	char *bare[] = {const_cast<char *>(bootstrap.c_str()), const_cast<char *>(service.c_str()), nullptr};
 	if (!sidecar.empty()) {
+		// The bootstrap otherwise receives a deliberately minimal native environment. Forward sidecar configuration, including
+		// its fallback test switches, to the sidecar launch only, so a direct fallback launch keeps the ordinary environment.
+		auto wrapped_environment = environment;
+		for (char **entry = *_NSGetEnviron(); *entry; ++entry)
+			if (std::string_view(*entry).starts_with("X87_") && !std::string_view(*entry).starts_with("X87_SIDECAR_BOOTSTRAP="))
+				wrapped_environment.emplace_back(*entry);
+		if (const char *aot = std::getenv("ROSETTA_DISABLE_AOT"))
+			wrapped_environment.emplace_back(std::string("ROSETTA_DISABLE_AOT=") + aot);
+		if (std::getenv("RAVEN_TRACE_API"))
+			wrapped_environment.emplace_back("RAVEN_TRACE_API=1");
+		auto env = pointers(wrapped_environment);
 		char *wrapped[] = {sidecar.data(), const_cast<char *>("--cooperative"), bare[0], bare[1], nullptr};
 		// v1.9.0 execs the bootstrap in its original pid; the detached sidecar
 		// watches that pid. Raven retains its existing task-port identity checks.
@@ -48,6 +51,7 @@ int spawn_x87_guest(pid_t *pid, const std::string &bootstrap, const std::string 
 		if (!result) return 0;
 		std::fprintf(stderr, "raven: RUNNING WITHOUT X87 ACCELERATION: sidecar spawn error %d\n", result);
 	}
+	auto env = pointers(environment);
 	return posix_spawn(pid, bootstrap.c_str(), actions, attributes, bare, env.data());
 }
 

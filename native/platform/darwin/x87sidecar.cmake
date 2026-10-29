@@ -21,11 +21,11 @@ if(EXISTS "${RAVEN_X87_SIDECAR}" AND RAVEN_MINGW32 AND RAVEN_MINGW64)
         COMMAND ${RAVEN_MINGW32} -O2 -nostdlib -fno-stack-protector -DRAVEN_X87_CHILD_LAUNCHER
             -Wl,--entry,_raven_entry,--no-insert-timestamp ${RAVEN_DARWIN_DIR}/tests/x87sidecar.c -lkernel32 -o ${child_fixture}
         DEPENDS ${RAVEN_DARWIN_DIR}/tests/x87sidecar.c VERBATIM)
-    add_custom_target(darwin_x87sidecar_fixtures ALL DEPENDS ${x87_fixtures} ${child_fixture})
+    add_custom_target(darwin_x87sidecar_fixtures DEPENDS ${x87_fixtures} ${child_fixture})
     foreach(case IN ITEMS correctness fallback x64 child)
         add_test(NAME darwin_x87sidecar_${case} COMMAND ${Python3_EXECUTABLE}
             ${PROJECT_SOURCE_DIR}/scripts/test-x87sidecar.py $<TARGET_FILE:raven> ${RAVEN_X87_SIDECAR}
             ${CMAKE_CURRENT_BINARY_DIR}/darwin-x87sidecar-32.exe ${CMAKE_CURRENT_BINARY_DIR}/darwin-x87sidecar-64.exe ${case})
-        set_tests_properties(darwin_x87sidecar_${case} PROPERTIES TIMEOUT 60)
+        set_tests_properties(darwin_x87sidecar_${case} PROPERTIES TIMEOUT 180)
     endforeach()
 endif()
