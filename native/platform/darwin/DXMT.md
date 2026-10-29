@@ -365,5 +365,9 @@ recycling records whose old surfaces remain in use, busy-slot protection,
 nonblocking pressure and retirement without screen capture. Build it with
 `cmake --build <build> --target darwin_dxmt_pool_test -j8`.
 The expanded control layout uses protocol version 5: rebuild the host, bootstrap
-and `raven-dxmt.dylib` together. The adapter is built by
+and `raven-dxmt.dylib` together. Before calling adapter initialization or wrapping
+its function table, the guest loader requires `raven_unixlib_protocol_version()`
+to equal its own protocol version. Missing or mismatched versions fail with
+ENOEXEC and a rebuild diagnostic, including old unversioned adapters.
+The adapter is built by
 `scripts/provision-dxmt.py`; rebuilding the host does not rebuild a provisioned adapter.

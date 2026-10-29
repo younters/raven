@@ -41,6 +41,11 @@ struct raven_control *raven_dxmt_control(void)
 	return __atomic_load_n(&control, __ATOMIC_ACQUIRE);
 }
 
+uint32_t raven_unixlib_protocol_version(void)
+{
+	return RAVEN_GUEST_VERSION;
+}
+
 void raven_unixlib_init(struct raven_control *shared)
 {
 	__atomic_store_n(&control, shared, __ATOMIC_RELEASE);

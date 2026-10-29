@@ -654,3 +654,35 @@ set_tests_properties(native_darwin_dxmt_drawable_pool PROPERTIES TIMEOUT 20 SKIP
 add_executable(darwin_fd_budget_test ${RAVEN_DARWIN_DIR}/fd_budget_test.cpp)
 add_test(NAME native_darwin_fd_budget COMMAND darwin_fd_budget_test)
 set_tests_properties(native_darwin_fd_budget PROPERTIES TIMEOUT 15)
+
+if(TARGET darwin_unix_call_fixtures)
+    set(ADAPTER_PROTOCOL_LIBRARIES)
+    set(adapter ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-test.dylib)
+    add_custom_command(OUTPUT ${adapter}
+        COMMAND ${CMAKE_C_COMPILER} -arch x86_64 -dynamiclib -fblocks
+            ${RAVEN_DARWIN_DIR}/dxmt/unix_adapter.m ${RAVEN_DARWIN_DIR}/dxmt/presentation.m
+            -framework Foundation -framework Metal -framework IOSurface -o ${adapter}
+        DEPENDS ${RAVEN_DARWIN_DIR}/dxmt/unix_adapter.m ${RAVEN_DARWIN_DIR}/dxmt/presentation.m
+            ${RAVEN_DARWIN_DIR}/guest/protocol.h VERBATIM)
+    foreach(version 0 4 5)
+        set(library ${CMAKE_CURRENT_BINARY_DIR}/adapter-protocol-${version}.dylib)
+        set(adapter_options)
+        set(adapter_dependencies)
+        if(version EQUAL 5)
+            set(adapter_options -DREAL_ADAPTER -Wl,-needed_library,${adapter})
+            set(adapter_dependencies ${adapter})
+        endif()
+        add_custom_command(OUTPUT ${library}
+            COMMAND ${CMAKE_C_COMPILER} -arch x86_64 -dynamiclib -DADAPTER_VERSION=${version} ${adapter_options}
+                ${RAVEN_DARWIN_DIR}/tests/adapter_protocol_library.c -o ${library}
+            DEPENDS ${RAVEN_DARWIN_DIR}/tests/adapter_protocol_library.c ${RAVEN_DARWIN_DIR}/guest/protocol.h ${adapter_dependencies} VERBATIM)
+        list(APPEND ADAPTER_PROTOCOL_LIBRARIES ${library})
+    endforeach()
+    add_custom_target(darwin_adapter_protocol_fixtures ALL DEPENDS ${ADAPTER_PROTOCOL_LIBRARIES})
+    add_executable(darwin_adapter_protocol_test ${RAVEN_DARWIN_DIR}/tests/adapter_protocol.cpp)
+    target_link_libraries(darwin_adapter_protocol_test PRIVATE raven_cpu)
+    add_dependencies(darwin_adapter_protocol_test darwin_adapter_protocol_fixtures darwin_unix_call_fixtures raven-bootstrap)
+    add_test(NAME native_darwin_adapter_protocol COMMAND darwin_adapter_protocol_test
+        $<TARGET_FILE:raven-bootstrap> ${RAVEN_UNIX_CALL_PE} ${ADAPTER_PROTOCOL_LIBRARIES})
+    set_tests_properties(native_darwin_adapter_protocol PROPERTIES TIMEOUT 15)
+endif()
