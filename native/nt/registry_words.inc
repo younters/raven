@@ -1012,6 +1012,8 @@
 {"MapViewOfFile", 5},
 {"MapViewOfFileEx", 6},
 {"MapVirtualKeyA", 2},
+{"MapVirtualKeyExA", 3},
+{"MapVirtualKeyExW", 3},
 {"MapVirtualKeyW", 2},
 {"MessageBeep", 1},
 {"MessageBoxA", 4},

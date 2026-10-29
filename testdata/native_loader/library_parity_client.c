@@ -24,6 +24,23 @@ static LRESULT CALLBACK window_proc(HWND window, UINT message, WPARAM wparam, LP
 
 int raven_entry(void)
 {
+	HKL keyboard = GetKeyboardLayout(0);
+	if (MapVirtualKeyExW('A', MAPVK_VK_TO_CHAR, keyboard) != 'A' ||
+		MapVirtualKeyExA(VK_OEM_1, MAPVK_VK_TO_CHAR, keyboard) != ';' ||
+		MapVirtualKeyW('A', MAPVK_VK_TO_CHAR) != 'A' || MapVirtualKeyA(VK_OEM_1, MAPVK_VK_TO_CHAR) != ';') return 100;
+	if (MapVirtualKeyExW('A', MAPVK_VK_TO_VSC, keyboard) != 0x1e ||
+		MapVirtualKeyExW(0x1e, MAPVK_VSC_TO_VK, keyboard) != 'A') return 101;
+	if (MapVirtualKeyExW(VK_RCONTROL, MAPVK_VK_TO_VSC_EX, keyboard) != 0xe01d ||
+		MapVirtualKeyExW(VK_RCONTROL, MAPVK_VK_TO_VSC, keyboard) != 0x1d ||
+		MapVirtualKeyExW(0xe01d, MAPVK_VSC_TO_VK_EX, keyboard) != VK_RCONTROL ||
+		MapVirtualKeyExW(0xe01d, MAPVK_VSC_TO_VK, keyboard) != VK_CONTROL) return 102;
+	if (MapVirtualKeyExW(VK_RSHIFT, MAPVK_VK_TO_VSC_EX, keyboard) != 0x36 ||
+		MapVirtualKeyExW(0x36, MAPVK_VSC_TO_VK_EX, keyboard) != VK_RSHIFT ||
+		MapVirtualKeyExW(VK_RMENU, MAPVK_VK_TO_VSC_EX, keyboard) != 0xe038 ||
+		MapVirtualKeyExW(0xe038, MAPVK_VSC_TO_VK_EX, keyboard) != VK_RMENU) return 103;
+	if (MapVirtualKeyExW(VK_LEFT, MAPVK_VK_TO_VSC_EX, keyboard) != 0xe04b ||
+		MapVirtualKeyExW(0xe04b, MAPVK_VSC_TO_VK_EX, keyboard) != VK_LEFT ||
+		MapVirtualKeyExW(0, MAPVK_VK_TO_VSC, keyboard) || MapVirtualKeyExW('A', 99, keyboard)) return 104;
 	OSVERSIONINFOEXA version_a = {0};
 	OSVERSIONINFOEXW version_w = {0};
 	version_a.dwOSVersionInfoSize = sizeof version_a;
