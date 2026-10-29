@@ -1,4 +1,5 @@
 #include "child_process.h"
+#include "console.h"
 #include "event.h"
 #include "mutex.h"
 #include "threads.h"
@@ -225,6 +226,8 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		if (NativePaths::device(name)) {
+			if (open_console_device(context, call, name, access, inheritable_handle(call, security)))
+				return;
 			const int descriptor = ::open("/dev/null", O_RDWR | O_CLOEXEC);
 			const auto made = objects.add_object(std::make_shared<FileObject>(descriptor, access, false, "/dev/null", u"NUL", 0));
 			{ if (!made.status && inheritable_handle(call, security)) objects.set_inherit(made.value, true); call.ret(made.status ? invalid_handle : made.value); }
@@ -312,7 +315,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		create_file(call, call.wide(call[0]), call.u32(1), call.u32(3), flags, security);
 	});
 	registry.add("ReadFile", 5, [&, resolve, missing, file_of](ApiCall &call) {
-		if (transfer_pipe(context, call, true))
+		if (transfer_pipe(context, call, true) || read_console_file(context, call))
 			return;
 		// The standard handles inherited from the host read straight from their descriptors.
 		if (!file_of(call[0])) {
@@ -382,6 +385,9 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 				: ::pwrite(file->descriptor, bytes.data(), bytes.size(), off_t(offset));
 			if (count >= 0 && offset != UINT64_MAX && !(file->flags & 0x40000000U))
 				::lseek(file->descriptor, off_t(offset + uint64_t(count)), SEEK_SET);
+		} else if (::isatty(file->descriptor)) {
+			count = TerminalConsole::instance().write_text(file->descriptor, std::string_view(reinterpret_cast<const char *>(bytes.data()), bytes.size())) ?
+				ssize_t(bytes.size()) : -1;
 		} else {
 			do count = ::write(file->descriptor, bytes.data(), bytes.size()); while (count < 0 && errno == EINTR);
 		}
@@ -816,6 +822,19 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		put32(bytes, 44, uint32_t(uint64_t(metadata.st_ino) >> 32));
 		put32(bytes, 48, uint32_t(metadata.st_ino));
 		call.write(call[1], bytes);
+		call.ret(1);
+	});
+	// The host file systems keep no 8.3 names: a valid request on an open file is accepted and leaves nothing to record, as a volume with
+	// short name generation turned off does.
+	registry.add("SetFileShortNameW", 2, [file_of](ApiCall &call) {
+		if (!file_of(call[0])) {
+			call.fail(6);
+			return;
+		}
+		if (!call[1] || call.wide(call[1], 13).size() > 12) {
+			call.fail(87);
+			return;
+		}
 		call.ret(1);
 	});
 	// The information classes programs set on an open file: times, renaming, deletion on close, the file's length and I/O hints.
@@ -1642,7 +1661,13 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		auto found = std::make_shared<FindObject>();
 		const bool wild = pattern.find_first_of(u"*?<>") != pattern.npos;
 		std::vector<std::u16string> names;
-		if (wild) {
+#ifdef __APPLE__
+		// Case-insensitive host lookups keep the caller's spelling; enumeration supplies the file's stored name.
+		const bool enumerate = true;
+#else
+		const bool enumerate = wild;
+#endif
+		if (enumerate) {
 			DIR *handle = ::opendir(resolved->host.c_str());
 			if (!handle) {
 				call.set_last_error(error_of(errno));

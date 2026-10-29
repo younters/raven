@@ -111,6 +111,9 @@ int raven_entry(void)
 	CHECK(24,FindNextFileW(find,&data) && same(data.cFileName,L"moved.txt"));
 	CHECK(25,!FindNextFileW(find,&data) && GetLastError()==ERROR_NO_MORE_FILES);
 	CHECK(26,FindClose(find));
+	join(pattern,work,L"HELLO.TXT");
+	find=FindFirstFileW(pattern,&data);
+	CHECK(53,find!=INVALID_HANDLE_VALUE && same(data.cFileName,L"hello.txt") && FindClose(find));
 	join(pattern,work,L"*.txt");
 	find=FindFirstFileExW(pattern,FindExInfoStandard,&data,FindExSearchLimitToDirectories,0,0);
 	CHECK(52,find!=INVALID_HANDLE_VALUE && same(data.cFileName,L"hello.txt") && FindClose(find));

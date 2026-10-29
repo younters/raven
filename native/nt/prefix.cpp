@@ -25,7 +25,8 @@ NativePrefix::NativePrefix(std::filesystem::path root) : directory(std::move(roo
 	// The Fonts folder holds the installed fonts, as on Windows: links to the host's font files, made once when the folder is new.
 	const auto fonts = directory / "drive_c" / "windows" / "Fonts";
 	std::error_code error;
-	if (std::filesystem::create_directory(fonts, error)) {
+	// Older prefixes may have an empty Fonts folder from before host font discovery was available.
+	if (std::filesystem::create_directory(fonts, error) || std::filesystem::is_empty(fonts, error)) {
 #ifdef __APPLE__
 		const auto roots = raven_darwin::font_roots();
 #else

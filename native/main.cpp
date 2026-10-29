@@ -194,6 +194,7 @@ int main(int argc, char **argv)
 	const bool run_process = mode == "--run-process";
 	int first_file=3;
 	auto timeout=std::chrono::milliseconds(5000);
+	bool timeout_given=false;
 	bool wayland=false,x11=false,macos=false;
 	if (run_process && argc>3 && std::string_view(argv[3]).starts_with("--timeout-ms=")) {
 		const std::string_view value=std::string_view(argv[3]).substr(13);
@@ -204,6 +205,7 @@ int main(int argc, char **argv)
 			return 2;
 		}
 		timeout=std::chrono::milliseconds(milliseconds);
+		timeout_given=true;
 		first_file=4;
 	}
 	if (run_process && argc>first_file && std::string_view(argv[first_file])=="--desktop=wayland") {
@@ -253,14 +255,15 @@ int main(int argc, char **argv)
 		else more=false;
 		if (more) ++first_file;
 	}
-	if (run_process) {
-		// What programs it starts inherit: how long they may run and which window system they use.
+	// What programs it starts inherit: how long they may run and which window system they use.
+	const auto pass_options=[&] {
 		std::string options="--timeout-ms="+std::to_string(timeout.count());
 		if (wayland) options+=" --desktop=wayland";
 		if (x11) options+=" --desktop=x11";
 		if (macos) options+=" --desktop=macos";
 		setenv("RAVEN_CHILD_OPTIONS",options.c_str(),1);
-	}
+	};
+	if (run_process) pass_options();
 	const bool bind_imports = mode == "--bind-imports";
 	int last_file=argc;
 	if (run_process)
@@ -326,8 +329,9 @@ int main(int argc, char **argv)
 					{
 						const auto runtime = std::filesystem::read_symlink("/proc/self/exe").parent_path();
 						for (const auto &[from, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}})
-							for (const char *program : {"msiexec.exe", "regsvr32.exe", "control.exe", "dism.exe", "fondue.exe", "regedit.exe", "mscoree.dll", "riched20.dll",
-									"msftedit.dll", "l_intl.nls"}) {
+							for (const char *program : {"cmd.exe", "msiexec.exe", "regsvr32.exe", "control.exe", "dism.exe", "fondue.exe", "regedit.exe", "mscoree.dll", "riched20.dll",
+									"msftedit.dll", "l_intl.nls", "find.exe", "findstr.exe", "more.com", "sort.exe", "where.exe", "xcopy.exe", "attrib.exe",
+									"timeout.exe", "choice.exe", "whoami.exe", "hostname.exe", "tasklist.exe", "taskkill.exe", "reg.exe"}) {
 								std::error_code error;
 								// The 64-bit Registry Editor lives in the Windows folder itself.
 								const bool windows_folder = std::string_view(program) == "regedit.exe" && std::string_view(folder) == "system32";
@@ -368,6 +372,9 @@ int main(int argc, char **argv)
 									const pid_t child = ::fork();
 									if (child == 0) {
 										::setenv("RAVEN_PREFIX_SETUP", "1", 1);
+										// Setup is quiet: only a failure says anything, on standard error.
+										if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
+											::dup2(quiet, 1);
 										const std::string self = std::filesystem::read_symlink("/proc/self/exe").string(), path = program.string();
 										::execl(self.c_str(), self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
 											server, static_cast<char *>(nullptr));
@@ -673,6 +680,15 @@ int main(int argc, char **argv)
 							std::u16string block(bytes.size()/2,u'\0');
 							std::memcpy(block.data(),bytes.data(),block.size()*2);
 							launch->environment=std::move(block);
+						}
+						// A console program started from a terminal has the terminal for its console, as Windows gives a console program the
+						// console it was started from, and runs for as long as it is used.
+						if (!inherited_stdio && handle_channel_fd<0 && entry->image.subsystem==3 && (::isatty(0) || ::isatty(1))) {
+							inherited_stdio=true;
+							if (!timeout_given) {
+								timeout=std::chrono::milliseconds(86400000);
+								pass_options();
+							}
 						}
 						if (inherited_stdio) launch->standard_fds={0,1,guest_error_fd};
 					}

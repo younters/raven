@@ -81,6 +81,12 @@ void register_sync_api(ApiRegistry &registry, KernelContext &context);
 void register_thread_api(ApiRegistry &registry, KernelContext &context);
 void register_memory_api(ApiRegistry &registry, KernelContext &context);
 void register_text_api(ApiRegistry &registry, KernelContext &context);
+// The console functions over the host terminal.
+void register_console_api(ApiRegistry &registry, KernelContext &context);
+// ReadFile on the console's input: a line, or typed characters, as ReadConsoleA reads them. False for any other handle.
+bool read_console_file(KernelContext &context, ApiCall &call);
+// CreateFile of CONIN$, CONOUT$ or CON: the host terminal. False when the name is another device or no terminal is there.
+bool open_console_device(KernelContext &context, ApiCall &call, std::u16string_view name, uint32_t access, bool inheritable);
 void register_process_api(ApiRegistry &registry, KernelContext &context);
 void register_security_api(ApiRegistry &registry, KernelContext &context);
 // The Schannel TLS client of SSPI over the host's OpenSSL.
@@ -100,6 +106,17 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context);
 void register_crypt32_api(ApiRegistry &registry, KernelContext &context);
 void register_bcrypt_api(ApiRegistry &registry, KernelContext &context);
 void register_font_service(ApiRegistry &registry, KernelContext &context);
+// An installed font family as GDI enumerates it: the face closest to regular, and the scripts and code pages its OS/2 table claims.
+struct InstalledFamily {
+	std::u16string name;
+	uint32_t weight = 400;
+	bool italic = false;
+	bool fixed = false;
+	uint32_t unicode_ranges[4]{};
+	uint32_t code_pages[2]{};
+};
+// The families of the fonts installed in the prefix, in name order; none without FreeType.
+std::vector<InstalledFamily> installed_font_families();
 void register_canvas_service(ApiRegistry &registry, KernelContext &context);
 // Starts the program an application name or command line names, looked up the way Windows does; null with the Windows error otherwise.
 std::shared_ptr<class ProcessObject> start_program(KernelContext &context, const std::u16string &application, const std::u16string &line,

@@ -16,6 +16,7 @@
 #include <new>
 #include <sstream>
 #include <unistd.h>
+#include <utility>
 #include <variant>
 
 namespace raven {
@@ -1025,10 +1026,19 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 #else
 				std::ifstream arguments(entry.path() / "cmdline", std::ios::binary);
 #endif
+				// The program is the runtime's first non-option argument, before -- and the program's own arguments.
 				std::string argument, last;
-				while (std::getline(arguments, argument, '\0'))
-					if (!argument.empty())
+				bool first = true;
+				while (std::getline(arguments, argument, '\0')) {
+					if (std::exchange(first, false) || argument.empty())
+						continue;
+					if (argument == "--")
+						break;
+					if (argument[0] != '-') {
 						last = argument;
+						break;
+					}
+				}
 #ifdef __APPLE__
 				auto stat = raven_darwin::proc_stream(entry.path() / "stat");
 #else
