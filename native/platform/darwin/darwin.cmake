@@ -641,14 +641,16 @@ include(${RAVEN_DARWIN_DIR}/x87sidecar.cmake)
 # Exercise the adapter with the x86_64 Metal ABI used under Rosetta.
 set(DXMT_POOL_TEST ${CMAKE_CURRENT_BINARY_DIR}/darwin-dxmt-pool-test)
 add_custom_command(OUTPUT ${DXMT_POOL_TEST}
-    COMMAND /usr/bin/clang -arch x86_64 -fblocks
+    COMMAND ${CMAKE_C_COMPILER} -arch x86_64 -fblocks
         ${RAVEN_DARWIN_DIR}/dxmt/presentation_pool_test.m
         -framework Foundation -framework Metal -framework IOSurface -o ${DXMT_POOL_TEST}
     DEPENDS ${RAVEN_DARWIN_DIR}/dxmt/presentation_pool_test.m
-        ${RAVEN_DARWIN_DIR}/dxmt/presentation.m ${RAVEN_DARWIN_DIR}/guest/protocol.h
+        ${RAVEN_DARWIN_DIR}/dxmt/presentation.m ${RAVEN_DARWIN_DIR}/dxmt/slot_state.h
+        ${RAVEN_DARWIN_DIR}/guest/protocol.h
     VERBATIM)
-add_custom_target(darwin_dxmt_pool_test DEPENDS ${DXMT_POOL_TEST})
-add_test(NAME native_darwin_dxmt_drawable_pool COMMAND ${DXMT_POOL_TEST})
+add_custom_target(darwin_dxmt_pool_test ALL DEPENDS ${DXMT_POOL_TEST})
+add_test(NAME native_darwin_dxmt_drawable_pool COMMAND ${Python3_EXECUTABLE}
+    ${RAVEN_DARWIN_DIR}/tests/run_rosetta.py ${DXMT_POOL_TEST})
 set_tests_properties(native_darwin_dxmt_drawable_pool PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
 
 add_executable(darwin_fd_budget_test ${RAVEN_DARWIN_DIR}/fd_budget_test.cpp)
@@ -682,9 +684,10 @@ if(TARGET darwin_unix_call_fixtures)
     add_executable(darwin_adapter_protocol_test ${RAVEN_DARWIN_DIR}/tests/adapter_protocol.cpp)
     target_link_libraries(darwin_adapter_protocol_test PRIVATE raven_cpu)
     add_dependencies(darwin_adapter_protocol_test darwin_adapter_protocol_fixtures darwin_unix_call_fixtures raven-bootstrap)
-    add_test(NAME native_darwin_adapter_protocol COMMAND darwin_adapter_protocol_test
+    add_test(NAME native_darwin_adapter_protocol COMMAND ${Python3_EXECUTABLE}
+        ${RAVEN_DARWIN_DIR}/tests/run_rosetta.py $<TARGET_FILE:darwin_adapter_protocol_test>
         $<TARGET_FILE:raven-bootstrap> ${RAVEN_UNIX_CALL_PE} ${ADAPTER_PROTOCOL_LIBRARIES})
-    set_tests_properties(native_darwin_adapter_protocol PROPERTIES TIMEOUT 15)
+    set_tests_properties(native_darwin_adapter_protocol PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
 endif()
 
 if(TARGET raven_cpu)
@@ -693,3 +696,6 @@ if(TARGET raven_cpu)
     add_test(NAME native_darwin_watch_lifetime COMMAND darwin_watch_lifetime_test)
     set_tests_properties(native_darwin_watch_lifetime PROPERTIES TIMEOUT 15)
 endif()
+
+add_test(NAME native_darwin_rosetta_runner COMMAND ${Python3_EXECUTABLE}
+    ${RAVEN_DARWIN_DIR}/tests/rosetta_runner_test.py)
