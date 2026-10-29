@@ -4322,8 +4322,36 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
         endif()
         add_test(NAME native_initial_dependency_cli COMMAND raven --run-process --execution=native ${LIFECYCLE_FIXTURES}/client.exe)
         add_test(NAME native_initial_forwarder_cli COMMAND raven --run-process --execution=native ${LIFECYCLE_FIXTURES}/forward-client.exe)
+        add_test(NAME native_initial_dependency_prefer_local COMMAND dependencies_test $<TARGET_FILE:raven-bootstrap> ${LIFECYCLE_FIXTURES})
         set_tests_properties(native_initial_dependency_contract PROPERTIES TIMEOUT 15)
+        set_tests_properties(native_initial_dependency_prefer_local PROPERTIES TIMEOUT 15 ENVIRONMENT RAVEN_PREFER_LOCAL_DLLS=1)
         set_tests_properties(native_initial_dependency_cli native_initial_forwarder_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        # A program's replacement library and the runtime's System32 fallback must coexist, for both guest widths.
+        foreach(width 64 32)
+            if(width EQUAL 64)
+                set(local_compiler ${RAVEN_MINGW64})
+                set(local_entry raven_entry)
+                set(local_dll_entry DllMain)
+            else()
+                set(local_compiler ${RAVEN_MINGW32})
+                set(local_entry _raven_entry)
+                set(local_dll_entry _DllMain@12)
+            endif()
+            if(local_compiler)
+                set(local_directory ${CMAKE_CURRENT_BINARY_DIR}/local-library-${width})
+                add_custom_command(OUTPUT ${local_directory}/winhttp.dll ${local_directory}/client.exe
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${local_directory}
+                    COMMAND ${local_compiler} -O2 -nostdlib -shared -DRAVEN_LOCAL_LIBRARY -fno-stack-protector
+                        -Wl,--entry,${local_dll_entry},--out-implib,${local_directory}/winhttp.a
+                        -o ${local_directory}/winhttp.dll ${LOADER_SOURCES}/local_library.c
+                    COMMAND ${local_compiler} -O2 -nostdlib -fno-stack-protector -Wl,--entry,${local_entry}
+                        -o ${local_directory}/client.exe ${LOADER_SOURCES}/local_library.c ${local_directory}/winhttp.a -lkernel32
+                    DEPENDS ${LOADER_SOURCES}/local_library.c VERBATIM)
+                add_custom_target(local_library_${width}_fixture ALL DEPENDS ${local_directory}/winhttp.dll ${local_directory}/client.exe)
+                add_test(NAME native_local_library_${width} COMMAND raven --run-process --execution=native ${local_directory}/client.exe)
+                set_tests_properties(native_local_library_${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 " ENVIRONMENT RAVEN_PREFER_LOCAL_DLLS=1)
+            endif()
+        endforeach()
     endif()
 endif()
 if(APPLE)

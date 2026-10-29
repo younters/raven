@@ -121,22 +121,34 @@ PEModule *NativeX86Loader::bring(const std::string &requested)
 			modules.add_alias(name, host);
 		name = host;
 	}
-	if (const auto found = modules.all().find(name); found != modules.all().end())
-		return found->second.get();
 	// A system library named by its path is the runtime's, as it is by its name; any library named by its path in the system directory is
 	// looked for as by its name, so a program that loads comctl32.dll from System32 gets the one the runtime has.
 	if (const auto slash = name.find_last_of("/\\:"); slash != std::string::npos) {
 		const auto base = name.substr(slash + 1);
 		if (const auto found = modules.all().find(base); found != modules.all().end() && found->second->runtime_api)
 			return found->second.get();
-		const auto folder = name.substr(0, slash);
-		if (folder == "c:\\windows\\system32" || folder == "c:\\windows\\syswow64")
+		auto folder = name.substr(0, slash);
+		for (auto &character : folder)
+			if (character == '/')
+				character = '\\';
+		if (folder == "c:\\windows\\system32" || folder == "c:\\windows\\syswow64") {
+			if (const auto fallback = modules.all().find("system32-" + base); fallback != modules.all().end())
+				return fallback->second.get();
 			return bring(base);
+		}
 	}
+	if ((library_flags & 0x1f00) == 0x800) {
+		if (const auto fallback = modules.all().find("system32-" + name); fallback != modules.all().end())
+			return fallback->second.get();
+	}
+	if (const auto found = modules.all().find(name); found != modules.all().end())
+		return found->second.get();
 	std::string identity;
 	std::filesystem::path file;
 	auto bytes = read_library(name, identity, file);
 	if (!bytes) {
+		if (const auto fallback = modules.all().find("system32-" + name); fallback != modules.all().end())
+			return fallback->second.get();
 		if (trace())
 			std::cerr << "raven: library file not found: " << requested << '\n';
 		environment.set_last_error(126);
