@@ -153,15 +153,18 @@ int main(int argc, char **argv)
 		std::signal(SIGSEGV, show_fault);
 		std::signal(SIGBUS, show_fault);
 	}
-	// RAVEN_TRACE_FILE=path sends the diagnostics of every process, a child program's included, to its own file path.<pid>.
-	if (const char *trace = std::getenv("RAVEN_TRACE_FILE")) {
-		const auto name = std::string(trace) + "." + std::to_string(::getpid());
-		if (!std::freopen(name.c_str(), "w", stderr))
-			return 2;
-		// A file is fully buffered once opened; diagnostics are read while the process runs, a line at a time.
-		std::setvbuf(stderr, nullptr, _IOLBF, 0);
-	}
+	// Preserve the child's inherited guest stderr before opening its per-process runtime trace.
+	const auto trace_runtime = [] {
+		if (const char *trace = std::getenv("RAVEN_TRACE_FILE")) {
+			const auto name = std::string(trace) + "." + std::to_string(::getpid());
+			if (!std::freopen(name.c_str(), "w", stderr))
+				return false;
+			std::setvbuf(stderr, nullptr, _IOLBF, 0);
+		}
+		return true;
+	};
 	const std::string mode = argc > 1 ? argv[1] : "";
+	if (mode != "--run-process" && !trace_runtime()) return 2;
 	// A restart of Windows: the moves and deletions installers left for it, then the programs that run once at the next logon.
 	if (mode == "--reboot") {
 		const auto done = raven::simulate_restart(raven::NativePrefix::from_environment(), std::filesystem::read_symlink("/proc/self/exe"));
@@ -255,6 +258,7 @@ int main(int argc, char **argv)
 		else more=false;
 		if (more) ++first_file;
 	}
+	if (run_process && !trace_runtime()) return 2;
 	// What programs it starts inherit: how long they may run and which window system they use.
 	const auto pass_options=[&] {
 		std::string options="--timeout-ms="+std::to_string(timeout.count());
