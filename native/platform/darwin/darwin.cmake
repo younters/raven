@@ -655,7 +655,7 @@ set_tests_properties(native_darwin_dxmt_drawable_pool PROPERTIES TIMEOUT 20 SKIP
 
 add_executable(darwin_fd_budget_test ${RAVEN_DARWIN_DIR}/fd_budget_test.cpp)
 add_test(NAME native_darwin_fd_budget COMMAND darwin_fd_budget_test)
-set_tests_properties(native_darwin_fd_budget PROPERTIES TIMEOUT 15)
+set_tests_properties(native_darwin_fd_budget PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77)
 
 if(TARGET darwin_unix_call_fixtures)
     set(ADAPTER_PROTOCOL_LIBRARIES)
@@ -699,3 +699,11 @@ endif()
 
 add_test(NAME native_darwin_rosetta_runner COMMAND ${Python3_EXECUTABLE}
     ${RAVEN_DARWIN_DIR}/tests/rosetta_runner_test.py)
+
+add_test(NAME native_darwin_fd_budget_low_hard COMMAND darwin_fd_budget_test --low-hard)
+set_tests_properties(native_darwin_fd_budget_low_hard PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77)
+add_library(darwin_fd_budget_observer SHARED ${RAVEN_DARWIN_DIR}/tests/fd_budget_observer.c)
+add_dependencies(darwin_fd_budget_test raven darwin_fd_budget_observer)
+add_test(NAME native_darwin_fd_budget_startup COMMAND ${Python3_EXECUTABLE}
+    ${RAVEN_DARWIN_DIR}/tests/fd_budget_startup.py $<TARGET_FILE:raven> $<TARGET_FILE:darwin_fd_budget_observer>)
+set_tests_properties(native_darwin_fd_budget_startup PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)

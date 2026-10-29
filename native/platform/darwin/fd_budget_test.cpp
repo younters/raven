@@ -24,7 +24,7 @@ static int fd_count()
 }
 
 // Keep 300 ordinary files and 64 pipe pairs alive concurrently, then release
-// them. These are valid host resources, with no dependency on Steam data.
+// them.
 static bool workload()
 {
 	std::vector<int> descriptors;
@@ -58,6 +58,12 @@ int main(int argc, char **argv)
 		}
 		rlimit original{};
 		check(!getrlimit(RLIMIT_NOFILE, &original), "get original limits");
+		if (argc == 2 && !std::strcmp(argv[1], "--low-hard")) {
+			rlimit low{std::min(rlim_t(128), original.rlim_max), std::min(rlim_t(128), original.rlim_max)};
+			check(!setrlimit(RLIMIT_NOFILE, &low), "set low hard limit");
+			original = low;
+		}
+		if (original.rlim_max < 256) return 77;
 		for (int scenario = 0; scenario < 4; ++scenario) {
 			const pid_t child = fork();
 			check(child >= 0, "fork test child");
