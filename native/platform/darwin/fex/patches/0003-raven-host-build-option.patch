@@ -1,0 +1,19 @@
+diff --git a/Darwin/build.py b/Darwin/build.py
+--- a/Darwin/build.py
++++ b/Darwin/build.py
+@@ -75,6 +75,7 @@
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("--output", type=Path, required=True)
+     parser.add_argument("--llvm-mingw", type=Path, default=Path("/opt/llvm-mingw-20260616-ucrt-macos-universal"))
++    parser.add_argument("--raven-host", action="store_true")
+     parser.add_argument("--jobs", type=int, default=8)
+     args = parser.parse_args()
+     root = Path(__file__).resolve().parents[1]
+@@ -157,6 +158,7 @@
+             run(["cmake", "-S", str(source), "-B", str(build), "-G", "Unix Makefiles",
+                  "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+                  "-DCMAKE_TOOLCHAIN_FILE=" + str(source / "Data/CMake/toolchain_mingw.cmake"),
++                 "-DRAVEN_HOST=" + ("ON" if args.raven_host else "OFF"),
+                  "-DMINGW_TRIPLE=" + triple, "-DENABLE_LTO=False", "-DBUILD_TESTING=False",
+                  "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--section-alignment=16384,--no-insert-timestamp",
+                  "-DENABLE_JEMALLOC_GLIBC_ALLOC=False", "-DTUNE_CPU=none", "-DENABLE_CCACHE=False",

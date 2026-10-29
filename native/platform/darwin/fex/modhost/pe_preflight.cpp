@@ -31,7 +31,12 @@ struct Mapping {
   void *base; size_t size;
   ~Mapping() { if (base != MAP_FAILED) munmap(base, size); }
 };
+#ifdef RAVEN_HOST_LOADER
+using ImportResolver = void *(*)(const char *, const char *);
+int map_module(int argc, char **argv, ImportResolver resolve) {
+#else
 int main(int argc, char **argv) {
+#endif
   if (argc != 2) { std::cerr << "usage: pe-preflight module.dll\n"; return 2; }
   try {
     std::ifstream input(argv[1], std::ios::binary);
@@ -81,7 +86,7 @@ int main(int argc, char **argv) {
               << " image_size=" << image_size << " DIR64_relocations=" << fixed << '\n';
     auto imports = f.get<uint32_t>(opt + 120), isize = f.get<uint32_t>(opt + 124);
     image.check(imports, isize);
-    size_t count = 0;
+    size_t count = 0, resolved = 0;
     for (size_t at = imports, end = size_t(imports) + isize; at + 20 <= end; at += 20) {
       auto name = image.get<uint32_t>(at + 12);
       if (!name) break;
@@ -91,12 +96,22 @@ int main(int argc, char **argv) {
         auto thunk = image.get<uint64_t>(lookup + i * 8);
         if (!thunk) break;
         image.check(iat + i * 8, 8);
+#ifdef RAVEN_HOST_LOADER
+        if (!(thunk >> 63)) {
+          if (void *target = resolve(image.string(name), image.string(thunk + 2))) {
+            image.put<uint64_t>(iat + i * 8, reinterpret_cast<uintptr_t>(target));
+            ++resolved;
+            continue;
+          }
+        }
+#endif
         std::cout << "unresolved " << image.string(name) << '!';
         if (thunk >> 63) std::cout << '#' << (thunk & 65535);
         else std::cout << image.string(thunk + 2);
         std::cout << '\n'; ++count;
       }
     }
+    std::cout << "resolved=" << resolved << "\n";
     std::cout << "STOP: " << count << " unresolved imports; no NT provider, CHPE initialization, or execution attempted\n";
     return 3;
   } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 2; }

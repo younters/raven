@@ -5,6 +5,8 @@ This script does not execute FEX or qualify the module-host gate.
 import argparse
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 import shutil
 import subprocess
@@ -51,7 +53,7 @@ def probes(root):
     if next(r for r in results if r['variant'] == 'sdk11' and not r['args'])['returncode']:
         raise RuntimeError('x18 legacy SDK gate failed; stop before module build')
 
-def build(root):
+def build(root, raven_host=False):
     source = root / 'FEX-darwin'
     if not source.exists():
         run(['git', 'clone', '--no-checkout', URL, source])
@@ -64,17 +66,24 @@ def build(root):
     if archive_sha != SOURCE_SHA:
         raise RuntimeError('source archive checksum mismatch')
     # Verify any tracked edits match only the exact Raven patch series.
-    patches = sorted((REPO / 'native/platform/darwin/fex/modhost/patches').glob('*.patch'))
-    for patch in patches:
-        reverse = subprocess.run(['git', '-C', str(source), 'apply', '--reverse', '--check', str(patch)],
-                                 capture_output=True)
-        if reverse.returncode:
-            run(['git', '-C', source, 'apply', '--check', patch])
+    patch_dir = 'native/platform/darwin/fex/patches' if raven_host else 'native/platform/darwin/fex/modhost/patches'
+    patches = sorted((REPO / patch_dir).glob('*.patch'))
+    # Validate a clean/prefix/fully patched tree before changing external sources.
+    # Private indexes handle overlapping hunks and new headers without staging them.
+    with tempfile.TemporaryDirectory(prefix='raven-fex-index-') as temp:
+        env = dict(os.environ, GIT_INDEX_FILE=str(Path(temp) / 'index'))
+        run(['git', '-C', source, 'read-tree', PIN], env=env)
+        trees = [subprocess.check_output(['git', '-C', str(source), 'write-tree'], env=env)]
+        for patch in patches:
+            run(['git', '-C', source, 'apply', '--cached', patch], env=env)
+            trees.append(subprocess.check_output(['git', '-C', str(source), 'write-tree'], env=env))
+        run(['git', '-C', source, 'read-tree', PIN], env=env)
+        run(['git', '-C', source, 'add', '-A'], env=env)
+        actual = subprocess.check_output(['git', '-C', str(source), 'write-tree'], env=env)
+        if actual not in trees:
+            raise RuntimeError('unexpected edits in source checkout')
+        for patch in patches[trees.index(actual):]:
             run(['git', '-C', source, 'apply', patch])
-    expected = ''.join(p.read_text() for p in patches)
-    actual = subprocess.check_output(['git', '-C', str(source), 'diff', '--binary'], text=True)
-    if actual != expected:
-        raise RuntimeError('unexpected tracked edits in source checkout')
     run(['git', '-C', source, 'submodule', 'update', '--init', '--jobs', '8', *SUBMODULES])
     archive = root / (TOOL + '.tar.xz')
     if not archive.exists():
@@ -86,11 +95,11 @@ def build(root):
         with tarfile.open(archive) as stream:
             # Archive is authenticated above; preserve toolchain's internal symlinks.
             stream.extractall(root, filter='data')
-    output = source / 'build/local/m1b'
+    output = source / ('build/local/m1c' if raven_host else 'build/local/m1b')
     manifest = output / 'fex-result.json'
     if not manifest.exists():
         run([sys.executable, source / 'Darwin/build.py', '--output', output,
-             '--llvm-mingw', compiler, '--jobs', '8'])
+             '--llvm-mingw', compiler, '--jobs', '8', *(['--raven-host'] if raven_host else [])])
     result = json.loads(manifest.read_text())
     status = subprocess.check_output(['git', '-C', str(source), 'status', '--porcelain', '--untracked-files=all'], text=True)
     if result['source_head'] != PIN or result['source_status'] != status:
@@ -114,7 +123,7 @@ def build(root):
         ['git', '-C', str(source), 'archive', '--format=tar', PIN])).hexdigest(),
         toolchain_archive_sha256=TOOL_SHA, patches=[dict(path=str(p.relative_to(REPO)), sha256=sha(p)) for p in patches],
         build=result)
-    (root / 'manifest.json').write_text(json.dumps(pins, indent=2) + '\n')
+    (root / ('m1c-manifest.json' if raven_host else 'manifest.json')).write_text(json.dumps(pins, indent=2) + '\n')
     exe = root / 'pe-preflight'
     run(['xcrun', 'clang++', '-arch', 'arm64', '-std=c++17', '-O2', '-Wall', '-Wextra', '-Werror',
          REPO / 'native/platform/darwin/fex/modhost/pe_preflight.cpp', '-o', exe])
@@ -123,10 +132,21 @@ def build(root):
         (root / (name + '-preflight.log')).write_text(p.stdout + p.stderr)
         if p.returncode != 3:
             raise RuntimeError('unexpected preflight outcome: ' + name)
+    if raven_host:
+        host = root / 'm1c-native-host'
+        run(['xcrun', 'clang++', '-arch', 'arm64', '-ffixed-x18', '-std=c++17', '-O2',
+             '-Wall', '-Wextra', '-Werror', '-Wl,-platform_version,macos,11.0,11.0',
+             REPO / 'native/platform/darwin/fex/modhost/native_host.cpp', '-o', host])
+        run([host, '--self-test'])
+        p = subprocess.run([str(host), str(root / 'xtajit64.dll')], capture_output=True, text=True)
+        (root / 'm1c-host-preflight.log').write_text(p.stdout + p.stderr)
+        if p.returncode != 3:
+            raise RuntimeError('unexpected native host preflight result')
     print('Module build PASS. Standalone PE host and guest execution are NOT implemented.')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--raven-host', action='store_true', help='Build the incomplete M1c frontend, not a qualified runtime')
     parser.add_argument('--root', type=Path, default=Path('/Users/yount/Documents/Projects/raven-components/fex-modules'))
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--probes-only', action='store_true')
@@ -135,6 +155,6 @@ if __name__ == '__main__':
     args.root.mkdir(parents=True, exist_ok=True)
     try:
         if not args.build_only: probes(args.root)
-        if not args.probes_only: build(args.root)
+        if not args.probes_only: build(args.root, args.raven_host)
     except (RuntimeError, subprocess.SubprocessError, OSError) as error:
         sys.exit(str(error))

@@ -1,0 +1,13 @@
+diff --git a/Darwin/build.py b/Darwin/build.py
+index 6455055..bf657f9 100644
+--- a/Darwin/build.py
++++ b/Darwin/build.py
+@@ -158,7 +158,7 @@ def main() -> int:
+                  "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+                  "-DCMAKE_TOOLCHAIN_FILE=" + str(source / "Data/CMake/toolchain_mingw.cmake"),
+                  "-DMINGW_TRIPLE=" + triple, "-DENABLE_LTO=False", "-DBUILD_TESTING=False",
+-                 "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--section-alignment=16384",
++                 "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--section-alignment=16384,--no-insert-timestamp",
+                  "-DENABLE_JEMALLOC_GLIBC_ALLOC=False", "-DTUNE_CPU=none", "-DENABLE_CCACHE=False",
+                  "-DENABLE_GUEST_WINDOW=" + ("True" if variant == "wow64" else "False"),
+                  "-DPython_EXECUTABLE=" + sys.executable], variant + "-configure")

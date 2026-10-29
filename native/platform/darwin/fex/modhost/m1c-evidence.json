@@ -1,0 +1,109 @@
+{
+  "build_status": "pass",
+  "source_commit": "370c63057fc9fc826b58fe15d59930876df55b5f",
+  "toolchain_archive_sha256": "2cab02a2e964bd4aae981150a45985d07c657cfa8d244959eb9e2dcc5eedd7b1",
+  "patches": [
+    {
+      "path": "native/platform/darwin/fex/patches/0001-deterministic-pe-timestamps.patch",
+      "sha256": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46"
+    },
+    {
+      "path": "native/platform/darwin/fex/patches/0002-raven-host-frontend.patch",
+      "sha256": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da"
+    },
+    {
+      "path": "native/platform/darwin/fex/patches/0003-raven-host-build-option.patch",
+      "sha256": "b10f70cb16189b544afc3337b2e7c9e8b5bfad2b7f6963aec2b3767a78225d14"
+    }
+  ],
+  "artifacts": {
+    "xtajit64.dll": {
+      "machine": "0x8664",
+      "chpe_metadata_pointer": "0x180390820",
+      "chpe_code_map": [
+        [
+          "0x4000 - 0x21CCC4",
+          "ARM64EC"
+        ],
+        [
+          "0x21D000 - 0x220120",
+          "X64"
+        ]
+      ],
+      "exports": [
+        "BTCpu64FlushInstructionCache",
+        "BTCpu64IsProcessorFeaturePresent",
+        "BTCpu64NotifyMemoryDirty",
+        "BTCpu64NotifyReadFile",
+        "BeginSimulation",
+        "DispatchJump",
+        "ExitToX64",
+        "FlushInstructionCacheHeavy",
+        "NotifyMapViewOfSection",
+        "NotifyMemoryAlloc",
+        "NotifyMemoryFree",
+        "NotifyMemoryProtect",
+        "NotifyUnmapViewOfSection",
+        "ProcessInit",
+        "ProcessTerm",
+        "RavenProcessInit",
+        "ResetToConsistentState",
+        "RetToEntryThunk",
+        "ThreadInit",
+        "ThreadTerm",
+        "UpdateProcessorInformation"
+      ],
+      "imports": [
+        "ntdll.dll"
+      ],
+      "wine_builtin_marker": true,
+      "sha256": "35c666616cb817d41bb7b04c4f5b67a5b8502f6a4c1c59df830801846b60f6c8",
+      "size": 5508608,
+      "path": "/Users/yount/Documents/Projects/raven-components/fex-modules/FEX-darwin/build/local/m1c/dlls/xtajit64.dll",
+      "upstream_path": "/Users/yount/Documents/Projects/raven-components/fex-modules/FEX-darwin/build/local/m1c/arm64ec/Bin/libarm64ecfex.dll"
+    },
+    "xtajit.dll": {
+      "machine": "0xaa64",
+      "chpe_metadata_pointer": "0x0",
+      "chpe_code_map": [],
+      "exports": [
+        "BTCpuFlushInstructionCache2",
+        "BTCpuFlushInstructionCacheHeavy",
+        "BTCpuGetBopCode",
+        "BTCpuGetContext",
+        "BTCpuIsProcessorFeaturePresent",
+        "BTCpuNotifyMapViewOfSection",
+        "BTCpuNotifyMemoryAlloc",
+        "BTCpuNotifyMemoryDirty",
+        "BTCpuNotifyMemoryFree",
+        "BTCpuNotifyMemoryProtect",
+        "BTCpuNotifyProcessExecuteFlagsChange",
+        "BTCpuNotifyReadFile",
+        "BTCpuNotifyUnmapViewOfSection",
+        "BTCpuProcessInit",
+        "BTCpuProcessTerm",
+        "BTCpuResetToConsistentState",
+        "BTCpuSetContext",
+        "BTCpuSimulate",
+        "BTCpuSuspendLocalThread",
+        "BTCpuThreadInit",
+        "BTCpuThreadTerm",
+        "BTCpuUpdateProcessorInformation",
+        "__wine_get_unix_opcode"
+      ],
+      "imports": [
+        "wow64.dll",
+        "ntdll.dll"
+      ],
+      "wine_builtin_marker": true,
+      "sha256": "da77711ed23034128bb53ef92eaf8f9bcf891692fbf05574b2980176b858aad9",
+      "size": 4959232,
+      "path": "/Users/yount/Documents/Projects/raven-components/fex-modules/FEX-darwin/build/local/m1c/dlls/xtajit.dll",
+      "upstream_path": "/Users/yount/Documents/Projects/raven-components/fex-modules/FEX-darwin/build/local/m1c/wow64/Bin/libwow64fex.dll"
+    }
+  },
+  "host_preflight": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19186\nunresolved ntdll.dll!LdrDisableThreadCalloutsForDll\nunresolved ntdll.dll!LdrGetDllFullName\nunresolved ntdll.dll!LdrGetDllHandle\nunresolved ntdll.dll!LdrGetProcedureAddress\nunresolved ntdll.dll!NtAllocateVirtualMemoryEx\nunresolved ntdll.dll!NtClose\nunresolved ntdll.dll!NtCreateFile\nunresolved ntdll.dll!NtCreateSection\nunresolved ntdll.dll!NtCreateThreadEx\nunresolved ntdll.dll!NtDelayExecution\nunresolved ntdll.dll!NtDuplicateObject\nunresolved ntdll.dll!NtFlushInstructionCache\nunresolved ntdll.dll!NtGetContextThread\nunresolved ntdll.dll!NtGetCurrentProcessorNumber\nunresolved ntdll.dll!NtLockFile\nunresolved ntdll.dll!NtMapViewOfSection\nunresolved ntdll.dll!NtOpenFile\nunresolved ntdll.dll!NtOpenKeyEx\nunresolved ntdll.dll!NtQueryAttributesFile\nunresolved ntdll.dll!NtQueryDirectoryFile\nunresolved ntdll.dll!NtQueryInformationFile\nunresolved ntdll.dll!NtQueryInformationThread\nunresolved ntdll.dll!NtQueryObject\nunresolved ntdll.dll!NtQuerySystemInformation\nunresolved ntdll.dll!NtQuerySystemTime\nunresolved ntdll.dll!NtQueryValueKey\nunresolved ntdll.dll!NtReadFile\nunresolved ntdll.dll!NtSetInformationFile\nunresolved ntdll.dll!NtSetInformationThread\nunresolved ntdll.dll!NtSuspendThread\nunresolved ntdll.dll!NtTerminateProcess\nunresolved ntdll.dll!NtTerminateThread\nunresolved ntdll.dll!NtUnlockFile\nunresolved ntdll.dll!NtUnmapViewOfSection\nunresolved ntdll.dll!NtWaitForSingleObject\nunresolved ntdll.dll!NtWriteFile\nunresolved ntdll.dll!ProcessPendingCrossProcessEmulatorWork\nunresolved ntdll.dll!RtlAcquirePebLock\nunresolved ntdll.dll!RtlAcquireSRWLockExclusive\nunresolved ntdll.dll!RtlAcquireSRWLockShared\nunresolved ntdll.dll!RtlCaptureContext\nunresolved ntdll.dll!RtlClearBits\nunresolved ntdll.dll!RtlCreateUnicodeStringFromAsciiz\nunresolved ntdll.dll!RtlDosPathNameToNtPathName_U\nunresolved ntdll.dll!RtlFindClearBitsAndSet\nunresolved ntdll.dll!RtlFreeAnsiString\nunresolved ntdll.dll!RtlFreeUnicodeString\nunresolved ntdll.dll!RtlGetCurrentDirectory_U\nunresolved ntdll.dll!RtlImageDirectoryEntryToData\nunresolved ntdll.dll!RtlImageNtHeader\nunresolved ntdll.dll!RtlInitAnsiString\nunresolved ntdll.dll!RtlInitUnicodeString\nunresolved ntdll.dll!RtlInitializeConditionVariable\nunresolved ntdll.dll!RtlInitializeSRWLock\nunresolved ntdll.dll!RtlIsEcCode\nunresolved ntdll.dll!RtlLocateExtendedFeature\nunresolved ntdll.dll!RtlLookupFunctionEntry\nunresolved ntdll.dll!RtlMultiByteToUnicodeN\nunresolved ntdll.dll!RtlMultiByteToUnicodeSize\nunresolved ntdll.dll!RtlNtStatusToDosError\nunresolved ntdll.dll!RtlQueryPerformanceFrequency\nunresolved ntdll.dll!RtlRaiseStatus\nunresolved ntdll.dll!RtlReleasePebLock\nunresolved ntdll.dll!RtlReleaseSRWLockExclusive\nunresolved ntdll.dll!RtlReleaseSRWLockShared\nunresolved ntdll.dll!RtlRestoreContext\nunresolved ntdll.dll!RtlRunOnceExecuteOnce\nunresolved ntdll.dll!RtlSleepConditionVariableSRW\nunresolved ntdll.dll!RtlTryAcquireSRWLockExclusive\nunresolved ntdll.dll!RtlTryAcquireSRWLockShared\nunresolved ntdll.dll!RtlUTF8ToUnicodeN\nunresolved ntdll.dll!RtlUnicodeStringToAnsiString\nunresolved ntdll.dll!RtlUnicodeToMultiByteN\nunresolved ntdll.dll!RtlUnicodeToMultiByteSize\nunresolved ntdll.dll!RtlUnicodeToUTF8N\nunresolved ntdll.dll!RtlUnwindEx\nunresolved ntdll.dll!RtlVirtualUnwind\nunresolved ntdll.dll!RtlWaitOnAddress\nunresolved ntdll.dll!RtlWakeAddressAll\nunresolved ntdll.dll!RtlWakeAddressSingle\nunresolved ntdll.dll!RtlWakeAllConditionVariable\nunresolved ntdll.dll!RtlWakeConditionVariable\nunresolved ntdll.dll!_errno\nunresolved ntdll.dll!_vsnprintf\nunresolved ntdll.dll!_vsnwprintf\nunresolved ntdll.dll!atan2\nunresolved ntdll.dll!cos\nunresolved ntdll.dll!isalnum\nunresolved ntdll.dll!isspace\nunresolved ntdll.dll!isxdigit\nunresolved ntdll.dll!memchr\nunresolved ntdll.dll!memcmp\nunresolved ntdll.dll!memcpy\nunresolved ntdll.dll!memmove\nunresolved ntdll.dll!memset\nunresolved ntdll.dll!sin\nunresolved ntdll.dll!sprintf\nunresolved ntdll.dll!sscanf\nunresolved ntdll.dll!strchr\nunresolved ntdll.dll!strcmp\nunresolved ntdll.dll!strlen\nunresolved ntdll.dll!strncmp\nunresolved ntdll.dll!strtol\nunresolved ntdll.dll!strtoul\nunresolved ntdll.dll!swprintf\nunresolved ntdll.dll!tan\nunresolved ntdll.dll!tolower\nunresolved ntdll.dll!toupper\nunresolved ntdll.dll!vsprintf\nunresolved ntdll.dll!wcschr\nunresolved ntdll.dll!wcscmp\nunresolved ntdll.dll!wcscpy\nunresolved ntdll.dll!wcslen\nunresolved ntdll.dll!wcsncmp\nunresolved ntdll.dll!wcstol\nunresolved ntdll.dll!wcstoul\nresolved=11\nSTOP: 116 unresolved imports; no NT provider, CHPE initialization, or execution attempted\n",
+  "x18_probe": "pid=47233 page_size=16384 toggle=1 query=1 mode=default\nspin=123456789abcdef0 spin_bad=0 sleep_bad=0/100 signals=26 context_bad=0 live_bad=0 after_signals=123456789abcdef0\n",
+  "native_host_self_test": "PASS: native VM, heap, recursive locks, QPC substrate (not PE execution)",
+  "runtime_entry_attempted": false
+}
