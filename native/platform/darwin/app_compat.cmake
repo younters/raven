@@ -6,7 +6,7 @@ foreach(width 64 32)
         set(entry _raven_entry)
     endif()
     if(compiler)
-        foreach(area sspi_ansi socket_exclusive)
+        foreach(area sspi_ansi socket_exclusive processor_count)
             set(fixture ${CMAKE_CURRENT_BINARY_DIR}/darwin-${area}${width}.exe)
             add_custom_command(OUTPUT ${fixture}
                 COMMAND ${compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${entry}

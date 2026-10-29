@@ -140,6 +140,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 {
 #ifdef __APPLE__
 	raven_darwin::register_firmware_api(registry);
+	raven_darwin::register_processor_count_api(registry);
 #endif
 	auto &objects = context.objects;
 	registry.add("GetAdaptersAddresses", 5, [](ApiCall &call) {

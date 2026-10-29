@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <cstring>
 #include <algorithm>
+#include <thread>
 
 namespace raven_darwin {
 
@@ -31,6 +32,17 @@ void register_firmware_api(raven::ApiRegistry &registry)
 			call.write(call[2], data);
 		call.ret(data.size());
 	});
+}
+
+// Raven exposes one processor group, with the same width limit as GetSystemInfo.
+void register_processor_count_api(raven::ApiRegistry &registry)
+{
+	for (const auto *name : {"GetActiveProcessorCount", "GetMaximumProcessorCount"})
+		registry.add(name, 1, [](raven::ApiCall &call) {
+			const auto group = call.u32(0) & 0xffff;
+			if (group && group != 0xffff) { call.fail(87); return; }
+			call.ret(std::max(1U, std::min(call.pointer_width() == 4 ? 32U : 64U, std::thread::hardware_concurrency())));
+		});
 }
 
 void seed_hardware_registry(raven::NativeRegistry &hive)
