@@ -1,5 +1,8 @@
 # M1c: Raven host frontend feasibility spike
 
+Follow-up: [M1D.md](M1D.md) records partial callable-adapter/JIT/substrate work
+and the remaining 72 imports. The execution milestone remains incomplete.
+
 **Partial implementation; NO-GO for M2.** The patched Windows modules compile and
 pass their PE audits. No module initialization or guest execution was attempted:
 the standalone loader stops with **116 unresolved import slots**. This is a

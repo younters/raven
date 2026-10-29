@@ -1,0 +1,36 @@
+{
+  "scope": "partial substrate only; execution milestone incomplete",
+  "module_sha256": "35c666616cb817d41bb7b04c4f5b67a5b8502f6a4c1c59df830801846b60f6c8",
+  "substrate_results": [
+    {
+      "command": [
+        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-modhost-test-dy10h39n/host",
+        "--self-test"
+      ],
+      "returncode": 0,
+      "stdout": "PASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-modhost-test-dy10h39n/abi"
+      ],
+      "returncode": 0,
+      "stdout": "PASS: MAP_JIT execution, nested write modes, sixteen integer arguments and EC register clobbers\n",
+      "stderr": ""
+    }
+  ],
+  "preflight": {
+    "command": [
+      "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-modhost-test-dy10h39n/host",
+      "/Users/yount/Documents/Projects/raven-components/fex-modules/xtajit64.dll"
+    ],
+    "returncode": 3,
+    "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19186\nunresolved ntdll.dll!LdrDisableThreadCalloutsForDll\nunresolved ntdll.dll!LdrGetDllFullName\nunresolved ntdll.dll!LdrGetDllHandle\nunresolved ntdll.dll!LdrGetProcedureAddress\nunresolved ntdll.dll!NtAllocateVirtualMemoryEx\nunresolved ntdll.dll!NtClose\nunresolved ntdll.dll!NtCreateFile\nunresolved ntdll.dll!NtCreateSection\nunresolved ntdll.dll!NtCreateThreadEx\nunresolved ntdll.dll!NtDelayExecution\nunresolved ntdll.dll!NtDuplicateObject\nunresolved ntdll.dll!NtFlushInstructionCache\nunresolved ntdll.dll!NtGetContextThread\nunresolved ntdll.dll!NtGetCurrentProcessorNumber\nunresolved ntdll.dll!NtLockFile\nunresolved ntdll.dll!NtMapViewOfSection\nunresolved ntdll.dll!NtOpenFile\nunresolved ntdll.dll!NtOpenKeyEx\nunresolved ntdll.dll!NtQueryAttributesFile\nunresolved ntdll.dll!NtQueryDirectoryFile\nunresolved ntdll.dll!NtQueryInformationFile\nunresolved ntdll.dll!NtQueryInformationThread\nunresolved ntdll.dll!NtQueryObject\nunresolved ntdll.dll!NtQuerySystemInformation\nunresolved ntdll.dll!NtQuerySystemTime\nunresolved ntdll.dll!NtQueryValueKey\nunresolved ntdll.dll!NtReadFile\nunresolved ntdll.dll!NtSetInformationFile\nunresolved ntdll.dll!NtSetInformationThread\nunresolved ntdll.dll!NtSuspendThread\nunresolved ntdll.dll!NtTerminateProcess\nunresolved ntdll.dll!NtTerminateThread\nunresolved ntdll.dll!NtUnlockFile\nunresolved ntdll.dll!NtUnmapViewOfSection\nunresolved ntdll.dll!NtWaitForSingleObject\nunresolved ntdll.dll!NtWriteFile\nunresolved ntdll.dll!ProcessPendingCrossProcessEmulatorWork\nunresolved ntdll.dll!RtlCaptureContext\nunresolved ntdll.dll!RtlClearBits\nunresolved ntdll.dll!RtlCreateUnicodeStringFromAsciiz\nunresolved ntdll.dll!RtlDosPathNameToNtPathName_U\nunresolved ntdll.dll!RtlFindClearBitsAndSet\nunresolved ntdll.dll!RtlFreeAnsiString\nunresolved ntdll.dll!RtlFreeUnicodeString\nunresolved ntdll.dll!RtlGetCurrentDirectory_U\nunresolved ntdll.dll!RtlImageDirectoryEntryToData\nunresolved ntdll.dll!RtlImageNtHeader\nunresolved ntdll.dll!RtlInitAnsiString\nunresolved ntdll.dll!RtlInitUnicodeString\nunresolved ntdll.dll!RtlIsEcCode\nunresolved ntdll.dll!RtlLocateExtendedFeature\nunresolved ntdll.dll!RtlLookupFunctionEntry\nunresolved ntdll.dll!RtlMultiByteToUnicodeN\nunresolved ntdll.dll!RtlMultiByteToUnicodeSize\nunresolved ntdll.dll!RtlNtStatusToDosError\nunresolved ntdll.dll!RtlQueryPerformanceFrequency\nunresolved ntdll.dll!RtlRaiseStatus\nunresolved ntdll.dll!RtlRestoreContext\nunresolved ntdll.dll!RtlRunOnceExecuteOnce\nunresolved ntdll.dll!RtlUTF8ToUnicodeN\nunresolved ntdll.dll!RtlUnicodeStringToAnsiString\nunresolved ntdll.dll!RtlUnicodeToMultiByteN\nunresolved ntdll.dll!RtlUnicodeToMultiByteSize\nunresolved ntdll.dll!RtlUnicodeToUTF8N\nunresolved ntdll.dll!RtlUnwindEx\nunresolved ntdll.dll!RtlVirtualUnwind\nunresolved ntdll.dll!_vsnprintf\nunresolved ntdll.dll!_vsnwprintf\nunresolved ntdll.dll!sprintf\nunresolved ntdll.dll!sscanf\nunresolved ntdll.dll!swprintf\nunresolved ntdll.dll!vsprintf\nresolved=55\nSTOP: 72 unresolved imports; no NT provider, CHPE initialization, or execution attempted\n",
+    "stderr": ""
+  },
+  "ctest": "Release standalone build -j8; locked ctest 1/1 substrate test passed",
+  "module_init": false,
+  "guest_execution": false,
+  "qualifying_hard_blocker_established": false
+}
