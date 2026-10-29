@@ -546,6 +546,9 @@ if(TARGET raven AND RAVEN_MINGW64)
             add_test(NAME native_darwin_teardown_wait_x${width} COMMAND ${Python3_EXECUTABLE}
                 ${RAVEN_DARWIN_DIR}/tests/teardown_wait.py $<TARGET_FILE:raven> ${TEARDOWN_FIXTURE})
             set_tests_properties(native_darwin_teardown_wait_x${width} PROPERTIES TIMEOUT 30)
+            add_test(NAME native_darwin_teardown_multi_x${width} COMMAND ${Python3_EXECUTABLE}
+                ${RAVEN_DARWIN_DIR}/tests/teardown_wait.py $<TARGET_FILE:raven> ${TEARDOWN_FIXTURE} multi)
+            set_tests_properties(native_darwin_teardown_multi_x${width} PROPERTIES TIMEOUT 30)
             set(CREATION_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/process-creation${width}.exe)
             add_custom_command(OUTPUT ${CREATION_FIXTURE}
                 COMMAND ${ORPHAN_COMPILER} -nostdlib -O1 -fno-builtin -fno-stack-protector
@@ -660,3 +663,6 @@ if(TEST native_outer_surface_input)
 endif()
 
 include(${RAVEN_DARWIN_DIR}/x87sidecar.cmake)
+
+add_test(NAME native_darwin_teardown_ps_rows COMMAND ${Python3_EXECUTABLE}
+    ${RAVEN_DARWIN_DIR}/tests/teardown_wait.py --check-ps)
