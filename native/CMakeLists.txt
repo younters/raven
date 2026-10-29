@@ -2175,6 +2175,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                             -Wl,--entry,${crt_entry},--no-insert-timestamp
                             -o ${crt_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/crt_errors_client.c -lkernel32
                         DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/crt_errors_client.c VERBATIM)
+                    set(math_client ${CMAKE_CURRENT_BINARY_DIR}/crt-rounding-x${width}.exe)
+                    add_custom_command(OUTPUT ${math_client}
+                        COMMAND ${crt_compiler} -O2 -nostdlib -fno-stack-protector -fno-builtin
+                            -Wl,--entry,${crt_entry},--no-insert-timestamp
+                            -o ${math_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/crt_rounding_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/crt_rounding_client.c VERBATIM)
+                    add_custom_target(crt_rounding_fixture${width} ALL DEPENDS ${math_client})
+                    add_test(NAME native_crt_rounding_x${width} COMMAND raven --run-process --execution=native ${math_client})
+                    set_tests_properties(native_crt_rounding_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/crt-rounding-prefix${width})
                     add_custom_target(crt_errors_fixture${width} ALL DEPENDS ${crt_client})
                     add_test(NAME native_crt_errors_x${width} COMMAND raven --run-process --execution=native ${crt_client})
                     set_tests_properties(native_crt_errors_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "

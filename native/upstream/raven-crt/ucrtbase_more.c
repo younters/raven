@@ -1208,6 +1208,7 @@ CRT double nearbyint(double x) { return rint(x); }
 CRT long lrint(double x) { return (long)rint(x); }
 CRT long lrintf(float x) { return (long)rint(x); }
 CRT long long llrint(double x) { return (long long)rint(x); }
+CRT long long llrintf(float x) { return (long long)rint(x); }
 
 CRT double trunc(double x)
 {
