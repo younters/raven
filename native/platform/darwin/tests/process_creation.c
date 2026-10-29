@@ -16,6 +16,14 @@ int raven_entry(void)
     if (!length || !part || lstrcmpW(path, found)) return 8;
     if (SearchPathW(NULL, L"C:\\missing-raven-process.exe", NULL, MAX_PATH, found, NULL) ||
         GetLastError() != ERROR_FILE_NOT_FOUND) return 9;
+    WCHAR without_extension[MAX_PATH];
+    lstrcpyW(without_extension, path);
+    unsigned path_length = lstrlenW(path);
+    if (path_length < 4 || lstrcmpW(path + path_length - 4, L".exe")) return 10;
+    without_extension[path_length - 4] = 0;
+    part = NULL;
+    length = SearchPathW(NULL, without_extension, L".exe", MAX_PATH, found, &part);
+    if (length != path_length || !part || lstrcmpW(path, found)) return 11;
     unsigned n = 0;
     command[n++] = '"';
     for (unsigned i = 0; path[i]; ++i) command[n++] = path[i];

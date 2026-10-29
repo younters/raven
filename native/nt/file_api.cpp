@@ -1592,7 +1592,11 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(87);
 			return;
 		}
+#ifdef __APPLE__
+		if (call[2] && !raven_darwin::search_path_has_extension(file))
+#else
 		if (call[2] && file.find(u'.') == std::u16string::npos)
+#endif
 			file += call.wide(call[2]);
 		std::vector<std::u16string> directories;
 		if (call[0]) {
