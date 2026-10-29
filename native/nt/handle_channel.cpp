@@ -9,6 +9,8 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <vector>
 
@@ -28,6 +30,18 @@ HandleChannel *parent = nullptr;
 // Frames that are not a handle sent over: a request names the value it wants in `handle` and its number in `size`; an answer carries
 // the request number in `handle` and the kind of the object after this prefix, nothing after it when there is no such handle.
 const std::string request_kind = "request", answer_prefix = "answer:", transfer_prefix = "transfer:";
+
+// Opt-in, bounded metadata only: never records addresses, handles or copied memory.
+void trace_phase(const char *phase, int fd, uint64_t number, const std::string &kind)
+{
+	static const bool enabled = std::getenv("RAVEN_TRACE_HANDLE_PHASES") != nullptr;
+	static unsigned count = 0;
+	if (!enabled || count >= 4096) return;
+	++count;
+	const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	std::fprintf(stderr, "handle-phase %lld %d %d %llu %s %s\n", (long long)ns, int(::getpid()), fd,
+		(unsigned long long)number, phase, kind.c_str());
+}
 
 struct ProcessChannels {
 	int listener = -1;
@@ -112,6 +126,8 @@ bool HandleChannel::send_frame(const InheritedHandle &record, int shared)
 {
 	if (descriptor < 0)
 		return false;
+	if (record.kind.starts_with(answer_prefix))
+		trace_phase("answer-send", descriptor, record.handle, record.kind);
 	const auto bytes = serialize_inherited({record});
 	iovec vector{const_cast<uint8_t *>(bytes.data()), bytes.size()};
 	alignas(cmsghdr) char control[CMSG_SPACE(sizeof(int))] = {};
@@ -180,10 +196,12 @@ std::optional<InheritedHandle> HandleChannel::exchange(NativeObjects &objects, N
 	const uint64_t number = next_request++;
 	request.size = number;
 	answers[number] = std::nullopt;
+	trace_phase("send", descriptor, number, request.kind);
 	if (!send_frame(request, shared)) {
 		answers.erase(number);
 		return std::nullopt;
 	}
+	trace_phase("sent", descriptor, number, request.kind);
 	// The other process answers when it next schedules its threads; meanwhile the threads of this one run.
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 	HostWait waiting;
@@ -194,6 +212,7 @@ std::optional<InheritedHandle> HandleChannel::exchange(NativeObjects &objects, N
 	}, deadline);
 	const auto found = answers.find(number);
 	if (found == answers.end() || !found->second) {
+		trace_phase("timeout", descriptor, number, request.kind);
 		answers.erase(number);
 		return std::nullopt;
 	}
@@ -232,6 +251,8 @@ void HandleChannel::receive(NativeObjects &objects)
 			continue;
 		}
 		auto &record = records.front();
+		trace_phase(record.kind.starts_with(answer_prefix) ? "answer-receive" : "dispatch", descriptor,
+			record.kind.starts_with(answer_prefix) ? record.handle : record.size, record.kind);
 		if (process_only && !record.kind.starts_with("process:") && record.kind != answer_prefix + "process") {
 			if (received >= 0) ::close(received);
 			continue;

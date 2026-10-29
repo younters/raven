@@ -2031,6 +2031,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                         set_tests_properties(native_shared_wait_guards_x${width} PROPERTIES TIMEOUT 15
                             ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/shared-wait-prefix${width};RAVEN_PARALLEL=1")
                     endif()
+                    set(latency_client ${CMAKE_CURRENT_BINARY_DIR}/handle-latency${width}.exe)
+                    add_custom_command(OUTPUT ${latency_client}
+                        COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${remote_entry},--image-base,${remote_base},--no-insert-timestamp
+                            -o ${latency_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/handle_latency_client.c -lkernel32 -lgcc
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/handle_latency_client.c VERBATIM)
+                    list(APPEND REMOTE_PROCESS_CLIENTS ${latency_client})
+                    add_test(NAME native_handle_latency_x${width} COMMAND raven --run-process --execution=native --timeout-ms=45000 ${latency_client})
+                    set_tests_properties(native_handle_latency_x${width} PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/handle-latency-prefix${width})
                     set(remote_client ${CMAKE_CURRENT_BINARY_DIR}/remote-process${width}.exe)
                     add_custom_command(OUTPUT ${remote_client}
                         COMMAND ${remote_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
