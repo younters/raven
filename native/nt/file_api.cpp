@@ -1,6 +1,3 @@
-#ifdef __APPLE__
-#include "platform/darwin/path_search.h"
-#endif
 #include "child_process.h"
 #include "console.h"
 #include "event.h"
@@ -14,6 +11,9 @@
 #include "file_objects.h"
 #include "restart.h"
 #include "text.h"
+#ifdef __APPLE__
+#include "platform/darwin/path_search.h"
+#endif
 
 #include <algorithm>
 #include <cerrno>

@@ -521,8 +521,9 @@ endif()
 # Host-only shortcut parser and generated bundle ownership/lifecycle contracts.
 add_test(NAME native_darwin_apps COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/apps_test.py)
 
-# Both guest widths exercise the same printer contracts and verify the resulting PDF on the host.
 include(${RAVEN_DARWIN_DIR}/app_compat.cmake)
+
+# Both guest widths exercise the same printer contracts and verify the resulting PDF on the host.
 # Orphaned children: a parent host killed outright leaves its child a broken pipe, a signalled process handle and a failed
 # completion, and a detached child running.
 if(TARGET raven AND RAVEN_MINGW64)
