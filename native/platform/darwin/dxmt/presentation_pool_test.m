@@ -39,8 +39,8 @@ int main(void)
 		if (!device) return 77;
 		pthread_t host;
 		check(!pthread_create(&host, NULL, acknowledge, NULL), "start retirement worker");
-		RavenDXMTLayer *layers[24];
-		for (unsigned i = 0; i < 24; ++i) {
+		RavenDXMTLayer *layers[128];
+		for (unsigned i = 0; i < 128; ++i) {
 			layers[i] = [[RavenDXMTLayer alloc] init];
 			layers[i]->window = i + 1;
 			layers[i]->props.device = (uint64_t)device;
@@ -48,9 +48,10 @@ int main(void)
 			uint64_t args[2] = {(uint64_t)layers[i], 0};
 			check(!next_drawable(args) && args[1] && layers[i]->frames.count == 1, "lazy first drawable");
 			RavenDXMTDrawable *frame = (id)args[1];
+			IOSurfaceIncrementUseCount(frame->surface);
 			__atomic_store_n(&control.surfaces[frame->slot].state, RAVEN_SURFACE_DISPLAYED, __ATOMIC_RELEASE);
 		}
-		for (unsigned i = 0; i < 24; ++i) {
+		for (unsigned i = 0; i < 128; ++i) {
 			uint64_t args[2] = {(uint64_t)layers[i], 0};
 			check(!next_drawable(args) && layers[i]->frames.count == 2, "grow only when first frame busy");
 			RavenDXMTDrawable *frame = (id)args[1];
@@ -58,8 +59,16 @@ int main(void)
 			control.surfaces[frame->slot].port = IOSurfaceCreateMachPort(frame->surface);
 			check(control.surfaces[frame->slot].port != MACH_PORT_NULL, "create drawable send right");
 			check(!next_drawable(args) && args[1] == (uint64_t)frame && layers[i]->frames.count == 2, "reuse released frame");
+			IOSurfaceIncrementUseCount(frame->surface);
+			__atomic_store_n(&control.surfaces[frame->slot].state, RAVEN_SURFACE_DISPLAYED, __ATOMIC_RELEASE);
 		}
-		for (unsigned i = 0; i < 24; ++i) [layers[i] release];
+		for (unsigned i = 0; i < 128; ++i) {
+			RavenDXMTDrawable *displayed = layers[i]->frames[0];
+			check(IOSurfaceIsInUse(displayed->surface), "stealing metadata preserves old host surface");
+			IOSurfaceDecrementUseCount(displayed->surface);
+			IOSurfaceDecrementUseCount(((RavenDXMTDrawable *)layers[i]->frames[1])->surface);
+			[layers[i] release];
+		}
 
 		struct layer_props props = {.device = (uint64_t)device, .width = 16, .height = 16, .format = 80};
 		NSMutableArray *frames = [[NSMutableArray alloc] init];
@@ -79,8 +88,15 @@ int main(void)
 		for (unsigned i = 0; i < RAVEN_SURFACE_SLOTS; ++i)
 			check([(RavenDXMTDrawable *)frames[i] acquireSlot], "reserve outstanding write");
 		check(![(RavenDXMTDrawable *)frames[RAVEN_SURFACE_SLOTS] acquireSlot], "must not steal outstanding write");
+		RavenDXMTLayer *blocked = [[RavenDXMTLayer alloc] init];
+		blocked->props = props;
+		uint64_t pressure[2] = {(uint64_t)blocked, 123};
+		const CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
+		check(next_drawable(pressure) == (int32_t)0x887a000aU && !pressure[1], "nonblocking pressure result");
+		check(CFAbsoluteTimeGetCurrent() - started < 1, "pool exhaustion must not stall five seconds");
+		[blocked release];
 		// All other host states must also remain unavailable under pressure.
-		const uint32_t busy[] = {RAVEN_SURFACE_READY, RAVEN_SURFACE_IMPORTING, RAVEN_SURFACE_DISPLAYED};
+		const uint32_t busy[] = {RAVEN_SURFACE_READY, RAVEN_SURFACE_IMPORTING};
 		for (unsigned state = 0; state < sizeof(busy) / sizeof(*busy); ++state) {
 			for (unsigned i = 0; i < RAVEN_SURFACE_SLOTS; ++i) __atomic_store_n(&control.surfaces[i].state, busy[state], __ATOMIC_RELEASE);
 			check(![(RavenDXMTDrawable *)frames[RAVEN_SURFACE_SLOTS] acquireSlot], "must not steal host-owned slot");
@@ -98,7 +114,7 @@ int main(void)
 		__atomic_store_n(&done, true, __ATOMIC_RELEASE);
 		pthread_join(host, NULL);
 		[device release];
-		puts("24 live views, lazy growth/reuse, 3x pool recycling, busy-state protection and retirement PASS");
+		puts("128 live views, lazy growth/reuse, 3x pool recycling, busy-state protection and retirement PASS");
 	}
 	return 0;
 }

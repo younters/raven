@@ -335,14 +335,27 @@ guests only.
 bundles launched from Launchpad, while preserving explicit caller overrides. Direct runtime launches
 remain opt-in through `RAVEN_DXGI_VENDOR=amd`. This setting does not disable Firefox's sandboxes.
 
-The presentation adapter creates textures lazily, up to three per view. Its
-64 process-wide slots describe in-flight presentations rather than every texture
-retained by a swapchain. A drawable may reclaim an UNUSED or host-AVAILABLE slot;
-it never steals WRITING, READY, IMPORTING or DISPLAYED slots. Detached textures
-acquire a new slot on their next presentation. The null texture callback returns
-STATUS_INVALID_PARAMETER. `native_darwin_dxmt_drawable_pool` covers 24 live views,
-lazy growth/reuse, recycling, busy-slot protection and retirement without windows
-or screen capture. Build it with `cmake --build <build> --target darwin_dxmt_pool_test -j8`.
+The presentation adapter creates up to three textures per view lazily. Its 64
+process-wide slots are transport records for pending and imported presentations,
+not a limit on live views. WRITING, READY and IMPORTING records cannot be stolen.
+DISPLAYED means import is complete: the host owns an independent surface snapshot,
+so another drawable may recycle that record while the last image remains visible.
+Recycling a record never permits overwriting its former surface: each drawable
+checks IOSurfaceIsInUse on its own surface before allowing GPU writes.
+
+Acquisition is nonblocking. When all records are pending or all three textures of
+a view remain busy, the adapter returns 0x887a000a (DXGI_ERROR_WAS_STILL_DRAWING)
+and a null drawable immediately, analogous to DXGI_PRESENT_DO_NOT_WAIT. There is
+no fixed five-second retry. This is the unix adapter contract: the pinned DXMT
+MetalLayer_nextDrawable thunk discards the status, so it does not promise that
+HRESULT reaches the guest's Present call. The null texture callback rejects the
+request with STATUS_INVALID_PARAMETER. Full guest-level retry/HRESULT propagation
+requires a corresponding DXMT presenter change.
+
+`native_darwin_dxmt_drawable_pool` covers 128 live views, lazy growth/reuse,
+recycling records whose old surfaces remain in use, busy-slot protection,
+nonblocking pressure and retirement without screen capture. Build it with
+`cmake --build <build> --target darwin_dxmt_pool_test -j8`.
 The expanded control layout uses protocol version 5: rebuild the host, bootstrap
 and `raven-dxmt.dylib` together. The adapter is built by
 `scripts/provision-dxmt.py`; rebuilding the host does not rebuild a provisioned adapter.

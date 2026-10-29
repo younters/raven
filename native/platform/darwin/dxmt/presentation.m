@@ -12,7 +12,7 @@
 extern struct raven_control *raven_dxmt_control(void);
 @class RavenDXMTLayer;
 @class RavenDXMTDrawable;
-// Slots describe in-flight presentations, not every texture a swapchain retains.
+// Slots describe pending or imported presentations; host snapshots retain their own surfaces.
 static RavenDXMTDrawable *slot_owners[RAVEN_SURFACE_SLOTS];
 
 // v0.80 WMTLayerProps, pack(8). The fields are ABI, not a dependency on Wine's window-driver structures.
@@ -98,11 +98,11 @@ _Static_assert(sizeof(struct layer_props) == 40, "DXMT v0.80 layer ABI");
 		for (unsigned i = 0; i < RAVEN_SURFACE_SLOTS; ++i) {
 			struct raven_surface_frame *frame = &shared->surfaces[i];
 			uint32_t state = __atomic_load_n(&frame->state, __ATOMIC_ACQUIRE);
-			if (state != RAVEN_SURFACE_UNUSED && state != RAVEN_SURFACE_AVAILABLE) continue;
+			if (state != RAVEN_SURFACE_UNUSED && state != RAVEN_SURFACE_AVAILABLE && state != RAVEN_SURFACE_DISPLAYED) continue;
 			if (!__atomic_compare_exchange_n(&frame->state, &state, RAVEN_SURFACE_WRITING, 0,
 				__ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) continue;
-			// AVAILABLE acknowledges that the host has finished with the previous slot.
-			// Its drawable keeps its Metal texture but obtains a new slot on its next present.
+			// DISPLAYED acknowledges completed import: the host retained a snapshot.
+			// Reuse only the record, not the old texture (which may still be in use).
 			if (slot_owners[i]) slot_owners[i]->slot = -1;
 			if (frame->port) mach_port_deallocate(mach_task_self(), frame->port);
 			slot_owners[i] = self;
@@ -197,31 +197,28 @@ static int32_t next_drawable(void *args)
 	uint64_t *p = args;
 	RavenDXMTLayer *layer = (RavenDXMTLayer *)p[0];
 	p[1] = 0;
-	const CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 5;
-	do {
-		for (RavenDXMTDrawable *drawable in layer->frames) {
-			if ([drawable acquireSlot]) {
-				p[1] = (uint64_t)drawable;
-				return 0;
-			}
+	for (RavenDXMTDrawable *drawable in layer->frames) {
+		if ([drawable acquireSlot]) {
+			p[1] = (uint64_t)drawable;
+			return 0;
 		}
-		// Allocate textures lazily; slots are leased only while presenting.
-		if (layer->frames.count < 3) {
-			RavenDXMTDrawable *drawable = [[RavenDXMTDrawable alloc] initWithDevice:(id<MTLDevice>)layer->props.device
-				window:layer->window properties:&layer->props];
-			if (!drawable) return (int32_t)0xc00000bbU;
-			[layer->frames addObject:drawable];
-			drawable->owner = layer;
-			[drawable release];
-			if ([drawable acquireSlot]) {
-				p[1] = (uint64_t)drawable;
-				return 0;
-			}
+	}
+	// Allocate textures lazily; imported records do not pin capacity.
+	if (layer->frames.count < 3) {
+		RavenDXMTDrawable *drawable = [[RavenDXMTDrawable alloc] initWithDevice:(id<MTLDevice>)layer->props.device
+			window:layer->window properties:&layer->props];
+		if (!drawable) return (int32_t)0xc00000bbU;
+		[layer->frames addObject:drawable];
+		drawable->owner = layer;
+		[drawable release];
+		if ([drawable acquireSlot]) {
+			p[1] = (uint64_t)drawable;
+			return 0;
 		}
-		usleep(500);
-	} while (CFAbsoluteTimeGetCurrent() < deadline);
-	fprintf(stderr, "raven DXMT: timed out waiting for an IOSurface presentation buffer\n");
-	return (int32_t)0x00000102U;
+	}
+	// Nonblocking backpressure, analogous to DXGI_PRESENT_DO_NOT_WAIT.
+	return (int32_t)0x887a000aU; // DXGI_ERROR_WAS_STILL_DRAWING at the adapter boundary.
+
 }
 
 static int32_t drawable_texture(void *args)
