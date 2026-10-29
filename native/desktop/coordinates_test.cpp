@@ -2,6 +2,7 @@
 #include "api.h"
 #include "nt/providers.h"
 
+#include <algorithm>
 #include <fstream>
 #include <cerrno>
 #include <iostream>
@@ -69,7 +70,10 @@ int main(int argc,char **argv)
 		check(bool(file.read(reinterpret_cast<char *>(bytes.data()),static_cast<std::streamsize>(bytes.size()))),"cannot read coordinate fixture");
 		raven::ModuleSet modules;
 		auto &entry=modules.add("client.exe",std::move(bytes));
-		auto &user=modules.add("user32.dll",raven::runtime_provider("user32.dll",0x180000000ULL,raven::NativeDesktop::user_exports()));
+		auto exports=std::vector<std::string_view>(raven::NativeDesktop::user_exports().begin(),raven::NativeDesktop::user_exports().end());
+		exports.push_back("SetWindowPos");
+		std::sort(exports.begin(),exports.end());
+		auto &user=modules.add("user32.dll",raven::runtime_provider("user32.dll",0x180000000ULL,exports));
 		raven::LoadedImage *images[]={&entry.loaded,&user.loaded};
 		raven::NativeProcess process(images,argv[1],std::chrono::seconds(2));
 		for (const auto &symbol:user.exports)
@@ -82,10 +86,12 @@ int main(int argc,char **argv)
 		check(window,"window allocation failed");
 		auto *record=objects.window(window);
 		record->x=27; record->y=41; record->width=300; record->height=212;
+		raven::ApiRegistry registry;
+		windows.register_api(registry);
 		const auto call=[&](const char *name,std::initializer_list<uint64_t> args) {
 			const auto function=modules.resolve({"user32.dll",name,0,false,0});
 			check(process.call(function,std::span(args.begin(),args.size()),std::chrono::seconds(1)).stop==raven::NativeStop::api,"coordinate API did not trap");
-			check(windows.dispatch(name),"coordinate API not dispatched");
+			check(windows.dispatch(name) || registry.dispatch(process,environment,name),"coordinate API not dispatched");
 			const auto result=process.resume(std::chrono::seconds(1));
 			check(result.stop==raven::NativeStop::returned,"coordinate API did not return");
 			return result.value;
@@ -147,6 +153,21 @@ int main(int argc,char **argv)
 		injected=false;
 		check(call("PeekMessageW",{page+128,0,0x200,0x200,1})==1 &&
 			words(page+128,2)==std::vector<int32_t>{int32_t(window),int32_t(window>>32)},"surviving window lost pointer input");
+		// SetWindowPos must keep an owned menu from stealing its owner's focus.
+		windows.set_call([](uint64_t,std::span<const uint64_t>) { return raven::NativeResult{raven::NativeStop::returned,0}; });
+		presentation.present=[](uint64_t,std::string_view,uint32_t,uint32_t,std::span<const uint8_t>) {};
+		windows.set_presentation(presentation);
+		call("SetFocus",{window});
+		const auto popup=objects.add(raven::DesktopWindow{0,0,u"popup",20,30,80,60});
+		objects.window(popup)->owner=window;
+		objects.window(popup)->style=0x80000000U;
+		objects.window(popup)->visible=false;
+		check(call("SetWindowPos",{popup,0,20,30,80,60,0x50})==1,"nonactivating popup show failed");
+		check(objects.window_visible(popup) && call("GetFocus",{})==window && call("GetActiveWindow",{})==window,
+			"SWP_NOACTIVATE transferred popup focus");
+		call("ShowWindow",{popup,0});
+		check(call("SetWindowPos",{popup,0,20,30,80,60,0x40})==1 && call("GetFocus",{})==popup,
+			"activating popup did not take focus");
 		process.protect_memory(page,4096,PROT_READ);
 		check(call("ClientToScreen",{window,point})==0 && environment.last_error()==998 && words(point,2)==std::vector<int32_t>{0,0},"readonly point was modified");
 		std::cout<<"Owned outer/client geometry, live mapping and guard-page negatives passed\n";

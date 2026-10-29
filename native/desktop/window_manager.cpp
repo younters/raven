@@ -353,7 +353,7 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 			return;
 	}
 	if (effective & swp_showwindow)
-		show_window(handle, 5);
+		show_window(handle, (effective & swp_noactivate) ? 8 : 5);
 	else if (effective & swp_hidewindow)
 		show_window(handle, 0);
 	if (!objects.window(handle))
