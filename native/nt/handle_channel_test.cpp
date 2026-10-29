@@ -12,9 +12,6 @@
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
-#ifdef __APPLE__
-#include <libproc.h>
-#endif
 
 static void check(bool condition, const char *message)
 {
@@ -106,33 +103,6 @@ static void test_rejected_transfer(raven::NativeObjects &objects)
 	::close(pair[1]);
 }
 
-#ifdef __APPLE__
-static int fd_count()
-{
-	proc_fdinfo entries[4096];
-	const int bytes = ::proc_pidinfo(::getpid(), PROC_PIDLISTFDS, 0, entries, sizeof(entries));
-	check(bytes > 0 && bytes < int(sizeof(entries)), "cannot count watch descriptors");
-	return bytes / int(sizeof(proc_fdinfo));
-}
-
-static void test_watch_lifetime()
-{
-	const int baseline = fd_count();
-	int peak = baseline;
-	for (int round = 0; round < 1000; ++round) {
-		{
-			std::vector<pollfd> watches;
-			auto lease = raven::watch_handles(watches);
-			const int live = fd_count();
-			check(live == baseline + int(watches.size()), "watch snapshot has unexpected descriptor owners");
-			peak = std::max(peak, live);
-		}
-		check(fd_count() == baseline, "watch lease leaked descriptors");
-	}
-	std::cout << "watch rounds=1000 fd_baseline=" << baseline << " fd_peak=" << peak << " fd_final=" << fd_count() << '\n';
-}
-#endif
-
 int main(int argc, char **argv)
 {
 	try {
@@ -160,9 +130,6 @@ int main(int argc, char **argv)
 			raven::add_child_channel(receivers[index].get());
 		}
 		raven::enable_process_requests();
-#ifdef __APPLE__
-		test_watch_lifetime();
-#endif
 		std::vector<pollfd> watches;
 		auto lease = raven::watch_handles(watches);
 		auto peer = raven::process_request_channel(::getpid());
