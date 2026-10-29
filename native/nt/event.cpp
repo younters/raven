@@ -51,7 +51,7 @@ EventObject::EventObject(int descriptor, Layout layout) : type(0), local_signale
 // Named events retain their existing on-disk manual-reset flag layout. Imported
 // descriptors carry that layout too, so older processes can still open the name.
 EventObject::EventObject(std::shared_ptr<SharedFile> storage)
-	: EventObject(::dup(storage->file_descriptor()), Layout::manual)
+	: EventObject(::fcntl(storage->file_descriptor(), F_DUPFD_CLOEXEC, 0), Layout::manual)
 {
 	this->storage = std::move(storage);
 }

@@ -5,11 +5,17 @@
 #include "shared_file.h"
 
 #include <future>
+#include <cerrno>
+#include <cstdlib>
 #include <iostream>
+#include <spawn.h>
 #include <stdexcept>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
+
+extern char **environ;
 
 static void check(bool condition, const char *message)
 {
@@ -25,6 +31,8 @@ static void queued(raven::NativeObjects &objects, uint64_t handle, size_t count)
 
 int main(int argc, char **argv)
 {
+	if (argc == 3 && std::string_view(argv[1]) == "--closed-event-fd")
+		return ::fcntl(std::atoi(argv[2]), F_GETFD) == -1 && errno == EBADF ? 0 : 1;
 	try {
 		check(argc==2,"bootstrap required");
 		{
@@ -74,6 +82,13 @@ int main(int argc, char **argv)
 			auto event = std::make_shared<raven::EventObject>(storage);
 			raven::InheritedHandle record;
 			check(event->describe(record) && record.kind == "named-event", "named event inheritance description failed");
+			auto descriptor = std::to_string(record.descriptor);
+			char *arguments[] = {argv[0], const_cast<char *>("--closed-event-fd"), descriptor.data(), nullptr};
+			pid_t child = 0;
+			check(!::posix_spawn(&child, argv[0], nullptr, nullptr, arguments, environ), "cannot probe event exec inheritance");
+			int status = 0;
+			check(::waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+				"named event leaked into an unrelated exec");
 			record.handle = 0x1000;
 			record.handle_access = 0x1f0003;
 			record.descriptor = ::dup(record.descriptor);
