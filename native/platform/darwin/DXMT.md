@@ -236,7 +236,6 @@ qualification passes. Building the upstream test executables is not equivalent t
 Prerequisites: Meson, the Windows cross compiler, Metal's Xcode toolchain, **x86_64** LLVM 15 static
 libraries, and a private configured Wine build. Current DXMT still requires major version 15;
 the Apple Silicon Homebrew support does not make arm64 LLVM archives suitable for this unixlib.
-The existing local LLVM installation is `/Users/yount/Documents/Projects/raven-components-build/llvm15`.
 Do not use an arm64-only Homebrew archive in its place.
 
 For Wine 10 source already provisioned under `$C/tools/wine-src`, configure a fresh external directory:
@@ -256,9 +255,11 @@ make -j4 BISON="$(brew --prefix bison)/bin/bison" tools/winebuild/winebuild \
 From Raven's checkout:
 
 ```sh
-python3 scripts/provision-dxmt.py --destination /tmp/raven-firefox-source-components \
-  --source-llvm ~/Documents/Projects/raven-components-build/llvm15 \
-  --source-wine /tmp/raven-firefox-wine-build
+python3 scripts/provision-dxmt.py --destination "$C" \
+  --source-llvm /absolute/path/to/x86_64-llvm15 \
+  --source-wine /absolute/path/to/private-wine-build
+cmake -S . -B build -DRAVEN_DXMT_ROOT="$C/dxmt"
+cmake --build build -j4
 ```
 
 The source build and submodules stay inside the chosen destination's `dxmt-source-build` directory;
@@ -289,16 +290,39 @@ prefix; normal destruction removes them.
 
 #### System32 HLSL compiler
 
-Windows ships `d3dcompiler_47.dll` in System32 and ANGLE loads it from there; Raven's built-in export only
-refuses `D3DCompile`. The source overlay also builds `pe64/d3dcompiler_47.dll`
-(`dxmt/build_d3dcompiler.py`): Wine 10's d3dcompiler objects linked against vkd3d-shader pinned at git
-`dcefd8b0` (Wine's bundled vkd3d 1.14 crashes in copy propagation on WebRender shaders, and 1.19 rejects
-ANGLE's statically indexed sampler arrays), with `d3dcompiler_crt.c` forwarding the stdio calls mingw headers
-emit to ucrtbase. When the configured DXMT root carries this file it replaces the stub as a system module;
-a copy beside the application still wins. `darwin_d3d_compile` checks vs_5_0/ps_5_0 DXBC and error blobs.
-The compiler builds every WebRender shader, but some generated code is wrong: page content draws with
-wrong colours and missing gradients/shadows, while Microsoft's compiler renders the same page correctly
-on the same DXMT build. Hardware WebRender is therefore not yet correct with this compiler.
+The provisioner defaults to Microsoft's redistributable `d3dcompiler_47.dll`, extracted from a
+checksum-pinned Windows SDK cabinet by `scripts/provision-d3dcompiler.py`. The download, DLL and
+provenance metadata stay in the external component directory. When present in the configured
+DXMT root, the DLL supplies System32 compiler loads; an application-local DLL still takes precedence
+for ordinary loads. `darwin_d3d_compile` checks vs_5_0/ps_5_0 DXBC and error blobs.
+
+`--hlsl-compiler wine` retains the experimental Wine 10/vkd3d-shader build. It compiles the WebRender
+shaders but generates incorrect colours and missing gradients/shadows, so it is unsuitable for
+Firefox hardware rendering. The Microsoft compiler does not require building Wine's compiler objects.
+
+#### DirectComposition and Firefox
+
+The source overlay builds Raven's `pe64/dcomp.dll` from the public SDK interfaces. It supports
+`IDCompositionDevice2`, `IDCompositionDesktopDevice`, HWND targets, `IDCompositionVisual2`, composition
+swapchain content, positive axis-aligned scale/translation, rectangle clips, a rounded clip per visual
+path, nearest/linear interpolation, source-over alpha and visual ordering. Changes are published as
+one bounded snapshot on `Commit`; retained frames can move, clip or detach without another `Present`.
+Device mutations and commits share a lock. Local and cross-process targets map Windows device pixels
+to Cocoa points, including DPI-aware Retina windows and window resizing.
+
+The four `darwin_dcomp_*` pixel tests cover both target ownership modes and DPI modes, pending changes,
+concurrent tree mutation, retained content, scale and clipping, rounded corners, overlapping alpha,
+detach and resize. Sandboxed Firefox 158.0.1 has additionally retained hardware **WebRender Layer
+Compositor** after navigation and three window resizes using this source overlay and the Microsoft compiler. Its GPU, content,
+RDD, socket, utility and GMP sandbox switches remain enabled. Test screenshots check actual rendering;
+the `about:support` feature report alone is insufficient.
+
+This is a limited DirectComposition implementation. Device v1, animations, general transforms,
+effects, composition surfaces, nested rounded clips, frame statistics and completion waiting are
+unsupported and return failure. The private snapshot accepts at most 128 streams; presentation transport
+currently has 16 surface slots. Firefox's optional video-overlay path still lacks `ID3D11VideoDevice`
+and falls back to ordinary composition. DXMT and this DirectComposition path currently support 64-bit
+guests only.
 
 `raven-apps` selects the AMD compatibility identity for `firefox.exe`, including generated app
 bundles launched from Launchpad, while preserving explicit caller overrides. Direct runtime launches
