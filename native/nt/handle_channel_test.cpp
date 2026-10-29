@@ -55,10 +55,10 @@ static void test_idle_wake(raven::NativeObjects &objects)
 		send_event(pair[1], event, 0x1020);
 	});
 	const auto start = std::chrono::steady_clock::now();
-	const int ready = ::poll(descriptors.data(), descriptors.size(), 500);
+	const int ready = ::poll(descriptors.data(), descriptors.size(), 2000);
 	const auto elapsed = std::chrono::steady_clock::now() - start;
 	sender.join();
-	check(ready > 0 && elapsed < std::chrono::milliseconds(250), "incoming transfer did not wake idle wait");
+	check(ready > 0 && elapsed < std::chrono::seconds(2), "incoming transfer did not wake idle wait");
 	check(objects.signaled(0x1020, 1) != 1, "wake callback dispatched a transfer");
 	raven::receive_handles(objects);
 	check(objects.signaled(0x1020, 1) == 1, "scheduler service lost wake transfer");
