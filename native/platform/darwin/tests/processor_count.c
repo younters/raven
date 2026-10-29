@@ -54,5 +54,14 @@ int raven_entry(void)
 		++sets; at+=record;
 	}
 	if (sets != count) return 18;
+	typedef LONG (WINAPI *QueryProcess)(HANDLE, ULONG, void *, ULONG, ULONG *);
+	QueryProcess query=(QueryProcess)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess");
+	ULONG_PTR basic[6];
+	if (!query || query(GetCurrentProcess(),0,basic,sizeof(basic),NULL) || basic[2] != process_mask) return 19;
+	typedef LONG (WINAPI *Power)(ULONG, void *, ULONG, void *, ULONG);
+	HMODULE power_module=LoadLibraryW(L"powrprof.dll");
+	Power power=power_module ? (Power)GetProcAddress(power_module,"CallNtPowerInformation") : NULL;
+	if (!power || power(11,NULL,0,buffer,count*24)) return 20;
+	if ((ULONG)power(11,NULL,0,buffer,count*24-1) != 0xc0000023U) return 21;
 	return 0;
 }
