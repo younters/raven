@@ -224,14 +224,15 @@ The new `scripts/provision-dxmt.py` has 78 lines. New DXMT provenance and licens
 ### Experimental source overlay (Firefox investigation)
 
 The opt-in source provisioner pins `3b252590cb0290e36fca6f088b5255b871d2d95a`, which contains
-keyed-mutex merge `e520fea415ba4b82b0c346dae77bbb1be4897453` (upstream PR #195).
-It applies the foreign-HWND source patch and links the unixlib directly to Raven's adapter instead
-of Wine's unix libraries. Two additional source patches correct the non-indexed geometry argument
-sentinel and preserve signed 100 ns keyed-mutex timeouts (including infinite waits). Patch 0005 makes
-AcquireSync/ReleaseSync own the shared event their encoder command captures; upstream retains it only when
-the encoder runs, after Firefox's GPU-process checks have released the texture (use-after-free in
-`objc_retain`, covered by `darwin_dxmt_self_share`). The normal binary-patched v0.80 path remains the default until runtime
-qualification passes. Building the upstream test executables is not equivalent to passing them.
+keyed-mutex merge `e520fea415ba4b82b0c346dae77bbb1be4897453` (upstream PR #195). It applies the
+foreign-HWND source patch and links the unixlib directly to Raven's adapter instead of Wine's unix
+libraries. Two additional source patches correct the non-indexed geometry argument sentinel and
+preserve signed 100 ns keyed-mutex timeouts (including infinite waits). Patch 0005 makes
+AcquireSync/ReleaseSync own the shared event their encoder command captures; upstream retains it
+only when the encoder runs, after Firefox's GPU-process checks have released the texture
+(use-after-free in `objc_retain`, covered by `darwin_dxmt_self_share`). The normal binary-patched
+v0.80 path remains the default until runtime qualification passes. Building the upstream test
+executables is not equivalent to passing them.
 
 Prerequisites: Meson, the Windows cross compiler, Metal's Xcode toolchain, **x86_64** LLVM 15 static
 libraries, and a private configured Wine build. Current DXMT still requires major version 15;
@@ -310,12 +311,13 @@ one bounded snapshot on `Commit`; retained frames can move, clip or detach witho
 Device mutations and commits share a lock. Local and cross-process targets map Windows device pixels
 to Cocoa points, including DPI-aware Retina windows and window resizing.
 
-The four `darwin_dcomp_*` pixel tests cover both target ownership modes and DPI modes, pending changes,
-concurrent tree mutation, retained content, scale and clipping, rounded corners, overlapping alpha,
-detach and resize. Sandboxed Firefox 158.0.1 has additionally retained hardware **WebRender Layer
-Compositor** after navigation and three window resizes using this source overlay and the Microsoft compiler. Its GPU, content,
-RDD, socket, utility and GMP sandbox switches remain enabled. Test screenshots check actual rendering;
-the `about:support` feature report alone is insufficient.
+The four `darwin_dcomp_*` pixel tests cover both target ownership modes and DPI modes, pending
+changes, concurrent tree mutation, retained content, scale and clipping, rounded corners,
+overlapping alpha, detach and resize. Sandboxed Firefox 158.0.1 has additionally retained hardware
+**WebRender Layer Compositor** after navigation and three window resizes using this source overlay
+and the Microsoft compiler. Its GPU, content, RDD, socket, utility and GMP sandbox switches remain
+enabled. Test screenshots check actual rendering; the `about:support` feature report alone is
+insufficient.
 
 The integrated macOS runtime also selects hardware WebRender with a fresh Firefox profile, without
 `gfx.webrender.all` or a DirectComposition-disable preference, using the AMD identity that `raven-apps`

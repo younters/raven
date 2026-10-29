@@ -252,8 +252,9 @@ void HandleChannel::receive(NativeObjects &objects)
 			continue;
 		}
 		auto &record = records.front();
-		trace_phase(record.kind.starts_with(answer_prefix) ? "answer-receive" : "dispatch", descriptor,
-			record.kind.starts_with(answer_prefix) ? record.handle : record.size, record.kind);
+		const bool answer_receive = record.kind.starts_with(answer_prefix);
+		trace_phase(answer_receive ? "answer-receive" : "dispatch", descriptor,
+			answer_receive ? record.handle : record.size, record.kind);
 		if (process_only && !record.kind.starts_with("process:") && record.kind != answer_prefix + "process") {
 			if (received >= 0) ::close(received);
 			continue;

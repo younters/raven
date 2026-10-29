@@ -5,6 +5,8 @@
 #include "gui_session.h"
 #include <cstdio>
 #include <stdexcept>
+#include <string_view>
+#include <vector>
 
 static void check(bool value, const char *message)
 {

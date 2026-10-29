@@ -6,10 +6,10 @@
 #include "nt/paths.h"
 
 #include <algorithm>
+#include <cstring>
 
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <cstring>
 
 // The NT file natives that ntdll exports and programs reach directly, Chromium's sandbox among them: it patches them in each child and
 // resolves them by reading ntdll's export table, so they must be there and must work. Each one is the Win32 call that does the same
@@ -64,7 +64,8 @@ uint32_t status_of(uint32_t error)
 	case 19: return 0xc00000a2U;
 	case 32: return 0xc0000043U;
 	case 33: return 0xc0000054U;
-	case 80: case 183: return 0xc0000035U;
+	case 80: return 0xc0000035U;
+	case 183: return 0xc0000035U;
 	case 87: return status_invalid_parameter;
 	case 112: return 0xc000007fU;
 	case 122: return 0xc0000023U;
@@ -333,12 +334,11 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 			}
 			const auto win32 = call.read(data, 36);
 			uint32_t attribute;
-			uint64_t creation, access, write, size_high, size_low;
+			uint64_t creation, access, write, size_high = 0, size_low = 0;
 			std::memcpy(&attribute, win32.data(), 4);
 			std::memcpy(&creation, win32.data() + 4, 8);
 			std::memcpy(&access, win32.data() + 12, 8);
 			std::memcpy(&write, win32.data() + 20, 8);
-			size_high = 0, size_low = 0;
 			std::memcpy(&size_high, win32.data() + 28, 4);
 			std::memcpy(&size_low, win32.data() + 32, 4);
 			const uint64_t size = (size_high << 32) | size_low;
@@ -362,8 +362,9 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 				std::memcpy(out.data() + 32, &allocation, 8);
 				std::memcpy(out.data() + 40, &end, 8);
 				std::memcpy(out.data() + 48, &attribute, 4);
-			} else
+			} else {
 				std::memcpy(out.data() + 32, &attribute, 4);
+			}
 			call.write(call[1], out);
 			call.ret(status_success);
 		} catch (const raven::ApiFault &) {

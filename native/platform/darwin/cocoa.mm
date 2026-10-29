@@ -560,8 +560,9 @@ struct CocoaPresentation::State {
 		case NSEventTypeKeyDown:
 		case NSEventTypeKeyUp: {
 			const bool down = event.type == NSEventTypeKeyDown;
-			if (trace) std::fprintf(stderr, "cocoa: key %u down %d window %llx focus %llx active %d\n", event.keyCode, int(down),
-				(unsigned long long)handle_of(event.window), (unsigned long long)keyboard_window, int(NSApp.active));
+			if (trace)
+				std::fprintf(stderr, "cocoa: key %u down %d window %llx focus %llx active %d\n", event.keyCode, int(down),
+					(unsigned long long)handle_of(event.window), (unsigned long long)keyboard_window, int(NSApp.active));
 			// The application's own shortcuts: Command-Q and Command-H.
 			if (down && (event.modifierFlags & NSEventModifierFlagCommand) && !(event.modifierFlags & NSEventModifierFlagControl)) {
 				NSString *character = event.charactersIgnoringModifiers.lowercaseString;
@@ -1437,7 +1438,10 @@ struct CocoaPresentation::State {
 		} else {
 			auto &pending = hidden_host_surfaces[handle];
 			if (!pending.layer) pending.layer = [CAMetalLayer layer];
-			pending.x = x; pending.y = y; pending.width = width; pending.height = height;
+			pending.x = x;
+			pending.y = y;
+			pending.width = width;
+			pending.height = height;
 			layer = pending.layer;
 		}
 		layer.opaque = !alpha_windows.contains(handle);

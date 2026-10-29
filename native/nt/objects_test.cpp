@@ -4,12 +4,13 @@
 #include "mutex.h"
 #include "shared_file.h"
 
-#include <future>
 #include <cerrno>
 #include <cstdlib>
+#include <future>
 #include <iostream>
 #include <spawn.h>
 #include <stdexcept>
+#include <string_view>
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <thread>

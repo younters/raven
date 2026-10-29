@@ -69,10 +69,10 @@ def main():
                 # Wait for this stage's pixels, including updates without a new Present.
                 deadline = time.monotonic() + 5
                 while True:
-                    selected_window = [str(info_tool), str(process.pid)]
+                    info_command = [str(info_tool), str(process.pid)]
                     if kind.startswith('popup'):
-                        selected_window += ['popup']
-                    info = json.loads(subprocess.check_output(selected_window))
+                        info_command += ['popup']
+                    info = json.loads(subprocess.check_output(info_command))
                     shot = work / f'stage{stage}.png'
                     capture = subprocess.run(['/usr/sbin/screencapture', '-x', '-o', '-l', str(info['id']), str(shot)],
                                              capture_output=True)

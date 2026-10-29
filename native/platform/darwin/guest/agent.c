@@ -76,7 +76,10 @@ int32_t raven_dispatch_unix_call(uint64_t handle, uint32_t code, void *args)
 		if (code < library->count && library->functions[code]) {
             active_unix_code = code;
             active_unix_args = args;
-            // The gate saved the Windows stack pointer above its 568-byte save area and eight registers.
+            // Frame layout: 16 = this frame's saved rbp and return address, which put rbp + 16 at the gate's
+            // 568-byte save area (fxsave image and spill slots); 568 = that save area's size; 64 = the eight
+            // callee-saved registers the gate pushed above it. The Windows stack pointer is the first value
+            // the gate pushed, so it sits at the top of that block. See _raven_unix_call_gate in guest/unix_call.s.
             active_unix_guest_stack = *(uint64_t *)((char *)__builtin_frame_address(0) + 16 + 568 + 64);
             result = library->functions[code](args);
             active_unix_args = NULL;
@@ -814,7 +817,7 @@ void raven_agent_stop(int signal, siginfo_t *info, void *raw, uint32_t index)
 		fprintf(stderr, "raven-bootstrap: native fault %d in %s+0x%llx (%s) at %p\n", signal,
 			image.dli_fname ? image.dli_fname : "unknown", thread->registers.rip - (uint64_t)image.dli_fbase,
 			image.dli_sname ? image.dli_sname : "unknown", info->si_addr);
-		fprintf(stderr, "raven-bootstrap: active unix call %u args=%p\n", active_unix_code, active_unix_args);
+        fprintf(stderr, "raven-bootstrap: active unix call %u args=%p\n", active_unix_code, active_unix_args);
 		// The handler runs on the alternate stack, so the faulting code's callers come from its frame-pointer chain; the last ones
 		// are guest addresses, which the host's fault report names.
 		uint64_t frame = thread->registers.rbp;

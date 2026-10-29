@@ -65,19 +65,19 @@ static void test_idle_wake(raven::NativeObjects &objects)
 	raven::remove_child_channel(channel.get());
 	channel.reset();
 	// Reuse the original descriptor for a readable pipe. An installed snapshot must still refer to the socket.
-	int pipe[2];
-	check(!::pipe2(pipe, O_CLOEXEC | O_NONBLOCK), "cannot create fd reuse pipe");
-	if (pipe[0] != pair[0]) check(::dup2(pipe[0], pair[0]) == pair[0], "cannot reuse original fd");
-	check(::write(pipe[1], "x", 1) == 1, "cannot signal reused fd");
+	int channel_pipe[2];
+	check(!::pipe2(channel_pipe, O_CLOEXEC | O_NONBLOCK), "cannot create fd reuse pipe");
+	if (channel_pipe[0] != pair[0]) check(::dup2(channel_pipe[0], pair[0]) == pair[0], "cannot reuse original fd");
+	check(::write(channel_pipe[1], "x", 1) == 1, "cannot signal reused fd");
 	check(::poll(descriptors.data(), descriptors.size(), 0) == 0, "stale watch followed a reused descriptor");
 	::close(pair[1]);
 	check(::poll(descriptors.data(), descriptors.size(), 100) > 0, "snapshot lost peer teardown readiness");
 	descriptors.clear();
 	lease = raven::watch_handles(descriptors);
 	check(::poll(descriptors.data(), descriptors.size(), 0) == 0, "refreshed watch kept removed channel");
-	if (pipe[0] != pair[0]) ::close(pair[0]);
-	::close(pipe[0]);
-	::close(pipe[1]);
+	if (channel_pipe[0] != pair[0]) ::close(pair[0]);
+	::close(channel_pipe[0]);
+	::close(channel_pipe[1]);
 }
 
 static void test_rejected_transfer(raven::NativeObjects &objects)

@@ -432,7 +432,6 @@ if(TARGET native_cpu_test)
     target_link_libraries(darwin_cocoa_policy_test PRIVATE raven_cpu PkgConfig::XKBCOMMON "-framework AppKit" "-framework Carbon" "-framework Metal")
     add_test(NAME native_darwin_cocoa_policy COMMAND darwin_cocoa_policy_test)
     set_tests_properties(native_darwin_cocoa_policy PROPERTIES SKIP_RETURN_CODE 77)
-
     add_executable(darwin_cocoa_hidden_surface_test ${RAVEN_DARWIN_DIR}/cocoa_hidden_surface_test.mm
         ${RAVEN_DARWIN_DIR}/cocoa.mm ${RAVEN_DARWIN_DIR}/gdi_presenter.mm ${RAVEN_DARWIN_DIR}/app_identity.mm)
     set_source_files_properties(${RAVEN_DARWIN_DIR}/cocoa_hidden_surface_test.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")

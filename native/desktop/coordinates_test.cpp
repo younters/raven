@@ -70,7 +70,8 @@ int main(int argc,char **argv)
 		check(bool(file.read(reinterpret_cast<char *>(bytes.data()),static_cast<std::streamsize>(bytes.size()))),"cannot read coordinate fixture");
 		raven::ModuleSet modules;
 		auto &entry=modules.add("client.exe",std::move(bytes));
-		auto exports=std::vector<std::string_view>(raven::NativeDesktop::user_exports().begin(),raven::NativeDesktop::user_exports().end());
+		const auto native_exports = raven::NativeDesktop::user_exports();
+		auto exports=std::vector<std::string_view>(native_exports.begin(),native_exports.end());
 		exports.push_back("SetWindowPos");
 		std::sort(exports.begin(),exports.end());
 		auto &user=modules.add("user32.dll",raven::runtime_provider("user32.dll",0x180000000ULL,exports));
