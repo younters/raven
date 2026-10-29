@@ -1155,6 +1155,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(8);
 			return;
 		}
+		objects.set_inherit(made.value, inheritable_handle(call, call[0]));
 		call.set_last_error(existed ? 183 : 0);
 		call.ret(made.value);
 	};

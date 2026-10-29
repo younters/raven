@@ -15,14 +15,20 @@ static void name(WCHAR *out, const WCHAR *prefix, DWORD pid)
 
 int raven_entry(void)
 {
-	DWORD parent=0; const WCHAR *line=GetCommandLineW();
+	DWORD parent=0, inherited=0, inherited_ex=0; const WCHAR *line=GetCommandLineW();
 	for (unsigned i=0;line[i];++i) if (line[i]==L'-' && line[i+1]==L'c' && line[i+2]==L' ') {
-		unsigned at=i+3; while (line[at]>=L'0' && line[at]<=L'9') parent=parent*10+line[at++]-L'0'; break;
+		unsigned at=i+3; while (line[at]>=L'0' && line[at]<=L'9') parent=parent*10+line[at++]-L'0'; while (line[at]==L' ') ++at;
+		while (line[at]>=L'0' && line[at]<=L'9') inherited=inherited*10+line[at++]-L'0';
+		while (line[at]==L' ') ++at;
+		while (line[at]>=L'0' && line[at]<=L'9') inherited_ex=inherited_ex*10+line[at++]-L'0';
+		break;
 	}
 	WCHAR pipe_name[100], event_name[100];
 	name(pipe_name,L"\\\\.\\pipe\\raven-semaphore-transfer-",parent ? parent : GetCurrentProcessId());
 	name(event_name,L"Local\\raven-semaphore-transfer-",parent ? parent : GetCurrentProcessId());
 	if (parent) {
+		if (WaitForSingleObject((HANDLE)(ULONG_PTR)inherited,0)!=WAIT_OBJECT_0 ||
+			WaitForSingleObject((HANDLE)(ULONG_PTR)inherited_ex,0)!=WAIT_OBJECT_0) return 7;
 		HANDLE semaphore=CreateSemaphoreW(NULL,1,2,NULL), alias=NULL;
 		if (!semaphore || !DuplicateHandle(GetCurrentProcess(),semaphore,GetCurrentProcess(),&alias,0,FALSE,DUPLICATE_SAME_ACCESS)) return 1;
 		HANDLE ready=OpenEventW(SYNCHRONIZE,FALSE,event_name);
@@ -38,13 +44,19 @@ int raven_entry(void)
 		if (ReleaseSemaphore(alias,1,NULL) || GetLastError()!=ERROR_TOO_MANY_POSTS) return 6;
 		CloseHandle(alias);CloseHandle(ready);return 0;
 	}
+	SECURITY_ATTRIBUTES security={sizeof(security),NULL,TRUE};
+	HANDLE inherited_semaphore=CreateSemaphoreW(&security,1,2,NULL);
+	HANDLE inherited_semaphore_ex=CreateSemaphoreExW(&security,1,2,NULL,0,SEMAPHORE_ALL_ACCESS);
+	if (!inherited_semaphore || !inherited_semaphore_ex) return 18;
 	HANDLE ready=CreateEventW(NULL,TRUE,FALSE,event_name);
 	HANDLE pipe=CreateNamedPipeW(pipe_name,PIPE_ACCESS_INBOUND,PIPE_TYPE_BYTE|PIPE_WAIT,1,256,256,0,NULL);
 	if (!ready || pipe==INVALID_HANDLE_VALUE) return 10;
 	WCHAR command[1024];unsigned at=0;command[at++]=L'"';at+=GetModuleFileNameW(NULL,command+at,900);command[at++]=L'"';
-	command[at++]=L' ';command[at++]=L'-';command[at++]=L'c';command[at++]=L' ';decimal(command+at,GetCurrentProcessId());
+	command[at++]=L' ';command[at++]=L'-';command[at++]=L'c';command[at++]=L' ';at+=decimal(command+at,GetCurrentProcessId());
+	command[at++]=L' ';at+=decimal(command+at,(DWORD)(ULONG_PTR)inherited_semaphore);
+	command[at++]=L' ';decimal(command+at,(DWORD)(ULONG_PTR)inherited_semaphore_ex);
 	STARTUPINFOW startup={0};startup.cb=sizeof(startup);PROCESS_INFORMATION process={0};
-	if (!CreateProcessW(NULL,command,NULL,NULL,FALSE,0,NULL,NULL,&startup,&process)) return 11;
+	if (!CreateProcessW(NULL,command,NULL,NULL,TRUE,0,NULL,NULL,&startup,&process)) return 11;
 	if (!ConnectNamedPipe(pipe,NULL) && GetLastError()!=ERROR_PIPE_CONNECTED) return 12;
 	HANDLE remote=NULL, semaphore=NULL;DWORD bytes=0;
 	if (!ReadFile(pipe,&remote,sizeof(remote),&bytes,NULL) || bytes!=sizeof(remote)) return 13;
@@ -53,6 +65,8 @@ int raven_entry(void)
 	if (!SetEvent(ready) || WaitForSingleObject(process.hProcess,5000)!=WAIT_OBJECT_0) return 16;
 	DWORD code=99;if (!GetExitCodeProcess(process.hProcess,&code) || code) return 20+code;
 	if (WaitForSingleObject(semaphore,0)!=WAIT_OBJECT_0 || WaitForSingleObject(semaphore,0)!=WAIT_OBJECT_0 || WaitForSingleObject(semaphore,0)!=WAIT_TIMEOUT) return 17;
+	if (WaitForSingleObject(inherited_semaphore,0)!=WAIT_TIMEOUT || WaitForSingleObject(inherited_semaphore_ex,0)!=WAIT_TIMEOUT) return 19;
+	CloseHandle(inherited_semaphore);CloseHandle(inherited_semaphore_ex);
 	CloseHandle(semaphore);CloseHandle(pipe);CloseHandle(ready);CloseHandle(process.hThread);CloseHandle(process.hProcess);
 	return 0;
 }
