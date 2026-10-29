@@ -60,7 +60,8 @@ int main(void)
 		for (unsigned i = 0; i < RAVEN_SURFACE_SLOTS * 3; ++i) {
 			RavenDXMTDrawable *frame = [[RavenDXMTDrawable alloc] initWithDevice:device window:i + 1 properties:&props];
 			check(frame && frame->slot == -1, "textures do not reserve slots");
-			[frames addObject:frame]; [frame release];
+			[frames addObject:frame];
+			[frame release];
 			check([frame acquireSlot] && control.surfaces[frame->slot].window == i + 1, "recycle released slot");
 			__atomic_store_n(&control.surfaces[frame->slot].state, RAVEN_SURFACE_AVAILABLE, __ATOMIC_RELEASE);
 		}
