@@ -72,6 +72,19 @@ void entry(void)
     ULONG_PTR information;
     if (create(&folder, NULL, L"\\??\\C:\\ntfile", FILE_LIST_DIRECTORY, FILE_CREATE, FILE_DIRECTORY_FILE, &information) || information != 2)
         ExitProcess(20);
+    if (create(&other, NULL, L"\\??\\C:\\ntfile", FILE_LIST_DIRECTORY, FILE_CREATE, FILE_DIRECTORY_FILE, NULL) != (NTSTATUS)0xc0000035)
+        ExitProcess(60);
+    if (create(&other, NULL, L"\\??\\C:\\ntfile", FILE_LIST_DIRECTORY, FILE_CREATE, 0, NULL) != (NTSTATUS)0xc0000035) ExitProcess(61);
+    if (create(&other, folder, L"newdir", FILE_LIST_DIRECTORY, FILE_OPEN_IF, FILE_DIRECTORY_FILE, &information) || information != 2)
+        ExitProcess(62);
+    CloseHandle(other);
+    for (ULONG disposition = 0; disposition <= 5; ++disposition) {
+        if (disposition == FILE_OPEN || disposition == FILE_CREATE || disposition == FILE_OPEN_IF) continue;
+        if (create(&other, NULL, L"\\??\\C:\\ntfile", FILE_LIST_DIRECTORY, disposition, FILE_DIRECTORY_FILE, NULL) != (NTSTATUS)0xc000000d)
+            ExitProcess(63 + disposition);
+        if (create(&other, NULL, L"\\??\\C:\\ntfile", FILE_LIST_DIRECTORY, disposition, 0, NULL) != (NTSTATUS)0xc0000022)
+            ExitProcess(69 + disposition);
+    }
     if (create(&file, folder, L"a.txt", GENERIC_WRITE, FILE_CREATE, FILE_NON_DIRECTORY_FILE, &information) || information != 2)
         ExitProcess(21);
     DWORD written;

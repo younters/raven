@@ -229,6 +229,14 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 				call.ret(status_not_a_directory);
 				return;
 			}
+			if (exists && disposition == 2) {
+				call.ret(0xc0000035U);
+				return;
+			}
+			if (((options & directory_file) || is_directory) && (disposition == 0 || disposition == 4 || disposition == 5)) {
+				call.ret(options & directory_file ? status_invalid_parameter : 0xc0000022U);
+				return;
+			}
 			// A directory is made, not opened, when FILE_DIRECTORY_FILE asks for a new one.
 			if ((options & directory_file) && !exists && (disposition == 2 || disposition == 3)) {
 				const auto made = run(*directory, call, {text, 0});
@@ -242,7 +250,7 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 			}
 			static constexpr uint32_t dispositions[] = {2, 3, 1, 4, 5, 2};
 			uint32_t win32 = dispositions[disposition];
-			if (is_directory || (options & directory_file))
+			if ((is_directory && (disposition == 1 || disposition == 3)) || ((options & directory_file) && !exists))
 				win32 = 3;
 			uint32_t flags = file_attributes & 0x7fa7;
 			if (!(options & synchronous)) flags |= 0x40000000U;
