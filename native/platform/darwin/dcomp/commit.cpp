@@ -8,7 +8,8 @@
 
 namespace raven {
 
-uint32_t darwin::publish_composition(DesktopObjects &objects, uint64_t device, uint32_t magic, uint32_t count, std::span<const raven_dcomp_item> items, const std::function<bool(uint64_t)> &foreign_target)
+uint32_t darwin::publish_composition(DesktopObjects &objects, uint64_t device, uint32_t magic, uint32_t count,
+	std::span<const raven_dcomp_item> items, const std::function<bool(uint64_t)> &foreign_target)
 {
 	if (magic != RAVEN_DCOMP_COMMIT_MAGIC || count > RAVEN_DCOMP_MAX_VISUALS || items.size() != count)
 		return 0x80070057U;
@@ -22,17 +23,14 @@ uint32_t darwin::publish_composition(DesktopObjects &objects, uint64_t device, u
 			return 0x80070057U;
 		}
 		for (const float value : item.clip)
-			if (!std::isfinite(value)) {
+			if (!std::isfinite(value))
 				return 0x80070057U;
-			}
 		for (const float value : item.rounded)
-			if (!std::isfinite(value)) {
+			if (!std::isfinite(value))
 				return 0x80070057U;
-			}
 		for (const float value : item.radius)
-			if (!std::isfinite(value) || value < 0) {
+			if (!std::isfinite(value) || value < 0)
 				return 0x80070057U;
-			}
 	}
 	// No guest calls, callbacks, or presentation polls occur while the transaction
 	// is published. Pending setters remain entirely in the PE component.
