@@ -346,13 +346,13 @@ bool NativeX86System::dispatch(std::string_view name)
 		fail(1);
 	} else if (name == "GetProcessAffinityMask") {
 		if (args[1])
-			#ifdef __APPLE__
+#ifdef __APPLE__
 			write32(args[1], darwin::processor_count(true) == 32 ? ~0U : (1U << darwin::processor_count(true)) - 1);
 #else
 			write32(args[1], 0xf);
 #endif
 		if (args[2])
-			#ifdef __APPLE__
+#ifdef __APPLE__
 			write32(args[2], darwin::processor_count(true) == 32 ? ~0U : (1U << darwin::processor_count(true)) - 1);
 #else
 			write32(args[2], 0xf);
@@ -362,7 +362,7 @@ bool NativeX86System::dispatch(std::string_view name)
 		process.return_api(1);
 	} else if (name == "GetSystemInfo") {
 		std::vector<uint8_t> info(36);
-		#ifdef __APPLE__
+#ifdef __APPLE__
 		const auto count = darwin::processor_count(true);
 		const auto mask = count == 32 ? ~0U : (1U << count) - 1;
 		const uint32_t fields[] = {0, 4096, 0x10000, 0x7ffeffff, mask, count, 586, 65536, 0x0a000006};
@@ -435,14 +435,14 @@ bool NativeX86System::dispatch(std::string_view name)
 				text(168, "MONITOR\\RAVEN0000");
 			} else {
 				text(4, "\\\\.\\DISPLAY1");
-				#ifdef __APPLE__
+	#ifdef __APPLE__
 				const auto identity = darwin_dxgi::identity();
 				text(36, identity ? identity->description : "Raven Display");
 				#else
 				text(36, "Raven Display");
 				#endif
 				device[164] = 5;
-				#ifdef __APPLE__
+	#ifdef __APPLE__
 				text(168, identity ? darwin_dxgi::pci_id(*identity) : "PCI\\VEN_1AF4&DEV_1050");
 				#else
 				text(168, "PCI\\VEN_1AF4&DEV_1050");

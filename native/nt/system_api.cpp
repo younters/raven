@@ -147,11 +147,14 @@ void zone_transitions(std::span<uint8_t> bytes, int year, const ZoneInfo &januar
 	std::memcpy(cached.data() + 16, bytes.data() + 152, 16);
 }
 
-static unsigned guest_processor_count(size_t width)
+static unsigned guest_processor_count(size_t width, bool topology = false)
 {
 #ifdef __APPLE__
+	(void)topology;
 	return darwin::processor_count(width == 4);
 #else
+	if (topology)
+		return unsigned(std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1));
 	return std::max(1U, std::min(unsigned(width * 8), std::thread::hardware_concurrency()));
 #endif
 }
@@ -182,7 +185,11 @@ std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_envi
 	add(u"HOMEDRIVE", u"C:");
 	add(u"HOMEPATH", u"\\Users\\" + user);
 	add(u"LOCALAPPDATA", profile + u"\\AppData\\Local");
+#ifdef __APPLE__
 	add(u"NUMBER_OF_PROCESSORS", widen_ascii(std::to_string(guest_processor_count(wow64 ? 4 : 8))));
+#else
+	add(u"NUMBER_OF_PROCESSORS", widen_ascii(std::to_string(guest_processor_count(8))));
+#endif
 	add(u"OS", u"Windows_NT");
 	add(u"Path", u"C:\\Windows\\system32;C:\\Windows;C:\\Windows\\System32\\Wbem");
 	add(u"PATHEXT", u".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC");
@@ -606,7 +613,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("SLPersistRTSPayloadOverride", 4, [](ApiCall &call) { call.ret(0xc004f016U); });
 	// All logical processors form one group of at most 64: the masks of the process and the system are the same.
 	const auto processor_mask = [](size_t width) {
-		const long count = guest_processor_count(width);
+		const long count = guest_processor_count(width, true);
 		return count >= 64 ? ~uint64_t(0) : (uint64_t(1) << count) - 1;
 	};
 	registry.add("GetProcessAffinityMask", 3, [processor_mask](ApiCall &call) {
@@ -654,7 +661,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		const size_t width = call.pointer_width();
 		// Each record: relationship, size, then flags, efficiency class, 20 reserved bytes, the group count and one group affinity.
 		const size_t record = (32 + width + 8 + width - 1) / width * width;
-		const long count = guest_processor_count(width);
+		const long count = guest_processor_count(width, true);
 		const auto mask = processor_mask(call.pointer_width());
 		std::vector<uint8_t> bytes;
 		const auto add = [&](uint32_t kind, uint64_t group_mask) {
@@ -702,7 +709,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const size_t width = call.pointer_width(), record = width == 4 ? 24 : 32;
-		const long count = guest_processor_count(width);
+		const long count = guest_processor_count(width, true);
 		std::vector<uint8_t> bytes;
 		const auto add = [&](uint32_t kind, uint64_t mask) {
 			std::vector<uint8_t> entry(record);
