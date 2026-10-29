@@ -3,6 +3,8 @@
 #define RAVEN_HOST_LOADER
 #include "pe_preflight.cpp"
 #include "raven_host.h"
+#include "abi.h"
+#include "crt.h"
 #include <mach/mach_time.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -113,7 +115,7 @@ int32_t delete_lock(void *key) {
   std::lock_guard<std::mutex> lock(locks_mutex);
   return locks.erase(key) ? 0 : invalid;
 }
-void *resolve(const char *dll, const char *name) {
+void *resolve_native(const char *dll, const char *name) {
   if (std::string(dll) != "ntdll.dll") return nullptr;
 #define ENTRY(n, f) if (std::string(name) == n) return reinterpret_cast<void*>(&f)
   ENTRY("NtAllocateVirtualMemory", allocate); ENTRY("NtFreeVirtualMemory", release);
@@ -124,10 +126,27 @@ void *resolve(const char *dll, const char *name) {
   ENTRY("RtlLeaveCriticalSection", leave); ENTRY("RtlTryEnterCriticalSection", try_enter);
   ENTRY("RtlDeleteCriticalSection", delete_lock);
 #undef ENTRY
-  return nullptr;
+  return RavenCRT::resolve(name);
+}
+NativeJit import_jit;
+void *resolve(const char *dll, const char *name) {
+  auto *target = resolve_native(dll, name);
+  return target ? native_adapter(import_jit, target) : nullptr;
 }
 void self_test() {
   assert(page_size() == 16384);
+  char16_t text[] = u"4294967295!"; char16_t *end = nullptr;
+  assert(RavenCRT::wide_ulong(text, &end, 10) == UINT32_MAX && *end == '!');
+  errno = 0;
+  assert(RavenCRT::wide_long(text, &end, 10) == INT32_MAX && errno == ERANGE);
+  assert(RavenCRT::length(u"\U0001f426") == 2);
+  assert(RavenCRT::compare(u"bird", u"birds") < 0);
+  char *last = nullptr;
+  assert(RavenCRT::ansi_ulong("-1!", &last, 10) == UINT32_MAX && *last == '!');
+  uint64_t args[8] {reinterpret_cast<uintptr_t>(text)};
+  uint64_t teb[1024] {};
+  auto *length_adapter = resolve("ntdll.dll", "wcslen");
+  assert(length_adapter && raven_ec_call(length_adapter, args, teb) == 11);
   void *p = nullptr; size_t n = 1;
   assert(allocate(nullptr, &p, 0, &n, 0x3000, 4) == 0 && n == page_size());
   memset(p, 0x5a, n);

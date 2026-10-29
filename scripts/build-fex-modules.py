@@ -136,7 +136,8 @@ def build(root, raven_host=False):
         host = root / 'm1c-native-host'
         run(['xcrun', 'clang++', '-arch', 'arm64', '-ffixed-x18', '-std=c++17', '-O2',
              '-Wall', '-Wextra', '-Werror', '-Wl,-platform_version,macos,11.0,11.0',
-             REPO / 'native/platform/darwin/fex/modhost/native_host.cpp', '-o', host])
+             REPO / 'native/platform/darwin/fex/modhost/native_host.cpp',
+             REPO / 'native/platform/darwin/fex/modhost/abi.S', '-o', host])
         run([host, '--self-test'])
         p = subprocess.run([str(host), str(root / 'xtajit64.dll')], capture_output=True, text=True)
         (root / 'm1c-host-preflight.log').write_text(p.stdout + p.stderr)
