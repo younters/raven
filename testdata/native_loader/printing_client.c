@@ -4,8 +4,28 @@
 
 #define CHECK(test, code) do { if (!(test)) ExitProcess(code); } while (0)
 
+static BOOL CALLBACK monitor_dc(HMONITOR monitor, HDC unused, LPRECT rect, LPARAM data)
+{
+	MONITORINFOEXW info={0}; info.cbSize=sizeof(info);
+	CHECK(GetMonitorInfoW(monitor,(MONITORINFO*)&info),40);
+	CHECK(info.rcWork.right>info.rcWork.left && info.rcWork.bottom>info.rcWork.top,41);
+	// Firefox discards this monitor when its null-driver device DC cannot be opened,
+	// leaving menu layout without the work area that constrains position and height.
+	HDC dc=CreateDCW(0,info.szDevice,0,0);
+	CHECK(dc && GetDeviceCaps(dc,BITSPIXEL)>0,42);
+	CHECK(DeleteDC(dc),43);
+	dc=CreateDCA(0,"\\\\.\\DISPLAY1",0,0);
+	CHECK(dc && DeleteDC(dc),44);
+	dc=CreateICW(0,info.szDevice,0,0);
+	CHECK(dc && DeleteDC(dc),45);
+	(*(DWORD*)data)++;
+	return TRUE;
+}
+
 void raven_entry(void)
 {
+	DWORD monitors=0;
+	CHECK(EnumDisplayMonitors(0,0,monitor_dc,(LPARAM)&monitors) && monitors==1,46);
 	DWORD size=0, count=0;
 	CHECK(!EnumPrintersW(PRINTER_ENUM_LOCAL,0,4,0,0,&size,&count) && size>0,1);
 	BYTE *list=GlobalAlloc(GPTR,size);

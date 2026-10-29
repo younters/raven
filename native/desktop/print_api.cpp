@@ -87,7 +87,10 @@ void NativeDesktop::register_print_api(ApiRegistry &registry, KernelContext &con
 	for (bool wide : {false, true}) {
 		registry.add(wide ? "CreateDCW" : "CreateDCA", 4, protect([=, this](ApiCall &call) {
 			const auto driver = call[0] ? printer_name(call, call[0], wide) : "";
-			if (driver == "DISPLAY" || driver == "display") { call.ret(create_dc(0)); return; }
+			// Monitor enumeration uses CreateDC(nullptr, monitor.szDevice, ...).
+			// Treat that as a display query so callers retain the monitor work area.
+			if (driver == "DISPLAY" || driver == "display" ||
+				(driver.empty() && call[1] && printer_name(call, call[1], wide) == "\\\\.\\DISPLAY1")) { call.ret(create_dc(0)); return; }
 			call.ret(make_dc(read_mode(call, printer_name(call, call[1], wide), call[3], wide)));
 		}));
 		registry.add(wide ? "CreateICW" : "CreateICA", 4, registry.find(wide ? "CreateDCW" : "CreateDCA")->second);
