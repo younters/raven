@@ -2402,7 +2402,7 @@ void NativeWindows::sync_window_updates()
 			if (!update) continue;
 			auto *window=objects.window(handle);
 			if (!window) continue;
-			if ((update->mask&1) && update->parent!=handle &&
+			if ((update->mask&1) && update->parent!=handle && !objects.is_child(handle,update->parent) &&
 				(!update->parent || objects.window(update->parent) || foreign_window_info(update->parent))) {
 				const auto *old=objects.window(window->parent),*next=objects.window(update->parent);
 				const int32_t dx=(next?next->x:0)-(old?old->x:0),dy=(next?next->y:0)-(old?old->y:0);
