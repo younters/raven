@@ -31,3 +31,12 @@ foreach(width 64 32)
         endforeach()
     endif()
 endforeach()
+
+find_program(RAVEN_WIDL widl)
+add_test(NAME native_darwin_installer_widl COMMAND ${Python3_EXECUTABLE}
+    ${PROJECT_SOURCE_DIR}/scripts/test-installer-widl.py)
+set_tests_properties(native_darwin_installer_widl PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 15)
+if(RAVEN_WIDL)
+    get_filename_component(widl_directory ${RAVEN_WIDL} DIRECTORY)
+    set_tests_properties(native_darwin_installer_widl PROPERTIES ENVIRONMENT "PATH=${widl_directory}:$ENV{PATH}")
+endif()
