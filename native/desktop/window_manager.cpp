@@ -483,10 +483,16 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		}
 	});
 	registry.add("SetParent", 2, [this](ApiCall &call) {
+		// A window cannot go under one of its descendants, which may be windows of other processes.
+		const auto local_parent = [this](uint64_t handle) -> std::optional<uint64_t> {
+			if (const auto *record = objects.window(handle)) return record->parent;
+			return std::nullopt;
+		};
 		auto *window = objects.window(call[0]);
 		if (!window) {
 			const auto foreign=foreign_window_info(call[0]);
 			if (!foreign || call[0]==call[1] || (call[1]&&!objects.window(call[1])&&!foreign_window_info(call[1]))) { call.fail(1400);return; }
+			if (window_under(call[0],call[1],local_parent)) { call.fail(87);return; }
 			ForeignWindowUpdate update{};update.mask=1;update.parent=call[1];
 			if (!request_window_update(call[0],update)) {call.fail(1400);return;}
 			call.ret(foreign->parent);return;
@@ -495,7 +501,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			call.fail(1400);
 			return;
 		}
-		if (call[1] == call[0] || objects.is_child(call[0], call[1])) {
+		if (call[1] == call[0] || window_under(call[0], call[1], local_parent)) {
 			call.fail(87);
 			return;
 		}

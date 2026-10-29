@@ -122,6 +122,23 @@ std::optional<ForeignWindowInfo> foreign_window_info(uint64_t window)
 	return info;
 }
 
+bool window_under(uint64_t ancestor, uint64_t window, const std::function<std::optional<uint64_t>(uint64_t)> &local_parent)
+{
+	for (unsigned depth = 0; ancestor && window && depth < 64; ++depth) {
+		auto parent = local_parent(window);
+		if (!parent) {
+			const auto foreign = foreign_window_info(window);
+			if (!foreign)
+				return false;
+			parent = foreign->parent;
+		}
+		if (*parent == ancestor)
+			return true;
+		window = *parent;
+	}
+	return false;
+}
+
 bool request_window_update(uint64_t window, const ForeignWindowUpdate &update)
 {
 	if (!foreign_window_info(window)) return false;

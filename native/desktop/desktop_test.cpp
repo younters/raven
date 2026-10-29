@@ -1,6 +1,7 @@
 #include "api.h"
 #include "windows.h"
 #include <thread>
+#include <csignal>
 #include <sys/wait.h>
 #include <unistd.h>
 #include "nt/providers.h"
@@ -119,6 +120,31 @@ int main(int argc, char **argv)
 				check(!hierarchy.window(root)->parent && hierarchy.window(child)->parent==root && hierarchy.window(leaf)->parent==child,
 					"foreign parent update created a cycle");
 			}
+			// A cycle can also close through a window another process owns and publishes under one of these.
+			const uint64_t foreign=leaf+0x1000;
+			int ready[2];
+			check(::pipe(ready)==0,"foreign window pipe failed");
+			const auto owner=fork();
+			check(owner>=0,"foreign window owner did not start");
+			if (!owner) {
+				raven::publish_window(foreign,1,1,0,leaf);
+				(void)::write(ready[1],"",1);
+				::pause();
+				_exit(0);
+			}
+			char byte;
+			check(::read(ready[0],&byte,1)==1,"foreign window was not published");
+			const auto local_parent=[&](uint64_t handle)->std::optional<uint64_t> {
+				if (const auto *record=hierarchy.window(handle)) return record->parent;
+				return std::nullopt;
+			};
+			check(raven::window_under(root,foreign,local_parent) && raven::window_under(leaf,foreign,local_parent) &&
+				!raven::window_under(foreign,root,local_parent) && !raven::window_under(foreign,leaf,local_parent),
+				"ancestry does not follow a foreign window's published parent");
+			::kill(owner,SIGKILL);
+			waitpid(owner,nullptr,0);
+			::close(ready[0]);::close(ready[1]);
+			raven::withdraw_window(foreign);
 			raven::withdraw_window(root);
 			process.unmap_memory(message);
 		}
