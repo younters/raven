@@ -1,11 +1,5 @@
 #include <winsock2.h>
 #include <iphlpapi.h>
-static void report(const char *text)
-{
-	DWORD written;
-	WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),text,lstrlenA(text),&written,NULL);
-}
-
 int raven_entry(void)
 {
 	WSADATA data;
@@ -56,13 +50,13 @@ int raven_entry(void)
 			struct sockaddr_in other=address;
 			other.sin_addr.s_addr=host;
 			if (bind(b,(struct sockaddr *)&other,sizeof(other))) return 20;
-			report("socket_exclusive: second IPv4 interface bind verified\n");
 			tested=1; break;
 		}
 	// Hosts with only loopback cannot exercise a second interface.
-	if (!tested) report("socket_exclusive: no second IPv4 interface available\n");
+
 	value=0;
 	if (!setsockopt(a,SOL_SOCKET,SO_EXCLUSIVEADDRUSE,(char *)&value,sizeof(value)) || WSAGetLastError()!=WSAEINVAL) return 8;
 	closesocket(a); closesocket(b); WSACleanup();
+	if (!tested) return 21;
 	return 0;
 }
