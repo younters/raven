@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <iostream>
+#include <map>
 
 #include "api.h"
 #include "shared_file.h"
@@ -17,6 +18,7 @@
 #include <sys/eventfd.h>
 #include <sys/mman.h>
 #include <thread>
+#include <utility>
 #include <unistd.h>
 
 namespace raven {
@@ -226,6 +228,7 @@ void NativeThreads::finish(GuestThread &thread, uint32_t code)
 	thread.state = GuestThread::State::done;
 	thread.impersonation.reset();
 	thread.ready = nullptr;
+	thread.descriptors = {};
 	for (const int report : thread.exit_reports) {
 		[[maybe_unused]] const auto written = ::write(report, &code, sizeof code);
 		::close(report);
@@ -440,12 +443,28 @@ std::chrono::steady_clock::time_point NativeThreads::idle_until(std::chrono::ste
 
 std::shared_ptr<void> NativeThreads::idle_descriptors(std::vector<pollfd> &descriptors) const
 {
+	for (const auto &thread : threads)
+		if (thread->state == GuestThread::State::waiting && !thread->suspend_count)
+			descriptors.insert(descriptors.end(), thread->descriptors.begin(), thread->descriptors.end());
 	descriptors.push_back({wake, POLLIN, 0});
 	if (process.execution_descriptor() >= 0)
 		descriptors.push_back({process.execution_descriptor(), POLLIN, 0});
 	if (watched)
 		watched(descriptors);
-	return watch_handles(descriptors);
+	const auto handles = watch_handles(descriptors);
+	// Several Windows waits may name the same fd. Darwin poll observes only its last entry, so preserve the union without moving
+	// existing entries (desktop callers retain indices into the vector).
+	std::map<int, size_t> first;
+	for (size_t index = 0; index < descriptors.size(); ++index) {
+		auto &descriptor = descriptors[index];
+		if (descriptor.fd < 0) continue;
+		const auto [position, added] = first.emplace(descriptor.fd, index);
+		if (!added) {
+			descriptors[position->second].events |= descriptor.events;
+			descriptor.fd = -1;
+		}
+	}
+	return handles;
 }
 
 void NativeThreads::drain_wake()
@@ -461,7 +480,8 @@ void NativeThreads::nudge()
 	[[maybe_unused]] const auto written = ::write(wake, &one, sizeof one);
 }
 
-bool NativeThreads::block(std::function<bool()> ready, std::optional<std::chrono::steady_clock::time_point> wake)
+bool NativeThreads::block(std::function<bool()> ready, std::optional<std::chrono::steady_clock::time_point> wake,
+	std::span<const pollfd> descriptors)
 {
 	if (ready())
 		return true;
@@ -486,16 +506,19 @@ bool NativeThreads::block(std::function<bool()> ready, std::optional<std::chrono
 	auto &me = *running;
 	me.ready = std::move(ready);
 	me.wake = wake;
+	const auto previous_descriptors = std::exchange(me.descriptors, descriptors);
 	me.state = GuestThread::State::waiting;
 	// The condition reads the waiting frame: it goes with the wait, also when an error or the end of the process leaves the frame.
 	struct Leave {
 		GuestThread &thread;
+		std::span<const pollfd> previous_descriptors;
 		~Leave()
 		{
 			thread.ready = nullptr;
 			thread.wake.reset();
+			thread.descriptors = previous_descriptors;
 		}
-	} leave{me};
+	} leave{me, previous_descriptors};
 	// RAVEN_TRACE_WAITS names the waits that last longer than a quarter of a second: the API and how long it kept its thread.
 	static const bool traced = std::getenv("RAVEN_TRACE_WAITS") != nullptr;
 	const auto began = std::chrono::steady_clock::now();

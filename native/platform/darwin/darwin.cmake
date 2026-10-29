@@ -44,6 +44,13 @@ if(TARGET raven_cpu)
     add_executable(darwin_dcomp_commit_test ${RAVEN_DARWIN_DIR}/tests/dcomp_commit.cpp)
     target_link_libraries(darwin_dcomp_commit_test PRIVATE raven_cpu)
     add_test(NAME native_darwin_dcomp_commit COMMAND darwin_dcomp_commit_test)
+    add_executable(darwin_scheduler_wait_test ${RAVEN_DARWIN_DIR}/scheduler_wait_test.cpp)
+    target_link_libraries(darwin_scheduler_wait_test PRIVATE raven_cpu)
+    add_dependencies(darwin_scheduler_wait_test raven-bootstrap)
+    add_test(NAME native_darwin_scheduler_wait COMMAND darwin_scheduler_wait_test $<TARGET_FILE:raven-bootstrap>)
+    add_test(NAME native_darwin_scheduler_wait_parallel COMMAND darwin_scheduler_wait_test $<TARGET_FILE:raven-bootstrap>)
+    set_tests_properties(native_darwin_scheduler_wait native_darwin_scheduler_wait_parallel PROPERTIES TIMEOUT 30)
+    set_tests_properties(native_darwin_scheduler_wait_parallel PROPERTIES ENVIRONMENT RAVEN_PARALLEL=1)
     add_executable(darwin_parallel_test ${RAVEN_DARWIN_DIR}/parallel_test.cpp)
     target_link_libraries(darwin_parallel_test PRIVATE raven_cpu)
     add_dependencies(darwin_parallel_test raven-bootstrap)
@@ -67,6 +74,13 @@ if(TARGET raven_cpu)
                 -o ${RAVEN_DARWIN_HANDOFF_BENCHMARK} ${RAVEN_DARWIN_DIR}/handoff_benchmark.c -lkernel32
             DEPENDS ${RAVEN_DARWIN_DIR}/handoff_benchmark.c VERBATIM)
         add_custom_target(darwin_handoff_benchmark ALL DEPENDS ${RAVEN_DARWIN_HANDOFF_BENCHMARK})
+        add_test(NAME native_darwin_handoff COMMAND raven --run-process --execution=native --timeout-ms=15000
+            --stdio=inherit ${RAVEN_DARWIN_HANDOFF_BENCHMARK})
+        add_test(NAME native_darwin_handoff_parallel COMMAND raven --run-process --execution=native --timeout-ms=15000
+            --stdio=inherit ${RAVEN_DARWIN_HANDOFF_BENCHMARK})
+        set_tests_properties(native_darwin_handoff native_darwin_handoff_parallel PROPERTIES TIMEOUT 30
+            PASS_REGULAR_EXPRESSION "2000 [0-9]+ [0-9]+")
+        set_tests_properties(native_darwin_handoff_parallel PROPERTIES ENVIRONMENT RAVEN_PARALLEL=1)
     endif()
 endif()
 

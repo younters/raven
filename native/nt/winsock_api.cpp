@@ -368,7 +368,8 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 		if (ready())
 			return true;
 		HostWait waiting;
-		return threads.block(ready, wake);
+		const pollfd descriptor_wait{descriptor, events, 0};
+		return threads.block(ready, wake, {&descriptor_wait, 1});
 	};
 
 	const auto make_socket = [&objects](ApiCall &call, int family, int type, int protocol) -> uint64_t {
@@ -1842,7 +1843,7 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			threads.block([&] {
 				std::vector<pollfd> again;
 				return poll_once(again) > 0;
-			}, wake);
+			}, wake, requested);
 			ready = poll_once(entries);
 		}
 		if (ready < 0) {
