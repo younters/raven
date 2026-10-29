@@ -72,12 +72,29 @@ void entry(void)
     ULONG_PTR information;
     if (create(&folder, NULL, L"\\??\\C:\\ntfile", FILE_LIST_DIRECTORY, FILE_CREATE, FILE_DIRECTORY_FILE, &information) || information != 2)
         ExitProcess(20);
+    if (create(&other, NULL, L"\\??\\C:\\ntfile", FILE_LIST_DIRECTORY, FILE_CREATE, FILE_DIRECTORY_FILE, NULL) != (NTSTATUS)0xc0000035)
+        ExitProcess(60);
+    if (create(&other, NULL, L"\\??\\C:\\ntfile", FILE_LIST_DIRECTORY, FILE_CREATE, 0, NULL) != (NTSTATUS)0xc0000035) ExitProcess(61);
+    if (create(&other, folder, L"newdir", FILE_LIST_DIRECTORY, FILE_OPEN_IF, FILE_DIRECTORY_FILE, &information) || information != 2)
+        ExitProcess(62);
+    CloseHandle(other);
+    for (ULONG disposition = 0; disposition <= 5; ++disposition) {
+        if (disposition == FILE_OPEN || disposition == FILE_CREATE || disposition == FILE_OPEN_IF) continue;
+        if (create(&other, NULL, L"\\??\\C:\\ntfile", FILE_LIST_DIRECTORY, disposition, FILE_DIRECTORY_FILE, NULL) != (NTSTATUS)0xc000000d)
+            ExitProcess(63 + disposition);
+        if (create(&other, NULL, L"\\??\\C:\\ntfile", FILE_LIST_DIRECTORY, disposition, 0, NULL) != (NTSTATUS)0xc0000022)
+            ExitProcess(69 + disposition);
+    }
     if (create(&file, folder, L"a.txt", GENERIC_WRITE, FILE_CREATE, FILE_NON_DIRECTORY_FILE, &information) || information != 2)
         ExitProcess(21);
     DWORD written;
     if (!WriteFile(file, "hello", 5, &written, NULL) || written != 5) ExitProcess(22);
     CloseHandle(file);
     if (create(&file, NULL, L"\\??\\C:\\ntfile\\a.txt", GENERIC_READ, FILE_CREATE, 0, NULL) != (NTSTATUS)0xc0000035) ExitProcess(23);
+    if (create(&file, NULL, L"\\??\\C:\\ntfile\\a.txt", GENERIC_READ, FILE_CREATE, FILE_DIRECTORY_FILE, NULL) != (NTSTATUS)0xc0000035)
+        ExitProcess(85);
+    if (create(&file, NULL, L"\\??\\C:\\ntfile\\a.txt", GENERIC_WRITE, FILE_OVERWRITE, FILE_DIRECTORY_FILE, NULL) != (NTSTATUS)0xc000000d)
+        ExitProcess(86);
     if (create(&file, NULL, L"\\??\\C:\\ntfile\\a.txt", GENERIC_READ, FILE_OPEN, FILE_DIRECTORY_FILE, NULL) != (NTSTATUS)0xc0000103)
         ExitProcess(24);
     if (create(&file, NULL, L"\\??\\C:\\ntfile", GENERIC_READ, FILE_OPEN, FILE_NON_DIRECTORY_FILE, NULL) != (NTSTATUS)0xc00000ba)
@@ -91,6 +108,11 @@ void entry(void)
     IO_STATUS_BLOCK io;
     if (NtOpenFile(&file, GENERIC_READ | SYNCHRONIZE, &attributes, &io, FILE_SHARE_READ, FILE_SYNCHRONOUS_IO_NONALERT) || io.Information != 1)
         ExitProcess(29);
+    DWORD handles_before, handles_after;
+    if (!GetProcessHandleCount(GetCurrentProcess(), &handles_before)) ExitProcess(75);
+    if (create((HANDLE *)1, NULL, L"\\??\\C:\\ntfile\\a.txt", GENERIC_READ, FILE_OPEN, 0, NULL) != (NTSTATUS)0xc0000005)
+        ExitProcess(76);
+    if (!GetProcessHandleCount(GetCurrentProcess(), &handles_after) || handles_after != handles_before) ExitProcess(77);
     char buffer[8] = {0};
     DWORD read;
     if (!ReadFile(file, buffer, sizeof buffer, &read, NULL) || read != 5 || buffer[0] != 'h' || buffer[4] != 'o') ExitProcess(30);
@@ -137,6 +159,9 @@ void entry(void)
         !GetTokenInformation(token, TokenUser, user, sizeof user, &size)) ExitProcess(46);
     const SID *sid = (const SID *)((TOKEN_USER *)user)->User.Sid;
     if (sid->SubAuthorityCount != 1 || sid->IdentifierAuthority.Value[5] != 5 || sid->SubAuthority[0] != 7) ExitProcess(47);
+    TOKEN_PRIVILEGES privileges;
+    if (!GetTokenInformation(token, TokenPrivileges, &privileges, sizeof privileges, &size) || privileges.PrivilegeCount != 1 ||
+        privileges.Privileges[0].Luid.LowPart != 23 || privileges.Privileges[0].Luid.HighPart) ExitProcess(49);
     CloseHandle(token);
     if (!RevertToSelf() || OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &token)) ExitProcess(48);
 
@@ -147,10 +172,24 @@ void entry(void)
     view[0] = 'z';
     UNICODE_STRING section = text(L"\\Sessions\\1\\BaseNamedObjects\\RavenNtSection");
     InitializeObjectAttributes(&attributes, &section, 0, NULL, NULL);
+    if (!GetProcessHandleCount(GetCurrentProcess(), &handles_before)) ExitProcess(78);
+    if (NtOpenSection((HANDLE *)1, SECTION_MAP_READ, &attributes) != (NTSTATUS)0xc0000005) ExitProcess(79);
+    if (!GetProcessHandleCount(GetCurrentProcess(), &handles_after) || handles_after != handles_before) ExitProcess(80);
     HANDLE opened;
-    if (NtOpenSection(&opened, SECTION_MAP_READ, &attributes)) ExitProcess(51);
+    if (NtOpenSection(&opened, SECTION_QUERY | SECTION_MAP_READ, &attributes)) ExitProcess(51);
     const char *seen = MapViewOfFile(opened, FILE_MAP_READ, 0, 0, 0);
     if (!seen || seen[0] != 'z') ExitProcess(52);
+    UnmapViewOfFile(seen);
+    CloseHandle(opened);
+    // A query-only handle maps no view; a generic read handle maps for reading but not writing.
+    if (NtOpenSection(&opened, SECTION_QUERY, &attributes)) ExitProcess(81);
+    if (MapViewOfFile(opened, FILE_MAP_READ, 0, 0, 0)) ExitProcess(82);
+    CloseHandle(opened);
+    if (NtOpenSection(&opened, GENERIC_READ, &attributes)) ExitProcess(83);
+    seen = MapViewOfFile(opened, FILE_MAP_READ, 0, 0, 0);
+    if (!seen || seen[0] != 'z' || MapViewOfFile(opened, FILE_MAP_WRITE, 0, 0, 0)) ExitProcess(84);
+    UnmapViewOfFile(seen);
+    CloseHandle(opened);
     UNICODE_STRING absent = text(L"\\Sessions\\1\\BaseNamedObjects\\RavenNoSection");
     InitializeObjectAttributes(&attributes, &absent, 0, NULL, NULL);
     if (NtOpenSection(&opened, SECTION_MAP_READ, &attributes) != (NTSTATUS)0xc0000034) ExitProcess(53);

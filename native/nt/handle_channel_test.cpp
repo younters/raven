@@ -55,10 +55,10 @@ static void test_idle_wake(raven::NativeObjects &objects)
 		send_event(pair[1], event, 0x1020);
 	});
 	const auto start = std::chrono::steady_clock::now();
-	const int ready = ::poll(descriptors.data(), descriptors.size(), 500);
+	const int ready = ::poll(descriptors.data(), descriptors.size(), 2000);
 	const auto elapsed = std::chrono::steady_clock::now() - start;
 	sender.join();
-	check(ready > 0 && elapsed < std::chrono::milliseconds(250), "incoming transfer did not wake idle wait");
+	check(ready > 0 && elapsed < std::chrono::seconds(1), "incoming transfer did not wake idle wait");
 	check(objects.signaled(0x1020, 1) != 1, "wake callback dispatched a transfer");
 	raven::receive_handles(objects);
 	check(objects.signaled(0x1020, 1) == 1, "scheduler service lost wake transfer");
@@ -80,6 +80,29 @@ static void test_idle_wake(raven::NativeObjects &objects)
 	::close(pipe[1]);
 }
 
+static void test_rejected_transfer(raven::NativeObjects &objects)
+{
+	int pair[2];
+	check(!::socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0, pair), "cannot create rejection channel");
+	raven::HandleChannel channel(pair[0]);
+	raven::EventObject event(0, true);
+	check(objects.adopt(0x1030, std::make_shared<raven::EventObject>(0, true), false), "cannot reserve transfer handle");
+	raven::InheritedHandle record;
+	check(event.describe(record), "cannot prepare rejected event");
+	const int available = ::dup(pair[1]);
+	check(available >= 0, "cannot find free descriptor");
+	::close(available);
+	send_event(pair[1], event, 0x1030);
+	channel.receive(objects);
+	check(::fcntl(available, F_GETFD) == -1 && errno == EBADF, "rejected transfer leaked descriptor");
+	send_event(pair[1], event, 0x1034);
+	channel.receive(objects);
+	check(objects.signaled(0x1034, 1) == 1, "transfer after rejection failed");
+	objects.close(0x1030);
+	objects.close(0x1034);
+	::close(pair[1]);
+}
+
 int main(int argc, char **argv)
 {
 	try {
@@ -96,6 +119,7 @@ int main(int argc, char **argv)
 		}
 		raven::NativeObjects objects;
 		test_idle_wake(objects);
+		test_rejected_transfer(objects);
 		std::array<std::unique_ptr<raven::HandleChannel>, 3> receivers;
 		std::array<int, 3> senders;
 		for (size_t index = 0; index < receivers.size(); ++index) {

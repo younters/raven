@@ -340,7 +340,7 @@ void HandleChannel::receive(NativeObjects &objects)
 		try {
 			adopt_inherited(objects, records);
 		} catch (const std::exception &) {
-			::close(received);
+			// adopt_inherited consumes the descriptor, including on failure.
 		}
 	}
 }

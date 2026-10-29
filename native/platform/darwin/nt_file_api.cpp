@@ -221,12 +221,25 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 			const auto found = pipe ? Inner{0, 2} : run(*attributes, call, {text, 0, data});
 			const bool exists = found.result != 0;
 			const bool is_directory = exists && (call.load<uint32_t>(data) & directory_attribute);
+			// The parameters are checked before the name, and an existing name refuses FILE_CREATE before its type is looked at.
+			if ((options & directory_file) && (disposition == 0 || disposition == 4 || disposition == 5)) {
+				call.ret(status_invalid_parameter);
+				return;
+			}
+			if (exists && disposition == 2) {
+				call.ret(0xc0000035U);
+				return;
+			}
 			if (exists && is_directory && (options & non_directory)) {
 				call.ret(status_file_is_a_directory);
 				return;
 			}
 			if (exists && !is_directory && (options & directory_file)) {
 				call.ret(status_not_a_directory);
+				return;
+			}
+			if (is_directory && (disposition == 0 || disposition == 4 || disposition == 5)) {
+				call.ret(0xc0000022U);
 				return;
 			}
 			// A directory is made, not opened, when FILE_DIRECTORY_FILE asks for a new one.
@@ -242,7 +255,7 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 			}
 			static constexpr uint32_t dispositions[] = {2, 3, 1, 4, 5, 2};
 			uint32_t win32 = dispositions[disposition];
-			if (is_directory || (options & directory_file))
+			if ((is_directory && (disposition == 1 || disposition == 3)) || ((options & directory_file) && !exists))
 				win32 = 3;
 			uint32_t flags = file_attributes & 0x7fa7;
 			if (!(options & synchronous)) flags |= 0x40000000U;
@@ -269,7 +282,7 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 			}
 			constexpr uint64_t superseded = 0, opened_existing = 1, created = 2, overwritten = 3;
 			uint64_t information = opened_existing;
-			if (!exists && !(options & directory_file))
+			if (!exists && !pipe && !(options & directory_file))
 				information = created;
 			else if ((options & directory_file) && !exists)
 				information = created;
@@ -277,8 +290,13 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 				information = superseded;
 			else if (disposition == 4 || disposition == 5)
 				information = overwritten;
-			call.store_pointer(out, opened.result);
-			put_io_status(call, io, status_success, information);
+			try {
+				call.store_pointer(out, opened.result);
+				put_io_status(call, io, status_success, information);
+			} catch (const raven::ApiFault &) {
+				objects.close(opened.result);
+				throw;
+			}
 			call.ret(status_success);
 		} catch (const raven::ApiFault &) {
 			call.ret(status_access_violation);
@@ -357,7 +375,7 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 
 	// NtOpenSection: a named section of the session's namespace (\Sessions\N\BaseNamedObjects, or a name relative to its directory) is
 	// the name CreateFileMapping was given, with or without Local\; one of the global namespace is Global\.
-	registry.add("NtOpenSection", 3, [=](ApiCall &call) {
+	registry.add("NtOpenSection", 3, [=, &objects](ApiCall &call) {
 		try {
 			const auto parsed = object_attributes(call, call[2]);
 			if (!call[0] || !parsed || parsed->name.empty()) {
@@ -383,10 +401,15 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 				call.ret(status_object_path_not_found);
 				return;
 			}
-			// SECTION_MAP_EXECUTE is FILE_MAP_EXECUTE's bit 0x20 in the Win32 call; the other section rights are the same bits.
-			uint32_t access = call.u32(1);
-			if (access & 0x8)
-				access = (access & ~0x8U) | 0x20;
+			// Expand generic rights by the section mapping, then keep the section rights; only SECTION_MAP_EXECUTE differs from
+			// FILE_MAP_EXECUTE. A query-only handle maps nothing, as on Windows.
+			uint32_t requested = call.u32(1);
+			if (requested & 0x80000000U) requested |= 0x20005;
+			if (requested & 0x40000000U) requested |= 0x20002;
+			if (requested & 0x20000000U) requested |= 0x20008;
+			if (requested & 0x12000000U) requested |= 0xf001f;
+			uint32_t access = requested & 0x001f0017U;
+			if (requested & 0x8) access |= 0x20;
 			Scratch scratch(call.process);
 			Inner opened{0, 2};
 			for (const auto &candidate : names) {
@@ -398,7 +421,12 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 				call.ret(status_of(opened.error ? opened.error : 2));
 				return;
 			}
-			call.store_pointer(call[0], opened.result);
+			try {
+				call.store_pointer(call[0], opened.result);
+			} catch (const raven::ApiFault &) {
+				objects.close(opened.result);
+				throw;
+			}
 			call.ret(status_success);
 		} catch (const raven::ApiFault &) {
 			call.ret(status_access_violation);

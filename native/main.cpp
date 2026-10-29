@@ -154,11 +154,13 @@ int main(int argc, char **argv)
 		std::signal(SIGBUS, show_fault);
 	}
 	// Preserve the child's inherited guest stderr before opening its per-process runtime trace.
+	// RAVEN_TRACE_FILE=path sends the diagnostics of every process, a child program's included, to its own file path.<pid>.
 	const auto trace_runtime = [] {
 		if (const char *trace = std::getenv("RAVEN_TRACE_FILE")) {
 			const auto name = std::string(trace) + "." + std::to_string(::getpid());
 			if (!std::freopen(name.c_str(), "w", stderr))
 				return false;
+			// A file is fully buffered once opened; diagnostics are read while the process runs, a line at a time.
 			std::setvbuf(stderr, nullptr, _IOLBF, 0);
 		}
 		return true;
