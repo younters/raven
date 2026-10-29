@@ -26,7 +26,7 @@ struct EventObject::Shared {
 
 static_assert(std::atomic<uint32_t>::is_always_lock_free);
 
-EventObject::EventObject(int descriptor) : type(0), local_signaled(false), descriptor(descriptor)
+EventObject::EventObject(int descriptor, Layout layout) : type(0), local_signaled(false), descriptor(descriptor), named_layout(layout == Layout::manual)
 {
 	try {
 		struct stat information{};
@@ -38,7 +38,7 @@ EventObject::EventObject(int descriptor) : type(0), local_signaled(false), descr
 		shared = static_cast<Shared *>(mapped);
 		if (shared->type > 1)
 			throw std::runtime_error("invalid event type");
-		type = shared->type;
+		type = named_layout ? !shared->type : shared->type;
 		listen_shared_changes();
 		++shared_object_count;
 	} catch (...) {
@@ -46,6 +46,14 @@ EventObject::EventObject(int descriptor) : type(0), local_signaled(false), descr
 		if (descriptor >= 0) ::close(descriptor);
 		throw;
 	}
+}
+
+// Named events retain their existing on-disk manual-reset flag layout. Imported
+// descriptors carry that layout too, so older processes can still open the name.
+EventObject::EventObject(std::shared_ptr<SharedFile> storage)
+	: EventObject(::dup(storage->file_descriptor()), Layout::manual)
+{
+	this->storage = std::move(storage);
 }
 
 EventObject::~EventObject()
@@ -80,7 +88,7 @@ bool EventObject::describe(InheritedHandle &record) const
 		++shared_object_count;
 		changed.notify_all();
 	}
-	record.kind = "event";
+	record.kind = named_layout ? "named-event" : "event";
 	record.descriptor = descriptor;
 	return true;
 }

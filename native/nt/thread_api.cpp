@@ -92,23 +92,6 @@ private:
 	std::chrono::milliseconds period{0};
 };
 
-class SharedEventObject : public KernelObject {
-public:
-	std::u16string_view type_name() const override { return u"Event"; }
-	int signaled(uint32_t) const override { return state->signaled.load() ? 1 : 0; }
-	bool try_consume(uint32_t) override { return state->manual || state->signaled.exchange(0) == 1; }
-	void consume(uint32_t thread) override { try_consume(thread); }
-	int set_state(bool value) override
-	{
-		const int previous = int(state->signaled.exchange(value ? 1 : 0));
-		if (value)
-			announce_shared_change();
-		return previous;
-	}
-	EventState *state = nullptr;
-	std::shared_ptr<SharedFile> shared;
-};
-
 // A registered wait: the callback runs on a guest thread once the object is signaled or the time runs out.
 class WaitRegistration : public KernelObject {
 public:
@@ -987,9 +970,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			fail_shared(call, error);
 			return;
 		}
-		auto event = std::make_shared<SharedEventObject>();
-		event->shared = shared;
-		event->state = static_cast<EventState *>(shared->data);
+		auto event = std::make_shared<EventObject>(shared);
 		const auto made = objects.add_object(event);
 		if (made.status) {
 			call.fail(8, 0);
@@ -1049,9 +1030,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			fail_shared(call, error);
 			return;
 		}
-		auto event = std::make_shared<SharedEventObject>();
-		event->shared = shared;
-		event->state = static_cast<EventState *>(shared->data);
+		auto event = std::make_shared<EventObject>(shared);
 		const auto made = objects.add_object(event);
 		if (made.status) {
 			call.fail(8, 0);

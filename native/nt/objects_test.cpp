@@ -2,6 +2,7 @@
 #include "providers.h"
 #include "event.h"
 #include "mutex.h"
+#include "shared_file.h"
 
 #include <future>
 #include <iostream>
@@ -60,6 +61,28 @@ int main(int argc, char **argv)
 				!imported->try_consume(8) && imported->release(7) && imported->try_consume(8), "mutex transfer lost ownership or recursion");
 			mutex.reset();
 			check(imported->release(8), "mutex died with exporting handle");
+		}
+		{
+			bool existed = false;
+			uint32_t error = 0;
+			const auto name = raven::from_utf8("RavenNamedInheritance" + std::to_string(getpid()));
+			auto storage = raven::SharedFile::open("event", name, 8, true, existed, error, [](void *data) {
+				const uint32_t initial[2] = {1, 1}; // signaled, manual-reset
+				std::memcpy(data, initial, sizeof initial);
+			});
+			check(storage && !existed, "named event storage creation failed");
+			auto event = std::make_shared<raven::EventObject>(storage);
+			raven::InheritedHandle record;
+			check(event->describe(record) && record.kind == "named-event", "named event inheritance description failed");
+			record.handle = 0x1000;
+			record.handle_access = 0x1f0003;
+			record.descriptor = ::dup(record.descriptor);
+			raven::NativeObjects receiver;
+			raven::adopt_inherited(receiver, {record});
+			check(receiver.query_event(record.handle).value == (1ULL << 32) && receiver.try_consume(record.handle, 1) &&
+				receiver.try_consume(record.handle, 1), "named event inheritance changed manual/signaled state");
+			event->set_state(false);
+			check(receiver.query_event(record.handle).value == 0 && !receiver.try_consume(record.handle, 1), "named event reset was copied");
 		}
 		raven::NativeObjects objects;
 		const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(4);

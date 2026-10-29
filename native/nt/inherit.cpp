@@ -122,8 +122,8 @@ std::shared_ptr<KernelObject> object_from_record(const InheritedHandle &item)
 		return std::make_shared<MutexObject>(item.descriptor);
 	if (item.kind == "semaphore")
 		return std::make_shared<SemaphoreObject>(item.descriptor);
-	if (item.kind == "event")
-		return std::make_shared<EventObject>(item.descriptor);
+	if (item.kind == "event" || item.kind == "named-event")
+		return std::make_shared<EventObject>(item.descriptor, item.kind == "named-event" ? EventObject::Layout::manual : EventObject::Layout::type);
 	if (item.kind == "token")
 		return std::make_shared<AccessToken>(item.descriptor);
 	if (item.kind == "file") {
@@ -190,7 +190,7 @@ void adopt_inherited(NativeObjects &objects, const std::vector<InheritedHandle> 
 		}
 		if (!objects.adopt(item.handle, object, true))
 			throw std::runtime_error("inherited handle value is taken");
-		if (item.handle_access || item.kind == "token" || item.kind == "event" || item.kind == "mutex" || item.kind == "process")
+		if (item.handle_access || item.kind == "token" || item.kind == "event" || item.kind == "named-event" || item.kind == "mutex" || item.kind == "process")
 			objects.set_access(item.handle, item.handle_access);
 	}
 }
