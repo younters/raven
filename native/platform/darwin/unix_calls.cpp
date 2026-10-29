@@ -27,7 +27,7 @@ bool darwin_graphics_system_module(std::string_view name, bool x64)
     if (name == "d3d11.dll" || name == "dxgi.dll" || name == "d3d10core.dll" || name == "winemetal.dll" || name == "d3d10.dll" ||
         name == "d3d10_1.dll")
         return true;
-    // Windows ships the HLSL compiler in System32; a provisioned build of it replaces the runtime's refusing stub.
+    // Admit the provisioned System32 HLSL compiler and DirectComposition implementation when their DLLs are available.
     static const bool compiler = std::filesystem::is_regular_file(dxmt_root() / "pe64/d3dcompiler_47.dll");
     return (name == "d3dcompiler_47.dll" && compiler) || (name == "dcomp.dll" && std::filesystem::is_regular_file(dxmt_root() / "pe64/dcomp.dll"));
 }
