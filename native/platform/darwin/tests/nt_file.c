@@ -164,7 +164,7 @@ void entry(void)
     UNICODE_STRING section = text(L"\\Sessions\\1\\BaseNamedObjects\\RavenNtSection");
     InitializeObjectAttributes(&attributes, &section, 0, NULL, NULL);
     HANDLE opened;
-    if (NtOpenSection(&opened, SECTION_MAP_READ, &attributes)) ExitProcess(51);
+    if (NtOpenSection(&opened, SECTION_QUERY | SECTION_MAP_READ, &attributes)) ExitProcess(51);
     const char *seen = MapViewOfFile(opened, FILE_MAP_READ, 0, 0, 0);
     if (!seen || seen[0] != 'z') ExitProcess(52);
     UNICODE_STRING absent = text(L"\\Sessions\\1\\BaseNamedObjects\\RavenNoSection");

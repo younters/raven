@@ -391,10 +391,11 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 				call.ret(status_object_path_not_found);
 				return;
 			}
-			// SECTION_MAP_EXECUTE is FILE_MAP_EXECUTE's bit 0x20 in the Win32 call; the other section rights are the same bits.
-			uint32_t access = call.u32(1);
-			if (access & 0x8)
-				access = (access & ~0x8U) | 0x20;
+			// Translate section rights to file-mapping rights; querying alone needs a readable mapping handle.
+			const uint32_t requested = call.u32(1);
+			uint32_t access = requested & (0x2 | 0x4);
+			if (requested & 0x8) access |= 0x20;
+			if (!access && (requested & 0x1)) access = 0x4;
 			Scratch scratch(call.process);
 			Inner opened{0, 2};
 			for (const auto &candidate : names) {
