@@ -70,6 +70,22 @@ if(TARGET vulkan_pe_fixture AND RAVEN_MINGW64)
             ${VULKAN_FIXTURES}/vulkan.a -lkernel32 -luser32
         DEPENDS ${RAVEN_DARWIN_DIR}/tests/vulkan_present.c ${VULKAN_FIXTURES}/vulkan.a VERBATIM)
     add_custom_target(cocoa_vulkan_fixture ALL DEPENDS ${RAVEN_COCOA_VULKAN_FIXTURE})
+    set(HIDDEN_VULKAN_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/vulkan-fixtures/hidden-surface.exe)
+    add_custom_command(OUTPUT ${HIDDEN_VULKAN_FIXTURE}
+        COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector -mno-stack-arg-probe
+            -idirafter ${Vulkan_INCLUDE_DIRS} -Wl,--entry,raven_entry
+            -o ${HIDDEN_VULKAN_FIXTURE} ${RAVEN_DARWIN_DIR}/tests/vulkan_hidden_surface.c
+            ${VULKAN_FIXTURES}/vulkan.a -lkernel32 -luser32
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/vulkan_hidden_surface.c ${VULKAN_FIXTURES}/vulkan.a VERBATIM)
+    add_custom_target(cocoa_hidden_vulkan_fixture ALL DEPENDS ${HIDDEN_VULKAN_FIXTURE})
+    option(RAVEN_DARWIN_HIDDEN_SURFACE_TEST "Test hidden Vulkan surfaces in a logged-in macOS GUI session" OFF)
+    if(RAVEN_DARWIN_HIDDEN_SURFACE_TEST)
+        add_test(NAME native_darwin_hidden_vulkan_surface COMMAND raven --run-process --execution=native
+            --timeout-ms=15000 --desktop=macos ${HIDDEN_VULKAN_FIXTURE})
+        set_tests_properties(native_darwin_hidden_vulkan_surface PROPERTIES TIMEOUT 20
+            PASS_REGULAR_EXPRESSION "Native entry returned 0 " ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/hidden-vulkan-prefix)
+    endif()
+
     # This test needs a graphical login and screen capture access, so opt in when running desktop integration tests.
     option(RAVEN_DARWIN_PRESENT_TEST "Test Vulkan presentation on the logged-in macOS desktop (requires Pillow)" OFF)
     if(RAVEN_DARWIN_PRESENT_TEST)
@@ -413,6 +429,15 @@ if(TARGET native_cpu_test)
     target_link_libraries(darwin_cocoa_policy_test PRIVATE raven_cpu PkgConfig::XKBCOMMON "-framework AppKit" "-framework Carbon" "-framework Metal")
     add_test(NAME native_darwin_cocoa_policy COMMAND darwin_cocoa_policy_test)
     set_tests_properties(native_darwin_cocoa_policy PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_executable(darwin_cocoa_hidden_surface_test ${RAVEN_DARWIN_DIR}/cocoa_hidden_surface_test.mm
+        ${RAVEN_DARWIN_DIR}/cocoa.mm ${RAVEN_DARWIN_DIR}/gdi_presenter.mm ${RAVEN_DARWIN_DIR}/app_identity.mm)
+    set_source_files_properties(${RAVEN_DARWIN_DIR}/cocoa_hidden_surface_test.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    set_property(TARGET darwin_cocoa_hidden_surface_test PROPERTY OBJCXX_STANDARD 20)
+    target_include_directories(darwin_cocoa_hidden_surface_test PRIVATE ${CMAKE_SOURCE_DIR}/native)
+    target_link_libraries(darwin_cocoa_hidden_surface_test PRIVATE raven_cpu PkgConfig::XKBCOMMON "-framework AppKit" "-framework Carbon" "-framework Metal")
+    add_test(NAME native_darwin_cocoa_hidden_surface COMMAND darwin_cocoa_hidden_surface_test)
+    set_tests_properties(native_darwin_cocoa_hidden_surface PROPERTIES SKIP_RETURN_CODE 77)
     add_executable(darwin_cocoa_input_test ${RAVEN_DARWIN_DIR}/cocoa_input_test.mm
         ${RAVEN_DARWIN_DIR}/cocoa.mm ${RAVEN_DARWIN_DIR}/gdi_presenter.mm ${RAVEN_DARWIN_DIR}/app_identity.mm)
     set_source_files_properties(${RAVEN_DARWIN_DIR}/cocoa_input_test.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")

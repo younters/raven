@@ -185,6 +185,14 @@ struct CocoaPresentation::State {
 	std::vector<CFFileDescriptorRef> wait_descriptors;
 	RavenApplicationDelegate *delegate = nil;
 	std::map<uint64_t, std::unique_ptr<Surface>> surfaces;
+	// Vulkan permits a surface over an HWND that has never been shown. Keep its
+	// layer detached until a normal visible frame creates the native window.
+	struct HiddenHostSurface {
+		CAMetalLayer *layer = nil;
+		int32_t x = 0, y = 0;
+		uint32_t width = 0, height = 0;
+	};
+	std::map<uint64_t, HiddenHostSurface> hidden_host_surfaces;
 	std::map<NSInteger, uint64_t> numbers;
 	std::set<uint64_t> maximized;
 	std::set<uint64_t> alpha_windows;
@@ -1163,6 +1171,7 @@ struct CocoaPresentation::State {
 
 	void forget(uint64_t handle, bool replacing = false)
 	{
+		hidden_host_surfaces.erase(handle);
 		visibility_intent.erase(handle);
 		if (!replacing && dock_windows.erase(handle) && dock_windows.empty()) reconcile_dock = true;
 		std::erase_if(numbers, [&](const auto &entry) { return entry.second == handle; });
@@ -1235,6 +1244,15 @@ struct CocoaPresentation::State {
 				// A window shown maximized remembers the frame it was created with, to restore to.
 				if (maximized.contains(handle))
 					maximize(handle, true);
+			}
+			if (const auto hidden = hidden_host_surfaces.find(handle); hidden != hidden_host_surfaces.end()) {
+				const auto pending = hidden->second;
+				target->child = [[RavenMetalView alloc] initWithFrame:NSZeroRect];
+				target->child.layer = pending.layer;
+				target->child.wantsLayer = YES;
+				[target->view addSubview:target->child];
+				hidden_host_surfaces.erase(hidden);
+				host_surface(handle, pending.x, pending.y, pending.width, pending.height);
 			}
 			target->window.title = [NSString stringWithUTF8String:std::string(title).c_str()] ?: @"";
 			if (target->close_posted)
@@ -1398,17 +1416,24 @@ struct CocoaPresentation::State {
 
 	std::optional<HostSurface> host_surface(uint64_t handle, int32_t x, int32_t y, uint32_t width, uint32_t height)
 	{
+		connect();
 		Surface *target = surface(handle);
-		if (!target)
-			return std::nullopt;
-		if (!target->child) {
-			target->child = [[RavenMetalView alloc] initWithFrame:NSZeroRect];
-			target->child.wantsLayer = YES;
-			[target->view addSubview:target->child];
+		CAMetalLayer *layer;
+		if (target) {
+			if (!target->child) {
+				target->child = [[RavenMetalView alloc] initWithFrame:NSZeroRect];
+				target->child.wantsLayer = YES;
+				[target->view addSubview:target->child];
+			}
+			target->child.frame = NSMakeRect((x - target->insets[0]) / scale, (y - target->insets[1]) / scale,
+				std::max<uint32_t>(width, 1) / scale, std::max<uint32_t>(height, 1) / scale);
+			layer = (CAMetalLayer *)target->child.layer;
+		} else {
+			auto &pending = hidden_host_surfaces[handle];
+			if (!pending.layer) pending.layer = [CAMetalLayer layer];
+			pending.x = x; pending.y = y; pending.width = width; pending.height = height;
+			layer = pending.layer;
 		}
-		target->child.frame = NSMakeRect((x - target->insets[0]) / scale, (y - target->insets[1]) / scale,
-			std::max<uint32_t>(width, 1) / scale, std::max<uint32_t>(height, 1) / scale);
-		CAMetalLayer *layer = (CAMetalLayer *)target->child.layer;
 		layer.opaque = !alpha_windows.contains(handle);
 		layer.contentsScale = scale;
 		layer.drawableSize = CGSizeMake(width, height);
@@ -1675,6 +1700,7 @@ DesktopPresentation CocoaPresentation::callbacks()
 		return state->host_surface(handle, x, y, width, height);
 	};
 	result.release_host_surface = [this](uint64_t handle) {
+		state->hidden_host_surfaces.erase(handle);
 		if (auto *target = state->surface(handle)) {
 			[target->child removeFromSuperview];
 			target->child = nil;

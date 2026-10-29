@@ -457,11 +457,11 @@ std::optional<HostSurface> NativeWindows::host_surface(uint64_t handle) {
 		return std::nullopt;
 	const auto root = objects.window_root(handle);
 	const auto *top = objects.window(root);
-	if (!top || !objects.window(handle) || !objects.window_visible(handle))
+	if (!top || !objects.window(handle))
 		return std::nullopt;
 	// GPU drawing supplies the client pixels itself, so it cannot wait for WM_PAINT.
 	try {
-		present(root, true);
+		if (objects.window_visible(handle)) present(root, true);
 	} catch (...) {
 		return std::nullopt;
 	}
