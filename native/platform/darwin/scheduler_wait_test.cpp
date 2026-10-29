@@ -1,4 +1,4 @@
-// Report scheduler wake latency without asserting a machine-dependent timing bound.
+// Generous aggregate bounds distinguish descriptor wakes from the old 20 ms scheduler sweep.
 #include "nt/providers.h"
 #include "nt/threads.h"
 #include <algorithm>
@@ -32,7 +32,7 @@ int main(int argc, char **argv)
 		std::array<long long, 30> samples;
 		for (auto &sample : samples) {
 			std::chrono::steady_clock::time_point sent;
-			std::thread sender([&] {
+			std::jthread sender([&] {
 				std::this_thread::sleep_for(std::chrono::milliseconds(5));
 				sent = std::chrono::steady_clock::now();
 				const char byte = 1;
@@ -48,6 +48,10 @@ int main(int argc, char **argv)
 			char byte;
 			check(read(ends[0], &byte, 1) == 1, "read failed");
 		}
+		std::sort(samples.begin(), samples.end());
+		std::cout << "socket wake count " << samples.size() << " p50_us " << samples[15] << " p95_us " << samples[28] << '\n';
+		check(samples[15] < 5000, "median socket wake exceeded 5 ms");
+		check(samples[28] < 15000, "p95 socket wake exceeded 15 ms");
 		// Inspect the actual desktop/scheduler snapshot: duplicates are merged and the lease stays alive through polling.
 		bool inspected = false;
 		threads.set_idle([&](auto) {
@@ -66,8 +70,6 @@ int main(int argc, char **argv)
 		std::vector<pollfd> after;
 		const auto lease = threads.idle_descriptors(after);
 		for (const auto &fd : after) check(fd.fd != ends[0], "completed wait retained borrowed descriptor");
-		std::sort(samples.begin(), samples.end());
-		std::cout << "socket wake count " << samples.size() << " p50_us " << samples[15] << " p95_us " << samples[28] << '\n';
 		return 0;
 	} catch (const std::exception &error) {
 		std::cerr << error.what() << '\n';
