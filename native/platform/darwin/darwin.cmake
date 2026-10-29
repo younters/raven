@@ -18,11 +18,11 @@ if(RAVEN_DARWIN_DXVK_TESTS AND (NOT RAVEN_DXMT_ROOT OR NOT RAVEN_DXVK_PE64_DIR))
     message(FATAL_ERROR "DXVK comparisons need RAVEN_DXMT_ROOT and RAVEN_DXVK_PE64_DIR to build/run matching fixtures")
 endif()
 
-# The guest controller: Linux traces an ELF child with ptrace; macOS runs an x86_64 Mach-O agent under Rosetta 2 that the host
-# drives through shared memory. Same NativeProcess interface, different implementation file.
 add_executable(darwin_idle_wait_queue_test ${RAVEN_DARWIN_DIR}/idle_wait_queue_test.cpp)
 add_test(NAME native_darwin_idle_wait_queue COMMAND darwin_idle_wait_queue_test)
 
+# The guest controller: Linux traces an ELF child with ptrace; macOS runs an x86_64 Mach-O agent under Rosetta 2 that the host
+# drives through shared memory. Same NativeProcess interface, different implementation file.
 if(TARGET raven_cpu)
     include(${RAVEN_DARWIN_DIR}/audio/audio.cmake)
     get_target_property(RAVEN_CPU_SOURCES raven_cpu SOURCES)
