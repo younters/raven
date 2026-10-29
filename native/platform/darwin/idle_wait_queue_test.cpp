@@ -24,9 +24,12 @@ int main()
 		check(write(b[1], &byte, 1) == 1 && ready(queue.descriptor()), "replacement wait did not wake");
 		queue.disarm();
 		check(!ready(queue.descriptor()), "disarm retained readiness");
-		// Close and reuse the same descriptor number. Every arm must add a fresh kernel registration.
+		// Closing an armed fd removes its kernel filters before disarm can delete them.
+		check(queue.arm({&second, 1}), "arm before close failed");
 		const int reused = b[0];
 		close(b[0]);
+		queue.disarm();
+		check(!ready(queue.descriptor()), "closed armed descriptor retained readiness");
 		int replacement[2];
 		check(pipe(replacement) == 0, "replacement pipe failed");
 		if (replacement[0] != reused) { check(dup2(replacement[0], reused) == reused, "dup2 failed"); close(replacement[0]); }
