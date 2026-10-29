@@ -42,6 +42,7 @@ static bool argument(const wchar_t *word){
  const wchar_t *s=GetCommandLineW();for(;*s;++s){const wchar_t *a=s,*b=word;while(*a&&*b&&*a==*b){++a;++b;}if(!*b)return true;}return false;
 }
 extern "C" void entry(){
+ if(argument(L"--hidpi")) SetProcessDPIAware();
  if(argument(L"--child")){
   HWND hidden=CreateWindowExW(0,L"STATIC",L"",WS_POPUP,0,0,1,1,0,0,0,0);
   HWND child=CreateWindowExW(0,L"STATIC",L"",WS_CHILD|WS_VISIBLE,0,0,1,1,hidden,0,0,0);
@@ -55,7 +56,8 @@ extern "C" void entry(){
  if(!argument(L"--foreign"))render(w);
  wchar_t path[1024],command[1100];if(!GetModuleFileNameW(0,path,1024))ExitProcess(33);
  size_t at=0;command[at++]=L'"';for(size_t i=0;path[i];++i)command[at++]=path[i];command[at++]=L'"';
- for(const wchar_t *q=L" --child";*q;++q)command[at++]=*q;command[at]=0;
+ for(const wchar_t *q=L" --child";*q;++q)command[at++]=*q;
+ if(argument(L"--hidpi"))for(const wchar_t *q=L" --hidpi";*q;++q)command[at++]=*q;command[at]=0;
  STARTUPINFOW si={};si.cb=sizeof(si);PROCESS_INFORMATION pi={};
  if(!CreateProcessW(path,command,0,0,FALSE,0,0,0,&si,&pi))ExitProcess(34);
  HWND child=0;

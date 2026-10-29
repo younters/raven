@@ -127,8 +127,9 @@ uint64_t NativeWindows::surface_dc(uint64_t handle)
 	auto *window=objects.window(handle);
 	if (!window) throw uint32_t(1400);
 	if (window->dc) return window->dc;
-	if (window->parent) {
-		const auto root=objects.window_root(handle);surface_dc(root);
+	const auto root=objects.window_root(handle);
+	if (window->parent && root!=handle) {
+		surface_dc(root);
 		window=objects.window(handle);const auto bitmap=objects.window(root)->bitmap;
 		DesktopDC device{bitmap,bitmap,handle};objects.configure_window_dc(handle,device,false);
 		const auto dc=objects.add(device);if (!dc) throw uint32_t(8);
@@ -2405,6 +2406,15 @@ void NativeWindows::sync_window_updates()
 		for (const auto handle:objects.window_handles()) {
 			const auto *owned=std::as_const(objects).window(handle);
 			if (!owned || (owned->thread && owned->thread!=environment.thread_id())) continue;
+			const auto pending=take_window_update(handle,false);
+			if (!pending) continue;
+			// Window positioning can invoke its procedure and map scratch memory. A
+			// synchronous served call retries at its trap before doing either.
+			if (process.serving() && !process.parallel()) {
+				process.decline_served();
+				window_updates_checked={};
+				break;
+			}
 			const auto update=take_window_update(handle);
 			if (!update) continue;
 			auto *window=objects.window(handle);

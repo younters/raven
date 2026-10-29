@@ -200,8 +200,8 @@ if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
                 -ldcomp -ld3d11 -ldxgi -ldxguid -luuid -lkernel32 -luser32 -lgcc
             DEPENDS ${RAVEN_DARWIN_DIR}/tests/dcomp.cpp VERBATIM)
         add_custom_target(darwin_dcomp_fixture ALL DEPENDS ${DCOMP_EXE})
-        foreach(kind local foreign)
-            add_test(NAME darwin_dcomp_${kind} COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dcomp.py
+        foreach(kind local foreign local-hidpi foreign-hidpi)
+            add_test(NAME darwin_dcomp_${kind} COMMAND ${RAVEN_DXMT_IMAGE_PYTHON} ${RAVEN_DARWIN_DIR}/tests/run_dcomp.py
                 $<TARGET_FILE:raven> ${DCOMP_EXE} ${RAVEN_DXMT_ROOT} ${RAVEN_DXMT_WINDOW_INFO}
                 ${CMAKE_CURRENT_BINARY_DIR}/dcomp-${kind} ${kind})
             set_tests_properties(darwin_dcomp_${kind} PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE)

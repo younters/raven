@@ -24,7 +24,9 @@ def green_box(path):
 
 def main():
     raven, program, root, info_tool, work = map(lambda s: Path(s).resolve(), sys.argv[1:6])
-    foreign = len(sys.argv) > 6 and sys.argv[6] == 'foreign'
+    kind = sys.argv[6] if len(sys.argv) > 6 else 'local'
+    foreign = kind.startswith('foreign')
+    hidpi = kind.endswith('hidpi')
     if not (root / 'pe64/dcomp.dll').is_file():
         print('source DXMT overlay with DirectComposition required')
         return 77
@@ -33,8 +35,12 @@ def main():
     prefix = work / 'prefix'
     env = os.environ | {'RAVEN_PREFIX': str(prefix), 'RAVEN_DXMT_ROOT': str(root), 'RAVEN_TRACE_DXMT': '1'}
     command = [str(raven), '--run-process', '--execution=native', '--timeout-ms=45000', '--desktop=macos', str(program)]
+    if foreign or hidpi:
+        command += ['--']
     if foreign:
-        command += ['--', '--foreign']
+        command += ['--foreign']
+    if hidpi:
+        command += ['--hidpi']
     boxes = []
     with (work / 'run.log').open('w') as log:
         process = subprocess.Popen(command, env=env, stdout=log, stderr=log)
@@ -58,7 +64,10 @@ def main():
                 if not box:
                     raise RuntimeError(f'no rendered green surface in stage {stage}')
                 scale = Image.open(shot).width / info['bounds']['Width']
-                box = tuple(v / scale for v in box)
+                # DPI-aware guests use one Windows pixel per physical screenshot pixel.
+                # Unaware guests use logical coordinates and are enlarged by the backing scale.
+                unit = 1 if hidpi else scale
+                box = tuple(v / unit for v in box)
                 if abs((box[2] - box[0]) - 200) > 2 or abs((box[3] - box[1]) - 120) > 2:
                     raise RuntimeError(f'incorrect surface size: {box}')
                 boxes.append(box)

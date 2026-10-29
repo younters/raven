@@ -31,7 +31,7 @@ struct ForeignWindowUpdate {
 	uint32_t flags=0,mask=0; // bit 0: parent, bit 1: WINDOWPOS
 };
 bool request_window_update(uint64_t window, const ForeignWindowUpdate &update);
-std::optional<ForeignWindowUpdate> take_window_update(uint64_t window);
+std::optional<ForeignWindowUpdate> take_window_update(uint64_t window, bool consume = true);
 // Drawing side: the client size of a window another live process of the prefix owns.
 std::optional<std::pair<uint32_t, uint32_t>> foreign_window_size(uint64_t window);
 

@@ -207,15 +207,24 @@ struct DarwinDXMTPresentation::State {
 		if (old != displayed.end()) release(old->second, old->second.sequence != frame.sequence || old->second.slot != slot);
 		CALayer *parent = (__bridge CALayer *)host->surface;
 		CALayer *layer = [CALayer layer];
-		layer.frame = layer_id ? CGRectMake(binding.x, binding.y, frame.width*binding.sx, frame.height*binding.sy) : parent.bounds;
+		const auto client = windows.client_size(frame.window);
+		// DirectComposition coordinates are Windows client pixels. Cocoa layers use
+		// points; an aware guest on a Retina display can have two pixels per point.
+		const double unit_x = client ? parent.bounds.size.width / client->first : 1;
+		const double unit_y = client ? parent.bounds.size.height / client->second : 1;
+		layer.frame = layer_id ? CGRectMake(binding.x * unit_x, binding.y * unit_y,
+			frame.width * binding.sx * unit_x, frame.height * binding.sy * unit_y) : parent.bounds;
 		layer.zPosition=binding.order;
 		if (layer_id) {
-			const CGRect clipped=CGRectIntersection(CGRectMake(binding.left,binding.top,
-				fmax(0,binding.right-binding.left),fmax(0,binding.bottom-binding.top)),layer.frame);
-			CAShapeLayer *mask=[CAShapeLayer layer];
-			const CGRect local=CGRectMake((clipped.origin.x-binding.x)/binding.sx,(clipped.origin.y-binding.y)/binding.sy,
-				clipped.size.width/binding.sx,clipped.size.height/binding.sy);
-			CGPathRef path=CGPathCreateWithRect(local,nullptr);mask.path=path;CGPathRelease(path);layer.mask=mask;
+			const CGRect clip = CGRectMake(binding.left * unit_x, binding.top * unit_y,
+				fmax(0,binding.right-binding.left) * unit_x, fmax(0,binding.bottom-binding.top) * unit_y);
+			const CGRect clipped = CGRectIntersection(clip, layer.frame);
+			CAShapeLayer *mask = [CAShapeLayer layer];
+			const CGRect local = CGRectIsNull(clipped) ? CGRectZero : CGRectOffset(clipped, -layer.frame.origin.x, -layer.frame.origin.y);
+			CGPathRef path = CGPathCreateWithRect(local, nullptr);
+			mask.path = path;
+			CGPathRelease(path);
+			layer.mask = mask;
 		}
 		layer.contentsScale = parent.contentsScale;
 		layer.magnificationFilter = kCAFilterNearest;

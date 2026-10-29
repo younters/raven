@@ -141,7 +141,7 @@ bool request_window_update(uint64_t window, const ForeignWindowUpdate &update)
 	::flock(fd,LOCK_UN);::close(fd);return ok;
 }
 
-std::optional<ForeignWindowUpdate> take_window_update(uint64_t window)
+std::optional<ForeignWindowUpdate> take_window_update(uint64_t window, bool consume)
 {
 	const auto path=window_directory()/(window_name(window)+".update");
 	const int fd=::open(path.c_str(),O_RDWR|O_CLOEXEC);
@@ -150,7 +150,7 @@ std::optional<ForeignWindowUpdate> take_window_update(uint64_t window)
 	ForeignWindowUpdate pending{};
 	const bool ready=::pread(fd,&pending,sizeof(pending),0)==sizeof(pending) && pending.mask;
 	const ForeignWindowUpdate empty{};
-	if (ready && ::pwrite(fd,&empty,sizeof(empty),0)!=sizeof(empty)) pending.mask=0;
+	if (ready && consume && ::pwrite(fd,&empty,sizeof(empty),0)!=sizeof(empty)) pending.mask=0;
 	::flock(fd,LOCK_UN);::close(fd);
 	return pending.mask ? std::optional(pending) : std::nullopt;
 }
