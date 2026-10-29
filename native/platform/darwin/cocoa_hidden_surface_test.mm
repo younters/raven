@@ -11,7 +11,7 @@ static void check(bool value, const char *message)
 	if (!value) throw std::runtime_error(message);
 }
 
-int main()
+int main(int argc, char **argv)
 {
 	if (!raven_macos_gui_available()) return 77;
 	try {
@@ -45,6 +45,19 @@ int main()
 			}
 		}
 		check(released == nil, "released hidden surface retained its layer");
+		if (argc > 1 && std::string_view(argv[1]) == "--show-transition") {
+			std::vector<uint8_t> pixels(40 * 30 * 4, 255);
+			const auto regular = ui.host_surface(3, 0, 0, 40, 30);
+			ui.present(3, "Hidden surface transition", 40, 30, pixels);
+			check(ui.host_surface(3, 0, 0, 40, 30)->surface == regular->surface,
+				"showing a normal window replaced its Vulkan layer");
+			const auto popup = ui.host_surface(4, 0, 0, 40, 30);
+			ui.owned_popup(4, 3, 0, 0, 40, 30, pixels);
+			check(ui.host_surface(4, 0, 0, 40, 30)->surface == popup->surface,
+				"showing an owned popup replaced its Vulkan layer");
+			ui.remove(4);
+			ui.remove(3);
+		}
 	} catch (const std::exception &error) { std::fprintf(stderr, "%s\n", error.what()); return 1; }
 	return 0;
 }

@@ -1185,6 +1185,19 @@ struct CocoaPresentation::State {
 		surfaces.erase(handle);
 	}
 
+	void attach_hidden_host_surface(uint64_t handle, Surface &target)
+	{
+		const auto hidden = hidden_host_surfaces.find(handle);
+		if (hidden == hidden_host_surfaces.end()) return;
+		const auto pending = hidden->second;
+		target.child = [[RavenMetalView alloc] initWithFrame:NSZeroRect];
+		target.child.layer = pending.layer;
+		target.child.wantsLayer = YES;
+		[target.view addSubview:target.child];
+		hidden_host_surfaces.erase(hidden);
+		host_surface(handle, pending.x, pending.y, pending.width, pending.height);
+	}
+
 	void present(uint64_t handle, std::string_view title, uint32_t width, uint32_t height, std::span<const uint8_t> pixels)
 	{
 		if (!handle || !width || !height || width > 8192 || height > 8192 || pixels.size() != size_t(width) * height * 4)
@@ -1245,15 +1258,7 @@ struct CocoaPresentation::State {
 				if (maximized.contains(handle))
 					maximize(handle, true);
 			}
-			if (const auto hidden = hidden_host_surfaces.find(handle); hidden != hidden_host_surfaces.end()) {
-				const auto pending = hidden->second;
-				target->child = [[RavenMetalView alloc] initWithFrame:NSZeroRect];
-				target->child.layer = pending.layer;
-				target->child.wantsLayer = YES;
-				[target->view addSubview:target->child];
-				hidden_host_surfaces.erase(hidden);
-				host_surface(handle, pending.x, pending.y, pending.width, pending.height);
-			}
+			attach_hidden_host_surface(handle, *target);
 			target->window.title = [NSString stringWithUTF8String:std::string(title).c_str()] ?: @"";
 			if (target->close_posted)
 				target->close_posted = false;
@@ -1339,6 +1344,7 @@ struct CocoaPresentation::State {
 			target->height = height;
 			const NSPoint corner = screen_of(*owner, x, y);
 			[target->window setFrame:NSMakeRect(corner.x, corner.y - height / scale, width / scale, height / scale) display:NO];
+			attach_hidden_host_surface(handle, *target);
 			show(*target, pixels, width, height, alpha_windows.contains(handle));
 			if (!target->window.parentWindow)
 				[owner->window addChildWindow:target->window ordered:NSWindowAbove];
