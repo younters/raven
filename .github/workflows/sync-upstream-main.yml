@@ -1,0 +1,36 @@
+name: Sync upstream main
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */6 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'younters/raven'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Fast-forward main to upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/mirkobrombin/raven.git
+          git fetch --no-tags upstream main:refs/remotes/upstream/main
+          if ! git merge-base --is-ancestor HEAD refs/remotes/upstream/main; then
+            echo '::error::main has fork-only commits. Preserve them on macos before syncing.'
+            exit 1
+          fi
+          git push origin refs/remotes/upstream/main:refs/heads/main
+          echo "main matches upstream at $(git rev-parse refs/remotes/upstream/main)." >> "$GITHUB_STEP_SUMMARY"

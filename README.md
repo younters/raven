@@ -2,6 +2,8 @@
 
 <p align="center"><b>A Windows your apps recognize.</b></p>
 
+This fork develops the [experimental macOS port](native/platform/darwin/README.md) on `macos`, its default branch. `main` mirrors upstream Raven; [branch synchronization](docs/upstream-sync.md) keeps the two roles separate.
+
 [Website and documentation](https://useraven.org)
 
 Raven runs Windows applications on Linux. You install them with their own installers, the same ones you would use on a PC, and they start: no virtual machine, no winetricks, no DLL overrides.
