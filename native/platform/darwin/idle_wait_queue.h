@@ -29,6 +29,9 @@ public:
 	{
 		disarm();
 		if (queue < 0) return false;
+		// Do not report success for an event mask this queue cannot express.
+		for (const auto &descriptor : descriptors)
+			if (descriptor.fd >= 0 && (descriptor.events & ~(POLLIN | POLLOUT))) return false;
 		for (const auto &descriptor : descriptors) {
 			if (descriptor.fd < 0) continue;
 			for (const auto [mask, filter] : {std::pair<short, short>{POLLIN, EVFILT_READ}, {POLLOUT, EVFILT_WRITE}}) {

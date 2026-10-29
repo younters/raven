@@ -39,6 +39,12 @@ int main()
 		queue.disarm();
 		char received = 0;
 		check(read(a[0], &received, 1) == 1 && received == byte, "queue consumed borrowed descriptor data");
+		const pollfd exceptional{a[0], POLLPRI, 0};
+		check(!queue.arm({&exceptional, 1}), "except-only wait did not select fallback");
+		const std::array<pollfd, 2> mixed{{first, exceptional}};
+		check(!queue.arm(mixed) && !ready(queue.descriptor()), "unsupported mask left partial registrations");
+		check(queue.arm({&first, 1}), "unsupported mask prevented later valid wait");
+		queue.disarm();
 		check(fcntl(queue.descriptor(), F_GETFD) & FD_CLOEXEC, "queue would leak across exec");
 		return 0;
 	} catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
