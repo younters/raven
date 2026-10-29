@@ -103,3 +103,13 @@ M2 (`FexProcess` behind `--execution=fex`) remains **NO-GO** until at least actu
 module init and the verified returning guest dispatch execute, followed by fault
 and nested-callback qualification. This progress does not meet the user's
 single milestone or establish an allowed hard blocker.
+
+## Continuation: strings and thread environment
+
+Added sixteen string/bitmap imports (UTF-8 host code page, UTF-16 conversion,
+counted strings, TLS bitmap operations and harness path conversion). Constructed
+owned PEB/process parameters, TEB, CPU area, AMD64-context storage, static TLS
+vector and demand-zero EC-code bitmap. Self-tests check Unicode surrogate pairs,
+truncation boundaries, bitmap allocation and TEB/TLS/CPU-area wiring. Native
+substrate tests pass. These objects are not yet passed to module init; the
+remaining PE loader/import work continues. No new hard blocker is established.

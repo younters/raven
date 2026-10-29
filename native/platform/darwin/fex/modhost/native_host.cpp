@@ -6,6 +6,8 @@
 #include "abi.h"
 #include "crt.h"
 #include "sync.h"
+#include "nt_strings.h"
+#include "environment.h"
 #include <thread>
 #include <atomic>
 #include <mach/mach_time.h>
@@ -130,7 +132,8 @@ void *resolve_native(const char *dll, const char *name) {
   ENTRY("RtlDeleteCriticalSection", delete_lock);
 #undef ENTRY
   if (auto *p = RavenCRT::resolve(name)) return p;
-  return RavenSync::resolve(name);
+  if (auto *p = RavenSync::resolve(name)) return p;
+  return RavenNT::resolve_strings(name);
 }
 NativeJit import_jit;
 void *resolve(const char *dll, const char *name) {
@@ -160,6 +163,20 @@ void self_test() {
   assert(RavenSync::wait_address(&address_value, &compare_value, 8, &immediate) == 0x102);
   compare_value = 2;
   assert(RavenSync::wait_address(&address_value, &compare_value, 8, nullptr) == 0);
+  RavenNT::ProcessEnvironment process;
+  RavenNT::ThreadEnvironment thread(process);
+  uint32_t initial_tls = 0x12345678;
+  thread.install_tls(&initial_tls,4,12);
+  assert(*static_cast<uint32_t*>(thread.tls_vector[0]) == initial_tls);
+  assert(thread.static_tls[15]==0 && thread.cpu.context==thread.context.data());
+  assert(*reinterpret_cast<void**>(thread.teb.data()+0x1788)==&thread.cpu);
+  auto utf16 = RavenNT::decode("A\xf0\x9f\x90\xa6", 5);
+  assert(utf16 == u"A\U0001f426" && RavenNT::encode(utf16.data(), utf16.size()) == "A\xf0\x9f\x90\xa6");
+  uint32_t count = 0; char16_t tiny[2] {};
+  assert(RavenNT::to_unicode(tiny, 4, &count, "A\xf0\x9f\x90\xa6", 5) == int32_t(0x80000005) && count == 2);
+  uint32_t bits[2] {1,0}; RavenNT::Bitmap bitmap {64,0,bits};
+  assert(RavenNT::find_clear(&bitmap,2,1)==1 && bits[0]==7);
+  RavenNT::clear_bits(&bitmap,1,2); assert(bits[0]==1);
   char16_t text[] = u"4294967295!"; char16_t *end = nullptr;
   assert(RavenCRT::wide_ulong(text, &end, 10) == UINT32_MAX && *end == '!');
   errno = 0;
