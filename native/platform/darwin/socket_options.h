@@ -10,7 +10,10 @@ struct SocketOptions {
 	{
 		if (call.u32(1) != 0xffff) return false;
 		if (call.u32(2) == 4 && setting && exclusive) {
-			call.fail(10022, UINT64_MAX); return true;
+			if (!call[3] || call.i32(4) < 4) { call.fail(10014, UINT64_MAX); return true; }
+			if (call.load<int32_t>(call[3])) { call.fail(10022, UINT64_MAX); return true; }
+			// Disabling reuse preserves exclusivity and is a valid Boolean option.
+			call.ret(0); return true;
 		}
 		if (call.u32(2) != 0xfffffffbU) return false; // SO_EXCLUSIVEADDRUSE
 		if (!call[3] || !call[4] || (setting ? call.u32(4) : call.load<uint32_t>(call[4])) < 4) {
