@@ -1378,7 +1378,7 @@ struct CocoaPresentation::State {
 	std::optional<HostSurface> host_surface(uint64_t handle, int32_t x, int32_t y, uint32_t width, uint32_t height)
 	{
 		Surface *target = surface(handle);
-		if (!target || target->popup)
+		if (!target)
 			return std::nullopt;
 		if (!target->child) {
 			target->child = [[RavenMetalView alloc] initWithFrame:NSZeroRect];
@@ -1388,6 +1388,7 @@ struct CocoaPresentation::State {
 		target->child.frame = NSMakeRect((x - target->insets[0]) / scale, (y - target->insets[1]) / scale,
 			std::max<uint32_t>(width, 1) / scale, std::max<uint32_t>(height, 1) / scale);
 		CAMetalLayer *layer = (CAMetalLayer *)target->child.layer;
+		layer.opaque = !alpha_windows.contains(handle);
 		layer.contentsScale = scale;
 		layer.drawableSize = CGSizeMake(width, height);
 		layer.magnificationFilter = kCAFilterNearest;

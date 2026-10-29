@@ -252,6 +252,12 @@ extern "C" void entry() {
 								  400, 300, nullptr, nullptr, nullptr, nullptr);
 	if (!window)
 		ExitProcess(1);
+	if (argument(L"--popup")) {
+		HWND owner = window;
+		window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC", L"Raven composition popup",
+			WS_POPUP | WS_VISIBLE, 100, 100, 400, 300, owner, nullptr, nullptr, nullptr);
+		if (!window) ExitProcess(79);
+	}
 	if (!argument(L"--foreign"))
 		render(window);
 	wchar_t path[1024], command[1100];

@@ -35,8 +35,10 @@ def main():
     prefix = work / 'prefix'
     env = os.environ | {'RAVEN_PREFIX': str(prefix), 'RAVEN_DXMT_ROOT': str(root), 'RAVEN_TRACE_DXMT': '1'}
     command = [str(raven), '--run-process', '--execution=native', '--timeout-ms=45000', '--desktop=macos', str(program)]
-    if foreign or hidpi:
+    if foreign or hidpi or kind.startswith('popup'):
         command += ['--']
+    if kind.startswith('popup'):
+        command += ['--popup']
     if foreign:
         command += ['--foreign']
     if hidpi:
@@ -58,7 +60,10 @@ def main():
                     time.sleep(.05)
                 # A committed visual update propagates without a new swap-chain Present.
                 time.sleep(.3)
-                info = json.loads(subprocess.check_output([str(info_tool), str(process.pid)]))
+                selected_window = [str(info_tool), str(process.pid)]
+                if kind.startswith('popup'):
+                    selected_window += ['popup']
+                info = json.loads(subprocess.check_output(selected_window))
                 shot = work / f'stage{stage}.png'
                 subprocess.run(['/usr/sbin/screencapture', '-x', '-o', '-l', str(info['id']), str(shot)],
                                check=True, capture_output=True)
