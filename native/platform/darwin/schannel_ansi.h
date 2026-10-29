@@ -8,15 +8,24 @@ namespace raven::darwin {
 // SSPI. Only the package, principal and target strings differ for these calls.
 inline void register_schannel_ansi(ApiRegistry &registry, KernelContext &context)
 {
-	struct Adapter { const char *narrow, *wide; std::vector<size_t> strings; };
+	struct Adapter { const char *narrow, *wide; std::vector<size_t> strings; size_t words; };
 	for (const auto &entry : {
-		Adapter{"AcquireCredentialsHandleA", "AcquireCredentialsHandleW", {0,1}},
-		Adapter{"InitializeSecurityContextA", "InitializeSecurityContextW", {2}},
+		Adapter{"AcquireCredentialsHandleA", "AcquireCredentialsHandleW", {0,1}, 9},
+		Adapter{"InitializeSecurityContextA", "InitializeSecurityContextW", {2}, 12},
 		// The upstream provider supports only binary attributes (sizes, connection,
 		// ALPN); all have identical ANSI/Unicode layouts.
-		Adapter{"QueryContextAttributesA", "QueryContextAttributesW", {}}}) {
+		Adapter{"QueryContextAttributesA", "QueryContextAttributesW", {}, 3},
+		Adapter{"QueryCredentialsAttributesA", "QueryCredentialsAttributesW", {}, 3},
+		Adapter{"ImportSecurityContextA", "ImportSecurityContextW", {0}, 4},
+		Adapter{"AddCredentialsA", "AddCredentialsW", {1,2}, 8},
+		Adapter{"SetContextAttributesA", "SetContextAttributesW", {}, 4},
+		Adapter{"SetCredentialsAttributesA", "SetCredentialsAttributesW", {}, 4},
+		Adapter{"ChangeAccountPasswordA", "ChangeAccountPasswordW", {0,1,2,3,4}, 8}}) {
 		const auto base = registry.find(entry.wide);
-		if (!base) continue;
+		if (!base) {
+			registry.add(entry.narrow, entry.words, [](ApiCall &call) { call.ret(0x80090302U); });
+			continue;
+		}
 		registry.add(entry.narrow, base->first, [entry, base, &context](ApiCall &call) {
 			struct Scratch {
 				GuestAllocator &allocator;
@@ -38,7 +47,12 @@ inline void register_schannel_ansi(ApiRegistry &registry, KernelContext &context
 			call.ret(inner.result);
 		});
 	}
-	const auto wide = registry.find("InitSecurityInterfaceW")->second;
+	const auto wide_entry = registry.find("InitSecurityInterfaceW");
+	if (!wide_entry) {
+		registry.add("InitSecurityInterfaceA", 0, [](ApiCall &call) { call.fail(120); });
+		return;
+	}
+	const auto wide = wide_entry->second;
 	auto published = std::make_shared<std::atomic<uint64_t>>(0);
 	registry.add("InitSecurityInterfaceA", 0, [wide, published, &context](ApiCall &call) {
 		if (auto table = published->load()) { call.ret(table); return; }
