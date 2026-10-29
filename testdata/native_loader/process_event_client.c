@@ -260,9 +260,10 @@ int raven_entry(void)
 	WCHAR manual_name[] = L"RavenNamedTransfer00000000";
 	DWORD event_pid = GetCurrentProcessId();
 	for (unsigned index = 0; index < 8; ++index) {
-		manual_name[24-index] = L"0123456789abcdef"[event_pid & 15];
+		manual_name[25-index] = L"0123456789abcdef"[event_pid & 15];
 		event_pid >>= 4;
 	}
+	if (manual_name[17] != L'r' || manual_name[26]) return 98;
 	HANDLE manual = CreateEventExW(NULL, manual_name, 3, EVENT_ALL_ACCESS), orphan = CreateEventExA(NULL, NULL, 2, EVENT_ALL_ACCESS);
 	HANDLE mutex = CreateMutexW(NULL, TRUE, NULL);
 	HANDLE sent[8], fetched = NULL, empty = NULL;
