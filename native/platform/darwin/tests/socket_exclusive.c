@@ -50,6 +50,7 @@ int raven_entry(void)
 			struct sockaddr_in other=address;
 			other.sin_addr.s_addr=host;
 			if (bind(b,(struct sockaddr *)&other,sizeof(other))) return 20;
+			OutputDebugStringA("socket_exclusive: second IPv4 interface bind verified");
 			tested=1; break;
 		}
 	// Hosts with only loopback cannot exercise a second interface.
