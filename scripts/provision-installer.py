@@ -37,6 +37,11 @@ COMPONENTS = ("cabinet.dll", "sxs.dll", "rpcrt4.dll", "msi.dll", "raven-storage.
               "libtiff.dll", "propsys.dll", "mlang.dll", "windowscodecs.dll", "gdiplus.dll", "urlmon.dll", "riched20.dll", "msftedit.dll", "msvfw32.dll", "advpack.dll", "raven-setupapi.dll", "xmllite.dll")
 
 
+def widl_target(triple):
+    # Width alone retains the host ISA on arm64. RPC stubs need the guest ABI.
+    return ["widl", "-b", triple]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build the pinned ReactOS Windows Installer components: msi, cabinet, sxs and structured storage")
     parser.add_argument("--output", type=Path, required=True)
@@ -116,7 +121,7 @@ def main():
     run(["clang", "-O1", "-w", source / "sdk/tools/spec2def/spec2def.c", "-o", output / "spec2def"])
     for name in ("winnt", "ntdef", "devioctl"):
         run([output / "hpp", name + ".template.h", generated / "psdk" / (name + ".h")], source / "sdk/include/xdk")
-    widl = ["widl", "-b", triple, "-D__REACTOS__", "-I", source / "sdk/include/psdk", "-I", source / "sdk/include", "-I", generated / "psdk"]
+    widl = widl_target(triple) + ["-D__REACTOS__", "-I", source / "sdk/include/psdk", "-I", source / "sdk/include", "-I", generated / "psdk"]
     idls = set()
 
     def idl(name):
