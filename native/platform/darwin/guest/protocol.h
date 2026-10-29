@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #define RAVEN_GUEST_MAGIC 0x52564e47U // "RVNG"
-#define RAVEN_GUEST_VERSION 4U
+#define RAVEN_GUEST_VERSION 5U
 
 // Descriptors the host gives the agent at startup.
 #define RAVEN_GUEST_CONTROL_FD 3
@@ -85,7 +85,8 @@ enum raven_thread_state {
 #define RAVEN_STOP_INTERRUPT (-1)
 
 #define RAVEN_UNIX_EVENT_SLOTS 64
-#define RAVEN_SURFACE_SLOTS 16
+// Shared by all views in a GPU process; slots describe in-flight presentations.
+#define RAVEN_SURFACE_SLOTS 64
 
 enum raven_surface_state {
 	RAVEN_SURFACE_UNUSED,

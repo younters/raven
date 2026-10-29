@@ -334,3 +334,15 @@ guests only.
 `raven-apps` selects the AMD compatibility identity for `firefox.exe`, including generated app
 bundles launched from Launchpad, while preserving explicit caller overrides. Direct runtime launches
 remain opt-in through `RAVEN_DXGI_VENDOR=amd`. This setting does not disable Firefox's sandboxes.
+
+The presentation adapter creates textures lazily, up to three per view. Its
+64 process-wide slots describe in-flight presentations rather than every texture
+retained by a swapchain. A drawable may reclaim an UNUSED or host-AVAILABLE slot;
+it never steals WRITING, READY, IMPORTING or DISPLAYED slots. Detached textures
+acquire a new slot on their next presentation. The null texture callback returns
+STATUS_INVALID_PARAMETER. `native_darwin_dxmt_drawable_pool` covers 24 live views,
+lazy growth/reuse, recycling, busy-slot protection and retirement without windows
+or screen capture. Build it with `cmake --build <build> --target darwin_dxmt_pool_test -j8`.
+The expanded control layout uses protocol version 5: rebuild the host, bootstrap
+and `raven-dxmt.dylib` together. The adapter is built by
+`scripts/provision-dxmt.py`; rebuilding the host does not rebuild a provisioned adapter.

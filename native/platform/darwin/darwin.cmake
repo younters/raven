@@ -637,3 +637,16 @@ if(TEST native_outer_surface_input)
 endif()
 
 include(${RAVEN_DARWIN_DIR}/x87sidecar.cmake)
+
+# Exercise the adapter with the x86_64 Metal ABI used under Rosetta.
+set(DXMT_POOL_TEST ${CMAKE_CURRENT_BINARY_DIR}/darwin-dxmt-pool-test)
+add_custom_command(OUTPUT ${DXMT_POOL_TEST}
+    COMMAND /usr/bin/clang -arch x86_64 -fblocks
+        ${RAVEN_DARWIN_DIR}/dxmt/presentation_pool_test.m
+        -framework Foundation -framework Metal -framework IOSurface -o ${DXMT_POOL_TEST}
+    DEPENDS ${RAVEN_DARWIN_DIR}/dxmt/presentation_pool_test.m
+        ${RAVEN_DARWIN_DIR}/dxmt/presentation.m ${RAVEN_DARWIN_DIR}/guest/protocol.h
+    VERBATIM)
+add_custom_target(darwin_dxmt_pool_test DEPENDS ${DXMT_POOL_TEST})
+add_test(NAME native_darwin_dxmt_drawable_pool COMMAND ${DXMT_POOL_TEST})
+set_tests_properties(native_darwin_dxmt_drawable_pool PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
