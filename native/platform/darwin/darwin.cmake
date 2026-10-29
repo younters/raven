@@ -20,6 +20,9 @@ endif()
 
 # The guest controller: Linux traces an ELF child with ptrace; macOS runs an x86_64 Mach-O agent under Rosetta 2 that the host
 # drives through shared memory. Same NativeProcess interface, different implementation file.
+add_executable(darwin_idle_wait_queue_test ${RAVEN_DARWIN_DIR}/idle_wait_queue_test.cpp)
+add_test(NAME native_darwin_idle_wait_queue COMMAND darwin_idle_wait_queue_test)
+
 if(TARGET raven_cpu)
     include(${RAVEN_DARWIN_DIR}/audio/audio.cmake)
     get_target_property(RAVEN_CPU_SOURCES raven_cpu SOURCES)

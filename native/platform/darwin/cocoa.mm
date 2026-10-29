@@ -29,6 +29,7 @@ void raven_macos_program_identity();
 
 #include "cocoa_cursor.h"
 #include "gdi_presenter.h"
+#include "idle_wait_queue.h"
 
 namespace {
 
@@ -182,6 +183,9 @@ struct CocoaPresentation::State {
 	std::chrono::steady_clock::time_point next_pump{};
 	std::optional<std::pair<int32_t, int32_t>> screen_size;
 	id screen_observer = nil;
+	raven::DarwinIdleWaitQueue idle_wait_queue;
+	CFFileDescriptorRef wait_source = nullptr;
+	CFRunLoopSourceRef wait_runloop_source = nullptr;
 	std::vector<CFFileDescriptorRef> wait_descriptors;
 	RavenApplicationDelegate *delegate = nil;
 	std::map<uint64_t, std::unique_ptr<Surface>> surfaces;
@@ -259,6 +263,11 @@ struct CocoaPresentation::State {
 	~State()
 	{
 		watch_waits({});
+		if (wait_runloop_source) {
+			CFRunLoopRemoveSource(CFRunLoopGetMain(), wait_runloop_source, kCFRunLoopCommonModes);
+			CFRelease(wait_runloop_source);
+		}
+		if (wait_source) { CFFileDescriptorInvalidate(wait_source); CFRelease(wait_source); }
 		if (screen_observer)
 			[NSNotificationCenter.defaultCenter removeObserver:screen_observer];
 		surfaces.clear();
@@ -956,6 +965,39 @@ struct CocoaPresentation::State {
 	}
 
 	void watch_waits(std::span<const pollfd> descriptors)
+	{
+		if (wait_source) CFFileDescriptorDisableCallBacks(wait_source, kCFFileDescriptorReadCallBack);
+		if (descriptors.empty()) {
+			idle_wait_queue.disarm();
+			legacy_watch_waits({});
+			return;
+		}
+		if (!wait_source && idle_wait_queue.descriptor() >= 0) {
+			CFFileDescriptorContext context{0, this, nullptr, nullptr, nullptr};
+			const auto wake = [](CFFileDescriptorRef, CFOptionFlags, void *info) {
+				auto &state = *static_cast<State *>(info);
+				if (!state.idle_wait_queue.consume()) return;
+				// A run-loop descriptor callback alone does not return an NSEvent from nextEventMatchingMask.
+				[NSApp postEvent:[NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint modifierFlags:0
+					timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:0 context:nil subtype:0 data1:0 data2:0] atStart:NO];
+			};
+			wait_source = CFFileDescriptorCreate(kCFAllocatorDefault, idle_wait_queue.descriptor(), false, wake, &context);
+			if (wait_source) {
+				wait_runloop_source = CFFileDescriptorCreateRunLoopSource(kCFAllocatorDefault, wait_source, 0);
+				if (wait_runloop_source) CFRunLoopAddSource(CFRunLoopGetMain(), wait_runloop_source, kCFRunLoopCommonModes);
+				else { CFFileDescriptorInvalidate(wait_source); CFRelease(wait_source); wait_source = nullptr; }
+			}
+		}
+		if (wait_source && idle_wait_queue.arm(descriptors)) {
+			legacy_watch_waits({});
+			CFFileDescriptorEnableCallBacks(wait_source, kCFFileDescriptorReadCallBack);
+		} else {
+			// Keep the previous path for descriptors kqueue cannot watch, or resource exhaustion.
+			legacy_watch_waits(descriptors);
+		}
+	}
+
+	void legacy_watch_waits(std::span<const pollfd> descriptors)
 	{
 		for (const auto descriptor : wait_descriptors) {
 			CFFileDescriptorInvalidate(descriptor);
