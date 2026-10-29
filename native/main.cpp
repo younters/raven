@@ -1,5 +1,6 @@
 #ifdef __APPLE__
 #include "raven_darwin_launch.h"
+#include "platform/darwin/fd_budget.h"
 #endif
 #include "pe/pe.h"
 #include "pe/resources.h"
@@ -146,6 +147,8 @@ static void show_fault(int signal)
 int main(int argc, char **argv)
 {
 #ifdef __APPLE__
+	if (const int error = raven_darwin::prepare_fd_budget())
+		std::fprintf(stderr, "raven: descriptor budget unchanged (errno=%d)\n", error);
 	raven_macos_startup(argc, argv);
 #endif
 	if (std::getenv("RAVEN_BACKTRACE")) {

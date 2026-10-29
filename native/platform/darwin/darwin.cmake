@@ -650,3 +650,7 @@ add_custom_command(OUTPUT ${DXMT_POOL_TEST}
 add_custom_target(darwin_dxmt_pool_test DEPENDS ${DXMT_POOL_TEST})
 add_test(NAME native_darwin_dxmt_drawable_pool COMMAND ${DXMT_POOL_TEST})
 set_tests_properties(native_darwin_dxmt_drawable_pool PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
+
+add_executable(darwin_fd_budget_test ${RAVEN_DARWIN_DIR}/fd_budget_test.cpp)
+add_test(NAME native_darwin_fd_budget COMMAND darwin_fd_budget_test)
+set_tests_properties(native_darwin_fd_budget PROPERTIES TIMEOUT 15)
