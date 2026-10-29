@@ -43,5 +43,16 @@ int raven_entry(void)
 	DWORD_PTR process_mask, system_mask;
 	if (!GetProcessAffinityMask(GetCurrentProcess(), &process_mask, &system_mask) ||
 		process_mask != info.dwActiveProcessorMask || system_mask != process_mask) return 15;
+	typedef BOOL (WINAPI *CpuSets)(void *, ULONG, ULONG *, HANDLE, ULONG);
+	CpuSets cpu_sets=(CpuSets)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetSystemCpuSetInformation");
+	ULONG needed=0;
+	if (!cpu_sets || !cpu_sets(buffer,sizeof(buffer),&needed,NULL,0)) return 16;
+	DWORD sets=0;
+	for (unsigned at=0; at<needed;) {
+		DWORD record=*(DWORD *)(buffer+at);
+		if (record < 16 || record > needed-at || buffer[at+14] != sets) return 17;
+		++sets; at+=record;
+	}
+	if (sets != count) return 18;
 	return 0;
 }
