@@ -29,6 +29,7 @@ _Static_assert(sizeof(struct layer_props) == 40, "DXMT v0.80 layer ABI");
 	IOSurfaceRef surface;
 	id<MTLTexture> texture;
 	int slot;
+	bool discard_pending;
 	uint64_t window;
 	RavenDXMTLayer *owner; // Non-owning; used only while the swap chain is encoding a present.
 }
@@ -110,6 +111,7 @@ static void reap_retired_slot(unsigned slot)
 
 - (bool)acquireSlot
 {
+	if (__atomic_load_n(&discard_pending, __ATOMIC_ACQUIRE)) return false;
 	struct raven_control *shared = raven_dxmt_control();
 	@synchronized([RavenDXMTDrawable class]) {
 		if (slot >= 0) {
@@ -236,33 +238,71 @@ static int32_t get_props(void *args)
 	return 0;
 }
 
+#ifndef RAVEN_DXMT_DRAWABLE_WAIT
+#define RAVEN_DXMT_DRAWABLE_WAIT() usleep(500)
+#endif
+
+static bool drawable_progress_possible(RavenDXMTLayer *layer)
+{
+	struct raven_control *shared = raven_dxmt_control();
+	for (unsigned i = 0; i < RAVEN_SURFACE_SLOTS; ++i) {
+		const uint32_t state = __atomic_load_n(&shared->surfaces[i].state, __ATOMIC_ACQUIRE);
+		if (state == RAVEN_SURFACE_WRITING || state == RAVEN_SURFACE_READY || state == RAVEN_SURFACE_IMPORTING) return true;
+	}
+	for (RavenDXMTDrawable *drawable in layer->frames)
+		if (__atomic_load_n(&drawable->discard_pending, __ATOMIC_ACQUIRE) || IOSurfaceIsInUse(drawable->surface)) return true;
+	return false;
+}
+
 static int32_t next_drawable(void *args)
 {
 	uint64_t *p = args;
 	RavenDXMTLayer *layer = (RavenDXMTLayer *)p[0];
 	p[1] = 0;
-	for (RavenDXMTDrawable *drawable in layer->frames) {
-		if ([drawable acquireSlot]) {
-			p[1] = (uint64_t)drawable;
-			return 0;
+	const CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + .1;
+	do {
+		for (RavenDXMTDrawable *drawable in layer->frames) {
+			if ([drawable acquireSlot]) {
+				p[1] = (uint64_t)drawable;
+				return 0;
+			}
 		}
-	}
-	// Allocate textures lazily; imported records do not pin capacity.
-	if (layer->frames.count < 3) {
-		RavenDXMTDrawable *drawable = [[RavenDXMTDrawable alloc] initWithDevice:(id<MTLDevice>)layer->props.device
-			window:layer->window properties:&layer->props];
-		if (!drawable) return (int32_t)0xc00000bbU;
-		[layer->frames addObject:drawable];
-		drawable->owner = layer;
-		[drawable release];
-		if ([drawable acquireSlot]) {
-			p[1] = (uint64_t)drawable;
-			return 0;
+		if (layer->frames.count < 3) {
+			RavenDXMTDrawable *drawable = [[RavenDXMTDrawable alloc] initWithDevice:(id<MTLDevice>)layer->props.device
+				window:layer->window properties:&layer->props];
+			if (!drawable) return (int32_t)0xc00000bbU;
+			[layer->frames addObject:drawable];
+			drawable->owner = layer;
+			[drawable release];
+			if ([drawable acquireSlot]) {
+				p[1] = (uint64_t)drawable;
+				return 0;
+			}
 		}
-	}
-	// Nonblocking backpressure, analogous to DXGI_PRESENT_DO_NOT_WAIT.
-	return (int32_t)0x887a000aU; // DXGI_ERROR_WAS_STILL_DRAWING at the adapter boundary.
+		if (!drawable_progress_possible(layer)) break;
+		RAVEN_DXMT_DRAWABLE_WAIT();
+	} while (CFAbsoluteTimeGetCurrent() < deadline);
 
+	// The pinned PE thunk discards status and dereferences the result. Drop this
+	// presentation safely using a real render target, never a null Metal object.
+	// Reuse an unleased texture where possible; transient scratch objects otherwise
+	// live only through encoding and GPU completion, never through host retention.
+	RavenDXMTDrawable *discard = nil;
+	for (RavenDXMTDrawable *drawable in layer->frames) {
+		if (drawable->slot < 0 && !__atomic_load_n(&drawable->discard_pending, __ATOMIC_ACQUIRE) && !IOSurfaceIsInUse(drawable->surface)) {
+			discard = drawable;
+			break;
+		}
+	}
+	if (!discard) {
+		discard = [[[RavenDXMTDrawable alloc] initWithDevice:(id<MTLDevice>)layer->props.device
+			window:layer->window properties:&layer->props] autorelease];
+		if (!discard) return (int32_t)0xc0000017U;
+	}
+	__atomic_store_n(&discard->discard_pending, true, __ATOMIC_RELEASE);
+	__atomic_fetch_add(&raven_dxmt_control()->surface_errors, 1, __ATOMIC_RELAXED);
+	p[1] = (uint64_t)discard;
+	return 0;
 }
 
 static int32_t drawable_texture(void *args)
@@ -279,6 +319,13 @@ static int32_t present_common(void *args, double minimum_duration)
 	id<MTLCommandBuffer> command = (id<MTLCommandBuffer>)p[0];
 	RavenDXMTDrawable *drawable = (RavenDXMTDrawable *)p[1];
 	if (!drawable) return (int32_t)0xc000000dU;
+	if (drawable->slot < 0) {
+		[command addCompletedHandler:^(id<MTLCommandBuffer> completed) {
+			(void)completed;
+			__atomic_store_n(&drawable->discard_pending, false, __ATOMIC_RELEASE);
+		}];
+		return 0;
+	}
 	struct raven_control *shared = raven_dxmt_control();
 	struct raven_surface_frame *frame = &shared->surfaces[drawable->slot];
 	static uint64_t sequence;

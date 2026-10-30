@@ -1,4 +1,6 @@
 // Exercise the real x86_64 allocator without windows or captured pixels.
+static void wait_for_drawable(void);
+#define RAVEN_DXMT_DRAWABLE_WAIT() wait_for_drawable()
 static void retire_published(unsigned slot);
 static void retire_acknowledged(unsigned slot);
 #define RAVEN_DXMT_RETIRE_PUBLISHED(slot) retire_published(slot)
@@ -14,6 +16,13 @@ static bool acknowledge_retirement = true;
 static bool pause_retirement;
 static dispatch_semaphore_t paused, resume_retirement[2];
 static unsigned pause_index;
+static unsigned drawable_waits;
+
+static void wait_for_drawable(void)
+{
+	++drawable_waits;
+	usleep(500);
+}
 struct raven_control *raven_dxmt_control(void) { return &control; }
 
 static void check(bool ok, const char *message)
@@ -113,6 +122,81 @@ static void test_retirement(id<MTLDevice> device)
 	mach_port_deallocate(mach_task_self(), port);
 }
 
+static void *catch_up(void *object)
+{
+	RavenDXMTDrawable *drawable = object;
+	usleep(5000);
+	__atomic_store_n(&control.surfaces[drawable->slot].state, RAVEN_SURFACE_AVAILABLE, __ATOMIC_RELEASE);
+	return NULL;
+}
+
+static void render_discard(id<MTLDevice> device, RavenDXMTDrawable *discard)
+{
+	uint64_t texture_args[2] = {(uint64_t)discard, 0};
+	check(!drawable_texture(texture_args) && texture_args[1], "pinned nextDrawable -> texture receives valid Metal texture");
+	id<MTLCommandQueue> queue = [device newCommandQueue];
+	id<MTLCommandBuffer> command = [queue commandBuffer];
+	MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+	pass.colorAttachments[0].texture = (id)texture_args[1];
+	pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+	pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+	id<MTLRenderCommandEncoder> encoder = [command renderCommandEncoderWithDescriptor:pass];
+	check(encoder != nil, "guest render pass has a valid attachment under pressure");
+	[encoder endEncoding];
+	uint64_t present_args[2] = {(uint64_t)command, (uint64_t)discard};
+	check(!present_common(present_args, 0), "discard presentation is a safe no-op");
+	dispatch_semaphore_t completed = dispatch_semaphore_create(0);
+	[command addCompletedHandler:^(id<MTLCommandBuffer> done) {
+		(void)done;
+		dispatch_semaphore_signal(completed);
+	}];
+	[command commit];
+	check(!dispatch_semaphore_wait(completed, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)), "discard GPU work completes");
+	check(command.status == MTLCommandBufferStatusCompleted, "no Metal validation/error from guest pressure path");
+	dispatch_release(completed);
+	[queue release];
+}
+
+static void test_pacing(id<MTLDevice> device)
+{
+	RavenDXMTLayer *layer = [[RavenDXMTLayer alloc] init];
+	layer->window = 2002;
+	layer->props.device = (uint64_t)device;
+	layer->props.width = layer->props.height = 16;
+	uint64_t args[2] = {(uint64_t)layer, 0};
+	for (unsigned i = 0; i < 3; ++i) check(!next_drawable(args) && args[1], "encode three frames ahead");
+	RavenDXMTDrawable *ready = layer->frames[0];
+	__atomic_store_n(&control.surfaces[ready->slot].state, RAVEN_SURFACE_READY, __ATOMIC_RELEASE);
+	pthread_t host;
+	const unsigned waits_before_catchup = drawable_waits;
+	check(!pthread_create(&host, NULL, catch_up, ready), "start host catch-up");
+	check(!next_drawable(args) && args[1] == (uint64_t)ready && !ready->discard_pending && drawable_waits > waits_before_catchup,
+		"fourth request waits for READY frame instead of returning null or discarding");
+	pthread_join(host, NULL);
+	const unsigned waits_before_deadline = drawable_waits;
+	check(!next_drawable(args) && args[1] && layer->frames.count == 3 && drawable_waits > waits_before_deadline,
+		"stalled three-frame queue gets a scratch drawable after bounded pacing");
+	RavenDXMTDrawable *scratch = (id)args[1];
+	check(scratch->slot < 0 && scratch->discard_pending && ![layer->frames containsObject:scratch],
+		"deadline fallback leaves three cached textures unchanged");
+	render_discard(device, scratch);
+	[layer release];
+
+	// No live writer/importer can make progress: every record is quarantined.
+	for (unsigned i = 0; i < RAVEN_SURFACE_SLOTS; ++i) control.surfaces[i].state = RAVEN_SURFACE_RETIRE;
+	layer = [[RavenDXMTLayer alloc] init];
+	layer->props.device = (uint64_t)device;
+	layer->props.width = layer->props.height = 16;
+	args[0] = (uint64_t)layer;
+	const unsigned waits_before_pressure = drawable_waits;
+	check(!next_drawable(args) && args[1] && drawable_waits == waits_before_pressure, "genuine pressure does not wait for host pacing");
+	RavenDXMTDrawable *discard = (id)args[1];
+	check(discard->slot < 0 && discard->discard_pending, "pressure yields unpresented render target for pinned guest");
+	render_discard(device, discard);
+	[layer release];
+	for (unsigned i = 0; i < RAVEN_SURFACE_SLOTS; ++i) control.surfaces[i].state = RAVEN_SURFACE_UNUSED;
+}
+
 static void test_forward_right(id<MTLDevice> device)
 {
 	struct layer_props props = {.width = 16, .height = 16, .format = 80};
@@ -160,6 +244,7 @@ int main(void)
 		if (!device) return 77;
 		test_forward_right(device);
 		test_retirement(device);
+		test_pacing(device);
 		RavenDXMTLayer *layers[128];
 		for (unsigned i = 0; i < 128; ++i) {
 			layers[i] = [[RavenDXMTLayer alloc] init];
@@ -213,7 +298,7 @@ int main(void)
 		blocked->props = props;
 		uint64_t pressure[2] = {(uint64_t)blocked, 123};
 		const CFAbsoluteTime started = CFAbsoluteTimeGetCurrent();
-		check(next_drawable(pressure) == (int32_t)0x887a000aU && !pressure[1], "nonblocking pressure result");
+		check(!next_drawable(pressure) && pressure[1], "bounded pressure returns a safe drawable to pinned thunk");
 		check(CFAbsoluteTimeGetCurrent() - started < 1, "pool exhaustion must not stall five seconds");
 		[blocked release];
 		// All other host states must also remain unavailable under pressure.

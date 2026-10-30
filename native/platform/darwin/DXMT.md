@@ -335,7 +335,7 @@ guests only.
 bundles launched from Launchpad, while preserving explicit caller overrides. Direct runtime launches
 remain opt-in through `RAVEN_DXGI_VENDOR=amd`. This setting does not disable Firefox's sandboxes.
 
-The presentation adapter creates up to three textures per view lazily. Its 64
+The presentation adapter creates up to three cached textures per view lazily. Its 64
 process-wide slots are transport records for pending and imported presentations,
 not a limit on live views. WRITING, READY and IMPORTING records cannot be stolen.
 DISPLAYED means import is complete: the host owns an independent surface snapshot,
@@ -349,26 +349,38 @@ Mach queue, receive and use-count handoff with IOSurfaceIsInUse.
 Recycling a record never permits overwriting its former surface: each drawable
 checks IOSurfaceIsInUse on its own surface before allowing GPU writes.
 
-Acquisition is nonblocking. When all records are pending or all three textures of
-a view remain busy, the adapter returns 0x887a000a (DXGI_ERROR_WAS_STILL_DRAWING)
-and a null drawable immediately, analogous to DXGI_PRESENT_DO_NOT_WAIT. There is
-no fixed five-second retry. This is the unix adapter contract: the pinned DXMT
-MetalLayer_nextDrawable thunk discards the status, so it does not promise that
-HRESULT reaches the guest's Present call. The null texture callback rejects the
-request with STATUS_INVALID_PARAMETER. Full guest-level retry/HRESULT propagation
-requires a corresponding DXMT presenter change.
+Acquisition retries transient WRITING, READY, IMPORTING and texture-use states
+with 500 microsecond sleeps for up to 100 milliseconds. A fourth request can
+therefore wait for one of its three textures to catch up with the host. With no
+pending work or texture use that can progress (for example, a fully quarantined
+pool), it takes the pressure path immediately instead of waiting five seconds.
+
+The pinned release and source-overlay MetalLayer_nextDrawable thunks discard the
+unix status, and Presenter::encodeCommands unconditionally requests its texture.
+A null drawable therefore reaches an invalid render attachment; an error status
+alone cannot safely express WAS_STILL_DRAWING at this ABI. On exhausted capacity
+or an expired pacing deadline, Raven instead supplies a valid unpresented render
+target and returns success. The guest encodes normally but that presentation is
+dropped, preserving the previous host image and incrementing `surface_errors`. An
+unleased idle texture is reused where possible; otherwise a temporary scratch texture is retained through GPU
+completion and released, without reserving a transport slot or host image.
+Ordinary presentation keeps the three cached textures per view. Allocation failure
+still reports the resource error, as elsewhere in the Metal bridge. The null
+texture callback remains defensive and returns STATUS_INVALID_PARAMETER for a
+malformed direct call. A true guest-level WAS_STILL_DRAWING HRESULT requires
+changing the DXMT presenter and its thunk together.
 
 Retirement marks the record RETIRE under the guest allocator lock, then waits
 outside that lock for up to one second. A timeout quarantines the slot and its
 send right; it never releases a right the host may still be copying. Subsequent
 allocations reap quarantined rights only after UNUSED. Quarantine is bounded by
 the 64 transport slots, and a permanently unresponsive host eventually produces
-nonblocking backpressure. Cleanup tickets prevent an old destructor from touching
+the pressure fallback described above. Cleanup tickets prevent an old destructor from touching
 a replacement lease if another allocator reaps the acknowledgement first.
 
 `native_darwin_dxmt_drawable_pool` covers 128 live views, lazy growth/reuse,
 recycling records whose old surfaces remain in use, busy-slot protection,
-nonblocking pressure and retirement without screen capture. Build it with
+transient pacing, safe pressure rendering and retirement without screen capture. Build it with
 `cmake --build <build> --target darwin_dxmt_pool_test -j8`.
 The expanded control layout uses protocol version 5: rebuild the host, bootstrap
 and `raven-dxmt.dylib` together. Before calling adapter initialization or wrapping
