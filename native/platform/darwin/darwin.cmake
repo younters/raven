@@ -18,6 +18,9 @@ if(RAVEN_DARWIN_DXVK_TESTS AND (NOT RAVEN_DXMT_ROOT OR NOT RAVEN_DXVK_PE64_DIR))
     message(FATAL_ERROR "DXVK comparisons need RAVEN_DXMT_ROOT and RAVEN_DXVK_PE64_DIR to build/run matching fixtures")
 endif()
 
+add_executable(darwin_idle_wait_queue_test ${RAVEN_DARWIN_DIR}/idle_wait_queue_test.cpp)
+add_test(NAME native_darwin_idle_wait_queue COMMAND darwin_idle_wait_queue_test)
+
 # The guest controller: Linux traces an ELF child with ptrace; macOS runs an x86_64 Mach-O agent under Rosetta 2 that the host
 # drives through shared memory. Same NativeProcess interface, different implementation file.
 if(TARGET raven_cpu)
@@ -44,6 +47,13 @@ if(TARGET raven_cpu)
     add_executable(darwin_dcomp_commit_test ${RAVEN_DARWIN_DIR}/tests/dcomp_commit.cpp)
     target_link_libraries(darwin_dcomp_commit_test PRIVATE raven_cpu)
     add_test(NAME native_darwin_dcomp_commit COMMAND darwin_dcomp_commit_test)
+    add_executable(darwin_scheduler_wait_test ${RAVEN_DARWIN_DIR}/scheduler_wait_test.cpp)
+    target_link_libraries(darwin_scheduler_wait_test PRIVATE raven_cpu)
+    add_dependencies(darwin_scheduler_wait_test raven-bootstrap)
+    add_test(NAME native_darwin_scheduler_wait COMMAND darwin_scheduler_wait_test $<TARGET_FILE:raven-bootstrap>)
+    add_test(NAME native_darwin_scheduler_wait_parallel COMMAND darwin_scheduler_wait_test $<TARGET_FILE:raven-bootstrap>)
+    set_tests_properties(native_darwin_scheduler_wait native_darwin_scheduler_wait_parallel PROPERTIES TIMEOUT 30)
+    set_tests_properties(native_darwin_scheduler_wait_parallel PROPERTIES ENVIRONMENT RAVEN_PARALLEL=1)
     add_executable(darwin_parallel_test ${RAVEN_DARWIN_DIR}/parallel_test.cpp)
     target_link_libraries(darwin_parallel_test PRIVATE raven_cpu)
     add_dependencies(darwin_parallel_test raven-bootstrap)
@@ -60,6 +70,23 @@ if(TARGET raven_cpu)
                 -o ${RAVEN_DARWIN_PARALLEL_BENCHMARK} ${RAVEN_DARWIN_DIR}/parallel_benchmark.c -lkernel32
             DEPENDS ${RAVEN_DARWIN_DIR}/parallel_benchmark.c VERBATIM)
         add_custom_target(darwin_parallel_benchmark ALL DEPENDS ${RAVEN_DARWIN_PARALLEL_BENCHMARK})
+        set(RAVEN_DARWIN_HANDOFF_BENCHMARK ${CMAKE_CURRENT_BINARY_DIR}/darwin-handoff-benchmark.exe)
+        add_custom_command(OUTPUT ${RAVEN_DARWIN_HANDOFF_BENCHMARK}
+            COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector
+                -Wl,--entry,raven_entry,--image-base,0x199a00000
+                -o ${RAVEN_DARWIN_HANDOFF_BENCHMARK} ${RAVEN_DARWIN_DIR}/handoff_benchmark.c -lkernel32
+            DEPENDS ${RAVEN_DARWIN_DIR}/handoff_benchmark.c VERBATIM)
+        add_custom_target(darwin_handoff_benchmark ALL DEPENDS ${RAVEN_DARWIN_HANDOFF_BENCHMARK})
+        add_test(NAME native_darwin_handoff COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_handoff.py
+            $<TARGET_FILE:raven> --run-process --execution=native --timeout-ms=15000
+            --stdio=inherit ${RAVEN_DARWIN_HANDOFF_BENCHMARK})
+        add_test(NAME native_darwin_handoff_parallel COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_handoff.py
+            $<TARGET_FILE:raven> --run-process --execution=native --timeout-ms=15000
+            --stdio=inherit ${RAVEN_DARWIN_HANDOFF_BENCHMARK})
+        set_tests_properties(native_darwin_handoff native_darwin_handoff_parallel PROPERTIES TIMEOUT 30)
+        add_test(NAME native_darwin_handoff_runner COMMAND ${Python3_EXECUTABLE}
+            ${RAVEN_DARWIN_DIR}/tests/handoff_runner_test.py)
+        set_tests_properties(native_darwin_handoff_parallel PROPERTIES ENVIRONMENT RAVEN_PARALLEL=1)
     endif()
 endif()
 

@@ -12,6 +12,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <ucontext.h>
 #include <poll.h>
 #include <vector>
@@ -32,6 +33,8 @@ struct GuestThread {
 	// Wait condition: pure check, evaluated by the scheduler; the thread resumes when it holds or the wake time passes.
 	std::function<bool()> ready;
 	std::optional<std::chrono::steady_clock::time_point> wake;
+	// Borrowed from the live waiting frame; readiness ends scheduler and desktop sleeps.
+	std::span<const pollfd> descriptors;
 	uint32_t exit_code = 0x103;
 	int suspend_count = 0;
 	uint64_t start = 0, parameter = 0;
@@ -126,8 +129,10 @@ public:
 	GuestThread &current() { return *running; }
 	std::shared_ptr<GuestThread> find(uint32_t id) const;
 	uint32_t current_id() const { return running->id; }
-	// Blocks the current thread until ready() holds (true) or the wake time passes (false).
-	bool block(std::function<bool()> ready, std::optional<std::chrono::steady_clock::time_point> wake);
+	// Blocks the current thread until ready() holds (true) or the wake time passes (false). Descriptors are borrowed until return;
+	// their readiness wakes idle polling, but ready() remains authoritative (including closure and cancellation).
+	bool block(std::function<bool()> ready, std::optional<std::chrono::steady_clock::time_point> wake,
+		std::span<const pollfd> descriptors = {});
 	// Lets another runnable thread run; false when nothing else is runnable.
 	bool yield();
 	[[noreturn]] void exit_current(uint32_t code);
