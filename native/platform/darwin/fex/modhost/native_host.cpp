@@ -19,6 +19,7 @@
 #include "unwind.h"
 #include "fault.h"
 #include "bench.h"
+#include "module_contract.h"
 #include <thread>
 #include <atomic>
 #include <mach/mach_time.h>
@@ -95,15 +96,23 @@ void *resolve_native(const char *dll, const char *name) {
   return RavenNT::resolve_unwind(name);
 }
 NativeJit import_jit;
+std::mutex adapter_mutex;
+std::map<std::pair<std::string,std::string>,void*> adapter_cache;
 void *resolve(const char *dll, const char *name) {
-  if (!strcmp(dll,"ntdll.dll") && !strcmp(name,"RtlCaptureContext")) return reinterpret_cast<void*>(&RavenNT::raven_capture_ec_context);
-  if (!strcmp(dll,"ntdll.dll") && !strcmp(name,"RtlRestoreContext")) return reinterpret_cast<void*>(&RavenNT::raven_restore_ec_context);
-  unsigned stack = 0;
-  auto *target = !strcmp(dll,"ntdll.dll") ? RavenNT::resolve_threads(name,stack) : nullptr;
-  if (!target) target = resolve_native(dll, name);
-  if (!target && !strcmp(dll,"ntdll.dll")) target = RavenNT::resolve_io(name, stack);
-
-  return target ? native_adapter(import_jit, target, stack) : nullptr;
+  std::lock_guard<std::mutex> lock(adapter_mutex);
+  auto key=std::make_pair(std::string(dll),std::string(name));
+  auto found=adapter_cache.find(key);if(found!=adapter_cache.end())return found->second;
+  void *adapter=nullptr;
+  if(!strcmp(dll,"ntdll.dll") && !strcmp(name,"RtlCaptureContext"))adapter=reinterpret_cast<void*>(&RavenNT::raven_capture_ec_context);
+  else if(!strcmp(dll,"ntdll.dll") && !strcmp(name,"RtlRestoreContext"))adapter=reinterpret_cast<void*>(&RavenNT::raven_restore_ec_context);
+  else {
+    unsigned stack=0;auto *target=!strcmp(dll,"ntdll.dll")?RavenNT::resolve_threads(name,stack):nullptr;
+    if(!target)target=resolve_native(dll,name);
+    if(!target && !strcmp(dll,"ntdll.dll"))target=RavenNT::resolve_io(name,stack);
+    if(target)adapter=native_adapter(import_jit,target,stack);
+  }
+  if(adapter){if(RavenNT::active_process)RavenNT::active_process->mark_ec(uintptr_t(adapter),4);adapter_cache.emplace(std::move(key),adapter);}
+  return adapter;
 }
 std::unique_ptr<PEView> mapped_image;
 std::unique_ptr<RavenNT::ProcessEnvironment> process_environment;
@@ -118,11 +127,15 @@ void inspect_image(Bytes image, size_t opt) {
   process_environment->put(0x10,image.data);
   mapped_image->install_tls(*thread_environment);
   auto *entry=mapped_image->export_address("RavenProcessInit");
-  if(!entry) throw std::runtime_error("missing RavenProcessInit native export");
+  if(!entry || uintptr_t(entry)!=uintptr_t(image.data)+RavenContract::process_init_rva ||
+     !mapped_image->ec_code(RavenContract::process_init_rva) ||
+     image.get<uint32_t>(RavenContract::process_init_rva)!=RavenContract::process_init_instruction)
+    throw std::runtime_error("CHPE RavenProcessInit target/RVA does not match pinned contract");
   std::cout << "CHPE native RavenProcessInit RVA=" << std::hex << uintptr_t(entry)-uintptr_t(image.data) << std::dec
             << " TLS_bytes=" << thread_environment->static_tls.size() << " TEB/CPU-area prepared (not entered)\n";
 }
 extern "C" void raven_check_ec_call();
+extern "C" void raven_checked_import();
 std::array<uint8_t,16384> user_shared_data {};
 NativeJit callback_jit;
 sigjmp_buf guest_return;
@@ -133,12 +146,14 @@ unsigned nested_calls=0;
 uint64_t timed_calls=0,expected_timed_calls=100000;
 uint64_t integer_expected=5292597211099207303ull;
 uint64_t float_expected_bits=0;
+bool x87_test=false;unsigned x87_dispatches=0;
 uint64_t invoke_nested(void *packet);
 bool guest_active=false,guest_ok=false;
 unsigned guest_calls=0;
 uint64_t expected_guest_end=0;
 uint64_t expected_fault_rip=0,expected_fault_address=0;unsigned faults_repaired=0;
 uint64_t guest_dispatch(uint64_t number,void *packet) {
+  require_native_x18();
   auto *context=static_cast<uint8_t*>(packet);
   auto reg=[&](size_t offset){uint64_t v;memcpy(&v,context+offset,8);return v;};
   if(!guest_active)std::abort();
@@ -148,6 +163,16 @@ uint64_t guest_dispatch(uint64_t number,void *packet) {
     auto result=reg(0xc8)+3*reg(0x88)+5*reg(0xb8)+7*reg(0xc0);
     if(exercise_nested)result+=invoke_nested(packet);
     return result;
+  }
+  if(number==0x108){
+    uint16_t status;memcpy(&status,context+0x102,2);
+    if(!x87_test || (status&0x3900)!=0x3100 || context[0x104]!=0xc0){guest_ok=false;siglongjmp(*active_return,1);}
+    ++x87_dispatches;return 0;
+  }
+  if(number==0x109){
+    uint16_t status;memcpy(&status,context+0x102,2);double value=4.14159265358979323846;uint64_t bits;memcpy(&bits,&value,8);
+    guest_ok=x87_dispatches==1 && faults_repaired==1 && !(status&0x3800) && context[0x104]==0 && reg(0xc8)==bits && reg(0xf8)==expected_guest_end;
+    siglongjmp(*active_return,1);
   }
   if(number==0x104 || number==0x105 || number==0x107){
     if(number==0x104)guest_ok=reg(0xc8)==integer_expected;
@@ -161,18 +186,21 @@ uint64_t guest_dispatch(uint64_t number,void *packet) {
   if(number==0x101){guest_ok=guest_calls==1 && reg(0xc8)==expected_resumed && reg(0xf8)==expected_guest_end;siglongjmp(*active_return,1);}
   guest_ok=false;siglongjmp(*active_return,1);
 }
-int32_t unix_call(uint64_t,uint32_t,void *) { return RavenNT::not_supported; }
+int32_t unix_call(uint64_t,uint32_t,void *) { require_native_x18();return RavenNT::not_supported; }
 int32_t exception_callback(void *opaque,void *packet,void *) {
+  require_native_x18();
   auto *record=static_cast<RavenFault::Record*>(opaque);auto *context=static_cast<uint8_t*>(packet);
   uint64_t rip=0;memcpy(&rip,context+0xf8,8);
   if(record->code!=0xc0000005 || record->count!=2 || record->information[0]!=0 || record->information[1]!=expected_fault_address || rip!=expected_fault_rip || record->address!=reinterpret_cast<void*>(rip))return RavenNT::not_supported;
+  if(x87_test){uint16_t status;memcpy(&status,context+0x102,2);if((status&0x3900)!=0x3100 || context[0x104]!=0xc0)return RavenNT::not_supported;}
   ++faults_repaired;rip+=3;uint64_t value=0x1234;memcpy(context+0xf8,&rip,8);memcpy(context+0x78,&value,8);return 0;
 }
-void *cpu_area(void *teb) { void *area=nullptr; if(teb)memcpy(&area,static_cast<uint8_t*>(teb)+0x1788,8);return area; }
-void host_log(const char *message) { std::cerr << "FEX: " << message << std::flush; }
-uint32_t jit_protect(uint32_t mode) { auto previous=NativeJit::protect(mode); if(getenv("RAVEN_MODHOST_TRACE"))fprintf(stderr,"jit mode=%u previous=%u\n",mode,previous); return previous; }
-void *native_jit(uint64_t size) { auto *p=callback_jit.allocate(size);process_environment->mark_ec(uintptr_t(p),size);return p; }
+void *cpu_area(void *teb) { require_native_x18();void *area=nullptr; if(teb)memcpy(&area,static_cast<uint8_t*>(teb)+0x1788,8);return area; }
+void host_log(const char *message) { require_native_x18();std::cerr << "FEX: " << message << std::flush; }
+uint32_t jit_protect(uint32_t mode) { require_native_x18();auto previous=NativeJit::protect(mode); if(getenv("RAVEN_MODHOST_TRACE"))fprintf(stderr,"jit mode=%u previous=%u\n",mode,previous); return previous; }
+void *native_jit(uint64_t size) { require_native_x18();auto *p=callback_jit.allocate(size);process_environment->mark_ec(uintptr_t(p),size);return p; }
 void memory_event(uint64_t address,uint64_t size,uint64_t kind) {
+  require_native_x18();
   // FEX explicitly identifies native cache reservations that may overcommit.
   // Darwin mprotect commits access without physically populating demand-zero pages.
   if(kind==1){void *base=reinterpret_cast<void*>(address);size_t n=size;
@@ -229,7 +257,8 @@ void execute_image(Bytes image,size_t opt) {
   }
   uint64_t args[8]{uintptr_t(image.data),1,0};auto teb=thread_environment->teb.data();
   auto entry=image.get<uint32_t>(opt+16);
-  if(entry){auto result=raven_ec_call(image.data+view.native_rva(entry),args,teb);if(!result)throw std::runtime_error("DllMain rejected attach");std::cout << "PASS: native PE DllMain attach\n" << std::flush;}
+  if(!entry)throw std::runtime_error("missing PE DllMain entry");
+  {auto result=raven_ec_call(image.data+view.native_rva(entry),args,teb);if(!result)throw std::runtime_error("DllMain rejected attach");std::cout << "PASS: native PE DllMain attach\n" << std::flush;}
   args[0]=uintptr_t(&host);
   auto status=uint32_t(raven_ec_call(view.export_address("RavenProcessInit"),args,teb));
   if(status)throw std::runtime_error("RavenProcessInit returned "+std::to_string(status));
@@ -286,11 +315,27 @@ void execute_image(Bytes image,size_t opt) {
   asm volatile("mov x18,%0"::"r"(previous_teb));guest_active=false;exercise_nested=false;
   if(!guest_ok || nested_calls!=1)throw std::runtime_error("nested callback result mismatch");
   std::cout << "PASS: nested harness-to-guest callback argument=41 result=124 outer_resumed_result=5008\n" << std::flush;
+  uint8_t x87_code[]{0xdb,0xe3,0xd9,0xe8,0xd9,0xeb,0xd9,0xc9,0xd8,0xd1,
+    0xb8,8,1,0,0,0x0f,0x05,0x48,0xb8,0,0,0,0,0,0,0,0,0x48,0x8b,0,
+    0xde,0xc1,0xdd,0x1c,0x24,0x4c,0x8b,0x14,0x24,0xb8,9,1,0,0,0x0f,0x05,0xeb,0xfe};
+  memcpy(x87_code+19,&bad_value,8);void *x87_guest=nullptr;size_t x87_size=sizeof(x87_code);
+  if(allocate(nullptr,&x87_guest,0,&x87_size,0x3000,0x40))throw std::runtime_error("x87 guest allocation failed");
+  memcpy(x87_guest,x87_code,sizeof(x87_code));notification[0]=uintptr_t(x87_guest);notification[1]=x87_size;
+  raven_ec_call(view.export_address("NotifyMemoryAlloc"),notification,teb);
+  rip=uintptr_t(x87_guest);memcpy(context+0xf8,&rip,8);memcpy(context+0x98,&rsp,8);
+  expected_fault_rip=rip+27;expected_fault_address=bad_value;expected_guest_end=rip+sizeof(x87_code)-2;
+  x87_test=true;x87_dispatches=0;faults_repaired=0;guest_ok=false;
+  if(!sigsetjmp(guest_return,1)){guest_active=true;raven_ec_call(view.export_address("BeginSimulation"),args,teb);std::abort();}
+  asm volatile("mov x18,%0"::"r"(previous_teb));guest_active=false;x87_test=false;
+  if(!guest_ok)throw std::runtime_error("occupied x87 dispatch/fault round trip failed");
+  std::cout << "PASS: occupied x87 dispatch and AV TOP/condition/tag/result preserved\n" << std::flush;
+
   auto install_guest=[&](const std::vector<uint8_t> &blob){void *base=nullptr;size_t size=blob.size();if(allocate(nullptr,&base,0,&size,0x3000,0x40))throw std::runtime_error("benchmark allocation failed");memcpy(base,blob.data(),blob.size());notification[0]=uintptr_t(base);notification[1]=size;raven_ec_call(view.export_address("NotifyMemoryAlloc"),notification,teb);return uintptr_t(base);};
   auto integer_code=install_guest(RavenBench::kernel(false,10000000));
   auto floating_code=install_guest(RavenBench::kernel(true,10000000));
   auto roundtrip_code=install_guest(RavenBench::roundtrip(expected_timed_calls));
-  double reference=0.5;for(unsigned i=0;i<10000000;++i)reference=reference*1.0000001+0.25;
+  uint64_t integer_reference=7;double reference=0.5;for(unsigned i=0;i<10000000;++i){integer_reference=integer_reference*1664525+1013904223;reference=reference*1.0000001+0.25;}
+  if(integer_reference!=integer_expected)throw std::runtime_error("integer reference mismatch");
   memcpy(&float_expected_bits,&reference,8);
   auto ns=[](){timespec t{};clock_gettime(CLOCK_MONOTONIC_RAW,&t);return uint64_t(t.tv_sec)*1000000000+t.tv_nsec;};
   auto run_timed=[&](uintptr_t address,size_t terminal,bool floating){
@@ -310,8 +355,39 @@ void execute_image(Bytes image,size_t opt) {
 
 
 }
+uint8_t *gap_base=nullptr;
+volatile sig_atomic_t first_faults=0,second_faults=0;
+void gap_fault(int,siginfo_t *info,void*) {
+  auto offset=uintptr_t(info->si_addr)-uintptr_t(gap_base);
+  if(offset<4096)++first_faults;else if(offset<8192)++second_faults;else _exit(2);
+  if(mprotect(gap_base,second_faults?16384:4096,PROT_READ|PROT_WRITE))_exit(2);
+}
+int tier0_second_fault() {
+  if(getpagesize()!=16384)return 2;
+  gap_base=static_cast<uint8_t*>(mmap(nullptr,16384,PROT_NONE,MAP_PRIVATE|MAP_ANON,-1,0));if(gap_base==MAP_FAILED)return 2;
+  struct sigaction action{};action.sa_sigaction=gap_fault;action.sa_flags=SA_SIGINFO;sigemptyset(&action.sa_mask);
+  if(sigaction(SIGBUS,&action,nullptr) || sigaction(SIGSEGV,&action,nullptr))return 2;
+  volatile uint8_t *memory=gap_base;auto first=memory[0],second=memory[4096];(void)first;(void)second;
+  munmap(gap_base,16384);
+  if(first_faults==1 && !second_faults){std::cout<<"XFAIL: first_faults=1 second_faults=0; second 4K page was exposed by first repair\n";return 1;}
+  std::cout<<"XPASS: second logical page faulted independently\n";return 0;
+}
 void self_test() {
   assert(page_size() == 16384);
+  alignas(16) uint8_t rejected_context[0x4d0]{};
+  expected_fault_rip=0x1234;expected_fault_address=0x4567;faults_repaired=0;
+  for(unsigned invalid_case=0;invalid_case<3;++invalid_case){
+    RavenFault::Record record{};record.code=0xc0000005;record.count=2;record.address=reinterpret_cast<void*>(expected_fault_rip);
+    record.information[1]=expected_fault_address;uint64_t rip=expected_fault_rip;
+    if(invalid_case==0)record.information[0]=1;
+    if(invalid_case==1){++rip;record.address=reinterpret_cast<void*>(rip);}
+    if(invalid_case==2)++record.information[1];
+    memcpy(rejected_context+0xf8,&rip,8);std::array<uint8_t,0x4d0> before{};memcpy(before.data(),rejected_context,sizeof(rejected_context));
+    assert(exception_callback(&record,rejected_context,nullptr)==RavenNT::not_supported);
+    assert(!memcmp(before.data(),rejected_context,sizeof(rejected_context)) && !faults_repaired);
+  }
+  expected_fault_rip=expected_fault_address=0;
+
   char formatted[64]; uint64_t va[3]{42,uintptr_t("bird"),0x3ff4000000000000ull};
   assert(RavenFormat::output(formatted,64,"%d %s %.2f",va)==12 && !strcmp(formatted,"42 bird 1.25"));
   int scanned=0;char scanned_text[16]{};
@@ -351,6 +427,13 @@ void self_test() {
   assert(RavenVM::allocate_ex(reinterpret_cast<void*>(-1),&native_code,&native_size,0x3000,0x40,&ec,1)==0);
   uint32_t ret_instruction=0xd65f03c0;NativeJit::write(native_code,&ret_instruction,4);
   reinterpret_cast<void(*)()>(native_code)();
+  uint32_t previous_protection=0;size_t executable_size=native_size;
+  assert(protect(nullptr,&native_code,&executable_size,0x20,&previous_protection)==0 && previous_protection==0x40);
+  reinterpret_cast<void(*)()>(native_code)();
+  assert(RavenVM::prot(0x20,false)==PROT_READ && RavenVM::prot(0x20,true)==(PROT_READ|PROT_EXEC));
+  auto write_mode=NativeJit::protect(0);previous_protection=0xdead;
+  assert(protect(nullptr,&native_code,&executable_size,0x20,&previous_protection)==RavenVM::unsupported && previous_protection==0xdead);
+  NativeJit::protect(write_mode);
   zero=0;assert(release(nullptr,&native_code,&zero,0x8000)==0);
   char temporary[]="/tmp/raven-modhost-io-XXXXXX";int fd=mkstemp(temporary);assert(fd>=0);close(fd);
   auto path=RavenNT::decode(temporary,strlen(temporary));RavenNT::String name{};RavenNT::init_unicode(&name,path.c_str());
@@ -364,9 +447,22 @@ void self_test() {
   void *view=nullptr;size_t view_size=0;
   assert(RavenNT::map_section(section,reinterpret_cast<void*>(-1),&view,0,0,nullptr,&view_size,1,0,2)==0 && view_size==4 && !memcmp(view,"bird",4));
   assert(RavenNT::unmap_section(reinterpret_cast<void*>(-1),view)==0);
-  assert(RavenNT::close_handle(section)==0 && RavenNT::close_handle(file)==0);unlink(temporary);
+  assert(RavenNT::close_handle(section)==0);
+  auto shared_views=[&](void *section_handle){
+    void *a=nullptr,*b=nullptr,*copy=nullptr;size_t n=0;
+    assert(!RavenNT::map_section(section_handle,reinterpret_cast<void*>(-1),&a,0,0,nullptr,&n,1,0,4));n=0;
+    assert(!RavenNT::map_section(section_handle,reinterpret_cast<void*>(-1),&b,0,0,nullptr,&n,1,0,4));n=0;
+    assert(!RavenNT::map_section(section_handle,reinterpret_cast<void*>(-1),&copy,0,0,nullptr,&n,1,0,8));
+    static_cast<char*>(a)[0]='B';assert(static_cast<char*>(b)[0]=='B');
+    static_cast<char*>(copy)[0]='X';assert(static_cast<char*>(a)[0]=='B' && static_cast<char*>(b)[0]=='B');
+    for(auto *p:{a,b,copy})assert(!RavenNT::unmap_section(reinterpret_cast<void*>(-1),p));
+  };
+  assert(!RavenNT::create_section(&section,0,nullptr,nullptr,4,0x8000000,file));shared_views(section);assert(!RavenNT::close_handle(section));
+  char visible=0;assert(!RavenNT::read_file(file,nullptr,nullptr,nullptr,&io,&visible,1,&position,0) && visible=='B');
+  int64_t anonymous_size=16384;assert(!RavenNT::create_section(&section,0,nullptr,&anonymous_size,4,0x8000000,nullptr));shared_views(section);assert(!RavenNT::close_handle(section));
+  assert(RavenNT::close_handle(file)==0);unlink(temporary);
   alignas(16) uint8_t captured[0x4d0]{};
-  uint64_t capture_args[8]{uintptr_t(captured)}; uint64_t capture_teb[1024]{};
+  uint64_t capture_args[8]{uintptr_t(captured)}; uint64_t capture_teb[1536]{};
   raven_ec_call(reinterpret_cast<void*>(&RavenNT::raven_capture_ec_context),capture_args,capture_teb);
   assert(*reinterpret_cast<uint64_t*>(captured+0xf8) && *reinterpret_cast<uint64_t*>(captured+0x98));
   std::array<uint8_t,512> unwind_image{};PEView fixture_view{Bytes{unwind_image.data(),unwind_image.size()},0};
@@ -387,18 +483,53 @@ void self_test() {
   assert(*reinterpret_cast<void**>(thread.teb.data()+0x1788)==&thread.cpu);
   assert(cpu_area(thread.teb.data())==&thread.cpu);
   RavenNT::active_process=&process;RavenNT::active_thread=&thread;RavenNT::pseudo_handle=RavenNT::current_handle;
-  auto worker_entry=+[](void *p)->uint64_t{return *static_cast<uint64_t*>(p)+1;};
+  auto worker_entry=+[](void *p)->uint64_t{require_native_x18();stack_t stack{};assert(!sigaltstack(nullptr,&stack) && !(stack.ss_flags&SS_DISABLE));return *static_cast<uint64_t*>(p)+1;};
+  NativeJit worker_jit;auto *native_worker=native_adapter(worker_jit,reinterpret_cast<void*>(worker_entry));
   uint64_t worker_input=41;void *worker_handle=nullptr;
-  assert(RavenNT::create_thread(&worker_handle,0x1fffff,nullptr,reinterpret_cast<void*>(-1),reinterpret_cast<void*>(worker_entry),&worker_input,0x10,0,0,0,0)==0);
+  assert(RavenNT::create_thread(&worker_handle,0x1fffff,nullptr,reinterpret_cast<void*>(-1),native_worker,&worker_input,0x10,0,0,0,0)==0);
+  std::weak_ptr<RavenNT::ThreadControl> normal_worker=RavenNT::get_handle(worker_handle)->control;
   assert(RavenNT::wait_one(worker_handle,0,nullptr)==0);
   assert(RavenNT::get_handle(worker_handle)->control->exit_status==42);
   uint32_t object_info[14]{};assert(RavenNT::query_object(worker_handle,0,object_info,sizeof(object_info),nullptr)==0 && object_info[1]==0x1fffff);
   assert(RavenNT::close_handle(worker_handle)==0);
+  auto cleanup_deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+  while(!normal_worker.expired() && std::chrono::steady_clock::now()<cleanup_deadline)std::this_thread::yield();
+  assert(normal_worker.expired());
   RavenNT::String registry_name{};RavenNT::init_unicode(&registry_name,u"\\Registry\\Machine\\Hardware\\Description\\System\\CentralProcessor\\0");
   RavenNT::ObjectAttributes registry_object{48,0,nullptr,&registry_name,0,0,nullptr,nullptr};void *registry_key=nullptr;
   assert(RavenNT::open_key(&registry_key,0,&registry_object,0)==0);
   RavenNT::String value_name{};RavenNT::init_unicode(&value_name,u"CP 4030");uint8_t registry_value[20]{};
   assert(RavenNT::query_value(registry_key,&value_name,2,registry_value,20,nullptr)==0);assert(RavenNT::close_handle(registry_key)==0);
+  RavenNT::import_lookup=resolve;
+  import_jit.each_region([&](void *p,size_t n){process.mark_ec(uintptr_t(p),n);});
+  auto adapters_before=adapter_cache.size();
+  RavenNT::String dynamic_name{};RavenNT::init_ansi(&dynamic_name,"strlen");void *dynamic=nullptr,*again=nullptr;
+  assert(!RavenNT::procedure(&RavenNT::ntdll_token,&dynamic_name,0,&dynamic));
+  assert(!RavenNT::procedure(&RavenNT::ntdll_token,&dynamic_name,0,&again) && dynamic==again && RavenNT::is_ec(dynamic));
+  assert(adapter_cache.size()==adapters_before+1);
+  uint64_t dynamic_args[8]{uintptr_t(dynamic),uintptr_t("dynamic")};
+  assert(raven_ec_call(reinterpret_cast<void*>(&raven_checked_import),dynamic_args,thread.teb.data())==7);
+  std::array<void*,8> resolved{};std::vector<std::thread> resolvers;
+  adapters_before=adapter_cache.size();
+  NativeJit concurrent_jit;uint32_t ret=0xd65f03c0;
+  for(size_t i=0;i<resolved.size();++i)resolvers.emplace_back([&,i]{
+    require_native_x18();for(unsigned j=0;j<32;++j){resolved[i]=resolve("ntdll.dll","sin");auto *code=concurrent_jit.immutable(&ret,4);reinterpret_cast<void(*)()>(code)();}
+  });
+  for(auto &worker:resolvers)worker.join();for(auto *p:resolved)assert(p==resolved[0] && RavenNT::is_ec(p));
+  assert(adapter_cache.size()==adapters_before+1);
+  size_t regions=0;concurrent_jit.each_region([&](void*,size_t){++regions;});assert(regions==8*32);
+  auto terminating=+[](void*)->uint64_t {require_native_x18();RavenNT::terminate_thread(reinterpret_cast<void*>(-2),37);std::abort();};
+  auto *termination_adapter=native_adapter(worker_jit,reinterpret_cast<void*>(terminating));
+  auto environment_baseline=RavenNT::ThreadEnvironment::live_environments.load();
+  size_t handle_baseline=RavenNT::handles.size();
+  for(unsigned iteration=0;iteration<64;++iteration){
+    void *handle=nullptr;assert(!RavenNT::create_thread(&handle,0x1fffff,nullptr,reinterpret_cast<void*>(-1),termination_adapter,nullptr,0x10,0,0,0,0));
+    std::weak_ptr<RavenNT::ThreadControl> weak=RavenNT::get_handle(handle)->control;
+    assert(!RavenNT::wait_one(handle,0,nullptr));assert(RavenNT::get_handle(handle)->control->exit_status==37);assert(!RavenNT::close_handle(handle));
+    auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(2);
+    while((!weak.expired() || RavenNT::ThreadEnvironment::live_environments.load()!=environment_baseline) && std::chrono::steady_clock::now()<deadline)std::this_thread::yield();
+    assert(weak.expired() && RavenNT::ThreadEnvironment::live_environments.load()==environment_baseline && RavenNT::handles.size()==handle_baseline);
+  }
   RavenNT::active_process=nullptr;RavenNT::active_thread=nullptr;
   auto utf16 = RavenNT::decode("A\xf0\x9f\x90\xa6", 5);
   assert(utf16 == u"A\U0001f426" && RavenNT::encode(utf16.data(), utf16.size()) == "A\xf0\x9f\x90\xa6");
@@ -416,7 +547,7 @@ void self_test() {
   char *last = nullptr;
   assert(RavenCRT::ansi_ulong("-1!", &last, 10) == UINT32_MAX && *last == '!');
   uint64_t args[8] {reinterpret_cast<uintptr_t>(text)};
-  uint64_t teb[1024] {};
+  uint64_t teb[1536] {};
   auto *length_adapter = resolve("ntdll.dll", "wcslen");
   assert(length_adapter && raven_ec_call(length_adapter, args, teb) == 11);
   void *p = nullptr; size_t n = 1;
@@ -434,10 +565,16 @@ void self_test() {
   int key = 0; assert(initialize_lock(&key) == 0); assert(enter(&key) == 0);
   assert(try_enter(&key)); assert(leave(&key) == 0); assert(leave(&key) == 0); assert(delete_lock(&key) == 0);
   int64_t a, b, f; assert(qpc(&a, &f) == 1 && f > 0); assert(qpc(&b, nullptr) == 1 && b >= a);
+  std::cout << "PASS: negative fault repair, dynamic checked imports/concurrency, shared sections, RX JIT, worker termination\n";
   std::cout << "PASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)\n";
 }
 }
 int main(int argc, char **argv) {
+  require_native_x18();
+  if(argc==2 && std::string(argv[1])=="--tier0-second-fault")return tier0_second_fault();
+  if(argc==2 && std::string(argv[1])=="--unsupported-unwind"){
+    uint8_t context[0x4d0]{};RavenNT::UnwindState state{context};RavenNT::apply_ops(state,{{0xff,0,1},{0xe4,0,1}},0);return 2;
+  }
   if (argc == 2 && std::string(argv[1]) == "--self-test") { self_test(); return 0; }
   if (argc==3 && std::string(argv[1])=="--execute") return map_module(argc-1,argv+1,resolve,inspect_image,execute_image);
   return map_module(argc, argv, resolve, inspect_image);

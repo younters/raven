@@ -18,3 +18,6 @@ inline void *native_adapter(NativeJit &jit, void *target, unsigned stack_args = 
   // JIT write scope. MAP_JIT veneers would fault in that thread-wide mode.
   return jit.immutable(code.data(), sizeof(code));
 }
+
+inline uint64_t native_x18() {uint64_t value;asm volatile("mov %0,x18":"=r"(value));return value;}
+inline void require_native_x18() {if(native_x18()!=0)__builtin_trap();}

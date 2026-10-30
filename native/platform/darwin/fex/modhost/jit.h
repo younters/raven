@@ -7,16 +7,18 @@
 #include <cstring>
 #include <stdexcept>
 #include <vector>
+#include <mutex>
 
 // Standalone Tier 0 ownership; never claims Windows 4 KiB VM semantics.
 class NativeJit {
   struct Region { void *base; size_t size; };
   std::vector<Region> regions;
+  mutable std::mutex mutex;
 public:
   NativeJit() = default;
   NativeJit(const NativeJit&) = delete;
   NativeJit& operator=(const NativeJit&) = delete;
-  template<class F> void each_region(F visit) const { for(auto r:regions) visit(r.base,r.size); }
+  template<class F> void each_region(F visit) const { std::lock_guard<std::mutex> lock(mutex); for(auto r:regions) visit(r.base,r.size); }
   ~NativeJit() { for (auto r : regions) munmap(r.base, r.size); }
   void *allocate(size_t size) {
     if (!size || size > SIZE_MAX - 16383) throw std::runtime_error("bad JIT allocation size");
@@ -24,7 +26,7 @@ public:
     void *base = mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC,
                       MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
     if (base == MAP_FAILED) throw std::runtime_error("MAP_JIT allocation failed");
-    regions.push_back({base, size});
+    {std::lock_guard<std::mutex> lock(mutex);regions.push_back({base, size});}
     return base;
   }
   void *immutable(const void *code,size_t size) {
@@ -33,7 +35,7 @@ public:
     if(p==MAP_FAILED)throw std::runtime_error("adapter allocation failed");
     memcpy(p,code,size);sys_icache_invalidate(p,size);
     if(mprotect(p,rounded,PROT_READ|PROT_EXEC)){munmap(p,rounded);throw std::runtime_error("adapter RX protection failed");}
-    regions.push_back({p,rounded});return p;
+    {std::lock_guard<std::mutex> lock(mutex);regions.push_back({p,rounded});}return p;
   }
   inline static thread_local bool write_protected = true;
   static uint32_t protect(uint32_t mode) {

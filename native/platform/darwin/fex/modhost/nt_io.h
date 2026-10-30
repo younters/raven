@@ -122,7 +122,11 @@ int32_t create_section(void **out,uint32_t,ObjectAttributes *object,const int64_
   if(out)*out=nullptr;if(!out)return invalid_parameter;if(object || (attributes&~0x8000000u))return not_supported;
   auto h=std::make_shared<Handle>(Handle::section);h->section_protection=protection;
   if(file) {auto f=get_handle(file);if(!f || f->kind!=Handle::file)return bad_handle;h->fd=dup(f->fd);if(h->fd<0)return os_error(errno);struct stat st{};if(fstat(h->fd,&st))return os_error(errno);h->section_size=size?*size:st.st_size;}
-  else {if(!size || *size<=0)return invalid_parameter;h->section_size=*size;}
+  else {if(!size || *size<=0)return invalid_parameter;h->section_size=*size;
+    // An unlinked temporary backing object gives all views the same pages.
+    char path[]="/tmp/raven-section-XXXXXX";h->fd=mkstemp(path);if(h->fd<0)return os_error(errno);
+    unlink(path);fcntl(h->fd,F_SETFD,FD_CLOEXEC);if(ftruncate(h->fd,*size))return os_error(errno);
+  }
   *out=new_handle(h);return 0;
 }
 std::map<void*,size_t> views;
@@ -135,7 +139,7 @@ int32_t map_section(void *handle,void *process,void **base,uint64_t zero,size_t 
   auto at=offset?uint64_t(*offset):0;if(at>=h->section_size)return invalid_parameter;
   auto n=*size?*size:h->section_size-at;if(n>h->section_size-at)return invalid_parameter;
   auto prot=RavenVM::prot(protection);if(prot<0)return invalid_parameter;
-  void *p=mmap(nullptr,n,prot,MAP_PRIVATE|(h->fd<0?MAP_ANON:0),h->fd,at);if(p==MAP_FAILED)return os_error(errno);
+  void *p=mmap(nullptr,n,prot,((protection==8 || protection==0x80)?MAP_PRIVATE:MAP_SHARED),h->fd,at);if(p==MAP_FAILED)return os_error(errno);
   {std::lock_guard<std::mutex> g(handles_mutex);views[p]=n;}*base=p;*size=n;return 0;
 }
 int32_t unmap_section(void *process,void *base) {if(intptr_t(process)!=-1)return bad_handle;std::lock_guard<std::mutex> g(handles_mutex);auto i=views.find(base);if(i==views.end())return invalid_parameter;if(munmap(base,i->second))return os_error(errno);views.erase(i);return 0;}

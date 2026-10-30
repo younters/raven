@@ -28,7 +28,7 @@ int32_t get_context(void *handle,void *out) {
 uint8_t is_ec(void *address) {
   if(!active_process || uintptr_t(address)>=(1ull<<47))return 0;
   auto page=uintptr_t(address)>>12;
-  return (static_cast<uint8_t*>(active_process->code_bitmap)[page/8]>>(page%8))&1;
+  return (__atomic_load_n(static_cast<uint8_t*>(active_process->code_bitmap)+page/8,__ATOMIC_ACQUIRE)>>(page%8))&1;
 }
 void *extended_feature(void *extended,uint32_t feature,uint32_t *length) {
   if(length)*length=0;if(!extended || feature!=2)return nullptr;

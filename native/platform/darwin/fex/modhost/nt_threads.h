@@ -2,6 +2,7 @@
 #pragma once
 #include "nt_system.h"
 #include <setjmp.h>
+#include "signal_stack.h"
 namespace RavenNT {
 struct ThreadControl {
   pthread_t pthread{};std::mutex mutex;std::condition_variable condition;
@@ -16,13 +17,14 @@ std::shared_ptr<Handle> current_handle(void *) {
 }
 struct Start {std::shared_ptr<Handle> handle;void *function,*argument;};
 void *thread_start(void *opaque) {
+  require_native_x18();AlternateSignalStack signal_stack;
   std::unique_ptr<Start> start(static_cast<Start*>(opaque));auto h=start->handle;
   self_handle=h;auto c=h->control;pthread_threadid_np(nullptr,&c->tid);
   c->environment=std::make_unique<ThreadEnvironment>(*active_process);active_thread=c->environment.get();
   {std::lock_guard<std::mutex> guard(c->mutex);c->ready=true;}c->condition.notify_all();
   jmp_buf exit;thread_exit_frame=&exit;
   if(!setjmp(exit)){uint64_t args[8]{uintptr_t(start->argument)};c->exit_status=raven_ec_call(start->function,args,active_thread->teb.data());}
-  thread_exit_frame=nullptr;
+  require_native_x18();thread_exit_frame=nullptr;
   {std::lock_guard<std::mutex> guard(c->mutex);c->done=true;}c->condition.notify_all();
   self_handle.reset();active_thread=nullptr;return nullptr;
 }
@@ -45,10 +47,13 @@ int32_t wait_one(void *handle,uint8_t alert,const int64_t *timeout) {
   fprintf(stderr,"module requested process termination status=%08x\n",uint32_t(status));fflush(stderr);_exit(status);
 }
 int32_t terminate_thread(void *handle,int32_t status) {
-  auto h=get_handle(handle);if(!h || h->kind!=Handle::thread)return bad_handle;
-  if(!pthread_equal(h->control->pthread,pthread_self()))return not_supported;
-  if(!thread_exit_frame)return not_supported;
-  h->control->exit_status=status;longjmp(*thread_exit_frame,1);
+  {
+    auto h=get_handle(handle);if(!h || h->kind!=Handle::thread)return bad_handle;
+    if(!pthread_equal(h->control->pthread,pthread_self()))return not_supported;
+    if(!thread_exit_frame)return not_supported;
+    h->control->exit_status=status;
+  } // Destroy all C++ ownership before the nonlocal exit.
+  longjmp(*thread_exit_frame,1);
 }
 int32_t suspend_thread(void *handle,uint32_t *previous) {
   auto h=get_handle(handle);if(!h || h->kind!=Handle::thread)return bad_handle;

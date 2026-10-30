@@ -11,7 +11,7 @@ size_t page() { return getpagesize(); }
 size_t round(size_t n) { return n && n<=SIZE_MAX-page()+1 ? (n+page()-1)&~(page()-1) : 0; }
 int prot(uint32_t p,bool ec=false) {
   // Guest executable pages contain x86, not native instructions.
-  switch(p) { case 1:return PROT_NONE; case 2:case 0x20:return PROT_READ;
+  switch(p) { case 1:return PROT_NONE; case 2:return PROT_READ;case 0x20:return PROT_READ|(ec?PROT_EXEC:0);
     case 4:case 8:case 0x40:case 0x80:return PROT_READ|PROT_WRITE|(ec?PROT_EXEC:0);
     case 0x10:return ec?PROT_EXEC:PROT_READ; default:return -1; }
 }
@@ -93,7 +93,12 @@ int32_t protect(void *p,void **base,size_t *size,uint32_t protection,uint32_t *o
   if(i==regions.end() || !n || n>i->second.size-(at-i->first) || prot(protection,i->second.ec)<0) return invalid;
   auto first=(at-i->first)/page();
   for(size_t j=0;j<n/page();++j) if(!i->second.protections[first+j]) return int32_t(0xc000002d);
-  if(mprotect(reinterpret_cast<void*>(at),n,prot(protection,i->second.ec))) return invalid;
+  if(i->second.ec && protection==0x20) {
+    // MAP_JIT mappings cannot be reprotected on Darwin (EACCES). They already
+    // execute/read under the real per-thread JIT write-protection facility.
+    // Do not claim this transition inside a writable JIT scope.
+    if(!NativeJit::write_protected)return unsupported;
+  } else if(mprotect(reinterpret_cast<void*>(at),n,prot(protection,i->second.ec))) return i->second.ec?unsupported:invalid;
   if(getenv("RAVEN_MODHOST_TRACE"))fprintf(stderr,"VM protect %p size=%zu EC=%d protect=%x\n",reinterpret_cast<void*>(at),n,i->second.ec,protection);
   *old=i->second.protections[first]; std::fill_n(i->second.protections.begin()+first,n/page(),protection);
   *base=reinterpret_cast<void*>(at); *size=n; return 0;

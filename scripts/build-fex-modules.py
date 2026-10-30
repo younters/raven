@@ -3,6 +3,7 @@
 Run test-fex-modhost.py separately to require guest execution and measurements.
 """
 import argparse
+import re
 import hashlib
 import json
 import os
@@ -13,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
+from fex_modhost_contract import verify_patch_pins, verify_module_pin
 
 PIN = '370c63057fc9fc826b58fe15d59930876df55b5f'
 URL = 'https://github.com/dbc-hbin/FEX-darwin.git'
@@ -53,7 +55,8 @@ def probes(root):
     if next(r for r in results if r['variant'] == 'sdk11' and not r['args'])['returncode']:
         raise RuntimeError('x18 legacy SDK gate failed; stop before module build')
 
-def build(root, raven_host=False):
+def build(root, raven_host=False, build_id=None, clean=False):
+    contract = verify_patch_pins() if raven_host else None
     source = root / 'FEX-darwin'
     if not source.exists():
         run(['git', 'clone', '--no-checkout', URL, source])
@@ -95,9 +98,18 @@ def build(root, raven_host=False):
         with tarfile.open(archive) as stream:
             # Archive is authenticated above; preserve toolchain's internal symlinks.
             stream.extractall(root, filter='data')
-    output = source / ('build/local/m1d-final' if raven_host else 'build/local/m1b')
+    build_id = build_id or ('m1d-final' if raven_host else 'm1b')
+    if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', build_id):
+        raise RuntimeError('build id must be a simple directory name')
+    output = source / 'build/local' / build_id
+    if clean and output.exists():
+        if output.is_symlink():
+            raise RuntimeError('refusing to clean a symlink build output')
+        shutil.rmtree(output)
     manifest = output / 'fex-result.json'
-    if not manifest.exists():
+    cached = manifest.exists()
+    print(f'Build id={build_id} mode={"cached" if cached else "fresh"}', flush=True)
+    if not cached:
         run([sys.executable, source / 'Darwin/build.py', '--output', output,
              '--llvm-mingw', compiler, '--jobs', '8', *(['--raven-host'] if raven_host else [])])
     result = json.loads(manifest.read_text())
@@ -114,15 +126,22 @@ def build(root, raven_host=False):
             raise RuntimeError('submodule identity mismatch: ' + item['path'])
     if result['status'] != 'pass':
         raise RuntimeError('build blocked; inspect ' + str(manifest))
+    for item in result['licenses']:
+        bundled = output / 'licenses' / item['path'].replace('/', '__')
+        if sha(bundled) != item['sha256']:
+            raise RuntimeError('license bundle checksum mismatch: ' + item['path'])
+    shutil.copytree(output / 'licenses', root / 'licenses', dirs_exist_ok=True)
     for name, info in result['artifacts'].items():
         src = Path(info['path'])
         if sha(src) != info['sha256']:
             raise RuntimeError('artifact checksum mismatch: ' + name)
+        if raven_host and name == 'xtajit64.dll':
+            verify_module_pin(src, contract)
         shutil.copyfile(src, root / name)
     pins = dict(source_commit=PIN, source_archive_sha256=hashlib.sha256(subprocess.check_output(
         ['git', '-C', str(source), 'archive', '--format=tar', PIN])).hexdigest(),
         toolchain_archive_sha256=TOOL_SHA, patches=[dict(path=str(p.relative_to(REPO)), sha256=sha(p)) for p in patches],
-        build=result)
+        build_id=build_id, cached=cached, build=result)
     (root / ('m1d-manifest.json' if raven_host else 'manifest.json')).write_text(json.dumps(pins, indent=2) + '\n')
     exe = root / 'pe-preflight'
     run(['xcrun', 'clang++', '-arch', 'arm64', '-std=c++17', '-O2', '-Wall', '-Wextra', '-Werror',
@@ -149,14 +168,18 @@ def build(root, raven_host=False):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--raven-host', action='store_true', help='Build the Raven host frontend; qualify execution with test-fex-modhost.py')
-    parser.add_argument('--root', type=Path, default=Path('/Users/yount/Documents/Projects/raven-components/fex-modules'))
+    parser.add_argument('--root', type=Path, default=os.environ.get('RAVEN_FEX_MODULE_ROOT'))
+    parser.add_argument('--build-id', help='Named build output under FEX-darwin/build/local')
+    parser.add_argument('--clean', action='store_true', help='Remove only the selected build output before rebuilding')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--probes-only', action='store_true')
     mode.add_argument('--build-only', action='store_true')
     args = parser.parse_args()
+    if args.root is None:
+        parser.error('set RAVEN_FEX_MODULE_ROOT or pass --root')
     args.root.mkdir(parents=True, exist_ok=True)
     try:
         if not args.build_only: probes(args.root)
-        if not args.probes_only: build(args.root, args.raven_host)
+        if not args.probes_only: build(args.root, args.raven_host, args.build_id, args.clean)
     except (RuntimeError, subprocess.SubprocessError, OSError) as error:
         sys.exit(str(error))

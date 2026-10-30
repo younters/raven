@@ -2,6 +2,7 @@
 #pragma once
 #include "nt_strings.h"
 #include <array>
+#include <atomic>
 #include <pthread.h>
 #include <sys/mman.h>
 namespace RavenNT {
@@ -36,10 +37,12 @@ struct ProcessEnvironment {
   ~ProcessEnvironment() { munmap(code_bitmap,bitmap_size); }
   void mark_ec(uintptr_t begin,size_t size,bool present=true) {
     if(begin>=(1ull<<47) || size>(1ull<<47)-begin) throw std::runtime_error("EC address outside bitmap");
-    for(auto p=begin>>12;p<(begin+size+4095)>>12;++p) { auto &byte=static_cast<uint8_t*>(code_bitmap)[p/8];if(present)byte|=1u<<(p%8);else byte&=~(1u<<(p%8)); }
+    for(auto p=begin>>12;p<(begin+size+4095)>>12;++p) { auto &byte=static_cast<uint8_t*>(code_bitmap)[p/8];if(present)__atomic_fetch_or(&byte,uint8_t(1u<<(p%8)),__ATOMIC_RELEASE);else __atomic_fetch_and(&byte,uint8_t(~(1u<<(p%8))),__ATOMIC_RELEASE); }
   }
 };
 struct ThreadEnvironment {
+  inline static std::atomic<unsigned> live_environments{0};
+  ~ThreadEnvironment(){--live_environments;}
   alignas(16) std::array<uint8_t,0x3000> teb {};
   alignas(16) std::array<uint8_t,0x600> context {};
   std::array<void*,64> tls_vector {};
@@ -52,7 +55,7 @@ struct ThreadEnvironment {
     put(8,high); put(16,high-pthread_get_stacksize_np(pthread_self()));
     put(0x30,teb.data()); put<uint64_t>(0x40,getpid()); put(0x48,tid);
     put(0x58,tls_vector.data()); put(0x60,process.peb.data()); put(0x1788,&cpu);
-    cpu.context=context.data();
+    cpu.context=context.data();++live_environments;
   }
   void install_tls(const void *data,size_t initialized,size_t zero_fill) {
     if(initialized>SIZE_MAX-zero_fill) throw std::runtime_error("TLS size overflow");

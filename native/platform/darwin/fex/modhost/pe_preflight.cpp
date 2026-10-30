@@ -91,7 +91,7 @@ int main(int argc, char **argv) {
 #endif
     auto imports = f.get<uint32_t>(opt + 120), isize = f.get<uint32_t>(opt + 124);
     image.check(imports, isize);
-    size_t count = 0, resolved = 0;
+    size_t count = 0, resolved = 0, auxiliary_writes = 0;
     for (size_t at = imports, end = size_t(imports) + isize; at + 20 <= end; at += 20) {
       auto name = image.get<uint32_t>(at + 12);
       if (!name) break;
@@ -114,7 +114,12 @@ int main(int argc, char **argv) {
                 auto metadata = metadata_va - reinterpret_cast<uintptr_t>(image.data);
                 auto auxiliary = image.get<uint32_t>(metadata + 44);
                 auto iat_base = image.get<uint32_t>(opt + 112 + 12 * 8);
-                if (auxiliary) image.put<uint64_t>(auxiliary + iat + i * 8 - iat_base, reinterpret_cast<uintptr_t>(target));
+                if (auxiliary) {
+                  auto slot=auxiliary + iat + i * 8 - iat_base;
+                  image.put<uint64_t>(slot,reinterpret_cast<uintptr_t>(target));
+                  if(image.get<uint64_t>(slot)!=reinterpret_cast<uintptr_t>(target))throw std::runtime_error("auxiliary IAT write verification failed");
+                  ++auxiliary_writes;
+                }
               }
             }
             ++resolved;
@@ -128,9 +133,10 @@ int main(int argc, char **argv) {
         std::cout << '\n'; ++count;
       }
     }
+    std::cout << "auxiliary_iat_writes=" << auxiliary_writes << "\n";
     std::cout << "resolved=" << resolved << "\n";
 #ifdef RAVEN_HOST_LOADER
-    if (!count && execute) { execute(image, opt); return 0; }
+    if (!count && execute) { if(resolved!=127 || auxiliary_writes!=127)throw std::runtime_error("expected 127 ordinary and auxiliary IAT writes");execute(image, opt); return 0; }
 #endif
     std::cout << "STOP: " << count << " unresolved imports; inspection only, no module entry attempted\n";
     return 3;

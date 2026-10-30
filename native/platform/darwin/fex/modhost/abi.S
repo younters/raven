@@ -16,6 +16,7 @@ _raven_ec_call:
   stp d12, d13, [sp, #128]
   stp d14, d15, [sp, #144]
   str x18, [sp, #160]
+  str x18, [x2, #0x2ff0] // owned TEB extension: native x18 for this entry
   mov x16, x0
   mov x18, x2
   mov x17, x1
@@ -63,6 +64,7 @@ _raven_native_call:
   subs x17, x17, #1
   b.ne 1b
 2:
+  ldr x18, [x18, #0x2ff0] // Darwin value, never the Windows TEB
   blr x16
   ldp q14, q15, [sp, #224]
   ldp q12, q13, [sp, #192]
@@ -86,4 +88,22 @@ _raven_check_ec_call:
   tbnz x16, #0, 1f
   brk #0x124
 1:
+  ret
+
+// Legacy-SDK native signal trampoline. The kernel-saved ucontext retains the
+// interrupted x18; Darwin's sigtramp must receive the native value (zero).
+.weak_reference _raven_fault_handler
+.globl _raven_signal_entry
+_raven_signal_entry:
+  mov x18, xzr
+  b _raven_fault_handler
+
+.globl _raven_checked_import
+_raven_checked_import:
+  stp x29, x30, [sp, #-16]!
+  mov x11, x0
+  mov x0, x1
+  bl _raven_check_ec_call
+  blr x11
+  ldp x29, x30, [sp], #16
   ret
