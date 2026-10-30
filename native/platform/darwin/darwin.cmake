@@ -707,3 +707,6 @@ add_dependencies(darwin_fd_budget_test raven darwin_fd_budget_observer)
 add_test(NAME native_darwin_fd_budget_startup COMMAND ${Python3_EXECUTABLE}
     ${RAVEN_DARWIN_DIR}/tests/fd_budget_startup.py $<TARGET_FILE:raven> $<TARGET_FILE:darwin_fd_budget_observer>)
 set_tests_properties(native_darwin_fd_budget_startup PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
+
+add_executable(darwin_dxmt_slot_state_test ${RAVEN_DARWIN_DIR}/dxmt/slot_state_test.c)
+add_test(NAME native_darwin_dxmt_slot_state COMMAND darwin_dxmt_slot_state_test)

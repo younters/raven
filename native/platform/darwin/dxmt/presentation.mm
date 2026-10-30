@@ -294,11 +294,7 @@ struct DarwinDXMTPresentation::State {
 				const auto &ack = reinterpret_cast<const ReleaseMessage &>(buffer.message);
 				if (auto *control = process.darwin_control(); control && ack.slot < RAVEN_SURFACE_SLOTS) {
 					auto &frame = control->surfaces[ack.slot];
-					if (frame.sequence == ack.sequence) {
-						uint32_t expected = RAVEN_SURFACE_DISPLAYED;
-						__atomic_compare_exchange_n(&frame.state, &expected, RAVEN_SURFACE_AVAILABLE, false,
-							__ATOMIC_RELEASE, __ATOMIC_RELAXED);
-					}
+					raven_surface_release(&frame, ack.sequence);
 				}
 			} else if (buffer.message.header.msgh_id == retire_message && buffer.message.header.msgh_size >= sizeof(RetireMessage)) {
 				const auto &retired = reinterpret_cast<const RetireMessage &>(buffer.message);
@@ -359,10 +355,7 @@ struct DarwinDXMTPresentation::State {
 		if (!content.sent) {
 			if (auto *control=process.darwin_control()) {
 				auto &frame=control->surfaces[content.slot];
-				if (frame.sequence==content.frame.sequence) {
-					uint32_t expected=RAVEN_SURFACE_DISPLAYED;
-					__atomic_compare_exchange_n(&frame.state,&expected,RAVEN_SURFACE_AVAILABLE,false,__ATOMIC_RELEASE,__ATOMIC_RELAXED);
-				}
+				raven_surface_release(&frame, content.frame.sequence);
 			}
 		}
 		if (content.surface) {IOSurfaceDecrementUseCount(content.surface);CFRelease(content.surface);content.surface=nullptr;}
@@ -425,20 +418,21 @@ struct DarwinDXMTPresentation::State {
 					const mach_port_t port=process.copy_unix_port(frame.port);
 					IOSurfaceRef surface=port?IOSurfaceLookupFromMachPort(port):nullptr;
 					if (port) mach_port_deallocate(mach_task_self(),port);
-					if (!surface) {__atomic_store_n(&frame.state,RAVEN_SURFACE_AVAILABLE,__ATOMIC_RELEASE);continue;}
+					if (!surface) {
+						raven_surface_transition(&frame, routed.sequence, RAVEN_SURFACE_IMPORTING, RAVEN_SURFACE_AVAILABLE);
+						continue;
+					}
 					auto &content=compositions[frame.window];
 					release_composition(content);
 					content={frame,index,surface,content.binding,content.sent};
 					IOSurfaceIncrementUseCount(surface);
-					__atomic_store_n(&frame.state,RAVEN_SURFACE_DISPLAYED,__ATOMIC_RELEASE);
-					publish_composition(frame.window,content,*binding,true);
+					raven_surface_transition(&frame, routed.sequence, RAVEN_SURFACE_IMPORTING, RAVEN_SURFACE_DISPLAYED);
+					publish_composition(routed.window,content,*binding,true);
 					continue;
 				}
 				if (const auto foreign = foreign_window_info(routed.window); foreign && !windows.host_surface(routed.window)) {
 					if (forward(routed, index, pid_t(foreign->process), binding?frame.window:0, binding.value_or(darwin::CompositionBinding{}))) {
-						expected = RAVEN_SURFACE_IMPORTING;
-						__atomic_compare_exchange_n(&frame.state, &expected, RAVEN_SURFACE_DISPLAYED, false,
-							__ATOMIC_RELEASE, __ATOMIC_RELAXED);
+						raven_surface_transition(&frame, routed.sequence, RAVEN_SURFACE_IMPORTING, RAVEN_SURFACE_DISPLAYED);
 						continue;
 					}
 				}
@@ -449,18 +443,14 @@ struct DarwinDXMTPresentation::State {
 					if (surface) CFRelease(surface);
 					++errors;
 					__atomic_fetch_add(&control->surface_errors, 1, __ATOMIC_RELAXED);
-					expected = RAVEN_SURFACE_IMPORTING;
-					__atomic_compare_exchange_n(&frame.state, &expected, RAVEN_SURFACE_AVAILABLE, false,
-						__ATOMIC_RELEASE, __ATOMIC_RELAXED);
+					raven_surface_transition(&frame, routed.sequence, RAVEN_SURFACE_IMPORTING, RAVEN_SURFACE_AVAILABLE);
 					if (errors == 1) {
 						std::cerr << "raven DXMT: cannot import IOSurface or find the macOS window surface; stream=" << std::hex << frame.window << " target=" << routed.window << std::dec << '\n';
 						windows.dump_windows();
 					}
 					continue;
 				}
-				expected = RAVEN_SURFACE_IMPORTING;
-				__atomic_compare_exchange_n(&frame.state, &expected, RAVEN_SURFACE_DISPLAYED, false,
-					__ATOMIC_RELEASE, __ATOMIC_RELAXED);
+				raven_surface_transition(&frame, routed.sequence, RAVEN_SURFACE_IMPORTING, RAVEN_SURFACE_DISPLAYED);
 			}
 			for (auto &[stream,content]:compositions) {
 				if (const auto binding=windows.composition_binding(stream)) publish_composition(stream,content,*binding);
