@@ -808,7 +808,9 @@ NativeProcess::NativeProcess(std::span<LoadedImage *const> images, const std::st
 
 NativeProcess::~NativeProcess()
 {
+#ifdef RAVEN_FEX_PROCESS
 	if (fex) return;
+#endif
 	if (std::getenv("RAVEN_PROFILE") && std::getenv("RAVEN_QUEUED_GRAPHICS"))
 		std::cerr << "profile: queued calls=" << state->queued_calls << '\n';
 	if (state->child && state->child->profile.enabled)
@@ -1980,6 +1982,11 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 		state->pending_cleanup = state->api_traps.at(registers.rip - 1);
 		return {NativeStop::api, registers.rip - 1, registers.rip, signal};
 	}
+	// CPU INT3 traps save the following RIP. Windows backs it up for SEH;
+	// registered API/return traps above retain their internal post-INT3 ABI.
+	if (!x86 && breakpoint && registers.rip && state->covers(registers.rip - 1, 1, PROT_EXEC) &&
+		read_memory(registers.rip - 1, 1)[0] == 0xcc)
+		--registers.rip;
 	if (signal != SIGSEGV && signal != SIGBUS && signal != SIGILL && signal != SIGFPE)
 		fault_address = 0;
 	return {NativeStop::fault, registers.rax, registers.rip, signal, fault_address, code};
@@ -2143,7 +2150,9 @@ void NativeProcess::drain_unix_events(const std::function<void(uint64_t)> &signa
 
 raven_control *NativeProcess::darwin_control() const
 {
+#ifdef RAVEN_FEX_PROCESS
 	if (fex) return nullptr;
+#endif
 	return state->child->control;
 }
 

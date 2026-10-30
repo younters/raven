@@ -480,8 +480,36 @@ void initialize_image(Bytes image, size_t opt, uint64_t (*dispatch)(uint64_t, vo
 		throw std::runtime_error("ThreadInit returned " + std::to_string(status));
 	std::cout << "PASS: ThreadInit\n" << std::flush;
 }
+void verify_host_callret_fault() {
+	// The pinned frontend allocates one 4 MiB call/return stack between two
+	// 16 KiB guards. Use its real allocation, not an arbitrary dummy address.
+	uintptr_t guard = 0;
+	unsigned matches = 0;
+	for (const auto &[base, region] : RavenVM::regions)
+		if (region.size == 0x400000 + 2 * 16384 && region.initial == 1 &&
+			!region.protections.front() && !region.protections.back()) {
+			guard = base;
+			++matches;
+		}
+	if (matches != 1) throw std::runtime_error("call/return guard probe did not find the pinned allocation");
+	RavenFault::Record record{};
+	record.code = 0xc0000005;
+	record.count = 2;
+	record.information[1] = guard;
+	RavenFault::NativeContext native{};
+	native.pc = uintptr_t(&host_log); // Native Mach-O code, outside the translator.
+	native.x[17] = 0x12345678;
+	const auto before = native;
+	uint64_t args[8]{uintptr_t(&record), uintptr_t(&native)};
+	const auto status = uint32_t(raven_ec_call(mapped_image->export_address("RavenHandleFault"), args,
+		thread_environment->teb.data()));
+	if (status != uint32_t(0xc00000bb) || memcmp(&before, &native, sizeof(native)))
+		throw std::runtime_error("non-JIT call/return-range host fault was repaired or changed context");
+	std::cout << "PASS: non-JIT host fault in actual call/return guard rejected without context changes\n";
+}
 void execute_image(Bytes image, size_t opt) {
 	initialize_image(image, opt);
+	verify_host_callret_fault();
 	PEView view{image, opt};
 	uint64_t args[8]{};
 	auto teb = thread_environment->teb.data();

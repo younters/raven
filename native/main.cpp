@@ -91,8 +91,8 @@ static void leave_exit_code(uint32_t code)
 
 static int native_result(const raven::NativeResult &result,bool process_exit=false,bool inherited_stdio=false)
 {
-	if (result.stop==raven::NativeStop::exited) {
-		const auto code=uint32_t(result.value);
+	if (result.stop==raven::NativeStop::exited || (process_exit && result.exception_code)) {
+		const auto code=result.exception_code ? result.exception_code : uint32_t(result.value);
 		leave_exit_code(code);
 		if (!inherited_stdio) std::cout << "Native process exited with status " << code << '\n';
 		return !code ? 0 : (code & 0xff) ? int(code & 0xff) : 1;

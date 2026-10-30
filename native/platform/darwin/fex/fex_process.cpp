@@ -11,7 +11,9 @@
 #include <condition_variable>
 
 namespace {
-Mapping module_mapping{MAP_FAILED, 0};
+// The frontend has no qualified detach/reinitialization protocol. Keep the PE
+// mapping through static teardown; the OS releases it at host-process exit.
+Mapping *const module_mapping = new Mapping{MAP_FAILED, 0};
 bool module_claimed = false;
 bool selected_fex = false;
 void *guest_teb = nullptr;
@@ -103,14 +105,14 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 {
 	state->stack_size = (std::clamp<uint64_t>(stack_reserve, 256 * 1024, 64 * 1024 * 1024) + 16383) & ~uint64_t(16383);
 	if (module_claimed)
-		throw std::runtime_error("FEX module supports one process lifetime per host");
+		throw std::runtime_error("FEX module already claimed; a second FexProcess in this host is unsupported");
 	if (root.empty())
 		throw std::runtime_error("FEX requires RAVEN_FEX_MODULE_ROOT");
 	module_claimed = true;
 	std::string path = root + "/xtajit64.dll";
 	char program[] = "raven-fex";
 	char *argv[]{program, path.data()};
-	if (map_module(2, argv, resolve, inspect_image, initialize_process, &module_mapping))
+	if (map_module(2, argv, resolve, inspect_image, initialize_process, module_mapping))
 		throw std::runtime_error("FEX module initialization failed");
 	// Guest x86 code is data to the arm64 host. Keep it non-executable; only FEX's
 	// separate native code cache uses MAP_JIT. Never replace an existing host mapping.
@@ -523,27 +525,39 @@ uint64_t FexProcess::serving_teb() const { return 0; }
 bool FexProcess::serving() const { return false; }
 bool FexProcess::serving_queued() const { return false; }
 void FexProcess::set_queued_gl_elements(bool available) { if (available) throw std::runtime_error("FEX queued graphics unavailable"); }
-void FexProcess::set_served_calls(uint64_t *, std::vector<uint64_t> stubs, size_t, size_t, std::vector<uint64_t>, std::function<void(uint64_t)>, std::vector<uint64_t>)
+void FexProcess::set_served_calls(uint64_t *, std::vector<uint64_t> stubs, size_t stub_size, size_t wait_offset,
+	std::vector<uint64_t> yield_traps, std::function<void(uint64_t)>, std::vector<uint64_t> queued)
 {
-	// Keep provider shared pointers zero: every served stub falls through to its
-	// registered real API breakpoint, preserving the ordinary host handler path.
-	for (auto stub : stubs) {
+	if (!queued.empty()) throw std::runtime_error("FEX queued served calls are unsupported");
+	if (!yield_traps.empty() && (stub_size != 112 || wait_offset != 85))
+		throw std::runtime_error("FEX served stub layout is unsupported");
+	std::vector<uint8_t *> pointers;
+	for (auto trap : yield_traps) {
+		// Providers also append non-served prelude fragments to `stubs` for the
+		// Rosetta scheduler. Only actual served stubs have the canonical yield.
+		if (trap < 109 || std::find(stubs.begin(), stubs.end(), trap - 109) == stubs.end())
+			throw std::runtime_error("FEX served yield trap has no canonical stub");
+		const auto stub = trap - 109;
 		const auto code = read_memory(stub, 7);
-		if (code[0] != 0x4c || code[1] != 0x8b || code[2] != 0x15) continue;
+		if (code[0] != 0x4c || code[1] != 0x8b || code[2] != 0x15)
+			throw std::runtime_error("FEX served stub encoding is unsupported");
 		int32_t displacement;
 		memcpy(&displacement, code.data() + 3, 4);
 		const auto pointer = stub + 7 + uint64_t(int64_t(displacement));
-		const uint64_t zero = 0;
 		bool found = false;
 		for (auto *image : state->images) {
-			if (pointer >= image->base() && pointer - image->base() + 8 <= image->data().size()) {
-				memcpy(image->data().data() + pointer - image->base(), &zero, 8);
+			const auto offset = pointer - image->base();
+			if (pointer >= image->base() && offset <= image->data().size() && image->data().size() - offset >= 8) {
+				pointers.push_back(image->data().data() + offset);
 				found = true;
 				break;
 			}
 		}
 		if (!found) throw std::runtime_error("FEX served pointer is outside provider storage");
 	}
+	// Validate every real stub before clearing any pointer. Guest execution then
+	// reaches its registered API breakpoint with the original arguments intact.
+	for (auto *pointer : pointers) memset(pointer, 0, 8);
 }
 }
 

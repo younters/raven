@@ -385,7 +385,9 @@ public:
 			} catch (const std::exception &) {
 			}
 		}
-		throw unhandled();
+		auto stopped = unhandled();
+		stopped.exception_code = code;
+		throw stopped;
 	}
 
 	// Execution resumes at the callback nesting where the exception was raised; handler calls above it are abandoned.

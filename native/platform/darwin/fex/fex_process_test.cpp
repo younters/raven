@@ -18,7 +18,7 @@ int main(int argc, char **argv)
 	try {
 		if (argc != 3) return 2;
 		const char *root = std::getenv("RAVEN_FEX_MODULE_ROOT");
-		if (!root || !std::filesystem::exists(std::string(root) + "/xtajit64.dll")) {
+		if (!root || !*root || !std::filesystem::exists(std::string(root) + "/xtajit64.dll")) {
 			std::cerr << "SKIP: provision RAVEN_FEX_MODULE_ROOT/xtajit64.dll\n";
 			return 77;
 		}
@@ -31,6 +31,8 @@ int main(int argc, char **argv)
 		bool expected_fault = false;
 		size_t divide_offset = 0, divide_length = 0;
 		uint64_t quotient_register = 0, remainder_register = 0;
+		uint64_t fault_rax = 0, fault_rdx = 0, fault_rcx = 0;
+		constexpr uint64_t fault_flags = 0xed7; // OF/DF/SF/ZF/AF/PF/CF set, IF and fixed bit retained.
 		if (matrix) {
 			const bool sign = mode[7] == 's';
 			const auto dash = mode.find('-', 8);
@@ -57,6 +59,10 @@ int main(int argc, char **argv)
 				if (sign) { if (bits == 64) code.push_back(0x48); code.push_back(0x99); }
 				else { code.push_back(0x31); code.push_back(0xd2); }
 			}
+			fault_rax = low; fault_rdx = high; fault_rcx = divisor;
+			if (kind.starts_with("fold-"))
+				fault_rdx = sign ? (bits == 64 ? uint64_t(int64_t(low) >> 63) : uint64_t(uint32_t(int32_t(low) >> 31))) : 0;
+			code.insert(code.end(), {0x68, 0xd7, 0x0e, 0, 0, 0x9d}); // push flags; popfq
 			divide_offset = code.size();
 			if (bits == 16) code.push_back(0x66);
 			if (bits == 64) code.push_back(0x48);
@@ -97,14 +103,43 @@ int main(int argc, char **argv)
 			const uint8_t code[]{0x48, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0x48, 0x8b, 0, 0x48, 0x83, 0xc0, 5, 0xc3};
 			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
 		} else if (mode == "divide") {
-			const uint8_t code[]{0x31, 0xc9, 0xb8, 1, 0, 0, 0, 0x31, 0xd2, 0xf7, 0xf1, 0xc3};
+			const uint8_t code[]{0x31, 0xc9, 0xb8, 1, 0, 0, 0, 0x31, 0xd2, 0x68, 0xd7, 0x0e, 0, 0, 0x9d, 0xf7, 0xf1, 0xc3};
 			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
 		} else if (mode == "breakpoint") {
 			loaded.data()[image.entry] = 0xcc;
 			loaded.data()[image.entry + 1] = 0xc3;
-		} else check(mode == "entry", "unknown mode");
+		} else check(mode == "entry" || mode == "lifetime" || mode == "served-malformed", "unknown mode");
 		raven::LoadedImage *images[]{&loaded};
+		if (mode == "lifetime") {
+			auto second_rejected = [&] {
+				try { raven::FexProcess second(images, root); }
+				catch (const std::runtime_error &error) {
+					check(std::string(error.what()).find("second FexProcess") != std::string::npos, "second process failed for the wrong reason");
+					return;
+				}
+				throw std::runtime_error("second FexProcess was accepted");
+			};
+			{
+				raven::FexProcess first(images, root);
+				second_rejected();
+				const auto result = first.call(loaded.base() + image.entry, {});
+				check(result.stop == raven::NativeStop::returned && result.value == 500500, "rejected second process damaged first");
+			}
+			second_rejected();
+			std::cout << "PASS: second process rejected during and after controller lifetime\n";
+			return 0;
+		}
 		raven::FexProcess process(images, root);
+		if (mode == "served-malformed") {
+			try { process.set_served_calls(nullptr, {loaded.base() + image.entry}, 112, 85,
+				{loaded.base() + image.entry + 109}, {}, {}); }
+			catch (const std::runtime_error &error) {
+				check(std::string(error.what()).find("served stub encoding") != std::string::npos, "malformed served stub failed for wrong reason");
+				std::cout << "PASS: malformed real served stub rejected before execution\n";
+				return 0;
+			}
+			throw std::runtime_error("malformed served stub was silently skipped");
+		}
 		if (mode == "internal") asm volatile("brk #0");
 		auto result = process.call(loaded.base() + image.entry, {}, std::chrono::milliseconds(mode == "timeout" ? 20 : 5000));
 		if (mode == "selfmodify") {
@@ -126,6 +161,9 @@ int main(int argc, char **argv)
 				check(result.stop == raven::NativeStop::exception && result.value == 0xc0000094, "divide fault not delivered");
 				auto context = process.context();
 				check(context.registers.rip == loaded.base() + image.entry + divide_offset, "divide RIP imprecise");
+				check(context.registers.rax == fault_rax && context.registers.rdx == fault_rdx && context.registers.rcx == fault_rcx,
+					"divide fault changed RAX/RDX/RCX before dispatch");
+				check(context.registers.eflags == fault_flags, ("divide fault changed RFLAGS: got " + std::to_string(context.registers.eflags) + " expected " + std::to_string(fault_flags)).c_str());
 				context.registers.rip += divide_length;
 				process.set_context(context);
 				result = process.resume();
@@ -151,6 +189,7 @@ int main(int argc, char **argv)
 		} else if (mode == "fault") {
 			check(result.stop == raven::NativeStop::exception && result.value == 0xc0000005 && result.fault_address == 0,
 				"AV stop lost exception or address");
+			check(result.exception_information == std::vector<uint64_t>{0, 0}, "read AV information count/type/address differs");
 			auto context = process.context();
 			check(context.registers.rip == loaded.base() + image.entry + 10, "AV RIP imprecise");
 			context.registers.rip += 3;
@@ -160,6 +199,10 @@ int main(int argc, char **argv)
 		} else if (mode == "divide") {
 			std::cerr << "divide exception code=" << std::hex << result.value << std::dec << '\n';
 			check(result.stop == raven::NativeStop::exception && result.value == 0xc0000094, "divide error misclassified");
+			const auto context = process.context();
+			check(context.registers.rip == loaded.base() + image.entry + 15, "divide mode RIP imprecise");
+			check(context.registers.rax == 1 && context.registers.rdx == 0 && context.registers.rcx == 0 &&
+				context.registers.eflags == fault_flags, ("divide mode modified fault registers/flags: flags=" + std::to_string(context.registers.eflags)).c_str());
 			return 0;
 		} else if (mode == "breakpoint") {
 			check(result.stop == raven::NativeStop::exception && result.value == 0x80000003, "provider breakpoint not delivered");

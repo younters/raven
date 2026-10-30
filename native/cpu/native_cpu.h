@@ -15,7 +15,7 @@ struct raven_control;
 #endif
 
 namespace raven {
-#ifdef __APPLE__
+#ifdef RAVEN_FEX_PROCESS
 class FexProcess;
 #endif
 
@@ -197,7 +197,7 @@ private:
 	void protect_range(uint64_t address, size_t size, int protection, bool image);
 	struct State;
 	std::unique_ptr<State> state;
-#ifdef __APPLE__
+#ifdef RAVEN_FEX_PROCESS
 	std::shared_ptr<FexProcess> fex;
 #endif
 	void install_segment(uint32_t entry, uint64_t base);
