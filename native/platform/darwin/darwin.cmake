@@ -964,3 +964,41 @@ if(RAVEN_FEX_MODHOST AND TARGET kernel_seh_fixture)
     endforeach()
     add_custom_target(fex_review_fixtures DEPENDS ${review_outputs})
 endif()
+
+# M3 guest contracts require real concurrent FEX workers, with cooperative slices disabled.
+if(RAVEN_FEX_MODHOST AND TARGET fex_review_fixtures)
+    set(m3_case 0)
+    set(m3_outputs)
+    foreach(contract contention context worker-seh apc lifecycle worker-unhandled)
+        math(EXPR m3_case "${m3_case} + 1")
+        set(fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-parallel-${contract}.exe)
+        add_custom_command(OUTPUT ${fixture}
+            COMMAND ${RAVEN_CLANG} --target=x86_64-w64-mingw32 ${RAVEN_CLANG_MINGW_INCLUDE}
+                -O0 -fms-extensions -fseh-exceptions -Xclang -fasync-exceptions -fno-stack-protector -mno-stack-arg-probe
+                -DM3_CASE=${m3_case} -c -o ${fixture}.o ${RAVEN_DARWIN_DIR}/fex/parallel_client.c
+            COMMAND ${RAVEN_MINGW64} -nostdlib -Wl,--entry,raven_entry,--image-base,0x10000000000,--no-insert-timestamp
+                -o ${fixture} ${fixture}.o ${FEX_REVIEW_SUPPORT} -lkernel32
+            DEPENDS ${RAVEN_DARWIN_DIR}/fex/parallel_client.c ${FEX_REVIEW_SUPPORT} VERBATIM)
+        list(APPEND m3_outputs ${fixture})
+        set(m3_status)
+        if(contract STREQUAL "worker-unhandled")
+            list(APPEND m3_status --unhandled-status 0xe0424242)
+        endif()
+        add_test(NAME native_parallel_${contract}_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+            --raven $<TARGET_FILE:raven> --fixture ${fixture} --modules "${RAVEN_FEX_MODULE_ROOT}" ${m3_status})
+        set_tests_properties(native_parallel_${contract}_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;m3;parallel"
+            ENVIRONMENT "RAVEN_PARALLEL=1;RAVEN_SLICE_MS=0")
+    endforeach()
+    add_custom_target(fex_parallel_fixtures DEPENDS ${m3_outputs})
+    add_test(NAME native_parallel_kernel_threads_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+        --raven $<TARGET_FILE:raven> --fixture ${CMAKE_CURRENT_BINARY_DIR}/kernel-threads-fex.exe --modules "${RAVEN_FEX_MODULE_ROOT}")
+    set_tests_properties(native_parallel_kernel_threads_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;m3;parallel"
+        ENVIRONMENT "RAVEN_PARALLEL=1;RAVEN_SLICE_MS=0")
+endif()
+if(RAVEN_FEX_MODHOST AND TARGET fex_process_test)
+    foreach(contract timeout selfmodify)
+        add_test(NAME native_parallel_${contract}_fex COMMAND fex_process_test ${FEX_ENTRY_FIXTURE} ${contract})
+        set_tests_properties(native_parallel_${contract}_fex PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77
+            LABELS "fex;m3;parallel" ENVIRONMENT "RAVEN_PARALLEL=1;RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")
+    endforeach()
+endif()
