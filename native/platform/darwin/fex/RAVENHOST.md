@@ -1,7 +1,9 @@
 # M1c: Raven host frontend feasibility spike
 
-Follow-up: [M1D.md](M1D.md) records partial callable-adapter/JIT/substrate work
-and the remaining 72 imports. The execution milestone remains incomplete.
+Follow-up: [M1D.md](M1D.md) records the completed standalone execution milestone:
+127 bound imports, module init, returning guest dispatch, precise AV recovery,
+nested callback and verified compute/round-trip measurements. The M1c report below
+is the historical build-only checkpoint.
 
 **Partial implementation; NO-GO for M2.** The patched Windows modules compile and
 pass their PE audits. No module initialization or guest execution was attempted:

@@ -5,7 +5,7 @@
 namespace RavenNT {
 struct ThreadControl {
   pthread_t pthread{};std::mutex mutex;std::condition_variable condition;
-  bool done=false;uint64_t tid=0;int32_t exit_status=0;
+  bool done=false,ready=false;uint64_t tid=0;int32_t exit_status=0;
   std::unique_ptr<ThreadEnvironment> environment;
 };
 thread_local std::shared_ptr<Handle> self_handle;
@@ -17,8 +17,9 @@ std::shared_ptr<Handle> current_handle(void *) {
 struct Start {std::shared_ptr<Handle> handle;void *function,*argument;};
 void *thread_start(void *opaque) {
   std::unique_ptr<Start> start(static_cast<Start*>(opaque));auto h=start->handle;
-  self_handle=h;auto c=h->control;c->pthread=pthread_self();pthread_threadid_np(nullptr,&c->tid);
+  self_handle=h;auto c=h->control;pthread_threadid_np(nullptr,&c->tid);
   c->environment=std::make_unique<ThreadEnvironment>(*active_process);active_thread=c->environment.get();
+  {std::lock_guard<std::mutex> guard(c->mutex);c->ready=true;}c->condition.notify_all();
   jmp_buf exit;thread_exit_frame=&exit;
   if(!setjmp(exit)){uint64_t args[8]{uintptr_t(start->argument)};c->exit_status=raven_ec_call(start->function,args,active_thread->teb.data());}
   thread_exit_frame=nullptr;
@@ -32,7 +33,7 @@ int32_t create_thread(void **out,uint32_t access,ObjectAttributes *attributes,vo
   auto start=std::make_unique<Start>(Start{h,function,arg});pthread_attr_t attr;pthread_attr_init(&attr);pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED);
   auto size=std::max(stack,reserve);if(size && pthread_attr_setstacksize(&attr,std::max<uint64_t>(size,PTHREAD_STACK_MIN))){pthread_attr_destroy(&attr);return invalid_parameter;}
   int error=pthread_create(&h->control->pthread,&attr,thread_start,start.get());pthread_attr_destroy(&attr);if(error)return os_error(error);
-  start.release();*out=new_handle(h);return 0;
+  start.release();{std::unique_lock<std::mutex> lock(h->control->mutex);h->control->condition.wait(lock,[&]{return h->control->ready;});}*out=new_handle(h);return 0;
 }
 int32_t wait_one(void *handle,uint8_t alert,const int64_t *timeout) {
   if(alert)return not_supported;auto h=get_handle(handle);if(!h || h->kind!=Handle::thread)return bad_handle;
@@ -64,8 +65,25 @@ int32_t query_object(void *handle,uint32_t klass,void *out,uint32_t length,uint3
   {std::lock_guard<std::mutex> guard(handles_mutex);for(const auto &p:handles)if(p.second==h)++fields[2];}
   fields[3]=h.use_count();return 0;
 }
+int32_t query_thread_handle(void *handle,uint32_t klass,void *out,uint32_t length,uint32_t *written) {
+  if(written)*written=0;auto h=get_handle(handle);if(!h || h->kind!=Handle::thread)return bad_handle;
+  if(klass!=0)return int32_t(0xc0000003);if(written)*written=48;
+  if(!out || length<48)return int32_t(0xc0000004);
+  auto c=h->control;std::lock_guard<std::mutex> guard(c->mutex);
+  auto *environment=pthread_equal(c->pthread,pthread_self())?active_thread:c->environment.get();
+  if(!environment)return not_supported;
+  struct Basic {int32_t status,pad;void *teb;uint64_t pid,tid,mask;int32_t priority,base;};
+  auto n=sysconf(_SC_NPROCESSORS_ONLN);uint64_t mask=n>=64?UINT64_MAX:(1ull<<n)-1;
+  *static_cast<Basic*>(out)={c->done?c->exit_status:0x103,0,environment->teb.data(),uint64_t(getpid()),c->tid,mask,0,0};return 0;
+}
+int32_t set_thread_handle(void *handle,uint32_t klass,const void *in,uint32_t length) {
+  auto h=get_handle(handle);if(!h || h->kind!=Handle::thread)return bad_handle;
+  if(!pthread_equal(h->control->pthread,pthread_self()))return not_supported;
+  return set_thread(reinterpret_cast<void*>(-2),klass,in,length);
+}
 void *resolve_threads(const char *name,unsigned &stack) {
 #define NT(n,f,s) if(!strcmp(name,n)){stack=s;return reinterpret_cast<void*>(&f);}
+  NT("NtQueryInformationThread",query_thread_handle,0);NT("NtSetInformationThread",set_thread_handle,0);
   NT("NtCreateThreadEx",create_thread,3);NT("NtWaitForSingleObject",wait_one,0);NT("NtTerminateProcess",terminate_process,0);
   NT("NtTerminateThread",terminate_thread,0);NT("NtSuspendThread",suspend_thread,0);NT("NtQueryObject",query_object,0);
 #undef NT

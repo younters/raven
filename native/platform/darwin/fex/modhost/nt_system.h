@@ -88,7 +88,12 @@ int32_t query_thread(void *handle,uint32_t klass,void *out,uint32_t length,uint3
 int32_t set_thread(void *handle,uint32_t klass,const void *in,uint32_t length) {
   if(intptr_t(handle)!=-2 || !active_thread)return bad_handle;
   if(klass==10 && length==4) {auto slot=*static_cast<const uint32_t*>(in);if(slot>=64)return invalid_parameter;active_thread->put<void*>(0x1480+slot*8,nullptr);return 0;}
-  if(klass==3 && length==4) {sched_param p{};int policy;pthread_getschedparam(pthread_self(),&policy,&p);p.sched_priority=0;return os_error(pthread_setschedparam(pthread_self(),policy,&p));}
+  if(klass==3 && length==4) {
+    auto priority=*static_cast<const int32_t*>(in);
+    if(priority==-15)return os_error(pthread_set_qos_class_self_np(QOS_CLASS_BACKGROUND,0));
+    if(priority==0)return os_error(pthread_set_qos_class_self_np(QOS_CLASS_DEFAULT,0));
+    return not_supported;
+  }
   return int32_t(0xc0000003);
 }
 struct Once {std::mutex mutex;std::condition_variable condition;bool running=false,done=false;void *context=nullptr;};

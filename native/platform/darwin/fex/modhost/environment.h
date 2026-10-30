@@ -34,9 +34,9 @@ struct ProcessEnvironment {
     auto *env=environment.data(); memcpy(parameters.data()+0x80,&env,8);
   }
   ~ProcessEnvironment() { munmap(code_bitmap,bitmap_size); }
-  void mark_ec(uintptr_t begin,size_t size) {
+  void mark_ec(uintptr_t begin,size_t size,bool present=true) {
     if(begin>=(1ull<<47) || size>(1ull<<47)-begin) throw std::runtime_error("EC address outside bitmap");
-    for(auto p=begin>>12;p<(begin+size+4095)>>12;++p) static_cast<uint8_t*>(code_bitmap)[p/8]|=1u<<(p%8);
+    for(auto p=begin>>12;p<(begin+size+4095)>>12;++p) { auto &byte=static_cast<uint8_t*>(code_bitmap)[p/8];if(present)byte|=1u<<(p%8);else byte&=~(1u<<(p%8)); }
   }
 };
 struct ThreadEnvironment {

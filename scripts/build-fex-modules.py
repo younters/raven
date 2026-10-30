@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Reproduce M1b prerequisites and build pinned PE modules externally (always -j8).
-This script does not execute FEX or qualify the module-host gate.
+"""Build pinned PE modules and native host externally (always -j8).
+Run test-fex-modhost.py separately to require guest execution and measurements.
 """
 import argparse
 import hashlib
@@ -95,7 +95,7 @@ def build(root, raven_host=False):
         with tarfile.open(archive) as stream:
             # Archive is authenticated above; preserve toolchain's internal symlinks.
             stream.extractall(root, filter='data')
-    output = source / ('build/local/m1d' if raven_host else 'build/local/m1b')
+    output = source / ('build/local/m1d-final' if raven_host else 'build/local/m1b')
     manifest = output / 'fex-result.json'
     if not manifest.exists():
         run([sys.executable, source / 'Darwin/build.py', '--output', output,
@@ -123,7 +123,7 @@ def build(root, raven_host=False):
         ['git', '-C', str(source), 'archive', '--format=tar', PIN])).hexdigest(),
         toolchain_archive_sha256=TOOL_SHA, patches=[dict(path=str(p.relative_to(REPO)), sha256=sha(p)) for p in patches],
         build=result)
-    (root / ('m1c-manifest.json' if raven_host else 'manifest.json')).write_text(json.dumps(pins, indent=2) + '\n')
+    (root / ('m1d-manifest.json' if raven_host else 'manifest.json')).write_text(json.dumps(pins, indent=2) + '\n')
     exe = root / 'pe-preflight'
     run(['xcrun', 'clang++', '-arch', 'arm64', '-std=c++17', '-O2', '-Wall', '-Wextra', '-Werror',
          REPO / 'native/platform/darwin/fex/modhost/pe_preflight.cpp', '-o', exe])
@@ -133,22 +133,22 @@ def build(root, raven_host=False):
         if p.returncode != 3:
             raise RuntimeError('unexpected preflight outcome: ' + name)
     if raven_host:
-        host = root / 'm1c-native-host'
-        run(['xcrun', 'clang++', '-arch', 'arm64', '-ffixed-x18', '-std=c++17', '-O2',
+        host = root / 'm1d-native-host'
+        run(['xcrun', 'clang++', '-arch', 'arm64', '-ffixed-x18', '-ffp-contract=off', '-mmacosx-version-min=11.0', '-std=c++17', '-O2',
              '-Wall', '-Wextra', '-Werror', '-Wl,-platform_version,macos,11.0,11.0',
              REPO / 'native/platform/darwin/fex/modhost/native_host.cpp',
              REPO / 'native/platform/darwin/fex/modhost/abi.S',
              REPO / 'native/platform/darwin/fex/modhost/context.S', '-o', host])
         run([host, '--self-test'])
         p = subprocess.run([str(host), str(root / 'xtajit64.dll')], capture_output=True, text=True)
-        (root / 'm1c-host-preflight.log').write_text(p.stdout + p.stderr)
+        (root / 'm1d-host-preflight.log').write_text(p.stdout + p.stderr)
         if p.returncode != 3:
             raise RuntimeError('unexpected native host preflight result')
-    print('Module build PASS. Standalone PE host and guest execution are NOT implemented.')
+    print('Module build/audit PASS. Run scripts/test-fex-modhost.py to require runtime execution.')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--raven-host', action='store_true', help='Build the incomplete M1c frontend, not a qualified runtime')
+    parser.add_argument('--raven-host', action='store_true', help='Build the Raven host frontend; qualify execution with test-fex-modhost.py')
     parser.add_argument('--root', type=Path, default=Path('/Users/yount/Documents/Projects/raven-components/fex-modules'))
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--probes-only', action='store_true')

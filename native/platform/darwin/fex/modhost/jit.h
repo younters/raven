@@ -13,6 +13,9 @@ class NativeJit {
   struct Region { void *base; size_t size; };
   std::vector<Region> regions;
 public:
+  NativeJit() = default;
+  NativeJit(const NativeJit&) = delete;
+  NativeJit& operator=(const NativeJit&) = delete;
   template<class F> void each_region(F visit) const { for(auto r:regions) visit(r.base,r.size); }
   ~NativeJit() { for (auto r : regions) munmap(r.base, r.size); }
   void *allocate(size_t size) {

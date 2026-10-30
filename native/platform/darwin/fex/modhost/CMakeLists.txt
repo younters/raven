@@ -18,7 +18,7 @@ add_executable(fex_modhost_substrate native_host.cpp abi.S context.S)
 add_executable(fex_modhost_abi abi_test.cpp abi.S abi_fixture.S)
 foreach(target fex_modhost_substrate fex_modhost_abi)
     target_compile_features(${target} PRIVATE cxx_std_17)
-    target_compile_options(${target} PRIVATE -arch arm64 -ffixed-x18 -Wall -Wextra -Werror -mmacosx-version-min=11.0)
+    target_compile_options(${target} PRIVATE -arch arm64 -ffixed-x18 -ffp-contract=off -Wall -Wextra -Werror -mmacosx-version-min=11.0)
     # Self-test predicates must remain active in Release builds.
     target_compile_options(${target} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-UNDEBUG>)
     target_link_options(${target} PRIVATE -arch arm64 -Wl,-platform_version,macos,11.0,11.0)

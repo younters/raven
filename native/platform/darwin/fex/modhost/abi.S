@@ -39,8 +39,8 @@ _raven_ec_call:
 
 // EC -> native arm64. A per-import stub puts the native wrapper in x16.
 // Uniform uint64_t parameters: up to eight in registers, eight on stack.
-// Wrapper signatures must use uint64_t for ALL integer arguments: Darwin packs
-// narrower stack values whereas Windows reserves eight bytes per parameter.
+// Stack slots in wrapper signatures use uint64_t and explicitly narrow their
+// values: Darwin packs narrow stack values; Windows reserves eight-byte slots.
 // Nonvariadic FP arguments in d0-d7 and results in d0 pass through untouched.
 .p2align 2
 .globl _raven_native_call

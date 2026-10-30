@@ -17,6 +17,8 @@
 #include "nt_threads.h"
 #include "context.h"
 #include "unwind.h"
+#include "fault.h"
+#include "bench.h"
 #include <thread>
 #include <atomic>
 #include <mach/mach_time.h>
@@ -28,6 +30,7 @@
 #include <mutex>
 #include <string>
 #include <cassert>
+#include <iomanip>
 
 namespace {
 using RavenVM::allocate;
@@ -96,9 +99,10 @@ void *resolve(const char *dll, const char *name) {
   if (!strcmp(dll,"ntdll.dll") && !strcmp(name,"RtlCaptureContext")) return reinterpret_cast<void*>(&RavenNT::raven_capture_ec_context);
   if (!strcmp(dll,"ntdll.dll") && !strcmp(name,"RtlRestoreContext")) return reinterpret_cast<void*>(&RavenNT::raven_restore_ec_context);
   unsigned stack = 0;
-  auto *target = resolve_native(dll, name);
+  auto *target = !strcmp(dll,"ntdll.dll") ? RavenNT::resolve_threads(name,stack) : nullptr;
+  if (!target) target = resolve_native(dll, name);
   if (!target && !strcmp(dll,"ntdll.dll")) target = RavenNT::resolve_io(name, stack);
-  if (!target && !strcmp(dll,"ntdll.dll")) target = RavenNT::resolve_threads(name, stack);
+
   return target ? native_adapter(import_jit, target, stack) : nullptr;
 }
 std::unique_ptr<PEView> mapped_image;
@@ -122,27 +126,52 @@ extern "C" void raven_check_ec_call();
 std::array<uint8_t,16384> user_shared_data {};
 NativeJit callback_jit;
 sigjmp_buf guest_return;
+sigjmp_buf *active_return=&guest_return;
+bool exercise_nested=false,nested_done=false;uint64_t nested_result=0,nested_code=0;
+uint64_t expected_resumed=4884;
+unsigned nested_calls=0;
+uint64_t timed_calls=0,expected_timed_calls=100000;
+uint64_t integer_expected=5292597211099207303ull;
+uint64_t float_expected_bits=0;
+uint64_t invoke_nested(void *packet);
 bool guest_active=false,guest_ok=false;
 unsigned guest_calls=0;
 uint64_t expected_guest_end=0;
+uint64_t expected_fault_rip=0,expected_fault_address=0;unsigned faults_repaired=0;
 uint64_t guest_dispatch(uint64_t number,void *packet) {
   auto *context=static_cast<uint8_t*>(packet);
   auto reg=[&](size_t offset){uint64_t v;memcpy(&v,context+offset,8);return v;};
   if(!guest_active)std::abort();
   if(number==0x100){
     ++guest_calls;
-    if(reg(0xc8)!=7 || reg(0x88)!=11 || reg(0xb8)!=13 || reg(0xc0)!=17){guest_ok=false;siglongjmp(guest_return,1);}
-    return reg(0xc8)+3*reg(0x88)+5*reg(0xb8)+7*reg(0xc0);
+    if(reg(0xc8)!=7 || reg(0x88)!=11 || reg(0xb8)!=13 || reg(0xc0)!=17){guest_ok=false;siglongjmp(*active_return,1);}
+    auto result=reg(0xc8)+3*reg(0x88)+5*reg(0xb8)+7*reg(0xc0);
+    if(exercise_nested)result+=invoke_nested(packet);
+    return result;
   }
-  if(number==0x101){guest_ok=guest_calls==1 && reg(0xc8)==4884 && reg(0xf8)==expected_guest_end;siglongjmp(guest_return,1);}
-  guest_ok=false;siglongjmp(guest_return,1);
+  if(number==0x104 || number==0x105 || number==0x107){
+    if(number==0x104)guest_ok=reg(0xc8)==integer_expected;
+    else if(number==0x105)guest_ok=reg(0x1a0)==float_expected_bits;
+    else guest_ok=reg(0xc8)==expected_timed_calls && timed_calls==expected_timed_calls;
+    guest_ok=guest_ok && reg(0xf8)==expected_guest_end;siglongjmp(*active_return,1);
+  }
+  if(number==0x106){++timed_calls;return 1;}
+  if(number==0x103){nested_result=reg(0xc8);nested_done=true;++nested_calls;siglongjmp(*active_return,1);}
+  if(number==0x102){guest_ok=faults_repaired==1 && reg(0xc8)==4665 && reg(0xf8)==expected_guest_end;siglongjmp(*active_return,1);}
+  if(number==0x101){guest_ok=guest_calls==1 && reg(0xc8)==expected_resumed && reg(0xf8)==expected_guest_end;siglongjmp(*active_return,1);}
+  guest_ok=false;siglongjmp(*active_return,1);
 }
 int32_t unix_call(uint64_t,uint32_t,void *) { return RavenNT::not_supported; }
-int32_t exception_callback(void *,void *,void *) { return RavenNT::not_supported; }
+int32_t exception_callback(void *opaque,void *packet,void *) {
+  auto *record=static_cast<RavenFault::Record*>(opaque);auto *context=static_cast<uint8_t*>(packet);
+  uint64_t rip=0;memcpy(&rip,context+0xf8,8);
+  if(record->code!=0xc0000005 || record->count!=2 || record->information[0]!=0 || record->information[1]!=expected_fault_address || rip!=expected_fault_rip || record->address!=reinterpret_cast<void*>(rip))return RavenNT::not_supported;
+  ++faults_repaired;rip+=3;uint64_t value=0x1234;memcpy(context+0xf8,&rip,8);memcpy(context+0x78,&value,8);return 0;
+}
 void *cpu_area(void *) { return &thread_environment->cpu; }
 void host_log(const char *message) { std::cerr << "FEX: " << message << std::flush; }
 uint32_t jit_protect(uint32_t mode) { auto previous=NativeJit::protect(mode); if(getenv("RAVEN_MODHOST_TRACE"))fprintf(stderr,"jit mode=%u previous=%u\n",mode,previous); return previous; }
-void *native_jit(uint64_t size) { return callback_jit.allocate(size); }
+void *native_jit(uint64_t size) { auto *p=callback_jit.allocate(size);process_environment->mark_ec(uintptr_t(p),size);return p; }
 void memory_event(uint64_t address,uint64_t size,uint64_t kind) {
   // FEX explicitly identifies native cache reservations that may overcommit.
   // Darwin mprotect commits access without physically populating demand-zero pages.
@@ -150,8 +179,26 @@ void memory_event(uint64_t address,uint64_t size,uint64_t kind) {
     if(RavenVM::allocate(reinterpret_cast<void*>(-1),&base,0,&n,0x1000,4))std::abort();
   }else if(kind!=2)std::abort();
 }
+uint64_t invoke_nested(void *packet) {
+  struct Frame {sigjmp_buf completion;alignas(16) uint8_t outer_context[0x4d0];uint64_t stack_base,stack_limit;};
+  auto frame=std::make_unique<Frame>();memcpy(frame->outer_context,packet,sizeof(frame->outer_context));
+  auto &cpu=thread_environment->cpu;frame->stack_base=cpu.stack_base;frame->stack_limit=cpu.stack_limit;
+  void *emulator_stack=nullptr,*stack=nullptr;size_t emulator_size=262144,stack_size=262144;
+  if(allocate(nullptr,&emulator_stack,0,&emulator_size,0x3000,4) || allocate(nullptr,&stack,0,&stack_size,0x3000,4))std::abort();
+  cpu.stack_limit=uintptr_t(emulator_stack);cpu.stack_base=cpu.stack_limit+emulator_size;
+  auto *context=static_cast<uint8_t*>(packet);auto sp=uintptr_t(stack)+stack_size-128;uint64_t argument=41;
+  memcpy(context+0xf8,&nested_code,8);memcpy(context+0x98,&sp,8);memcpy(context+0x80,&argument,8);
+  auto *previous=active_return;active_return=&frame->completion;nested_done=false;
+  uint64_t args[8]{};
+  if(!sigsetjmp(frame->completion,1))raven_ec_call(mapped_image->export_address("BeginSimulation"),args,thread_environment->teb.data());
+  active_return=previous;
+  cpu.stack_base=frame->stack_base;cpu.stack_limit=frame->stack_limit;memcpy(packet,frame->outer_context,sizeof(frame->outer_context));
+  size_t zero=0;release(nullptr,&emulator_stack,&zero,0x8000);zero=0;release(nullptr,&stack,&zero,0x8000);
+  if(!nested_done || nested_result!=124)std::abort();return nested_result;
+}
 void execute_image(Bytes image,size_t opt) {
   PEView view{image,opt};auto &process=*process_environment;
+  RavenVM::code_event=+[](uintptr_t p,size_t n,bool present){process_environment->mark_ec(p,n,present);};
   auto metadata=view.metadata();
   auto mark=[&](void *base,size_t size){process.mark_ec(uintptr_t(base),size);};
   import_jit.each_region(mark);callback_jit.each_region(mark);
@@ -213,6 +260,54 @@ void execute_image(Bytes image,size_t opt) {
   asm volatile("mov x18,%0"::"r"(previous_teb));guest_active=false;
   if(!guest_ok)throw std::runtime_error("guest dispatch/resume result mismatch");
   std::cout << "PASS: x86-64 dispatch args=7,11,13,17 host_result=224 resumed_result=4884 calls=1\n" << std::flush;
+  RavenFault::Scope fault_scope(view.export_address("RavenHandleFault"));
+  void *bad=nullptr;size_t bad_size=16384;
+  if(allocate(nullptr,&bad,0,&bad_size,0x2000,1))throw std::runtime_error("fault reservation failed");
+  uint8_t fault_code[]{0x48,0xb8,0,0,0,0,0,0,0,0,0x48,0x8b,0x00,0x48,0x83,0xc0,5,0x49,0x89,0xc2,0xb8,2,1,0,0,0x0f,0x05,0xeb,0xfe};
+  auto bad_value=uintptr_t(bad);memcpy(fault_code+2,&bad_value,8);
+  void *fault_guest=nullptr;size_t fault_size=sizeof(fault_code);
+  if(allocate(nullptr,&fault_guest,0,&fault_size,0x3000,0x40))throw std::runtime_error("fault guest allocation failed");
+  memcpy(fault_guest,fault_code,sizeof(fault_code));notification[0]=uintptr_t(fault_guest);notification[1]=fault_size;
+  raven_ec_call(view.export_address("NotifyMemoryAlloc"),notification,teb);
+  rip=uintptr_t(fault_guest);memcpy(context+0xf8,&rip,8);memcpy(context+0x98,&rsp,8);
+  expected_fault_rip=rip+10;expected_fault_address=bad_value;expected_guest_end=rip+sizeof(fault_code)-2;faults_repaired=0;guest_ok=false;
+  if(!sigsetjmp(guest_return,1)){guest_active=true;thread_environment->cpu.simulation=1;raven_ec_call(view.export_address("BeginSimulation"),args,teb);std::abort();}
+  asm volatile("mov x18,%0"::"r"(previous_teb));guest_active=false;
+  if(!guest_ok)throw std::runtime_error("precise AV repair/resume result mismatch");
+  std::cout << "PASS: precise AV guest_rip=" << std::hex << expected_fault_rip << " fault_address=" << expected_fault_address << std::dec << " repaired_result=4665\n" << std::flush;
+  const uint8_t callback_code[]{0x48,0x89,0xc8,0x48,0x6b,0xc0,3,0x48,0x83,0xc0,1,0x49,0x89,0xc2,0xb8,3,1,0,0,0x0f,0x05,0xeb,0xfe};
+  void *callback_guest=nullptr;size_t callback_size=sizeof(callback_code);
+  if(allocate(nullptr,&callback_guest,0,&callback_size,0x3000,0x40))throw std::runtime_error("callback allocation failed");
+  memcpy(callback_guest,callback_code,sizeof(callback_code));notification[0]=uintptr_t(callback_guest);notification[1]=callback_size;
+  raven_ec_call(view.export_address("NotifyMemoryAlloc"),notification,teb);nested_code=uintptr_t(callback_guest);
+  rip=uintptr_t(guest_code);memcpy(context+0xf8,&rip,8);memcpy(context+0x98,&rsp,8);expected_guest_end=rip+sizeof(code)-2;
+  exercise_nested=true;expected_resumed=5008;guest_calls=0;nested_calls=0;guest_ok=false;
+  if(!sigsetjmp(guest_return,1)){guest_active=true;raven_ec_call(view.export_address("BeginSimulation"),args,teb);std::abort();}
+  asm volatile("mov x18,%0"::"r"(previous_teb));guest_active=false;exercise_nested=false;
+  if(!guest_ok || nested_calls!=1)throw std::runtime_error("nested callback result mismatch");
+  std::cout << "PASS: nested harness-to-guest callback argument=41 result=124 outer_resumed_result=5008\n" << std::flush;
+  auto install_guest=[&](const std::vector<uint8_t> &blob){void *base=nullptr;size_t size=blob.size();if(allocate(nullptr,&base,0,&size,0x3000,0x40))throw std::runtime_error("benchmark allocation failed");memcpy(base,blob.data(),blob.size());notification[0]=uintptr_t(base);notification[1]=size;raven_ec_call(view.export_address("NotifyMemoryAlloc"),notification,teb);return uintptr_t(base);};
+  auto integer_code=install_guest(RavenBench::kernel(false,10000000));
+  auto floating_code=install_guest(RavenBench::kernel(true,10000000));
+  auto roundtrip_code=install_guest(RavenBench::roundtrip(expected_timed_calls));
+  double reference=0.5;for(unsigned i=0;i<10000000;++i)reference=reference*1.0000001+0.25;
+  memcpy(&float_expected_bits,&reference,8);
+  auto ns=[](){timespec t{};clock_gettime(CLOCK_MONOTONIC_RAW,&t);return uint64_t(t.tv_sec)*1000000000+t.tv_nsec;};
+  auto run_timed=[&](uintptr_t address,size_t terminal,bool floating){
+    memcpy(context+0xf8,&address,8);memcpy(context+0x98,&rsp,8);expected_guest_end=address+terminal;
+    if(floating){double values[]{0.5,1.0000001,0.25};for(unsigned i=0;i<3;++i){memset(context+0x1a0+i*16,0,16);memcpy(context+0x1a0+i*16,&values[i],8);}}
+    guest_ok=false;timed_calls=0;auto begin=ns();
+    if(!sigsetjmp(guest_return,1)){guest_active=true;raven_ec_call(view.export_address("BeginSimulation"),args,teb);std::abort();}
+    asm volatile("mov x18,%0"::"r"(previous_teb));guest_active=false;auto elapsed=ns()-begin;
+    if(!guest_ok)throw std::runtime_error("benchmark result verification failed");return elapsed;
+  };
+  for(unsigned sample=0;sample<5;++sample){auto integer_ns=run_timed(integer_code,25,false);auto float_ns=run_timed(floating_code,25,true);
+    std::cout << "BENCH sample=" << sample << " iterations=10000000 integer_ns=" << integer_ns << " float_ns=" << float_ns << " integer_result=" << integer_expected << " float_result=" << std::setprecision(17) << reference << "\n" << std::flush;}
+  for(unsigned sample=0;sample<5;++sample){auto elapsed=run_timed(roundtrip_code,32,false);
+    std::cout << "ROUNDTRIP sample=" << sample << " calls=" << expected_timed_calls << " elapsed_ns=" << elapsed << " ns_per_call=" << double(elapsed)/expected_timed_calls << "\n" << std::flush;}
+
+
+
 
 }
 void self_test() {
@@ -290,6 +385,20 @@ void self_test() {
   assert(*static_cast<uint32_t*>(thread.tls_vector[0]) == initial_tls);
   assert(thread.static_tls[15]==0 && thread.cpu.context==thread.context.data());
   assert(*reinterpret_cast<void**>(thread.teb.data()+0x1788)==&thread.cpu);
+  RavenNT::active_process=&process;RavenNT::active_thread=&thread;RavenNT::pseudo_handle=RavenNT::current_handle;
+  auto worker_entry=+[](void *p)->uint64_t{return *static_cast<uint64_t*>(p)+1;};
+  uint64_t worker_input=41;void *worker_handle=nullptr;
+  assert(RavenNT::create_thread(&worker_handle,0x1fffff,nullptr,reinterpret_cast<void*>(-1),reinterpret_cast<void*>(worker_entry),&worker_input,0x10,0,0,0,0)==0);
+  assert(RavenNT::wait_one(worker_handle,0,nullptr)==0);
+  assert(RavenNT::get_handle(worker_handle)->control->exit_status==42);
+  uint32_t object_info[14]{};assert(RavenNT::query_object(worker_handle,0,object_info,sizeof(object_info),nullptr)==0 && object_info[1]==0x1fffff);
+  assert(RavenNT::close_handle(worker_handle)==0);
+  RavenNT::String registry_name{};RavenNT::init_unicode(&registry_name,u"\\Registry\\Machine\\Hardware\\Description\\System\\CentralProcessor\\0");
+  RavenNT::ObjectAttributes registry_object{48,0,nullptr,&registry_name,0,0,nullptr,nullptr};void *registry_key=nullptr;
+  assert(RavenNT::open_key(&registry_key,0,&registry_object,0)==0);
+  RavenNT::String value_name{};RavenNT::init_unicode(&value_name,u"CP 4030");uint8_t registry_value[20]{};
+  assert(RavenNT::query_value(registry_key,&value_name,2,registry_value,20,nullptr)==0);assert(RavenNT::close_handle(registry_key)==0);
+  RavenNT::active_process=nullptr;RavenNT::active_thread=nullptr;
   auto utf16 = RavenNT::decode("A\xf0\x9f\x90\xa6", 5);
   assert(utf16 == u"A\U0001f426" && RavenNT::encode(utf16.data(), utf16.size()) == "A\xf0\x9f\x90\xa6");
   uint32_t count = 0; char16_t tiny[2] {};

@@ -54,6 +54,7 @@ std::string object_path(const ObjectAttributes *o) {
 }
 int32_t create_file(void **out,uint32_t access,ObjectAttributes *object,IoStatus *io,const int64_t *allocation,
                     uint32_t attributes,uint32_t sharing,uint32_t disposition,uint64_t options,uint64_t ea,uint64_t ea_size) {
+  options=uint32_t(options);ea_size=uint32_t(ea_size);
   if(out)*out=nullptr; if(io)*io={invalid_parameter,0};
   if(!out || !io) return invalid_parameter;
   (void)attributes;(void)sharing;
@@ -106,6 +107,7 @@ int32_t set_file(void *handle,IoStatus *io,const void *input,uint32_t length,uin
   return io->status=not_supported;
 }
 int32_t lock_file(void *handle,void *event,void *apc,void *,IoStatus *io,const int64_t *offset,const int64_t *length,uint32_t key,uint64_t fail,uint64_t exclusive) {
+  fail=uint8_t(fail);exclusive=uint8_t(exclusive);
   if(!io || !offset || !length)return invalid_parameter;*io={0,0};auto h=get_handle(handle);if(!h || h->kind!=Handle::file)return io->status=bad_handle;
   if(event || apc || key)return io->status=not_supported;
   struct flock lock{};lock.l_type=exclusive?F_WRLCK:F_RDLCK;lock.l_whence=SEEK_SET;lock.l_start=*offset;lock.l_len=*length;
@@ -125,6 +127,7 @@ int32_t create_section(void **out,uint32_t,ObjectAttributes *object,const int64_
 }
 std::map<void*,size_t> views;
 int32_t map_section(void *handle,void *process,void **base,uint64_t zero,size_t commit,int64_t *offset,size_t *size,uint32_t inherit,uint64_t allocation,uint64_t protection) {
+  allocation=uint32_t(allocation);protection=uint32_t(protection);
   (void)commit;(void)inherit;
   if(intptr_t(process)!=-1 || !base || !size)return invalid_parameter;
   if(zero || allocation || *base || (offset && (*offset<0 || *offset%getpagesize())))return not_supported;
@@ -137,6 +140,7 @@ int32_t map_section(void *handle,void *process,void **base,uint64_t zero,size_t 
 }
 int32_t unmap_section(void *process,void *base) {if(intptr_t(process)!=-1)return bad_handle;std::lock_guard<std::mutex> g(handles_mutex);auto i=views.find(base);if(i==views.end())return invalid_parameter;if(munmap(base,i->second))return os_error(errno);views.erase(i);return 0;}
 int32_t query_directory(void *handle,void *event,void *apc,void *,IoStatus *io,void *out,uint32_t length,uint32_t klass,uint64_t single,uint64_t pattern_value,uint64_t restart) {
+  single=uint8_t(single);restart=uint8_t(restart);
   (void)single;
   if(!io || !out)return invalid_parameter;*io={0,0};auto h=get_handle(handle);if(!h || h->kind!=Handle::file)return io->status=bad_handle;
   if(event || apc)return io->status=not_supported;

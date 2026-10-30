@@ -72,6 +72,7 @@ int scan(const char *input,const char *format,uint64_t a,uint64_t b,const uint64
     std::string length;
     if(!strncmp(p,"I64",3)){length="ll";p+=3;}else if(*p && strchr("hljztL",*p)){length+=*p++;if(*p==length[0] && (*p=='h'||*p=='l'))length+=*p++;}
     char c=*p++;spec+=length;spec+=c;
+    if(length=="l" && (c=='c' || c=='s' || c=='[')){errno=EINVAL;return -1;}
     if(c=='['){if(*p=='^')spec+=*p++;if(*p==']')spec+=*p++;while(*p && *p!=']')spec+=*p++;if(*p)spec+=*p++;}
     if(!c || (!suppress && arg>=values.size())){errno=EINVAL;return -1;}
     int used=-1;void *dest=suppress?nullptr:reinterpret_cast<void*>(values[arg++]);

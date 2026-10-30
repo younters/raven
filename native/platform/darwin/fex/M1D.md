@@ -1,190 +1,217 @@
-# M1d: native module execution
+# M1d: native FEX module execution
 
-**Latest checkpoint:** all 127 import slots bind; native DllMain, process and
-thread init pass; an x86-64 guest makes one business dispatch and resumes with
-verified result **4884**. See the execution checkpoint below. Earlier sections
-are historical progress records, not the current execution status.
+**The execution milestone and all four requested follow-ons pass in the standalone
+arm64 harness.** All 127 xtajit64 import slots bind. Native module process/thread
+init, a returning x86-64 dispatch, precise AV repair/resume, a nested callback,
+compute verification and round-trip measurements execute under Tier 0.
 
-## Earlier substrate checkpoint
+**GO for M2 development:** build an opt-in `FexProcess` behind `--execution=fex`.
+General Windows compatibility and a default switch remain unqualified. The NT,
+unwind, signal, memory and vector-state work below is part of M2's qualification,
+not something this small harness proves. No production launch, Rosetta or graphics
+code was changed. Nothing was pushed.
 
-Branch `t3/fex-modhost-execution` fast-forwarded from `macos` through `a22048c`
-and `c46c333`. No push. This follow-up **does not deliver the execution milestone**.
-There is no demonstrated OS limit, FEX design limit, or entitlement requirement
-blocking the requested Tier 0 snippet. The remaining stop is unfinished Raven
-implementation, not a qualified feasibility blocker. **NO-GO for M2**.
-
-## Implemented and exercised
-
-- An unentitled native arm64 `MAP_JIT` owner, cache invalidation, and a per-thread
-  write-mode hook that preserves nested write scopes. Multiple mappings execute
-  successfully. No entitlements, signing changes, or system settings were used.
-- A native arm64-to-EC entry adapter for eight integer register arguments. It
-  installs/restores x18 and preserves Darwin registers that EC may destroy.
-- EC-to-native import stubs and a bridge preserving full q6–q15 and x18. Uniform
-  64-bit stack parameters support up to sixteen integer arguments. The bridge
-  copies only the declared number of stack arguments. Typed native signatures
-  with narrow stack arguments and Windows varargs are **not** supported by it.
-- Twenty-eight additional CRT imports: memory, ANSI string/ctype, math, errno,
-  UTF-16 string and Windows 32-bit long conversions. No Darwin `wchar_t`/`long`
-  substitution is used. Sixteen synchronization imports: SRW shared/exclusive
-  locks, condition variables, PEB lock and address waits, including timeouts.
-- The original eleven substrate import slots now receive callable adapter
-  addresses rather than bare Darwin function pointers. Preflight resolves **55
-  of 127 slots**, leaving **72 unresolved**. Missing functions remain missing;
-  none is replaced with a success-returning fake.
-
-Evidence is `modhost/m1d-evidence.json`. The host self-test exercises VM, heap,
-recursive locks, UTF-16/long conversions, a call through a generated import
-adapter, a two-thread SRW/condition-variable handoff, immediate address timeout
-and an unequal-address comparison. The assembly fixture exercises sixteen
-integer arguments and deliberately clobbers EC-volatile/Darwin-saved registers.
-It is a synthetic ABI fixture, **not compiler-generated PE code or an x86 guest**.
-FP/vector preservation is implemented in assembly but still needs explicit
-adversarial tests. Math imports were resolved, not executed by the tests.
-
-## Reproduction
+Branch: `t3/fex-modhost-execution`, continuing `a22048c` and `c46c333`.
+Implementation commits are recorded by:
 
 ```sh
-python3 scripts/test-fex-modhost.py --substrate-only
-python3 scripts/test-fex-modhost.py --evidence /tmp/fex-execution.json
+git log --oneline c46c333..HEAD
 ```
 
-The first command passes only the native substrate tests. The second deliberately
-returns **exit 1** after printing the unresolved imports; the mapper itself
-returns 3. It must not be cited as an execution pass. It neither makes PE pages
-executable nor enters the module. The pinned provisioned M1c DLLs were reused;
-FEX modules were not rebuilt or patched further in this follow-up.
+## Evidence and reproduction
 
-The test is also registered from Darwin CMake only when `xtajit64.dll` is
-provisioned under `RAVEN_FEX_MODULE_ROOT`. A standalone configuration avoids
-building Raven or provisioning unrelated fixtures:
+Committed evidence: [modhost/m1d-runtime-evidence.json](modhost/m1d-runtime-evidence.json).
+It includes artifact/patch hashes, all five samples, exact runtime output, result
+checks and the locked CTest outcome. Earlier `m1d-evidence.json` and
+`m1d-continuation-evidence.json` preserve historical partial checkpoints.
 
 ```sh
+python3 scripts/build-fex-modules.py --raven-host --build-only
+python3 scripts/test-fex-modhost.py --evidence /tmp/fex-runtime.json
+
 cmake -S native/platform/darwin/fex/modhost -B /tmp/raven-m1d-cmake -DCMAKE_BUILD_TYPE=Release
 cmake --build /tmp/raven-m1d-cmake -j8
-/tmp/raven-ctest-lock.sh fex-m1d-substrate ctest --test-dir /tmp/raven-m1d-cmake --output-on-failure
+/tmp/raven-ctest-lock.sh fex-m1d-runtime ctest --test-dir /tmp/raven-m1d-cmake --output-on-failure
 ```
 
-Recorded result: `fex_modhost_substrate` **1/1 passed** in a Release build;
-assertions are explicitly enabled for the substrate tests. No execution test is
-registered as passing. The Python driver's default mode continues to require
-execution and fails until implemented. No Raven/bootstrap or x86 process ran.
-The standalone arm64 ABI fixture was debugged with lldb after a test-fixture stack
-layout error, corrected before the recorded passing run. FEXCore and its JIT
-remain unchanged, as do production launch, Rosetta and graphics behavior.
+The build driver validates the exact pinned source/patch series, toolchain and
+artifacts. It builds both modules with **-j8**, performs PE export/CHPE audits,
+and copies them into the external root. Final fresh recipe output:
 
-## Still required
+`/Users/yount/Documents/Projects/raven-components/fex-modules/FEX-darwin/build/local/m1d-final/`
 
-1. Resolve the 72 missing import slots listed in the evidence: loader lookup and
-   image metadata, native executable VM allocation (`NtAllocateVirtualMemoryEx`),
-   file/section/registry operations, thread/system information and lifecycle,
-   context capture/restore/unwind, string conversion and varargs formatting,
-   run-once and cross-process emulator work. Optional unsupported requests need
-   defined failures; unwind/context restore must be real before exception tests.
-2. Implement mapped PE execution, CHPE-native export redirection, auxiliary IAT
-   handling and self-module dispatch slots. Current adapters have not been called
-   from the actual xtajit64 PE image.
-3. Construct TEB, PEB, TLS, CPU area, AMD64 context and module/emulator stacks;
-   pass the versioned host table through actual process/thread init. Standalone
-   `MAP_JIT` allocation is not yet connected to the module allocator's EC-code path.
-4. Implement spill/dispatch/context-apply/reentry and the returning x64 snippet.
-   The existing frontend still raises unsupported on guest syscalls. Then prove
-   precise AV/repair/resume and nested callbacks in the requested order.
+The root also contains `m1d-manifest.json` and `m1d-native-host`. Native substrate
+checks in the build driver are separate from execution; the second command above
+requires actual init, resumed guest results, fault/callback markers and all timing
+samples. A preflight stop or a zero exit without those checks cannot pass.
 
-These are also the remaining NT/hosting obligations for real processes; broader
-handle, I/O, VM splitting/decommit, cancellation, remote thread contexts, unwind,
-SMC/invalidation and FP/vector semantics need qualification beyond a first snippet.
-Synchronization state currently lives in process-owned side tables with process
-lifetime; this is a standalone harness, not production object-lifetime management.
-Tier 0 retains 16 KiB host pages and coarse 4 KiB protections as an explicit gap.
+CMake registers `fex_modhost_substrate` and `fex_modhost_execution` only when
+`xtajit64.dll` exists under `RAVEN_FEX_MODULE_ROOT` (the external root by default).
+The same directory works standalone, without building Raven or provisioning its
+unrelated fixtures. Release tests explicitly retain assertions. Final locked
+CTest result: **2/2 passed**. `--substrate-only` selects only the native tests.
 
-## Measurements and decision
+Pins remain FEX-darwin **370c63057fc9fc826b58fe15d59930876df55b5f** and llvm-mingw
+**20260616-ucrt-macos-universal**. Final audited DLL SHA256s:
 
-No guest instruction, module init, dispatch, precise guest fault or callback has
-executed. Therefore there are **no FEX compute-throughput or guest/host round-trip
-measurements**. The prior SPIKE baseline remains integer 9.293 ms and float
-12.525 ms per 10M iterations; it was not rerun. Test duration is not a translator
-benchmark.
+- `xtajit64.dll`: `94d3a55a034eaf36fffe56e866c97f5eca2e6744ee563ff33c7e8e9688fdeb1b`
+- `xtajit.dll`: `010c342d2a10e73ac2a3029d3120d801eba8059341316728b836756977d09c6e`
 
-M2 (`FexProcess` behind `--execution=fex`) remains **NO-GO** until at least actual
-module init and the verified returning guest dispatch execute, followed by fault
-and nested-callback qualification. This progress does not meet the user's
-single milestone or establish an allowed hard blocker.
+WoW64 was built/audited, not executed. This is a native arm64 process on the same
+M4 Pro/macOS 27.2 host, with 16 KiB pages and the legacy-SDK linker flag preserving
+x18. No entitlement, signing-policy change, boot-argument change or system setting
+was used. Debugging used only the standalone arm64 harness. The x86 benchmark
+assembly is compiled into an object for byte verification; no x86 executable or
+Raven/bootstrap process was launched.
 
-## Continuation: strings and thread environment
+## What runs
 
-Added sixteen string/bitmap imports (UTF-8 host code page, UTF-16 conversion,
-counted strings, TLS bitmap operations and harness path conversion). Constructed
-owned PEB/process parameters, TEB, CPU area, AMD64-context storage, static TLS
-vector and demand-zero EC-code bitmap. Self-tests check Unicode surrogate pairs,
-truncation boundaries, bitmap allocation and TEB/TLS/CPU-area wiring. Native
-substrate tests pass. These objects are not yet passed to module init; the
-remaining PE loader/import work continues. No new hard blocker is established.
+| Contract | Observed result |
+| --- | --- |
+| Imports | 127/127 bound; both ordinary and auxiliary IAT populated |
+| Native entry | Native target selected from the DLL's own CHPE redirection table; final RavenProcessInit RVA `0x5bc4` |
+| Process/thread initialization | DllMain attach, RavenProcessInit and ThreadInit all execute and pass |
+| Returning dispatch | Guest arguments 7, 11, 13, 17; native return 224; resumed guest adds 0x1234 and verifies **4884** |
+| Precise AV | Exact guest RIP and inaccessible allocation address checked; harness skips the three-byte load and sets RAX=0x1234; resumed guest verifies **4665** |
+| Nested callback | During dispatch, native harness enters a guest callback with argument 41; callback returns 124; outer guest resumes and verifies **5008** |
+| Compute | Both 10M-iteration kernels match the original SPIKE assembly bytes; integer result and float bits verified |
+| Round trip | Each of five samples verifies 100,000 guest/native calls and the accumulated guest result |
 
-### Continuation: VM, image audit, I/O and system services
+The basic snippet performs one business dispatch plus a separate completion
+syscall. Completion verifies the exact resumed end RIP and transfers to the saved
+native test frame. It cannot pass merely by reaching the host once.
 
-Preflight now resolves **108/127 imports**, with **19 unresolved** (latest list in
-`modhost/m1d-continuation-evidence.json`). Added actual file read/write/query/seek,
-byte locks, owned handles/duplication and file/anonymous section mappings; native
-system information/time/frequency/CPU identity; counted loader lookup; image
-metadata queries; run-once; and Windows varargs formatting/scanning adapters.
-Unsupported operations return explicit failures. The harness namespace maps
-native paths and Z: paths; it is not a general Windows filesystem provider.
+The host owns PEB/process parameters, TEB, runtime TLS slots/bitmap, a static TLS
+vector, AMD64 context, CHPE CPU area and EC code bitmap. This DLL has no PE TLS
+directory; the zero-size static template is explicitly observed. Its runtime TLS
+allocation is used by the real CRT. x18 designates the TEB while executing EC code.
+Both module and dynamically allocated native EC-code pages are classified in the
+bitmap. Imports use adapters preserving EC vector nonvolatiles and x18; entry
+adapters preserve Darwin registers that EC may clobber.
 
-The mapper now audits CHPE and constructs the environment while pages remain
-non-executable. `RavenProcessInit` resolves to native RVA **0x57a4** from the pinned
-DLL's own metadata. This DLL has no PE TLS directory (TLS template size 0); its
-runtime TLS bitmap/TEB slots are provided. No module entry has run.
+Native code uses MAP_JIT and nested write scopes. Immutable import veneers use
+ordinary RX mappings so they remain executable while FEX enables JIT writes.
+Guest executable pages contain x86 data and do not become native executable pages.
+The host commits FEX's explicitly marked native overcommit reservations through
+Darwin demand-zero mappings. Arbitrary reservations remain inaccessible.
 
-Added checks for file/section round trips, Windows-format integer/string/float
-arguments, reserve/commit/decommit/recommit and execution through the EC-code
-allocation path. The recommit-zero test exposed Darwin `MADV_DONTNEED` retaining
-anonymous contents; decommit now replaces owned non-JIT pages with demand-zero
-anonymous pages. Native JIT decommit explicitly clears memory under a write scope.
-All native substrate checks pass. Ordinary anonymous RX native code also executes
-on this unentitled host. No qualifying hard blocker has been found; work continues.
+The AV bridge converts Darwin signal state to the pinned ARM64 context. A small
+frontend export asks FEX to reconstruct the precise guest state, delivers it to
+the Raven exception callback, and returns a native context that reenters the
+module's dispatcher with the repaired AMD64 packet. It does not issue a Windows
+SVC or reinterpret a Darwin ucontext as a Windows context.
 
-## Execution checkpoint
+A nested entry saves the outer context and completion frame and uses independent
+emulator/guest stacks. The same FEX thread state is then restored before the outer
+dispatch returns. This demonstrates a synchronous single-level integer callback;
+arbitrary-depth callbacks, callbacks inside waits and FP/vector nesting still
+need qualification.
 
-The standalone host now executes the module's native CHPE entry (never the x64
-export thunk), populates both IATs and installs checked native indirect-call slots.
-It executes native DllMain, `RavenProcessInit` and `ThreadInit` through Raven's table.
-A real x64 snippet supplies arguments 7, 11, 13, 17 using Windows' syscall registers;
-the native dispatch returns 224. Guest execution resumes, adds 0x1234, and a terminal
-completion syscall verifies result **4884** and the exact resumed end RIP. There
-is one business dispatch plus a distinct completion syscall; both are real JIT
-transitions. Completion transfers to the saved native harness frame.
+## Measurements
 
-Two runtime discoveries were fixed rather than bypassed: immutable import veneers
-must be ordinary RX mappings because FEX calls imports during MAP_JIT write scopes;
-and the inherited RtlQueryPerformanceCounter binding incorrectly accepted an NT
-query's second argument. It is now a one-argument BOOLEAN adapter.
+Five samples, 10,000,000 serial dependent iterations each. Function bodies are
+byte-identical to the earlier `SPIKE.md` kernels: integer multiply/add recurrence,
+SSE2 scalar multiply/add with no FMA. The driver independently assembles
+`bench_kernels_x86_64.S` and compares the bytes in `bench.h` before execution.
 
-Patch 0004 supplies nonnull optional allocator hooks and actual syscall packet
-spill/dispatch/reentry. Patch 0005 is a necessary, isolated **Core guard allocation
-fix**: the pinned temporary compiler buffer's 4K guard protected the whole initial
-16K host allocation. Its buffer sizes and guard placement now use 16K when the
-Darwin JIT hook is installed, matching the existing shared-code-buffer policy.
-Instruction decoding, lowering and emitted guest instruction semantics are unchanged.
-The failing guard was observed on the first emitted instruction under standalone
-arm64 lldb. No guard check was removed; guard bounds remain checked.
+| Median | Prior Rosetta baseline | FEX Tier 0 | FEX / Rosetta |
+| --- | ---: | ---: | ---: |
+| Integer, 10M iterations | 9.293 ms | **20.539 ms** | **2.21×** |
+| Float, 10M iterations | 12.525 ms | **25.608 ms** | **2.04×** |
 
-All 127 import slots now bind to callable implementations. This does **not** mean
-a complete NT implementation: the new unwind decoder handles ordinary full-xdata
-prologs/epilogs and canonical packed body frames, rejects unsupported packed
-partial frames, and does not yet run language cleanup handlers in RtlUnwindEx.
-Unhandled RtlRaiseStatus is fatal with an explicit status diagnostic. Broad native
-SEH/C++ exception compatibility, remote thread termination, some I/O classes and
-full Windows path/locale semantics remain unqualified. No API returns invented
-success to get through init. Synthetic context-capture and unwind checks run in
-the substrate test, but those are not a full unwind qualification suite.
+Verified integer result: `5292597211099207303`. Verified float result:
+`4295705.5919631328`, bit-identical to the native C++ reference with
+`-ffp-contract=off`.
 
-The initial successful guest run used the incrementally rebuilt pinned module at
-`FEX-darwin/build/local/m1d/arm64ec/Bin/libarm64ecfex.dll`, built with -j8.
-The final audited reproduction/evidence is updated after the follow-on tests.
-`test-fex-modhost.py` now requires init markers and the verified guest result in
-its default mode; the provisioned-module CMake registers a separate execution
-CTest. A zero exit without those markers cannot pass.
+Guest/native round-trip median: **118.199 ns/call**, five samples of 100,000 calls.
+The range was 116.834–120.868 ns/call. This includes the guest loop, syscall state
+spill, native dispatch, context application and dispatcher reentry. It is not an
+isolated native function-call latency or an ARM64EC fast-call measurement.
 
-AV recovery, nested callback and timing follow-ons continue from this checkpoint.
-M2 remains NO-GO pending those contracts and the NT gaps listed above.
+Raw compute samples in ns:
+
+| Sample | Integer | Float |
+| --- | ---: | ---: |
+| 0 | 20,417,042 | 25,607,666 |
+| 1 | 20,685,000 | 25,667,291 |
+| 2 | 19,947,375 | 25,675,500 |
+| 3 | 20,539,250 | 25,607,000 |
+| 4 | 20,627,000 | 25,199,459 |
+
+Sample 0 includes first compilation of that benchmark's blocks; the other samples
+reuse them. Timings cover guest entry through verified completion; the wrapper
+adds a call/return and terminal syscall around the identical compute function.
+The Rosetta baseline was not rerun. These are same-machine historical comparisons
+under concurrent development load, not controlled whole-application benchmarks.
+Both compute medians exceed twice the supplied baseline; M2 must measure real
+workloads before a default decision. These register-only loops do not establish
+that hardware TSO alone would close the compute gap.
+
+## Patch and implementation boundaries
+
+All Raven adapters are original code. No Wine implementation was copied or linked.
+FEX notices remain intact; the build recipe bundles the upstream license inventory.
+The six isolated patches apply in order to the pinned MIT FEX/FEX-darwin snapshot:
+
+1. Deterministic PE timestamps (inherited).
+2. Raven host frontend/table (inherited).
+3. Raven build option (inherited).
+4. Actual syscall spill/dispatch/reentry, nonnull allocator hooks and explicit
+   native-overcommit notifications.
+5. Native temporary JIT guard sizing. This is the necessary **Core allocation
+   exception** to keeping Core untouched: the pinned temporary buffer uses a 4K
+   guard, and rounding it to 16K protected the entire initial buffer. Buffer sizing,
+   guard placement and fault bounds now agree on 16K when the Darwin write hook is
+   installed. No guard check is removed and no guest instruction lowering changes.
+6. Raven-owned precise fault entry and shared context-packet construction.
+
+The first guard failure was observed under standalone lldb on the first emitted
+instruction. Other corrected runtime failures were a null optional allocator hook,
+executing a MAP_JIT import veneer during a write scope, privileged CTR_EL0 access
+(replaced by public cache-line queries), and the inherited two-argument binding
+for the one-argument RtlQueryPerformanceCounter API. None was hidden by a passing
+stub or by ignoring a failure.
+
+The host registry exposes a conservative CPU-feature model projected from Darwin
+capability queries; unexposed identification values fail rather than inventing a
+MIDR. String conversion uses a UTF-8 host code page and Windows UTF-16/32-bit-long
+widths. File handles, reads/writes, basic queries, byte locks and section mappings
+use actual native resources. Unsupported requests return explicit status failures.
+
+The original unwind decoder follows the documented
+[ARM64 PE unwind format](https://learn.microsoft.com/en-us/cpp/build/arm64-exception-handling).
+It has context-capture and synthetic full-xdata tests, supports canonical packed
+body frames, and rejects unsupported cases. It is not a complete native Windows
+exception runtime.
+
+## Remaining NT surface and M2 decision
+
+- Native C++/SEH unwinding needs language-handler cleanup, complete packed partial
+  prologs/epilogs and context flags/FP control semantics. RtlUnwindEx currently
+  rejects cleanup handlers; unhandled RtlRaiseStatus reports the status and aborts.
+  Binding those imports is not a claim that arbitrary exception paths pass.
+- File sharing/access policy, general Windows drive/path rules, locale/code pages,
+  broader file/object/system/registry classes, async I/O and cancellation need a
+  real-process provider. Formatting/scanning coverage is limited, including wider
+  scanf/locale cases. The harness's supported namespace is native paths and Z:.
+- Process/thread lifetime, remote termination, remote context operations beyond
+  the owned native-thread subset, TLS expansion/FLS, suspend/doorbell races and
+  cross-process memory notifications need production contracts. Runtime side
+  tables currently have harness/process lifetime.
+- Signal conversion is qualified for the synchronous tested read fault and uses
+  a standalone alternate stack. Calling frontend code from the signal handler
+  needs an async-signal-safety/deferred-delivery audit before general process use.
+- SMC/invalidation, KUSER_SHARED_DATA faults, x87/YMM recovery, adversarial vector
+  nonvolatiles, PE32/guest-window mode and arbitrary-depth callback state remain
+  unqualified. WoW64 has not executed.
+- **Tier 0 retains 16 KiB pages and coarse 4 KiB protections.** The test faults a
+  complete inaccessible host page. It does not prove distinct permissions or
+  one-shot guards for four guest subpages in one host page. M2 needs an explicit
+  compatibility policy; Tier 1/entitlement packaging is not counted as evidence.
+
+**GO for an opt-in M2 engineering backend, with these limits made explicit and
+qualification tests attached.** Actual translation, repaired faults and nested
+entry are now demonstrated, so a FexProcess implementation has an executable base.
+Default production use and parity claims remain NO-GO until the listed contracts
+and representative application/performance tests pass. The current production
+launch path and Rosetta behavior stay unchanged.

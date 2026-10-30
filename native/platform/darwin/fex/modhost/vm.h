@@ -16,6 +16,7 @@ int prot(uint32_t p,bool ec=false) {
     case 0x10:return ec?PROT_EXEC:PROT_READ; default:return -1; }
 }
 struct Region { size_t size; uint32_t initial; bool ec; std::vector<uint32_t> protections; };
+void (*code_event)(uintptr_t,size_t,bool)=nullptr;
 std::mutex mutex;
 std::map<uintptr_t,Region> regions;
 auto containing(uintptr_t p) {
@@ -45,6 +46,7 @@ int32_t allocate_impl(void *process,void **base,size_t *size,uint32_t type,uint3
   if(at && uintptr_t(p)!=at) { munmap(p,n); return int32_t(0xc0000018); }
   if(getenv("RAVEN_MODHOST_TRACE"))fprintf(stderr,"VM alloc %p size=%zu EC=%d type=%x protect=%x\n",p,n,ec,type,protection);
   regions.emplace(uintptr_t(p),Region{n,protection,ec,std::vector<uint32_t>(n/page(),type&0x1000?protection:0)});
+  if(ec && code_event)code_event(uintptr_t(p),n,true);
   *base=p; *size=n; return 0;
 }
 int32_t allocate(void *p,void **b,uintptr_t zero,size_t *s,uint32_t t,uint32_t prot) {
@@ -69,6 +71,7 @@ int32_t release(void *p,void **base,size_t *size,uint32_t type) {
   if(type==0x8000) {
     if(at!=i->first || *size) return invalid;
     if(munmap(*base,i->second.size)) return invalid;
+    if(i->second.ec && code_event)code_event(at,i->second.size,false);
     regions.erase(i); *base=nullptr; return 0;
   }
   if(type!=0x4000) return unsupported;
