@@ -11,6 +11,9 @@
 
 extern struct raven_control *raven_dxmt_control(void);
 @class RavenDXMTLayer;
+@class RavenDXMTDrawable;
+// Slots describe pending or imported presentations; host snapshots retain their own surfaces.
+static RavenDXMTDrawable *slot_owners[RAVEN_SURFACE_SLOTS];
 
 // v0.80 WMTLayerProps, pack(8). The fields are ABI, not a dependency on Wine's window-driver structures.
 struct layer_props {
@@ -26,8 +29,11 @@ _Static_assert(sizeof(struct layer_props) == 40, "DXMT v0.80 layer ABI");
 	IOSurfaceRef surface;
 	id<MTLTexture> texture;
 	int slot;
+	bool discard_pending;
+	uint64_t window;
 	RavenDXMTLayer *owner; // Non-owning; used only while the swap chain is encoding a present.
 }
+- (bool)acquireSlot;
 - (instancetype)initWithDevice:(id<MTLDevice>)device window:(uint64_t)window properties:(const struct layer_props *)props;
 @end
 
@@ -40,12 +46,43 @@ _Static_assert(sizeof(struct layer_props) == 40, "DXMT v0.80 layer ABI");
 }
 @end
 
+// A timed-out retirement owns its send right until the host acknowledges UNUSED.
+// The fixed array bounds quarantine even if the host stops responding entirely.
+static struct {
+	bool active;
+	uint64_t ticket;
+	mach_port_t port;
+} retiring_slots[RAVEN_SURFACE_SLOTS];
+static uint64_t retirement_ticket;
+
+// Called only under the allocator lock. Reaping may be done by another allocator
+// before the destructor resumes; its ticket prevents cleanup of a later lease.
+static void reap_retired_slot(unsigned slot)
+{
+	struct raven_surface_frame *frame = &raven_dxmt_control()->surfaces[slot];
+	if (!retiring_slots[slot].active || __atomic_load_n(&frame->state, __ATOMIC_ACQUIRE) != RAVEN_SURFACE_UNUSED) return;
+	if (retiring_slots[slot].port) mach_port_deallocate(mach_task_self(), retiring_slots[slot].port);
+	frame->port = 0;
+	retiring_slots[slot].active = false;
+}
+
+#ifndef RAVEN_DXMT_RETIRE_PUBLISHED
+#define RAVEN_DXMT_RETIRE_PUBLISHED(slot) ((void)0)
+#endif
+#ifndef RAVEN_DXMT_RETIRE_ACKNOWLEDGED
+#define RAVEN_DXMT_RETIRE_ACKNOWLEDGED(slot) ((void)0)
+#endif
+#ifndef RAVEN_DXMT_RETIRE_ATTEMPTS
+#define RAVEN_DXMT_RETIRE_ATTEMPTS 1000
+#endif
+
 @implementation RavenDXMTDrawable
-- (instancetype)initWithDevice:(id<MTLDevice>)device window:(uint64_t)window properties:(const struct layer_props *)props
+- (instancetype)initWithDevice:(id<MTLDevice>)device window:(uint64_t)target properties:(const struct layer_props *)props
 {
 	self = [super init];
 	if (!self) return nil;
 	slot = -1;
+	window = target;
 	struct raven_control *shared = raven_dxmt_control();
 	if (!shared || !isfinite(props->width) || !isfinite(props->height) || props->width < 1 || props->height < 1 ||
 		props->width > 16384 || props->height > 16384 || (props->format != 70 && props->format != 80)) {
@@ -69,37 +106,80 @@ _Static_assert(sizeof(struct layer_props) == 40, "DXMT v0.80 layer ABI");
 		[self release];
 		return nil;
 	}
-	for (unsigned i = 0; i < RAVEN_SURFACE_SLOTS; ++i) {
-		uint32_t unused = RAVEN_SURFACE_UNUSED;
-		if (__atomic_compare_exchange_n(&shared->surfaces[i].state, &unused, RAVEN_SURFACE_WRITING, 0,
-			__ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
-			slot = (int)i;
+	return self;
+}
+
+- (bool)acquireSlot
+{
+	if (__atomic_load_n(&discard_pending, __ATOMIC_ACQUIRE)) return false;
+	struct raven_control *shared = raven_dxmt_control();
+	@synchronized([RavenDXMTDrawable class]) {
+		if (slot >= 0) {
+			struct raven_surface_frame *frame = &shared->surfaces[slot];
+			const uint32_t state = __atomic_load_n(&frame->state, __ATOMIC_ACQUIRE);
+			// The send right contributes to IOSurfaceIsInUse; drop it after host import.
+			if ((state == RAVEN_SURFACE_AVAILABLE || state == RAVEN_SURFACE_DISPLAYED) && frame->port) {
+				mach_port_deallocate(mach_task_self(), frame->port);
+				frame->port = 0;
+			}
+			uint32_t available = RAVEN_SURFACE_AVAILABLE;
+			return !IOSurfaceIsInUse(surface) && __atomic_compare_exchange_n(&frame->state, &available,
+				RAVEN_SURFACE_WRITING, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
+		}
+		if (IOSurfaceIsInUse(surface)) return false;
+		for (unsigned i = 0; i < RAVEN_SURFACE_SLOTS; ++i) {
+			reap_retired_slot(i);
+			if (retiring_slots[i].active) continue;
 			struct raven_surface_frame *frame = &shared->surfaces[i];
+			uint32_t state = __atomic_load_n(&frame->state, __ATOMIC_ACQUIRE);
+			if (state != RAVEN_SURFACE_UNUSED && state != RAVEN_SURFACE_AVAILABLE && state != RAVEN_SURFACE_DISPLAYED) continue;
+			if (!__atomic_compare_exchange_n(&frame->state, &state, RAVEN_SURFACE_WRITING, 0,
+				__ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) continue;
+			// DISPLAYED acknowledges completed import: the host retained a snapshot.
+			// Reuse only the record, not the old texture (which may still be in use).
+			if (slot_owners[i]) slot_owners[i]->slot = -1;
+			if (frame->port) mach_port_deallocate(mach_task_self(), frame->port);
+			slot_owners[i] = self;
+			slot = (int)i;
 			frame->port = 0;
 			frame->window = window;
-			frame->width = width;
-			frame->height = height;
-			frame->pixel_format = format;
-			__atomic_store_n(&frame->state, RAVEN_SURFACE_AVAILABLE, __ATOMIC_RELEASE);
-			return self;
+			frame->width = (uint32_t)IOSurfaceGetWidth(surface);
+			frame->height = (uint32_t)IOSurfaceGetHeight(surface);
+			frame->pixel_format = IOSurfaceGetPixelFormat(surface);
+			return true;
 		}
 	}
-	fprintf(stderr, "raven DXMT: IOSurface pool is full\n");
-	[self release];
-	return nil;
+	return false;
 }
 
 - (void)dealloc
 {
 	struct raven_control *shared = raven_dxmt_control();
-	if (slot >= 0 && shared) {
-		struct raven_surface_frame *frame = &shared->surfaces[slot];
-		const mach_port_t port = frame->port;
-		__atomic_store_n(&frame->state, RAVEN_SURFACE_RETIRE, __ATOMIC_RELEASE);
-		// The host acknowledges retirement before the guest destroys the port name it may be copying.
-		for (unsigned wait = 0; wait < 1000 && __atomic_load_n(&frame->state, __ATOMIC_ACQUIRE) != RAVEN_SURFACE_UNUSED; ++wait)
+	int retiring = -1;
+	uint64_t ticket = 0;
+	@synchronized([RavenDXMTDrawable class]) {
+		if (slot >= 0 && shared) {
+			retiring = slot;
+			ticket = ++retirement_ticket;
+			retiring_slots[slot].active = true;
+			retiring_slots[slot].ticket = ticket;
+			retiring_slots[slot].port = shared->surfaces[slot].port;
+			slot_owners[slot] = nil;
+			__atomic_store_n(&shared->surfaces[slot].state, RAVEN_SURFACE_RETIRE, __ATOMIC_RELEASE);
+		}
+	}
+	if (retiring >= 0) {
+		RAVEN_DXMT_RETIRE_PUBLISHED((unsigned)retiring);
+		for (unsigned wait = 0; wait < RAVEN_DXMT_RETIRE_ATTEMPTS &&
+			__atomic_load_n(&shared->surfaces[retiring].state, __ATOMIC_ACQUIRE) != RAVEN_SURFACE_UNUSED; ++wait)
 			usleep(1000);
-		if (port) mach_port_deallocate(mach_task_self(), port);
+		if (__atomic_load_n(&shared->surfaces[retiring].state, __ATOMIC_ACQUIRE) == RAVEN_SURFACE_UNUSED)
+			RAVEN_DXMT_RETIRE_ACKNOWLEDGED((unsigned)retiring);
+		@synchronized([RavenDXMTDrawable class]) {
+			if (retiring_slots[retiring].ticket == ticket) reap_retired_slot((unsigned)retiring);
+		}
+		// On timeout the slot and right stay quarantined. A later acquisition
+		// reaps them only after the host's UNUSED acknowledgement.
 	}
 	[texture release];
 	if (surface) CFRelease(surface);
@@ -158,46 +238,77 @@ static int32_t get_props(void *args)
 	return 0;
 }
 
+#ifndef RAVEN_DXMT_DRAWABLE_WAIT
+#define RAVEN_DXMT_DRAWABLE_WAIT() usleep(500)
+#endif
+
+static bool drawable_progress_possible(RavenDXMTLayer *layer)
+{
+	struct raven_control *shared = raven_dxmt_control();
+	for (unsigned i = 0; i < RAVEN_SURFACE_SLOTS; ++i) {
+		const uint32_t state = __atomic_load_n(&shared->surfaces[i].state, __ATOMIC_ACQUIRE);
+		if (state == RAVEN_SURFACE_WRITING || state == RAVEN_SURFACE_READY || state == RAVEN_SURFACE_IMPORTING) return true;
+	}
+	for (RavenDXMTDrawable *drawable in layer->frames)
+		if (__atomic_load_n(&drawable->discard_pending, __ATOMIC_ACQUIRE) || IOSurfaceIsInUse(drawable->surface)) return true;
+	return false;
+}
+
 static int32_t next_drawable(void *args)
 {
 	uint64_t *p = args;
 	RavenDXMTLayer *layer = (RavenDXMTLayer *)p[0];
-	struct raven_control *shared = raven_dxmt_control();
 	p[1] = 0;
-	while (layer->frames.count < 3) {
-		RavenDXMTDrawable *frame = [[RavenDXMTDrawable alloc] initWithDevice:(id<MTLDevice>)layer->props.device
-			window:layer->window properties:&layer->props];
-		if (!frame) return (int32_t)0xc00000bbU;
-		[layer->frames addObject:frame];
-		frame->owner = layer;
-		[frame release];
-	}
-	const CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 5;
+	const CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + .1;
 	do {
 		for (RavenDXMTDrawable *drawable in layer->frames) {
-			struct raven_surface_frame *frame = &shared->surfaces[drawable->slot];
-			const uint32_t status = __atomic_load_n(&frame->state, __ATOMIC_ACQUIRE);
-			// A Mach send right itself contributes to IOSurfaceIsInUse. Drop it only after the host imported or discarded the frame.
-			if ((status == RAVEN_SURFACE_AVAILABLE || status == RAVEN_SURFACE_DISPLAYED) && frame->port) {
-				mach_port_deallocate(mach_task_self(), frame->port);
-				frame->port = 0;
-			}
-			uint32_t available = RAVEN_SURFACE_AVAILABLE;
-			if (!IOSurfaceIsInUse(drawable->surface) && __atomic_compare_exchange_n(&frame->state, &available,
-				RAVEN_SURFACE_WRITING, 0, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) {
+			if ([drawable acquireSlot]) {
 				p[1] = (uint64_t)drawable;
 				return 0;
 			}
 		}
-		usleep(500);
+		if (layer->frames.count < 3) {
+			RavenDXMTDrawable *drawable = [[RavenDXMTDrawable alloc] initWithDevice:(id<MTLDevice>)layer->props.device
+				window:layer->window properties:&layer->props];
+			if (!drawable) return (int32_t)0xc00000bbU;
+			[layer->frames addObject:drawable];
+			drawable->owner = layer;
+			[drawable release];
+			if ([drawable acquireSlot]) {
+				p[1] = (uint64_t)drawable;
+				return 0;
+			}
+		}
+		if (!drawable_progress_possible(layer)) break;
+		RAVEN_DXMT_DRAWABLE_WAIT();
 	} while (CFAbsoluteTimeGetCurrent() < deadline);
-	fprintf(stderr, "raven DXMT: timed out waiting for an IOSurface presentation buffer\n");
-	return (int32_t)0x00000102U;
+
+	// The pinned PE thunk discards status and dereferences the result. Drop this
+	// presentation safely using a real render target, never a null Metal object.
+	// Reuse an unleased texture where possible; transient scratch objects otherwise
+	// live only through encoding and GPU completion, never through host retention.
+	RavenDXMTDrawable *discard = nil;
+	for (RavenDXMTDrawable *drawable in layer->frames) {
+		if (drawable->slot < 0 && !__atomic_load_n(&drawable->discard_pending, __ATOMIC_ACQUIRE) && !IOSurfaceIsInUse(drawable->surface)) {
+			discard = drawable;
+			break;
+		}
+	}
+	if (!discard) {
+		discard = [[[RavenDXMTDrawable alloc] initWithDevice:(id<MTLDevice>)layer->props.device
+			window:layer->window properties:&layer->props] autorelease];
+		if (!discard) return (int32_t)0xc0000017U;
+	}
+	__atomic_store_n(&discard->discard_pending, true, __ATOMIC_RELEASE);
+	__atomic_fetch_add(&raven_dxmt_control()->surface_errors, 1, __ATOMIC_RELAXED);
+	p[1] = (uint64_t)discard;
+	return 0;
 }
 
 static int32_t drawable_texture(void *args)
 {
 	uint64_t *p = args;
+	if (!p[0]) { p[1] = 0; return (int32_t)0xc000000dU; }
 	p[1] = (uint64_t)((RavenDXMTDrawable *)p[0])->texture;
 	return 0;
 }
@@ -208,6 +319,13 @@ static int32_t present_common(void *args, double minimum_duration)
 	id<MTLCommandBuffer> command = (id<MTLCommandBuffer>)p[0];
 	RavenDXMTDrawable *drawable = (RavenDXMTDrawable *)p[1];
 	if (!drawable) return (int32_t)0xc000000dU;
+	if (drawable->slot < 0) {
+		[command addCompletedHandler:^(id<MTLCommandBuffer> completed) {
+			(void)completed;
+			__atomic_store_n(&drawable->discard_pending, false, __ATOMIC_RELEASE);
+		}];
+		return 0;
+	}
 	struct raven_control *shared = raven_dxmt_control();
 	struct raven_surface_frame *frame = &shared->surfaces[drawable->slot];
 	static uint64_t sequence;

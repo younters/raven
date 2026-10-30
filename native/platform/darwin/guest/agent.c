@@ -591,9 +591,17 @@ static void serve(struct raven_service_channel *service)
 		}
 		const uint32_t index = unix_library_count;
 		void (*initialize)(struct raven_control *) = dlsym(module, "raven_unixlib_init");
+		void *(*wrap)(void *, uint32_t) = dlsym(module, "raven_unixlib_wrap_table");
+		uint32_t (*version)(void) = dlsym(module, "raven_unixlib_protocol_version");
+		if ((initialize || wrap) && (!version || version() != RAVEN_GUEST_VERSION)) {
+			fprintf(stderr, "raven-bootstrap: unixlib adapter protocol mismatch (expected %u); rebuild raven-dxmt.dylib\n", RAVEN_GUEST_VERSION);
+			dlclose(module);
+			errno = ENOEXEC;
+			ok = 0;
+			break;
+		}
 		if (initialize)
 			initialize(control);
-		void *(*wrap)(void *, uint32_t) = dlsym(module, "raven_unixlib_wrap_table");
 		if (wrap)
 			functions = wrap(functions, (uint32_t)a[0]);
 		if (!functions) {
