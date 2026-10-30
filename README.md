@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/logo.svg" alt="Raven" width="320"></p>
+<p align="center"><img src="docs/logo.svg" alt="Raven" width="120"></p>
 
 <p align="center"><b>A Windows your apps recognize.</b></p>
 
@@ -47,16 +47,18 @@ python3 scripts/provision-controls.py --arch x86 --output components/controls32
 python3 scripts/provision-installer.py --output components/installer
 python3 scripts/provision-installer.py --arch x86 --output components/installer32
 python3 scripts/provision-graphics.py --destination components/graphics
+python3 scripts/provision-roots.py --output components/roots
 cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DRAVEN_RTL_COMPONENT_PATH=$PWD/components/rtl/raven-rtl.dll \
     -DRAVEN_CONTROLS_COMPONENT_DIR=$PWD/components/controls -DRAVEN_CONTROLS32_COMPONENT_DIR=$PWD/components/controls32 \
     -DRAVEN_INSTALLER_COMPONENT_DIR=$PWD/components/installer -DRAVEN_INSTALLER32_COMPONENT_DIR=$PWD/components/installer32 \
     -DRAVEN_DXVK_PE64_DIR=$PWD/components/graphics/dxvk/pe64 -DRAVEN_DXVK_PE32_DIR=$PWD/components/graphics/dxvk/pe32 \
-    -DRAVEN_VKD3D_PE64_DIR=$PWD/components/graphics/vkd3d-proton/pe64
+    -DRAVEN_VKD3D_PE64_DIR=$PWD/components/graphics/vkd3d-proton/pe64 \
+    -DRAVEN_ROOT_CERTIFICATE_DIRECTORY=$PWD/components/roots
 cmake --build build -j2
 ```
 
-DXVK and vkd3d-proton are only needed for Direct3D programs and games.
+DXVK and vkd3d-proton are only needed for Direct3D programs and games. The Microsoft root certificates let installers check the signatures of the packages they download, as setups built with WiX Burn and the .NET and Visual C++ redistributables do.
 
 On an X11 session, `--desktop=x11` takes the place of `--desktop=wayland`. The X11 desktop is experimental; `-DRAVEN_DESKTOP_WAYLAND=OFF` builds Raven without Wayland at all.
 
@@ -143,4 +145,4 @@ The [earlier chart data](docs/benchmarks.json), with CPU time and memory, remain
 
 Raven's Linux runtime is licensed under [GPL-3.0-or-later](LICENSE). Its own guest adapters listed in [LICENSES.json](LICENSES.json) remain MIT-licensed. Imported and derived components keep their own licenses and notices (GPL, LGPL, MIT, BSD, libpng, Unicode and Skia). Earlier MIT grants remain valid.
 
-The Linux `raven` executable incorporates GPL UTF-8 conversion code and LGPL window-rectangle code. [LICENSES.md](LICENSES.md) records the component boundaries and distribution requirements; [packaging](docs/packaging.md) describes how to include the corresponding sources and notices with a build.
+[LICENSES.md](LICENSES.md) records the component boundaries and distribution requirements; [packaging](docs/packaging.md) describes how to include the corresponding sources and notices with a build.

@@ -1318,8 +1318,8 @@ static constexpr std::pair<std::string_view, uint8_t> uxtheme_words[]{
 	{"GetThemeSysColorBrush",2},{"GetThemeSysFont",3},{"GetThemeSysInt",3},{"GetThemeSysSize",2},{"GetThemeSysString",4},{"GetThemeTextExtent",9},
 	{"GetThemeTextMetrics",5},{"GetThemeTransitionDuration",6},{"GetWindowTheme",1},{"HitTestThemeBackground",10},{"IsAppThemed",0},{"IsCompositionActive",0},
 	{"IsDarkModeAllowedForApp",0},{"IsDarkModeAllowedForWindow",1},{"IsThemeActive",0},{"IsThemeBackgroundPartiallyTransparent",3},{"IsThemeDialogTextureEnabled",1},{"IsThemePartDefined",3},
-	{"OpenThemeData",2},{"OpenThemeDataEx",3},{"RefreshImmersiveColorPolicyState",0},{"SetPreferredAppMode",1},{"SetThemeAppProperties",1},{"SetWindowTheme",3},
-	{"SetWindowThemeAttribute",4},{"ShouldAppsUseDarkMode",0},{"ShouldSystemUseDarkMode",0},{"ThemeInitApiHook",2},{"UpdatePanningFeedback",4},
+	{"OpenThemeData",2},{"OpenThemeDataEx",3},{"OpenThemeDataForDpi",3},{"RefreshImmersiveColorPolicyState",0},{"SetPreferredAppMode",1},{"SetThemeAppProperties",1},
+	{"SetWindowTheme",3},{"SetWindowThemeAttribute",4},{"ShouldAppsUseDarkMode",0},{"ShouldSystemUseDarkMode",0},{"ThemeInitApiHook",2},{"UpdatePanningFeedback",4},
 };
 static constexpr std::pair<std::string_view, uint8_t> version_words[]{
 	{"GetFileVersionInfoA",4},{"GetFileVersionInfoSizeA",2},{"GetFileVersionInfoSizeW",2},{"GetFileVersionInfoW",4},{"VerFindFileA",8},{"VerFindFileW",8},
@@ -2374,7 +2374,8 @@ static constexpr std::pair<std::string_view, uint8_t> winspool_words[]{
 static constexpr std::pair<std::string_view, uint8_t> ravenhost_words[]{
 	{"RavenCanvasCreate",2},{"RavenCanvasDestroy",1},{"RavenCanvasDraw",4},{"RavenCanvasPixels",8},{"RavenCanvasSize",2},{"RavenFontClose",1},
 	{"RavenFontGlyphs",4},{"RavenFontInfo",2},{"RavenFontMetrics",3},{"RavenFontName",4},{"RavenFontOpen",3},{"RavenFontOutline",4},
-	{"RavenFontRender",10},{"RavenFontScan",2},{"RavenFontTable",5},{"RavenPathCombine",8},{"RavenPathWiden",7},{"RavenTrace",1},
+	{"RavenFontRender",10},{"RavenFontScan",2},{"RavenFontTable",5},{"RavenPathCombine",8},{"RavenPathWiden",7},{"RavenShaderRelease",1},
+	{"RavenShaderRequest",2},{"RavenShaderResult",4},{"RavenTrace",1},
 };
 static constexpr std::pair<std::string_view, uint8_t> secur32_words[]{
 	{"AcceptSecurityContext",9},{"AcquireCredentialsHandleA",9},{"AcquireCredentialsHandleW",9},{"AddCredentialsA",8},{"AddCredentialsW",8},{"AddSecurityPackageA",2},
@@ -2502,7 +2503,7 @@ static constexpr std::pair<std::string_view, uint8_t> dsound_words[]{
 	{"DirectSoundEnumerateA",2},{"DirectSoundEnumerateW",2},{"DirectSoundFullDuplexCreate",10},{"GetDeviceID",2},
 };
 static constexpr std::pair<std::string_view, uint8_t> combase_words[]{
-	{"CLSIDFromString",2},{"CoCreateGuid",1},{"CoCreateInstance",5},{"CoDecrementMTAUsage",1},{"CoGetApartmentType",2},{"CoGetMalloc",2},
+	{"CLSIDFromString",2},{"CoCreateFreeThreadedMarshaler",2},{"CoCreateGuid",1},{"CoCreateInstance",5},{"CoDecrementMTAUsage",1},{"CoGetApartmentType",2},{"CoGetMalloc",2},
 	{"CoIncrementMTAUsage",1},{"CoInitializeEx",2},{"CoTaskMemAlloc",1},{"CoTaskMemFree",1},{"CoTaskMemRealloc",2},{"CoUninitialize",0},
 	{"GetErrorInfo",2},{"RoActivateInstance",2},{"RoGetActivationFactory",3},{"RoGetParameterizedTypeInstanceIID",5},{"RoInitialize",1},{"RoOriginateError",2},
 	{"RoOriginateErrorW",3},{"RoOriginateLanguageException",3},{"RoParseTypeName",3},{"RoResolveNamespace",7},{"RoUninitialize",0},{"SetErrorInfo",2},
@@ -2585,7 +2586,7 @@ static constexpr std::pair<std::string_view, uint8_t> slc_words[]{
 };
 static constexpr std::pair<std::string_view, uint8_t> sppc_words[]{
 	{"SLClose",1},{"SLConsumeRight",5},{"SLDepositOfflineConfirmationId",4},{"SLGenerateOfflineInstallationId",3},{"SLGetApplicationInformation",6},{"SLGetApplicationPolicy",5},
-	{"SLGetAuthenticationResult",2},{"SLGetInstalledProductKeyIds",4},{"SLGetLicense",4},{"SLGetLicenseFileId",4},{"SLGetLicenseInformation",6},{"SLGetLicensingStatusInformation",6},
+	{"SLGetAuthenticationResult",3},{"SLGetInstalledProductKeyIds",4},{"SLGetLicense",4},{"SLGetLicenseFileId",4},{"SLGetLicenseInformation",6},{"SLGetLicensingStatusInformation",6},
 	{"SLGetPKeyId",6},{"SLGetPKeyInformation",6},{"SLGetPolicyInformation",5},{"SLGetPolicyInformationDWORD",3},{"SLGetProductSkuInformation",6},{"SLGetSLIDList",6},
 	{"SLGetServiceInformation",5},{"SLInstallLicense",4},{"SLInstallProofOfPurchase",6},{"SLLoadApplicationPolicies",4},{"SLOpen",1},{"SLPersistApplicationPolicies",3},
 	{"SLReArm",4},{"SLSetAuthenticationData",3},{"SLUninstallLicense",2},{"SLUninstallProofOfPurchase",2},{"SLUnloadApplicationPolicies",2},
@@ -2593,13 +2594,6 @@ static constexpr std::pair<std::string_view, uint8_t> sppc_words[]{
 static constexpr std::pair<std::string_view, uint8_t> rstrtmgr_words[]{
 	{"RmAddFilter",5},{"RmCancelCurrentTask",1},{"RmEndSession",1},{"RmGetFilterList",4},{"RmGetList",5},{"RmJoinSession",2},
 	{"RmRegisterResources",7},{"RmRemoveFilter",4},{"RmReserveHeap",1},{"RmRestart",3},{"RmShutdown",3},{"RmStartSession",3},
-};
-static constexpr std::pair<std::string_view, uint8_t> d3dcompiler_47_words[]{
-	{"D3DAssemble",8},{"D3DCompile",11},{"D3DCompile2",14},{"D3DCompileFromFile",9},{"D3DCompressShaders",4},{"D3DCreateBlob",2},
-	{"D3DCreateFunctionLinkingGraph",2},{"D3DCreateLinker",1},{"D3DDecompressShaders",8},{"D3DDisassemble",5},{"D3DDisassemble10Effect",3},{"D3DDisassemble11Trace",7},
-	{"D3DDisassembleRegion",8},{"D3DGetBlobPart",5},{"D3DGetDebugInfo",3},{"D3DGetInputAndOutputSignatureBlob",3},{"D3DGetInputSignatureBlob",3},{"D3DGetOutputSignatureBlob",3},
-	{"D3DGetTraceInstructionOffsets",7},{"D3DLoadModule",3},{"D3DPreprocess",7},{"D3DReadFileToBlob",2},{"D3DReflect",4},{"D3DReflectLibrary",4},
-	{"D3DReturnFailure1",3},{"D3DSetBlobPart",7},{"D3DStripShader",4},{"D3DWriteBlobToFile",3},
 };
 static constexpr std::pair<std::string_view, std::span<const std::pair<std::string_view, uint8_t>>> argument_tables[]{
 	{"advapi32.dll", advapi32_words},
@@ -2671,5 +2665,4 @@ static constexpr std::pair<std::string_view, std::span<const std::pair<std::stri
 	{"slc.dll", slc_words},
 	{"sppc.dll", sppc_words},
 	{"rstrtmgr.dll", rstrtmgr_words},
-	{"d3dcompiler_47.dll", d3dcompiler_47_words},
 };

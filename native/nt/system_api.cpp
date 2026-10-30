@@ -11,9 +11,14 @@
 #include <cpuid.h>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <map>
 #include <mutex>
+#include <optional>
+#include <span>
 #include <thread>
+#include <sched.h>
 #include <tuple>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -230,6 +235,128 @@ std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_envi
 	return result;
 }
 
+// The Software Protection Platform's license store: the files programs install, each named after the first license it holds and kept
+// where Windows keeps them. A license is an <r:license> element whose licenseId attribute is its SLID.
+struct LicenseStore {
+	std::mutex lock;
+	// Open sessions and the authentication data each was given.
+	std::map<uint64_t, std::vector<uint8_t>> sessions;
+};
+
+using Slid = std::array<uint8_t, 16>;
+
+std::optional<Slid> parse_slid(std::string_view text)
+{
+	if (text.size() == 38 && text.front() == '{' && text.back() == '}')
+		text = text.substr(1, 36);
+	if (text.size() != 36 || text[8] != '-' || text[13] != '-' || text[18] != '-' || text[23] != '-')
+		return std::nullopt;
+	std::string digits;
+	for (const char character : text)
+		if (character != '-')
+			digits += character;
+	uint8_t bytes[16];
+	for (size_t index = 0; index < 16; ++index) {
+		const auto digit = [](char character) -> int {
+			if (character >= '0' && character <= '9')
+				return character - '0';
+			character = char(character | 0x20);
+			return character >= 'a' && character <= 'f' ? character - 'a' + 10 : -1;
+		};
+		const int high = digit(digits[2 * index]), low = digit(digits[2 * index + 1]);
+		if (high < 0 || low < 0)
+			return std::nullopt;
+		bytes[index] = uint8_t(high << 4 | low);
+	}
+	// The text spells the first three fields big-endian; the SLID keeps them as little-endian numbers.
+	return Slid{bytes[3], bytes[2], bytes[1], bytes[0], bytes[5], bytes[4], bytes[7], bytes[6], bytes[8], bytes[9], bytes[10], bytes[11],
+		bytes[12], bytes[13], bytes[14], bytes[15]};
+}
+
+std::string slid_text(const Slid &id)
+{
+	char text[39];
+	std::snprintf(text, sizeof(text), "{%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X}", id[3], id[2], id[1], id[0], id[5],
+		id[4], id[7], id[6], id[8], id[9], id[10], id[11], id[12], id[13], id[14], id[15]);
+	return text;
+}
+
+// License files are UTF-8 XML; one saved as UTF-16 is read through its UTF-8 spelling.
+std::string license_text(std::span<const uint8_t> bytes)
+{
+	if (bytes.size() >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe) {
+		std::u16string wide((bytes.size() - 2) / 2, u'\0');
+		std::memcpy(wide.data(), bytes.data() + 2, wide.size() * 2);
+		return to_utf8(wide);
+	}
+	return std::string(bytes.begin(), bytes.end());
+}
+
+struct LicenseElement {
+	Slid id;
+	// The element's content, between its start and end tags.
+	std::string_view body;
+};
+
+std::vector<LicenseElement> license_elements(std::string_view text)
+{
+	std::vector<LicenseElement> result;
+	for (size_t start = text.find("<r:license"); start != text.npos; start = text.find("<r:license", start + 1)) {
+		const auto tag_end = text.find('>', start);
+		if (tag_end == text.npos)
+			break;
+		const auto tag = text.substr(start, tag_end - start);
+		const auto attribute = tag.find("licenseId");
+		if (attribute == tag.npos)
+			continue;
+		size_t cursor = attribute + 9;
+		while (cursor < tag.size() && (tag[cursor] == ' ' || tag[cursor] == '\t' || tag[cursor] == '\r' || tag[cursor] == '\n' || tag[cursor] == '='))
+			++cursor;
+		if (cursor >= tag.size() || (tag[cursor] != '"' && tag[cursor] != '\''))
+			continue;
+		const auto close = tag.find(tag[cursor], cursor + 1);
+		const auto id = close == tag.npos ? std::nullopt : parse_slid(tag.substr(cursor + 1, close - cursor - 1));
+		if (!id)
+			continue;
+		const auto end = text.find("</r:license>", tag_end);
+		result.push_back({*id, text.substr(tag_end + 1, end == text.npos ? text.npos : end - tag_end - 1)});
+	}
+	return result;
+}
+
+// The text of the first element under the license whose name attribute is the field, with the XML character references resolved.
+std::optional<std::string> license_field(std::string_view body, std::string_view field)
+{
+	const auto attribute = body.find("name=\"" + std::string(field) + "\"");
+	if (attribute == body.npos)
+		return std::nullopt;
+	const auto start = body.find('>', attribute);
+	const auto end = start == body.npos ? body.npos : body.find('<', start);
+	if (end == body.npos)
+		return std::nullopt;
+	std::string value;
+	const auto raw = body.substr(start + 1, end - start - 1);
+	for (size_t index = 0; index < raw.size(); ++index) {
+		constexpr std::pair<std::string_view, char> entities[] = {{"&amp;", '&'}, {"&lt;", '<'}, {"&gt;", '>'}, {"&quot;", '"'}, {"&apos;", '\''}};
+		const auto entity = std::find_if(std::begin(entities), std::end(entities), [&](const auto &item) { return raw.substr(index).starts_with(item.first); });
+		if (entity != std::end(entities)) {
+			value += entity->second;
+			index += entity->first.size() - 1;
+		} else {
+			value += raw[index];
+		}
+	}
+	return value;
+}
+
+std::optional<std::vector<uint8_t>> read_host_file(const std::filesystem::path &path)
+{
+	std::ifstream stream(path, std::ios::binary);
+	if (!stream)
+		return std::nullopt;
+	return std::vector<uint8_t>(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+}
+
 }
 
 uint64_t counter_ticks()
@@ -254,14 +381,17 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		const auto zone = zone_at(time_t((utc - filetime_epoch_offset) / 10000000ULL));
 		call.write(call[0], system_time(utc + int64_t(zone.offset_minutes) * 600000000LL));
 	});
-	registry.add("QueryPerformanceCounter", 1, [](ApiCall &call) {
-		call.store<uint64_t>(call[0], counter_ticks());
-		call.ret(1);
-	});
-	registry.add("QueryPerformanceFrequency", 1, [](ApiCall &call) {
-		call.store<uint64_t>(call[0], 10000000ULL);
-		call.ret(1);
-	});
+	// The performance counter, in kernel32's form and ntdll's (RtlQueryPerformanceCounter), which answers TRUE the same way.
+	for (const auto *name : {"QueryPerformanceCounter", "RtlQueryPerformanceCounter"})
+		registry.add(name, 1, [](ApiCall &call) {
+			call.store<uint64_t>(call[0], counter_ticks());
+			call.ret(1);
+		});
+	for (const auto *name : {"QueryPerformanceFrequency", "RtlQueryPerformanceFrequency"})
+		registry.add(name, 1, [](ApiCall &call) {
+			call.store<uint64_t>(call[0], 10000000ULL);
+			call.ret(1);
+		});
 	registry.add("GetTickCount64", 0, [](ApiCall &call) { call.ret(counter_ticks() / 10000); });
 	registry.add("GetTickCount", 0, [](ApiCall &call) { call.ret(uint32_t(counter_ticks() / 10000)); });
 	// winmm timers: the host clock already has millisecond resolution, so periods are accepted and change nothing.
@@ -344,51 +474,107 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		const auto a = call.load<uint64_t>(call[0]), b = call.load<uint64_t>(call[1]);
 		call.ret(uint32_t(a < b ? -1 : a > b ? 1 : 0));
 	});
-	const auto zone_information = [](ApiCall &call, bool dynamic) {
-		const time_t now = ::time(nullptr);
-		tm local{};
-		::localtime_r(&now, &local);
-		const int year = local.tm_year + 1900;
-		const time_t year_start = days_from_civil(year, 1, 1) * 86400;
-		const time_t middle = days_from_civil(year, 7, 1) * 86400;
-		const auto first = zone_at(year_start), second = zone_at(middle), current = zone_at(now);
+	// The host zone's TIME_ZONE_INFORMATION for a year (172 bytes; the dynamic form adds a 128-character key name and a flag): the
+	// standard bias, the names, and the transitions, found by stepping through the year's offsets. Each transition is the recurring
+	// "nth weekday of the month" rule (wYear zero, wDay 1 to 4, or 5 for the last), at the local time on the clock it leaves: daylight
+	// time starts at a standard-time hour, standard time at a daylight-time hour. The result says whether the zone has daylight time.
+	const auto zone_for_year = [](int year, bool dynamic, std::vector<uint8_t> &bytes) {
+		tm start{};
+		start.tm_year = year - 1900;
+		start.tm_mday = 1;
+		const time_t year_start = ::timegm(&start);
+		struct Change { time_t at; ZoneInfo before, after; };
+		std::vector<Change> changes;
+		auto previous = zone_at(year_start);
+		for (int day = 1; day <= 366; ++day) {
+			const time_t at = year_start + time_t(day) * 86400;
+			const auto zone = zone_at(at);
+			if (zone.offset_minutes != previous.offset_minutes) {
+				// The first second of the new offset, between the two days.
+				time_t low = at - 86400, high = at;
+				while (high - low > 1) {
+					const time_t middle = low + (high - low) / 2;
+					(zone_at(middle).offset_minutes == previous.offset_minutes ? low : high) = middle;
+				}
+				changes.push_back({high, previous, zone});
+			}
+			previous = zone;
+		}
+		const auto first = zone_at(year_start), second = zone_at(year_start + 182 * 86400);
 		const int standard = std::min(first.offset_minutes, second.offset_minutes), daylight = std::max(first.offset_minutes, second.offset_minutes);
-		// The dynamic form adds a 128-character key name and a flag after the 172 bytes of the plain one.
-		std::vector<uint8_t> bytes(dynamic ? 432 : 172);
+		bytes.assign(dynamic ? 432 : 172, 0);
+		const auto put_rule = [&](size_t at, const Change &change) {
+			const time_t local = change.at + time_t(change.before.offset_minutes) * 60;
+			tm clock{};
+			::gmtime_r(&local, &clock);
+			const int month_days = clock.tm_mon == 1 ? ((year % 4 == 0 && year % 100) || year % 400 == 0 ? 29 : 28) :
+				(clock.tm_mon == 3 || clock.tm_mon == 5 || clock.tm_mon == 8 || clock.tm_mon == 10) ? 30 : 31;
+			const uint16_t occurrence = clock.tm_mday + 7 > month_days ? 5 : uint16_t((clock.tm_mday - 1) / 7 + 1);
+			const uint16_t fields[8] = {0, uint16_t(clock.tm_mon + 1), uint16_t(clock.tm_wday), occurrence, uint16_t(clock.tm_hour),
+				uint16_t(clock.tm_min), uint16_t(clock.tm_sec), 0};
+			std::memcpy(bytes.data() + at, fields, sizeof fields);
+		};
 		const int32_t bias = -standard;
 		std::memcpy(bytes.data(), &bias, 4);
 		const auto standard_name = from_utf8(first.offset_minutes <= second.offset_minutes ? first.name : second.name).substr(0, 31);
 		const auto daylight_name = from_utf8(first.offset_minutes > second.offset_minutes ? first.name : second.name).substr(0, 31);
 		std::memcpy(bytes.data() + 4, standard_name.data(), standard_name.size() * 2);
 		std::memcpy(bytes.data() + 88, daylight_name.data(), daylight_name.size() * 2);
+		if (standard != daylight)
+			for (const auto &change : changes)
+				put_rule(change.after.offset_minutes == daylight ? 152 : 68, change);
 		const int32_t daylight_bias = standard - daylight;
 		std::memcpy(bytes.data() + 168, &daylight_bias, 4);
 		if (standard != daylight) zone_transitions(bytes, year, first, second);
 		if (dynamic) {
-			const auto key_name = from_utf8(first.offset_minutes <= second.offset_minutes ? first.name : second.name).substr(0, 127);
+			const auto key_name = standard_name.substr(0, 127);
 			std::memcpy(bytes.data() + 172, key_name.data(), key_name.size() * 2);
 		}
-		call.write(call[0], bytes);
-		call.ret(standard == daylight ? 0 : current.daylight ? 2 : 1);
+		return standard != daylight;
 	};
-	registry.add("GetTimeZoneInformation", 1, [zone_information](ApiCall &call) { zone_information(call, false); });
-	registry.add("GetDynamicTimeZoneInformation", 1, [zone_information](ApiCall &call) { zone_information(call, true); });
-	// A prefix has no per-year Dynamic DST registry overrides; use the supplied recurring rules, or the local zone when omitted.
-	registry.add("GetTimeZoneInformationForYear", 3, [zone_information](ApiCall &call) {
-		if (!call.u32(0) || !call[2]) { call.fail(87); return; }
-		if (call[1]) {
+	const auto current_year = [] {
+		const time_t now = ::time(nullptr);
+		tm local{};
+		::localtime_r(&now, &local);
+		return local.tm_year + 1900;
+	};
+	const auto zone_information = [zone_for_year, current_year](ApiCall &call, bool dynamic) {
+		std::vector<uint8_t> bytes;
+		const bool has_daylight = zone_for_year(current_year(), dynamic, bytes);
+		call.write(call[0], bytes);
+		call.ret(!has_daylight ? 0 : zone_at(::time(nullptr)).daylight ? 2 : 1);
+	};
+	// A year's rules for the zone named, or for the current zone when none is. The host has one zone: a dynamic zone with another key
+	// name is not found.
+	registry.add("GetTimeZoneInformationForYear", 3, [zone_for_year, current_year](ApiCall &call) {
+		if (!uint16_t(call[0]) || !call[2]) {
+			call.fail(87);
+			return;
+		}
+		// An unnamed dynamic zone carries the caller's recurring rules rather than a host zone key.
+		if (call[1] && !call.load<uint16_t>(call[1] + 172)) {
 			auto bytes = call.read(call[1], 172);
 			if (call.load<uint8_t>(call[1] + 428)) {
 				std::fill(bytes.begin() + 68, bytes.begin() + 84, 0);
 				std::fill(bytes.begin() + 152, bytes.end(), 0);
 			}
 			call.write(call[2], bytes);
-		} else {
-			ApiCall local(call.process, call.environment, {call[2]});
-			zone_information(local, false);
+			call.ret(1);
+			return;
 		}
+		const int year = uint16_t(call[0]) ? int(uint16_t(call[0])) : current_year();
+		std::vector<uint8_t> bytes;
+		zone_for_year(year, true, bytes);
+		if (call[1] && call.read(call[1] + 172, 256) != std::vector<uint8_t>(bytes.begin() + 172, bytes.begin() + 428)) {
+			call.fail(2);
+			return;
+		}
+		bytes.resize(172);
+		call.write(call[2], bytes);
 		call.ret(1);
 	});
+	registry.add("GetTimeZoneInformation", 1, [zone_information](ApiCall &call) { zone_information(call, false); });
+	registry.add("GetDynamicTimeZoneInformation", 1, [zone_information](ApiCall &call) { zone_information(call, true); });
 	// The reverse of the call below: a local time becomes UTC by taking the zone's offset off.
 	registry.add("TzSpecificLocalTimeToSystemTime", 3, [](ApiCall &call) {
 		const auto ticks = ticks_from(call.read(call[1], 16));
@@ -489,6 +675,20 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	};
 	// The processor state the system saves for threads: the x87 and SSE registers; programs then take the paths that need no more.
 	registry.add("GetEnabledXStateFeatures", 0, [](ApiCall &call) { call.ret(3); });
+	// Where a CONTEXT keeps an extended state feature: of the two features enabled above, the legacy floating-point state is the
+	// FXSAVE area (FltSave on x64, ExtendedRegisters on x86) and the SSE state its XMM registers. No other feature is in a context.
+	registry.add("LocateXStateFeature", 3, [](ApiCall &call) {
+		const bool wide = call.pointer_width() == 8;
+		const uint64_t save_area = call[0] + (wide ? 0x100 : 0xcc);
+		const uint32_t feature = call.u32(1);
+		if (!call[0] || feature > 1) {
+			call.ret(0);
+			return;
+		}
+		if (call[2])
+			call.store<uint32_t>(call[2], feature == 0 ? 512 : wide ? 256 : 128);
+		call.ret(feature == 0 ? save_area : save_area + 160);
+	});
 	// The number of file handles a process may have is no longer limited: the request is answered as asked.
 	registry.add("SetHandleCount", 1, [](ApiCall &call) { call.ret(call.u32(0)); });
 	registry.add("GetSystemInfo", 1, system_information);
@@ -558,23 +758,199 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	const auto policy_value = [](ApiCall &call) { call.ret(call[0] ? 0xc004f012U : 0x80070057U); };
 	registry.add("SLGetWindowsInformation", 4, policy_value);
 	registry.add("SLGetWindowsInformationDWORD", 2, policy_value);
-	// The Software Protection Platform keeps no licenses, product keys or policies here, and nothing is installed into it: lists are
-	// empty, lookups find nothing, rights are not granted and installing is refused. A session handle names nothing beyond itself.
-	registry.add("SLOpen", 1, [&context](ApiCall &call) {
+	// The Software Protection Platform keeps the licenses programs install and lists and reads them back. It holds no product keys, no
+	// policies and no key to sign an answer to a program's authentication challenge, so rights are not granted and the challenge cannot
+	// be verified. A session handle names nothing beyond itself.
+	auto store = std::make_shared<LicenseStore>();
+	constexpr uint32_t invalid_argument = 0x80070057U, value_not_found = 0xc004f012U, file_not_installed = 0xc004f011U,
+		invalid_license = 0xc004f01fU;
+	const auto open_session = [store](uint64_t handle) {
+		std::lock_guard guard(store->lock);
+		return handle && store->sessions.contains(handle);
+	};
+	registry.add("SLOpen", 1, [&context, store](ApiCall &call) {
 		const auto handle = call[0] ? context.allocator.allocate(8, true) : 0;
 		if (!handle) {
-			call.ret(call[0] ? 0x8007000eU : 0x80070057U);
+			call.ret(call[0] ? 0x8007000eU : invalid_argument);
 			return;
+		}
+		{
+			std::lock_guard guard(store->lock);
+			store->sessions[handle];
 		}
 		call.store_pointer(call[0], handle);
 		call.ret(0);
 	});
-	registry.add("SLClose", 1, [](ApiCall &call) { call.ret(call[0] ? 0 : 0x80070057U); });
-	// Empty lists: SLGetSLIDList, SLGetLicensingStatusInformation and SLGetInstalledProductKeyIds give a count of zero and no array.
+	registry.add("SLClose", 1, [&context, store](ApiCall &call) {
+		std::lock_guard guard(store->lock);
+		if (!store->sessions.erase(call[0])) {
+			call.ret(invalid_argument);
+			return;
+		}
+		context.allocator.release(call[0]);
+		call.ret(0);
+	});
+	// The store directory as the host sees it, created when asked to be; the service's own System32, whatever the caller's width.
+	const auto store_directory = [&paths](bool create) -> std::optional<std::filesystem::path> {
+		const bool was = paths.redirect(false);
+		auto resolved = paths.resolve(u"C:\\Windows\\System32\\spp\\store\\2.0\\licenses");
+		auto system = paths.resolve(u"C:\\Windows\\System32");
+		paths.redirect(was);
+		if (resolved && resolved->exists)
+			return resolved->host;
+		if (!create || !system || !system->exists)
+			return std::nullopt;
+		std::error_code error;
+		const auto directory = system->host / "spp" / "store" / "2.0" / "licenses";
+		std::filesystem::create_directories(directory, error);
+		return error ? std::nullopt : std::optional(directory);
+	};
+	// SLInstallLicense keeps the file under the ID of its first license and gives that ID back as the file's.
+	registry.add("SLInstallLicense", 4, [call_store = store_directory, open_session](ApiCall &call) {
+		const uint32_t size = call.u32(1);
+		if (!open_session(call[0]) || !size || !call[2] || !call[3]) {
+			call.ret(invalid_argument);
+			return;
+		}
+		const auto bytes = call.read(call[2], size);
+		const auto licenses = license_elements(license_text(bytes));
+		if (licenses.empty()) {
+			call.ret(invalid_license);
+			return;
+		}
+		const auto directory = call_store(true);
+		if (!directory) {
+			call.ret(0x80070003U);
+			return;
+		}
+		const auto target = *directory / (slid_text(licenses.front().id) + ".xrm-ms");
+		auto partial = target;
+		partial += ".partial";
+		{
+			std::ofstream stream(partial, std::ios::binary | std::ios::trunc);
+			stream.write(reinterpret_cast<const char *>(bytes.data()), std::streamsize(bytes.size()));
+			if (!stream.flush()) {
+				call.ret(0x8007001dU);
+				return;
+			}
+		}
+		std::error_code error;
+		std::filesystem::rename(partial, target, error);
+		if (error) {
+			std::filesystem::remove(partial, error);
+			call.ret(0x8007001dU);
+			return;
+		}
+		call.write(call[3], licenses.front().id);
+		call.ret(0);
+	});
+	// SLGetSLIDList answers for the licenses of an installed file; other questions find nothing installed and give an empty list.
+	registry.add("SLGetSLIDList", 6, [&context, call_store = store_directory, open_session](ApiCall &call) {
+		constexpr uint32_t license_file = 2, license = 3, last = 8;
+		const uint32_t query = call.u32(1), returned = call.u32(3);
+		if (!open_session(call[0]) || query >= last || returned >= last || !call[4] || !call[5]) {
+			call.ret(invalid_argument);
+			return;
+		}
+		call.store<uint32_t>(call[4], 0);
+		call.store_pointer(call[5], 0);
+		if (query != license_file || returned != license) {
+			call.ret(0);
+			return;
+		}
+		if (!call[2]) {
+			call.ret(invalid_argument);
+			return;
+		}
+		const auto file = call.read(call[2], 16);
+		const auto directory = call_store(false);
+		const auto bytes = directory ? read_host_file(*directory / (slid_text(*reinterpret_cast<const Slid *>(file.data())) + ".xrm-ms"))
+					     : std::nullopt;
+		if (!bytes) {
+			call.ret(file_not_installed);
+			return;
+		}
+		const auto licenses = license_elements(license_text(*bytes));
+		if (licenses.empty()) {
+			call.ret(value_not_found);
+			return;
+		}
+		const auto list = context.allocator.allocate(16 * licenses.size(), false);
+		if (!list) {
+			call.ret(0x8007000eU);
+			return;
+		}
+		for (size_t index = 0; index < licenses.size(); ++index)
+			call.write(list + 16 * index, licenses[index].id);
+		call.store<uint32_t>(call[4], uint32_t(licenses.size()));
+		call.store_pointer(call[5], list);
+		call.ret(0);
+	});
+	// SLGetLicenseInformation reads the type, version and description an installed license states about itself, as a string.
+	registry.add("SLGetLicenseInformation", 6, [&context, call_store = store_directory, open_session](ApiCall &call) {
+		if (!open_session(call[0]) || !call[1] || !call[2] || !call[4] || !call[5]) {
+			call.ret(invalid_argument);
+			return;
+		}
+		if (call[3])
+			call.store<uint32_t>(call[3], 0);
+		call.store<uint32_t>(call[4], 0);
+		call.store_pointer(call[5], 0);
+		const auto name = call.wide(call[2]);
+		const std::pair<std::u16string_view, std::vector<std::string_view>> fields[] = {
+			{u"LicenseType", {"licenseType"}}, {u"Version", {"licenseVersion"}}, {u"Description", {"description", "productDescription"}}};
+		const auto field = std::find_if(std::begin(fields), std::end(fields), [&](const auto &item) { return item.first == name; });
+		const auto directory = call_store(false);
+		if (field == std::end(fields) || !directory) {
+			call.ret(value_not_found);
+			return;
+		}
+		Slid id;
+		std::memcpy(id.data(), call.read(call[1], 16).data(), 16);
+		// The file named after the license holds it when it came first in what was installed; any other file may hold it too.
+		std::vector<std::filesystem::path> files{*directory / (slid_text(id) + ".xrm-ms")};
+		std::error_code error;
+		for (const auto &entry : std::filesystem::directory_iterator(*directory, error))
+			if (entry.path().extension() == ".xrm-ms" && entry.path() != files.front())
+				files.push_back(entry.path());
+		for (const auto &file : files) {
+			const auto bytes = read_host_file(file);
+			if (!bytes)
+				continue;
+			const auto text = license_text(*bytes);
+			for (const auto &license : license_elements(text)) {
+				if (license.id != id)
+					continue;
+				std::optional<std::string> value;
+				for (const auto spelling : field->second)
+					if (!value)
+						value = license_field(license.body, spelling);
+				if (!value) {
+					call.ret(value_not_found);
+					return;
+				}
+				const auto wide = from_utf8(*value);
+				const auto block = context.allocator.allocate(2 * (wide.size() + 1), true);
+				if (!block) {
+					call.ret(0x8007000eU);
+					return;
+				}
+				call.put_wide(block, wide, wide.size() + 1);
+				if (call[3])
+					call.store<uint32_t>(call[3], 1);
+				call.store<uint32_t>(call[4], uint32_t(2 * (wide.size() + 1)));
+				call.store_pointer(call[5], block);
+				call.ret(0);
+				return;
+			}
+		}
+		call.ret(value_not_found);
+	});
+	// Empty lists: SLGetLicensingStatusInformation and SLGetInstalledProductKeyIds give a count of zero and no array.
 	const auto empty_list = [](size_t count, size_t array) {
 		return [count, array](ApiCall &call) {
 			if (!call[0] || !call[count] || !call[array]) {
-				call.ret(0x80070057U);
+				call.ret(invalid_argument);
 				return;
 			}
 			call.store<uint32_t>(call[count], 0);
@@ -582,29 +958,58 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			call.ret(0);
 		};
 	};
-	registry.add("SLGetSLIDList", 6, empty_list(4, 5));
 	registry.add("SLGetLicensingStatusInformation", 6, empty_list(4, 5));
 	registry.add("SLGetInstalledProductKeyIds", 4, empty_list(2, 3));
-	const auto answer = [](uint32_t result) { return [result](ApiCall &call) { call.ret(call[0] ? result : 0x80070057U); }; };
+	const auto answer = [](uint32_t result) { return [result](ApiCall &call) { call.ret(call[0] ? result : invalid_argument); }; };
 	const std::pair<const char *, int> lookups[] = {{"SLGetApplicationInformation", 6}, {"SLGetProductSkuInformation", 6},
-		{"SLGetPKeyInformation", 6}, {"SLGetLicenseInformation", 6}, {"SLGetServiceInformation", 5}, {"SLGetPolicyInformation", 5},
-		{"SLGetPolicyInformationDWORD", 3}, {"SLGetApplicationPolicy", 5}, {"SLLoadApplicationPolicies", 4}};
+		{"SLGetPKeyInformation", 6}, {"SLGetServiceInformation", 5}, {"SLGetPolicyInformation", 5}, {"SLGetPolicyInformationDWORD", 3},
+		{"SLGetApplicationPolicy", 5}};
 	for (const auto &[name, words] : lookups)
-		registry.add(name, words, answer(0xc004f012U));
+		registry.add(name, words, answer(value_not_found));
+	// No policies are installed for any application: the handle it would load is cleared.
+	registry.add("SLLoadApplicationPolicies", 4, [](ApiCall &call) {
+		if (!call[0] || !call[3]) {
+			call.ret(invalid_argument);
+			return;
+		}
+		call.store_pointer(call[3], 0);
+		call.ret(0xc004f072U);
+	});
 	registry.add("SLConsumeRight", 5, answer(0xc004f013U));
-	registry.add("SLGetLicense", 4, answer(0xc004f011U));
-	registry.add("SLGetLicenseFileId", 4, answer(0xc004f011U));
-	registry.add("SLUninstallLicense", 2, answer(0xc004f011U));
-	registry.add("SLUninstallProofOfPurchase", 2, answer(0xc004f012U));
-	registry.add("SLInstallLicense", 4, answer(0xc004f016U));
+	registry.add("SLGetLicense", 4, answer(file_not_installed));
+	registry.add("SLGetLicenseFileId", 4, answer(file_not_installed));
+	registry.add("SLUninstallLicense", 2, answer(file_not_installed));
+	registry.add("SLUninstallProofOfPurchase", 2, answer(value_not_found));
 	// No product key configuration is installed to tell a key's ID, and no SKU to identify offline, confirm or rearm.
 	registry.add("SLGetPKeyId", 6, answer(0xc004f016U));
-	registry.add("SLGenerateOfflineInstallationId", 3, answer(0xc004f012U));
+	registry.add("SLGenerateOfflineInstallationId", 3, answer(value_not_found));
 	registry.add("SLDepositOfflineConfirmationId", 4, answer(0xc004f016U));
 	registry.add("SLReArm", 4, answer(0xc004f016U));
-	registry.add("SLSetAuthenticationData", 3, answer(0xc004f016U));
+	// The session keeps the challenge it is given; an empty one clears it. Without the platform's signing key no result can be built
+	// for it, which SLGetAuthenticationResult reports as SL_E_AUTHN_CANT_VERIFY, or SL_E_AUTHN_CHALLENGE_NOT_SET before a challenge.
+	registry.add("SLSetAuthenticationData", 3, [store](ApiCall &call) {
+		const uint32_t size = call.u32(1);
+		std::lock_guard guard(store->lock);
+		const auto session = store->sessions.find(call[0]);
+		if (!call[0] || session == store->sessions.end() || (size && !call[2])) {
+			call.ret(invalid_argument);
+			return;
+		}
+		session->second = size ? call.read(call[2], size) : std::vector<uint8_t>();
+		call.ret(0);
+	});
+	registry.add("SLGetAuthenticationResult", 3, [store](ApiCall &call) {
+		std::lock_guard guard(store->lock);
+		const auto session = store->sessions.find(call[0]);
+		if (!call[0] || session == store->sessions.end() || !call[1] || !call[2]) {
+			call.ret(invalid_argument);
+			return;
+		}
+		call.store<uint32_t>(call[1], 0);
+		call.store_pointer(call[2], 0);
+		call.ret(session->second.empty() ? 0xc004f079U : 0xc004f07aU);
+	});
 	registry.add("SLInstallProofOfPurchase", 6, answer(0xc004f016U));
-	registry.add("SLGetAuthenticationResult", 2, answer(0xc004f016U));
 	registry.add("SLPersistApplicationPolicies", 3, answer(0));
 	registry.add("SLUnloadApplicationPolicies", 2, answer(0));
 	// Undocumented: present because programs look for them, and they refuse every request.
@@ -616,6 +1021,19 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		const long count = guest_processor_count(width, true);
 		return count >= 64 ? ~uint64_t(0) : (uint64_t(1) << count) - 1;
 	};
+	// The processor the calling thread runs on at this moment: the host processor it runs on, in group 0, within the processors the process may use.
+	const auto current_processor = [] {
+		const int processor = ::sched_getcpu();
+		return uint32_t(processor < 0 ? 0 : processor % std::min<long>(std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1), 64));
+	};
+	for (const char *name : {"GetCurrentProcessorNumber", "NtGetCurrentProcessorNumber", "RtlGetCurrentProcessorNumber"})
+		registry.add(name, 0, [current_processor](ApiCall &call) { call.ret(current_processor()); });
+	// PROCESSOR_NUMBER: the group, the number within it, a reserved byte.
+	for (const char *name : {"GetCurrentProcessorNumberEx", "NtGetCurrentProcessorNumberEx", "RtlGetCurrentProcessorNumberEx"})
+		registry.add(name, 1, [current_processor](ApiCall &call) {
+			if (call[0])
+				call.write(call[0], std::vector<uint8_t>{0, 0, uint8_t(current_processor()), 0});
+		});
 	registry.add("GetProcessAffinityMask", 3, [processor_mask](ApiCall &call) {
 		if (!call[1] || !call[2]) {
 			call.fail(87);
@@ -955,6 +1373,28 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			call.write(call[0], std::vector<uint8_t>(size_t(call[2]), uint8_t(call[1])));
 		call.ret(call[0]);
 	});
+	// ntdll's C runtime string lengths and comparisons, with the bytes compared as unsigned characters.
+	registry.add("strlen", 1, [](ApiCall &call) { call.ret(call.narrow(call[0], SIZE_MAX - 1).size()); });
+	// A comparison reads no byte past the first difference, the terminator or the limit, so a bounded one may run up to the end of a
+	// buffer that has no terminator.
+	const auto compare_text = [](ApiCall &call, size_t limit) {
+		for (size_t at = 0; at < limit; ++at) {
+			const uint8_t left = call.load<uint8_t>(call[0] + at), right = call.load<uint8_t>(call[1] + at);
+			if (left != right || !left) {
+				call.ret(uint64_t(int64_t(left < right ? -1 : left > right ? 1 : 0)));
+				return;
+			}
+		}
+		call.ret(0);
+	};
+	registry.add("strcmp", 2, [compare_text](ApiCall &call) { compare_text(call, SIZE_MAX - 1); });
+	registry.add("strncmp", 3, [compare_text](ApiCall &call) {
+		if (!call[2]) {
+			call.ret(0);
+			return;
+		}
+		compare_text(call, size_t(call[2]));
+	});
 	registry.add("memcmp", 3, [](ApiCall &call) {
 		if (!call[2]) {
 			call.ret(0);
@@ -1177,6 +1617,12 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 					handle = module->loaded.base();
 		} else if (!call[1]) {
 			handle = context.entry.loaded.base();
+		} else if (context.module_named) {
+			handle = context.module_named(call[1], true);
+			if (!handle) {
+				call.ret(0);
+				return;
+			}
 		} else {
 			auto name = to_utf8(call.wide(call[1]));
 			for (auto &character : name)
@@ -1229,6 +1675,10 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	// The compatibility layer a program was started with changes the version Windows reports to it.
 	if (const auto layer = variables->values.find(u"__COMPAT_LAYER"); layer != variables->values.end())
 		activation_contexts().set_compatibility_layer(layer->second.second);
+	paths.set_search_path([variables] {
+		const auto found = variables->values.find(u"PATH");
+		return found == variables->values.end() ? std::u16string() : found->second.second;
+	});
 	context.environment_block = [variables]() {
 		std::u16string block;
 		for (const auto &[key, entry] : variables->values) {
@@ -1261,11 +1711,10 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(87);
 			return;
 		}
+		// Removing a variable that is not set succeeds: Rust's standard library, for one, removes variables without looking first and
+		// stops when that fails.
 		if (!call[1]) {
-			if (!variables->values.erase(key_of(name))) {
-				call.fail(203);
-				return;
-			}
+			variables->values.erase(key_of(name));
 		} else {
 			variables->values[key_of(name)] = {name, call.wide(call[1])};
 		}
@@ -1351,6 +1800,9 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		return slots;
 	};
 	const auto tls = make_slots(1088), fls = make_slots(4080);
+	// TLS slot 0 is taken before the program runs, as the system libraries of a Windows process take it: programs (older Rust runtimes
+	// among them) take an index of 0 for "not allocated" and stop when TlsAlloc gives it.
+	tls->used[0] = true;
 	// The thread block mirrors values for the guest-side fast paths of Tls/FlsGetValue (and TlsSetValue).
 	const auto bind = [&](const char *prefix, std::shared_ptr<Slots> slots, bool callback) {
 		const std::string base = prefix;

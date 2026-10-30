@@ -775,3 +775,23 @@ set_tests_properties(native_darwin_fd_budget_startup PROPERTIES TIMEOUT 20 SKIP_
 
 add_executable(darwin_dxmt_slot_state_test ${RAVEN_DARWIN_DIR}/dxmt/slot_state_test.c)
 add_test(NAME native_darwin_dxmt_slot_state COMMAND darwin_dxmt_slot_state_test)
+
+# Exercise the upstream LSA translated-name layouts in both guest pointer widths.
+foreach(width 64 32)
+    set(lsa_compiler ${RAVEN_MINGW${width}})
+    if(lsa_compiler)
+        set(lsa_fixture ${CMAKE_CURRENT_BINARY_DIR}/lsa-lookup${width}.exe)
+        if(width EQUAL 32)
+            set(lsa_entry _raven_entry)
+        else()
+            set(lsa_entry raven_entry)
+        endif()
+        add_custom_command(OUTPUT ${lsa_fixture}
+            COMMAND ${lsa_compiler} -O2 -nostdlib -fno-builtin -fno-stack-protector
+                -Wl,--entry,${lsa_entry} -o ${lsa_fixture} ${RAVEN_DARWIN_DIR}/tests/lsa_lookup.c -ladvapi32 -lkernel32
+            DEPENDS ${RAVEN_DARWIN_DIR}/tests/lsa_lookup.c VERBATIM)
+        add_custom_target(darwin_lsa_lookup${width} ALL DEPENDS ${lsa_fixture})
+        add_test(NAME native_darwin_lsa_lookup_x${width} COMMAND raven --run-process --execution=native ${lsa_fixture})
+        set_tests_properties(native_darwin_lsa_lookup_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "exited with status 0([^0-9]|$)")
+    endif()
+endforeach()

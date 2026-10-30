@@ -318,9 +318,11 @@ static WCHAR *wdup(const WCHAR *text)
 }
 
 /* ---- the fonts of the system ---- */
-/* A system font is named by its path; a font a program supplies through its own loader has no path and keeps its opened face and file. */
+/* A system font is named by its path; a font a program supplies through its own loader has no path and keeps its opened face and file.
+   The family and face are the weight-stretch-style names fonts are grouped by; win32 is the family GDI knows the font by, and the
+   typographic names group every weight and width of a design. */
 typedef struct {
-	WCHAR *path, *family, *face, *full, *postscript;
+	WCHAR *path, *family, *face, *full, *postscript, *win32, *typographic, *typographic_face;
 	DWORD index, weight, style, stretch, flags;
 	struct FaceData *data;
 	IDWriteFontFile *file;
@@ -440,10 +442,11 @@ static BOOL CALLBACK build_system(PINIT_ONCE once, PVOID parameter, PVOID *conte
 				entry->stretch = *(DWORD *)(records + walk + 16);
 				entry->flags = *(DWORD *)(records + walk + 20);
 				{
-					const char *text = strings;
-					WCHAR **fields[5] = {&entry->path, &entry->family, &entry->face, &entry->full, &entry->postscript};
+					const char *text = strings, *end = (const char *)records + walk + record;
+					WCHAR **fields[8] = {&entry->path, &entry->family, &entry->face, &entry->full, &entry->postscript, &entry->win32,
+						&entry->typographic, &entry->typographic_face};
 					int field;
-					for (field = 0; field < 5; ++field) {
+					for (field = 0; field < 8 && text < end; ++field) {
 						*fields[field] = widen(text);
 						while (*text)
 							++text;
@@ -1574,10 +1577,14 @@ static HRESULT STDMETHODCALLTYPE font_info_strings(IDWriteFont *self, DWRITE_INF
 		text = entry->full;
 	else if (id == DWRITE_INFORMATIONAL_STRING_POSTSCRIPT_NAME)
 		text = entry->postscript;
-	else if (id == DWRITE_INFORMATIONAL_STRING_WIN32_FAMILY_NAMES || id == DWRITE_INFORMATIONAL_STRING_PREFERRED_FAMILY_NAMES)
-		text = entry->family;
-	else if (id == DWRITE_INFORMATIONAL_STRING_WIN32_SUBFAMILY_NAMES || id == DWRITE_INFORMATIONAL_STRING_PREFERRED_SUBFAMILY_NAMES)
-		text = entry->face;
+	else if (id == DWRITE_INFORMATIONAL_STRING_WIN32_FAMILY_NAMES || id == DWRITE_INFORMATIONAL_STRING_TYPOGRAPHIC_FAMILY_NAMES) {
+		/* A face found through an alias family goes by the alias, as it does in the system set. */
+		FamilyEntry *family = FONT_OF(self)->family;
+		if (family && !wequal_fold(family->name, entry->family))
+			text = family->name;
+		else if (id == DWRITE_INFORMATIONAL_STRING_WIN32_FAMILY_NAMES)
+			text = entry->win32 && entry->win32[0] ? entry->win32 : entry->family;
+	}
 	if (!text && (int)id > 0 && (size_t)id < sizeof(name_ids) / sizeof(name_ids[0])) {
 		FaceData *data = face_data_for_entry(entry);
 		if (data) {
@@ -2188,6 +2195,13 @@ static IDWriteFontFaceReference *make_reference(FontEntry *entry)
 }
 
 /* ---- the sets ---- */
+/* A font listed under an alias family, such as a Liberation Sans face standing for Arial, goes by the alias in every family name, so a
+ * program that lists the families of the set finds the names it asks for. */
+static BOOL aliased(const SetFont *font)
+{
+	return font->family && !wequal_fold(font->family->name, font->entry->family);
+}
+
 /* The text of one property of a font, written into the buffer when it is a number; NULL when the font has no such property. */
 static const WCHAR *property_text(const SetFont *font, DWRITE_FONT_PROPERTY_ID id, WCHAR buffer[16])
 {
@@ -2196,11 +2210,19 @@ static const WCHAR *property_text(const SetFont *font, DWRITE_FONT_PROPERTY_ID i
 	int at = 15;
 	switch (id) {
 	case DWRITE_FONT_PROPERTY_ID_WEIGHT_STRETCH_STYLE_FAMILY_NAME:
-	case DWRITE_FONT_PROPERTY_ID_TYPOGRAPHIC_FAMILY_NAME:
-	case DWRITE_FONT_PROPERTY_ID_WIN32_FAMILY_NAME:
 		return font->family ? font->family->name : entry->family;
+	case DWRITE_FONT_PROPERTY_ID_TYPOGRAPHIC_FAMILY_NAME:
+		if (aliased(font))
+			return font->family->name;
+		return entry->typographic && entry->typographic[0] ? entry->typographic : entry->family;
+	case DWRITE_FONT_PROPERTY_ID_WIN32_FAMILY_NAME:
+		if (aliased(font))
+			return font->family->name;
+		return entry->win32 && entry->win32[0] ? entry->win32 : entry->family;
 	case DWRITE_FONT_PROPERTY_ID_WEIGHT_STRETCH_STYLE_FACE_NAME:
 		return entry->face ? entry->face : L"Regular";
+	case DWRITE_FONT_PROPERTY_ID_TYPOGRAPHIC_FACE_NAME:
+		return entry->typographic_face && entry->typographic_face[0] ? entry->typographic_face : entry->face ? entry->face : L"Regular";
 	case DWRITE_FONT_PROPERTY_ID_FULL_NAME:
 		return entry->full;
 	case DWRITE_FONT_PROPERTY_ID_POSTSCRIPT_NAME:
@@ -2387,10 +2409,18 @@ static HRESULT STDMETHODCALLTYPE set_matching_family(IDWriteFontSet *self, const
 	if (!found)
 		return E_OUTOFMEMORY;
 	for (position = 0; position < set->count; ++position) {
+		/* The name may be any of the font's family names or its full name. */
+		static const DWRITE_FONT_PROPERTY_ID names[] = {DWRITE_FONT_PROPERTY_ID_WIN32_FAMILY_NAME, DWRITE_FONT_PROPERTY_ID_WEIGHT_STRETCH_STYLE_FAMILY_NAME,
+			DWRITE_FONT_PROPERTY_ID_TYPOGRAPHIC_FAMILY_NAME, DWRITE_FONT_PROPERTY_ID_FULL_NAME};
 		WCHAR buffer[16];
-		const WCHAR *family = property_text(&set->fonts[position], DWRITE_FONT_PROPERTY_ID_WIN32_FAMILY_NAME, buffer);
-		if (family && wequal_fold(family, name))
-			found[count++] = set->fonts[position];
+		size_t which;
+		for (which = 0; which < sizeof(names) / sizeof(names[0]); ++which) {
+			const WCHAR *family = property_text(&set->fonts[position], names[which], buffer);
+			if (family && wequal_fold(family, name)) {
+				found[count++] = set->fonts[position];
+				break;
+			}
+		}
 	}
 	for (sorted = 1; sorted < count; ++sorted) {
 		SetFont font = found[sorted];
@@ -2695,10 +2725,13 @@ static void custom_add_file(CustomCollection *collection, IDWriteFontFile *file)
 			face_data_release(data);
 			continue;
 		}
-		entry->family = face_name(data, 16, 1);
-		entry->face = face_name(data, 17, 2);
+		entry->family = face_name(data, 21, 1);
+		entry->face = face_name(data, 22, 2);
 		entry->full = face_name(data, 4, 4);
 		entry->postscript = face_name(data, 6, 6);
+		entry->win32 = face_name(data, 1, 1);
+		entry->typographic = face_name(data, 16, 1);
+		entry->typographic_face = face_name(data, 17, 2);
 		entry->index = index;
 		entry->weight = (DWORD)(data->info[12] ? data->info[12] : 400);
 		entry->style = data->info[11] & 2 ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL;

@@ -10,6 +10,7 @@
 #include <ifaddrs.h>
 #include <map>
 #include <optional>
+#include <sstream>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <sys/ioctl.h>
@@ -83,6 +84,34 @@ uint8_t prefix_length(const sockaddr *mask)
 	for (size_t index = 0; index < size; ++index)
 		bits = uint8_t(bits + __builtin_popcount(bytes[index]));
 	return bits;
+}
+
+// The host's DNS servers, the nameserver lines of its resolver configuration, as Windows socket addresses (AF_INET6 is 23 there).
+std::vector<std::vector<uint8_t>> host_dns_servers()
+{
+	std::vector<std::vector<uint8_t>> servers;
+	std::ifstream configuration("/etc/resolv.conf");
+	for (std::string line; std::getline(configuration, line);) {
+		std::istringstream words(line);
+		std::string keyword, address;
+		if (!(words >> keyword >> address) || keyword != "nameserver")
+			continue;
+		address = address.substr(0, address.find('%'));
+		in_addr four{};
+		in6_addr six{};
+		if (::inet_pton(AF_INET, address.c_str(), &four) == 1) {
+			std::vector<uint8_t> bytes(16, 0);
+			bytes[0] = AF_INET;
+			std::memcpy(bytes.data() + 4, &four, 4);
+			servers.push_back(std::move(bytes));
+		} else if (::inet_pton(AF_INET6, address.c_str(), &six) == 1) {
+			std::vector<uint8_t> bytes(28, 0);
+			bytes[0] = 23;
+			std::memcpy(bytes.data() + 8, &six, 16);
+			servers.push_back(std::move(bytes));
+		}
+	}
+	return servers;
 }
 
 std::vector<Adapter> host_adapters(uint32_t family)
@@ -206,9 +235,17 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		const size_t origin_at = unicast_cursor; unicast_cursor += 24;
 		const size_t prefix_at = unicast_cursor;
 		const size_t unicast_record = align(prefix_at + 1, width);
+		// IP_ADAPTER_DNS_SERVER_ADDRESS_XP: length and reserved word, next, then the socket address and its length. Every adapter
+		// that is not the loopback one uses the host's DNS servers.
+		const auto dns_servers = (flags & skip_dns_server) ? std::vector<std::vector<uint8_t>>() : host_dns_servers();
+		const size_t dns_record = align(8 + 2 * width + 4, 8);
+		constexpr uint32_t loopback_type = 24;
 		size_t needed = 0;
 		for (const auto &adapter : adapters) {
 			needed += record;
+			if (adapter.type != loopback_type)
+				for (const auto &server : dns_servers)
+					needed += dns_record + align(server.size(), 8);
 			if (!(flags & skip_unicast))
 				for (const auto &address : adapter.unicast)
 					needed += unicast_record + align(address.socket_address.size(), 8);
@@ -249,7 +286,20 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 			}
 			put_pointer(self + suffix_at, base + position);
 			position += 2;
-			(void)dns_at;
+			position = align(position, 8);
+			if (adapter.type != loopback_type) {
+				size_t last = 0;
+				for (const auto &server : dns_servers) {
+					const size_t entry = position, stored = position + dns_record;
+					position = stored + align(server.size(), 8);
+					put32(entry, uint32_t(dns_record));
+					std::memcpy(block.data() + stored, server.data(), server.size());
+					put_pointer(entry + 8 + width, base + stored);
+					put32(entry + 8 + 2 * width, uint32_t(server.size()));
+					put_pointer(last ? last + 8 : self + dns_at, base + entry);
+					last = entry;
+				}
+			}
 			std::memcpy(block.data() + self + physical_at, adapter.hardware, 8);
 			put32(self + physical_length_at, adapter.hardware_length);
 			put32(self + flags_at, 0x10 | 0x80);
@@ -291,7 +341,35 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 			position = align(position, 8);
 		}
 		call.write(base, std::span<const uint8_t>(block.data(), std::min(position, block.size())));
-		(void)skip_anycast; (void)skip_multicast; (void)skip_dns_server;
+		(void)skip_anycast; (void)skip_multicast;
+		call.ret(0);
+	});
+	// FIXED_INFO: the host's name and the first resolver of its configuration, which is the whole server list.
+	registry.add("GetNetworkParams", 2, [](ApiCall &call) {
+		if (!call[1]) {
+			call.ret(error_invalid_parameter);
+			return;
+		}
+		const size_t width = call.pointer_width();
+		const size_t list_at = 264 + width, string_size = (width + 36 + width - 1) & ~(width - 1);
+		const size_t node_at = list_at + string_size, record = (node_at + 276 + width - 1) & ~(width - 1);
+		if (!call[0] || call.load<uint32_t>(call[1]) < record) {
+			call.store<uint32_t>(call[1], uint32_t(record));
+			call.ret(error_buffer_overflow);
+			return;
+		}
+		std::vector<uint8_t> block(record);
+		char host[132] = {};
+		::gethostname(host, sizeof(host) - 1);
+		std::memcpy(block.data(), host, std::strlen(host));
+		std::ifstream configuration("/etc/resolv.conf");
+		for (std::string line; std::getline(configuration, line);)
+			if (line.starts_with("nameserver ") && line.find(':') == line.npos && line.size() - 11 < 16) {
+				std::memcpy(block.data() + list_at + width, line.data() + 11, line.size() - 11);
+				break;
+			}
+		block[node_at] = 1;
+		call.write(call[0], std::span<const uint8_t>(block));
 		call.ret(0);
 	});
 	// The IPv4 adapters in IP_ADAPTER_INFO records, loopback left out; addresses past the first of an adapter are chained after the records.
@@ -1037,6 +1115,97 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 			}
 			call.ret(result.size());
 		});
+	// The volumes: one for each drive (NativePaths::volume_name). FindFirstVolume lists them in letter order, and each is mounted at its
+	// drive's root alone.
+	const auto volume_name = [](char16_t letter) { return NativePaths::volume_name(letter); };
+	const auto volume_letter = [drives, volume_name](const std::u16string &name) -> char16_t {
+		const uint32_t mask = drives();
+		for (char16_t letter = u'A'; letter <= u'Z'; ++letter)
+			if ((mask & (1u << (letter - u'A'))) && volume_name(letter) == name)
+				return letter;
+		return 0;
+	};
+	// A name and its terminator into a buffer of the given characters; a buffer too small fails with ERROR_FILENAME_EXCED_RANGE.
+	const auto put_volume = [](ApiCall &call, uint64_t buffer, uint32_t capacity, const std::u16string &name) {
+		if (capacity <= name.size()) {
+			call.fail(206);
+			return;
+		}
+		call.put_wide(buffer, name, capacity);
+		call.ret(1);
+	};
+	registry.add("FindFirstVolumeW", 2, [&objects, drives, volume_name, put_volume](ApiCall &call) {
+		auto list = std::make_shared<FindObject>();
+		const uint32_t mask = drives();
+		for (char16_t letter = u'A'; letter <= u'Z'; ++letter)
+			if (mask & (1u << (letter - u'A')))
+				list->entries.push_back({volume_name(letter), 0, 0, 0, 0, 0});
+		const auto made = objects.add_object(list);
+		if (made.status || list->entries.empty()) {
+			call.fail(made.status ? 8 : 18, UINT64_MAX);
+			return;
+		}
+		list->next = 1;
+		put_volume(call, call[0], call.u32(1), list->entries[0].name);
+		if (call.result)
+			call.ret(made.value);
+		else
+			objects.close(made.value);
+	});
+	registry.add("FindNextVolumeW", 3, [&objects, put_volume](ApiCall &call) {
+		const auto list = objects.object_as<FindObject>(call[0]);
+		if (!list) {
+			call.fail(6);
+			return;
+		}
+		if (list->next >= list->entries.size()) {
+			call.fail(18);
+			return;
+		}
+		put_volume(call, call[1], call.u32(2), list->entries[list->next].name);
+		if (call.result)
+			++list->next;
+	});
+	registry.add("FindVolumeClose", 1, [&objects](ApiCall &call) {
+		if (!objects.object_as<FindObject>(call[0]) || objects.close(call[0])) {
+			call.fail(6);
+			return;
+		}
+		call.ret(1);
+	});
+	// A drive's root, with its trailing backslash, is the mount point of its volume.
+	registry.add("GetVolumeNameForVolumeMountPointW", 3, [drives, volume_name, put_volume](ApiCall &call) {
+		const auto point = call.wide(call[0], 260);
+		const char16_t letter = point.size() == 3 && point[1] == u':' && point[2] == u'\\' ? char16_t(point[0] & ~0x20) : 0;
+		if (point.empty() || point.back() != u'\\') {
+			call.fail(87);
+			return;
+		}
+		if (!letter || letter < u'A' || letter > u'Z' || !(drives() & (1u << (letter - u'A')))) {
+			call.fail(4390);
+			return;
+		}
+		put_volume(call, call[1], call.u32(2), volume_name(letter));
+	});
+	// The paths a volume is mounted at, as a list of strings ending with an empty one; the count of characters it takes is reported.
+	registry.add("GetVolumePathNamesForVolumeNameW", 4, [volume_letter](ApiCall &call) {
+		const char16_t letter = volume_letter(call.wide(call[0], 260));
+		if (!letter) {
+			call.fail(87);
+			return;
+		}
+		const std::u16string list{letter, u':', u'\\', 0, 0};
+		if (call[3])
+			call.store<uint32_t>(call[3], uint32_t(list.size()));
+		if (call.u32(2) < list.size()) {
+			call.fail(234);
+			return;
+		}
+		std::vector<uint8_t> bytes(list.size() * 2);
+		std::memcpy(bytes.data(), list.data(), bytes.size());
+		call.write(call[1], bytes);
+		call.ret(1);
+	});
 	for (const bool wide : {true, false})
 		registry.add(wide ? "GetLogicalDriveStringsW" : "GetLogicalDriveStringsA", 2, [drives, wide](ApiCall &call) {
 			std::u16string text;
@@ -1052,46 +1221,43 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 			else call.put_narrow(call[1], to_utf8(text), text.size() + 1);
 			call.ret(text.size());
 		});
-	// A drive's volume: the prefix keeps the files, so every drive reports one NTFS volume.
-	registry.add("GetVolumeInformationW", 8, [&context](ApiCall &call) {
-		if (call[0]) {
-			const auto root = context.paths.resolve(call.wide(call[0], 260));
-			if (!root || !root->exists) {
-				call.fail(3);
+	// A drive's volume: the prefix keeps the files, so every drive reports one NTFS volume. The volume's fields, from the second
+	// argument on, are the same however the volume is named.
+	const auto volume_fields = [](ApiCall &call, bool wide) {
+		const auto put_text = [&](uint64_t address, uint32_t capacity, std::string_view text) {
+			if (!address || !capacity)
 				return;
-			}
-		}
-		if (call[1] && call.u32(2))
-			call.put_wide(call[1], u"", call.u32(2));
+			if (wide) call.put_wide(address, widen_ascii(std::string(text)), capacity);
+			else call.put_narrow(address, std::string(text), capacity);
+		};
+		put_text(call[1], call.u32(2), "");
 		if (call[3])
 			call.store<uint32_t>(call[3], 0x52415645);
 		if (call[4])
 			call.store<uint32_t>(call[4], 255);
 		if (call[5])
 			call.store<uint32_t>(call[5], 0x0000000f);
-		if (call[6] && call.u32(7))
-			call.put_wide(call[6], u"NTFS", call.u32(7));
+		put_text(call[6], call.u32(7), "NTFS");
 		call.ret(1);
-	});
-	registry.add("GetVolumeInformationA", 8, [&context](ApiCall &call) {
-		if (call[0]) {
-			const auto root = context.paths.resolve(widen_ascii(call.narrow(call[0], 260)));
-			if (!root || !root->exists) {
-				call.fail(3);
-				return;
+	};
+	for (const bool wide : {true, false})
+		registry.add(wide ? "GetVolumeInformationW" : "GetVolumeInformationA", 8, [&context, volume_fields, wide](ApiCall &call) {
+			if (call[0]) {
+				const auto root = context.paths.resolve(wide ? call.wide(call[0], 260) : widen_ascii(call.narrow(call[0], 260)));
+				if (!root || !root->exists) {
+					call.fail(3);
+					return;
+				}
 			}
+			volume_fields(call, wide);
+		});
+	// The volume of an open file or directory.
+	registry.add("GetVolumeInformationByHandleW", 8, [&objects, volume_fields](ApiCall &call) {
+		if (!objects.object_as<FileObject>(call[0]) && objects.descriptor(call[0]) < 0) {
+			call.fail(6);
+			return;
 		}
-		if (call[1] && call.u32(2))
-			call.put_narrow(call[1], "", call.u32(2));
-		if (call[3])
-			call.store<uint32_t>(call[3], 0x52415645);
-		if (call[4])
-			call.store<uint32_t>(call[4], 255);
-		if (call[5])
-			call.store<uint32_t>(call[5], 0x0000000f);
-		if (call[6] && call.u32(7))
-			call.put_narrow(call[6], "NTFS", call.u32(7));
-		call.ret(1);
+		volume_fields(call, true);
 	});
 	// DPI awareness contexts are the pseudo handles -1 to -5; the process is system DPI aware at 96 dots per inch.
 	const auto awareness_of = [](uint64_t context) -> int32_t {
@@ -1155,6 +1321,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	// Every process runs in session 1, the interactive one.
+	registry.add("WTSGetActiveConsoleSessionId", 0, [](ApiCall &call) { call.ret(1); });
 	registry.add("ProcessIdToSessionId", 2, [](ApiCall &call) {
 		if (!call[1]) {
 			call.fail(87);
@@ -1197,6 +1364,70 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("GetBestInterface", 2, best_interface);
 	registry.add("GetBestInterfaceEx", 2, best_interface);
+	// GetBestRoute2: the host's own choice of route, found by connecting a datagram socket to the destination (which sends nothing):
+	// the address it is bound to is the best source, and the adapter holding that address the interface. The MIB_IPFORWARD_ROW2 names
+	// that interface and the destination as a host route; the next hop is not known from here and stays unspecified.
+	registry.add("GetBestRoute2", 7, [](ApiCall &call) {
+		if (!call[3] || !call[5] || !call[6]) {
+			call.ret(87);
+			return;
+		}
+		auto destination = call.read(call[3], 28);
+		const uint16_t windows_family = uint16_t(destination[0] | destination[1] << 8);
+		const int family = windows_family == 2 ? AF_INET : windows_family == 23 ? AF_INET6 : -1;
+		if (family < 0) {
+			call.ret(87);
+			return;
+		}
+		sockaddr_storage target{};
+		std::memcpy(&target, destination.data(), family == AF_INET ? sizeof(sockaddr_in) : sizeof(sockaddr_in6));
+		target.ss_family = sa_family_t(family);
+		const int probe = ::socket(family, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+		sockaddr_storage source{};
+		socklen_t length = sizeof(source);
+		const socklen_t size = family == AF_INET ? sizeof(sockaddr_in) : sizeof(sockaddr_in6);
+		if (family == AF_INET) reinterpret_cast<sockaddr_in &>(target).sin_port = htons(9);
+		else reinterpret_cast<sockaddr_in6 &>(target).sin6_port = htons(9);
+		const bool routed = probe >= 0 && !::connect(probe, reinterpret_cast<const sockaddr *>(&target), size) &&
+			!::getsockname(probe, reinterpret_cast<sockaddr *>(&source), &length);
+		if (probe >= 0)
+			::close(probe);
+		if (!routed) {
+			call.ret(1231);
+			return;
+		}
+		uint32_t index = 0, type = 0;
+		for (const auto &adapter : host_adapters(0))
+			for (const auto &address : adapter.unicast)
+				if (address.socket_address.size() >= (family == AF_INET ? 8u : 24u) &&
+					std::memcmp(address.socket_address.data() + (family == AF_INET ? 4 : 8),
+						family == AF_INET ? static_cast<const void *>(&reinterpret_cast<sockaddr_in &>(source).sin_addr)
+										  : static_cast<const void *>(&reinterpret_cast<sockaddr_in6 &>(source).sin6_addr),
+						family == AF_INET ? 4 : 16) == 0) {
+					index = adapter.index;
+					type = adapter.type;
+				}
+		std::vector<uint8_t> best(28, 0);
+		std::memcpy(best.data(), &source, size);
+		best[0] = uint8_t(windows_family);
+		best[1] = 0;
+		best[2] = best[3] = 0;
+		call.write(call[6], best);
+		// MIB_IPFORWARD_ROW2: the interface LUID and index, the destination prefix (address and length), the next hop, then the
+		// lifetimes, metric, protocol and flags.
+		std::vector<uint8_t> row(104, 0);
+		const uint64_t luid = uint64_t(type) << 48 | uint64_t(index) << 24;
+		std::memcpy(row.data(), &luid, 8);
+		std::memcpy(row.data() + 8, &index, 4);
+		std::memcpy(row.data() + 12, destination.data(), 28);
+		row[40] = family == AF_INET ? 32 : 128;
+		row[44] = uint8_t(windows_family);
+		const uint32_t forever = 0xffffffffU;
+		std::memcpy(row.data() + 76, &forever, 4);
+		std::memcpy(row.data() + 80, &forever, 4);
+		call.write(call[5], row);
+		call.ret(0);
+	});
 	// The class of human interface devices; none is present.
 	registry.add("HidD_GetHidGuid", 1, [](ApiCall &call) {
 		static const uint8_t guid[16] = {0xb2, 0x55, 0x1e, 0x4d, 0x6f, 0xf1, 0xcf, 0x11, 0x88, 0xcb, 0x00, 0x11, 0x11, 0x00, 0x00, 0x30};
@@ -1220,6 +1451,8 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	// The scheduling class of the process, kept as the program sets it; the host does not change how the process is scheduled.
 	auto priority_class = std::make_shared<uint32_t>(0x20);
 	registry.add("GetPriorityClass", 1, [priority_class](ApiCall &call) { call.ret(*priority_class); });
+	// Host memory is the kernel's to manage: the limits a program asks for are advice, which Windows may ignore as well.
+	registry.add("SetProcessWorkingSetSizeEx", 4, [](ApiCall &call) { call.ret(1); });
 	registry.add("SetPriorityClass", 2, [priority_class](ApiCall &call) {
 		const uint32_t value = call.u32(1);
 		if (value != 0x20 && value != 0x40 && value != 0x80 && value != 0x100 && value != 0x4000 && value != 0x8000 && value != 0x00100000 && value != 0x00200000) {
@@ -1406,17 +1639,116 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(status == 0 ? 0 : status == 0xc0000073U ? 1332 : status == 0x107 ? 1332 : status == 0xc0000022U ? 5 : status == 0xc000000dU ? 87 :
 			status == 0xc000012dU ? 1455 : status == 0xc0000017U ? 8 : 317);
 	});
+	// LSA_REFERENCED_DOMAIN_LIST: its header, the entries, then their names and SIDs, in memory LsaFreeMemory gives back.
+	const auto referenced_domains = [&context](ApiCall &call, const std::vector<std::u16string> &domains, const std::vector<std::vector<uint8_t>> &domain_sids) -> uint64_t {
+		const size_t width = call.pointer_width(), text_size = width == 8 ? 16 : 8, trust_size = text_size + width;
+		size_t domain_bytes = 16 + domains.size() * trust_size;
+		for (size_t index = 0; index < domains.size(); ++index)
+			domain_bytes += (domains[index].size() + 1) * 2 + domain_sids[index].size();
+		const uint64_t domain_block = context.allocator.allocate(domain_bytes, true);
+		if (!domain_block)
+			return 0;
+		const auto pointer_at = [&](uint64_t address, uint64_t value) {
+			if (width == 8) call.store<uint64_t>(address, value);
+			else call.store<uint32_t>(address, uint32_t(value));
+		};
+		call.store<uint32_t>(domain_block, uint32_t(domains.size()));
+		pointer_at(domain_block + (width == 8 ? 8 : 4), domains.empty() ? 0 : domain_block + 16);
+		uint64_t cursor = domain_block + 16 + domains.size() * trust_size;
+		for (size_t index = 0; index < domains.size(); ++index) {
+			const uint64_t entry = domain_block + 16 + index * trust_size;
+			call.store<uint16_t>(entry, uint16_t(domains[index].size() * 2));
+			call.store<uint16_t>(entry + 2, uint16_t((domains[index].size() + 1) * 2));
+			pointer_at(entry + (width == 8 ? 8 : 4), cursor);
+			call.put_wide(cursor, domains[index], domains[index].size() + 1);
+			cursor += (domains[index].size() + 1) * 2;
+			pointer_at(entry + text_size, cursor);
+			call.write(cursor, domain_sids[index]);
+			cursor += domain_sids[index].size();
+		}
+		return domain_block;
+	};
+	// The domain's SID is the account's without its last part.
+	const auto domain_sid_of = [](std::vector<uint8_t> sid) {
+		if (sid.size() > 8 && sid[1] > 0) {
+			sid[1] = uint8_t(sid[1] - 1);
+			sid.resize(sid.size() - 4);
+		}
+		return sid;
+	};
+	// LsaLookupSids(policy, count, sids, domains, names): LSA_TRANSLATED_NAME for each SID and the domains they belong to. An unknown SID is
+	// reported as such, with no name.
+	registry.add("LsaLookupSids", 5, [&context, accounts, referenced_domains, domain_sid_of](ApiCall &call) {
+		const uint32_t count = call.u32(1);
+		if (!call[2] || !call[3] || !call[4] || !count || count > 20480) {
+			call.ret(0xc000000dU);
+			return;
+		}
+		const size_t width = call.pointer_width(), name_at = width == 8 ? 8 : 4, index_at = name_at + (width == 8 ? 16 : 8), translated_size = width == 8 ? 32 : 16;
+		const auto known = accounts();
+		std::vector<const Account *> found(count, nullptr);
+		std::vector<std::u16string> domains;
+		std::vector<std::vector<uint8_t>> domain_sids;
+		std::vector<int32_t> domain_of(count, -1);
+		size_t name_bytes = count * translated_size;
+		for (uint32_t index = 0; index < count; ++index) {
+			const uint64_t sid_at = width == 8 ? call.load<uint64_t>(call[2] + index * 8ULL) : call.load<uint32_t>(call[2] + index * 4ULL);
+			if (!sid_at)
+				continue;
+			const auto sid = call.read(sid_at, 8 + size_t(call.read(sid_at, 2)[1]) * 4);
+			const auto match = std::find_if(known.begin(), known.end(), [&](const Account &account) { return account.sid == sid; });
+			if (match == known.end())
+				continue;
+			found[index] = &*match;
+			name_bytes += (match->name.size() + 1) * 2;
+			if (match->domain.empty())
+				continue;
+			const auto known_domain = std::find_if(domains.begin(), domains.end(), [&](const auto &domain) { return equal_fold(domain, match->domain); });
+			domain_of[index] = int32_t(known_domain - domains.begin());
+			if (known_domain == domains.end()) {
+				domains.push_back(match->domain);
+				domain_sids.push_back(domain_sid_of(match->sid));
+			}
+		}
+		const uint64_t domain_block = referenced_domains(call, domains, domain_sids), name_block = context.allocator.allocate(name_bytes, true);
+		if (!domain_block || !name_block) {
+			if (domain_block) context.allocator.release(domain_block);
+			if (name_block) context.allocator.release(name_block);
+			call.ret(0xc0000017U);
+			return;
+		}
+		uint64_t cursor = name_block + count * translated_size;
+		uint32_t mapped = 0;
+		for (uint32_t index = 0; index < count; ++index) {
+			const uint64_t entry = name_block + index * translated_size;
+			if (!found[index]) {
+				call.store<uint32_t>(entry, 8);
+				call.store<int32_t>(entry + index_at, -1);
+				continue;
+			}
+			++mapped;
+			call.store<uint32_t>(entry, found[index]->use);
+			call.store<uint16_t>(entry + name_at, uint16_t(found[index]->name.size() * 2));
+			call.store<uint16_t>(entry + name_at + 2, uint16_t((found[index]->name.size() + 1) * 2));
+			call.store_pointer(entry + name_at + (width == 8 ? 8 : 4), cursor);
+			call.put_wide(cursor, found[index]->name, found[index]->name.size() + 1);
+			cursor += (found[index]->name.size() + 1) * 2;
+			call.store<int32_t>(entry + index_at, domain_of[index]);
+		}
+		call.store_pointer(call[3], domain_block);
+		call.store_pointer(call[4], name_block);
+		call.ret(mapped == count ? 0 : mapped ? 0x107 : 0xc0000073U);
+	});
 	// LsaLookupNames2(policy, flags, count, names, domains, sids): LSA_TRANSLATED_SID2 for each name, "account" or "domain\account", and
 	// the LSA_REFERENCED_DOMAIN_LIST of the domains they belong to, each in memory LsaFreeMemory gives back. STATUS_SOME_NOT_MAPPED or
 	// STATUS_NONE_MAPPED when names are not known.
-	registry.add("LsaLookupNames2", 6, [&context, accounts](ApiCall &call) {
+	registry.add("LsaLookupNames2", 6, [&context, accounts, referenced_domains, domain_sid_of](ApiCall &call) {
 		const uint32_t count = call.u32(2);
 		if (!call[3] || !call[4] || !call[5] || !count || count > 1000) {
 			call.ret(0xc000000dU);
 			return;
 		}
 		const size_t width = call.pointer_width(), text_size = width == 8 ? 16 : 8, translated_size = width == 8 ? 24 : 16;
-		const size_t trust_size = text_size + width;
 		const auto known = accounts();
 		std::vector<const Account *> found(count, nullptr);
 		std::vector<std::u16string> domains;
@@ -1446,24 +1778,14 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 			domain_of[index] = int32_t(known_domain - domains.begin());
 			if (known_domain == domains.end()) {
 				domains.push_back(match->domain);
-				// The domain's SID is the account's without its last part.
-				auto sid = match->sid;
-				if (sid.size() > 8 && sid[1] > 0) {
-					sid[1] = uint8_t(sid[1] - 1);
-					sid.resize(sid.size() - 4);
-				}
-				domain_sids.push_back(std::move(sid));
+				domain_sids.push_back(domain_sid_of(match->sid));
 			}
 		}
-		// The domain list: its header, the entries, then their names and SIDs.
-		size_t domain_bytes = 16 + domains.size() * trust_size;
-		for (size_t index = 0; index < domains.size(); ++index)
-			domain_bytes += (domains[index].size() + 1) * 2 + domain_sids[index].size();
 		size_t sid_bytes = count * translated_size;
 		for (const auto *account : found)
 			if (account)
 				sid_bytes += account->sid.size();
-		const uint64_t domain_block = context.allocator.allocate(domain_bytes, true), sid_block = context.allocator.allocate(sid_bytes, true);
+		const uint64_t domain_block = referenced_domains(call, domains, domain_sids), sid_block = context.allocator.allocate(sid_bytes, true);
 		if (!domain_block || !sid_block) {
 			if (domain_block) context.allocator.release(domain_block);
 			if (sid_block) context.allocator.release(sid_block);
@@ -1474,21 +1796,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 			if (width == 8) call.store<uint64_t>(address, value);
 			else call.store<uint32_t>(address, uint32_t(value));
 		};
-		call.store<uint32_t>(domain_block, uint32_t(domains.size()));
-		pointer_at(domain_block + (width == 8 ? 8 : 4), domains.empty() ? 0 : domain_block + 16);
-		uint64_t cursor = domain_block + 16 + domains.size() * trust_size;
-		for (size_t index = 0; index < domains.size(); ++index) {
-			const uint64_t entry = domain_block + 16 + index * trust_size;
-			call.store<uint16_t>(entry, uint16_t(domains[index].size() * 2));
-			call.store<uint16_t>(entry + 2, uint16_t((domains[index].size() + 1) * 2));
-			pointer_at(entry + (width == 8 ? 8 : 4), cursor);
-			call.put_wide(cursor, domains[index], domains[index].size() + 1);
-			cursor += (domains[index].size() + 1) * 2;
-			pointer_at(entry + text_size, cursor);
-			call.write(cursor, domain_sids[index]);
-			cursor += domain_sids[index].size();
-		}
-		cursor = sid_block + count * translated_size;
+		uint64_t cursor = sid_block + count * translated_size;
 		uint32_t mapped = 0;
 		for (uint32_t index = 0; index < count; ++index) {
 			const uint64_t entry = sid_block + index * translated_size;

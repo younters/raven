@@ -12,8 +12,17 @@ namespace raven {
 
 namespace {
 
+constexpr std::u16string_view volume_prefix = u"\\\\?\\Volume{52415645-0000-0000-0000-0000000000";
+
 std::u16string strip_namespace(std::u16string_view path)
 {
+	// A volume's name stands for its drive: two hex digits of the letter, then the brace that closes the GUID.
+	if (path.size() >= volume_prefix.size() + 3 && equal_fold(path.substr(0, volume_prefix.size()), volume_prefix) && path[volume_prefix.size() + 2] == u'}') {
+		const auto digit = [](char16_t c) { return c >= u'0' && c <= u'9' ? c - u'0' : (c | 0x20) >= u'a' && (c | 0x20) <= u'f' ? (c | 0x20) - u'a' + 10 : -1; };
+		const int high = digit(path[volume_prefix.size()]), low = digit(path[volume_prefix.size() + 1]);
+		if (high >= 0 && low >= 0 && high * 16 + low >= u'A' && high * 16 + low <= u'Z')
+			return std::u16string{char16_t(high * 16 + low), u':'} + std::u16string(path.substr(volume_prefix.size() + 3));
+	}
 	for (const std::u16string_view prefix : {u"\\\\?\\", u"\\\\.\\", u"\\??\\"})
 		if (path.starts_with(prefix) && path.size() > prefix.size() + 1 && path[prefix.size() + 1] == u':')
 			return std::u16string(path.substr(prefix.size()));
@@ -40,6 +49,41 @@ std::optional<std::string> case_match(const std::filesystem::path &directory, co
 	return found;
 }
 
+}
+
+std::u16string NativePaths::volume_name(char16_t letter)
+{
+	constexpr char16_t hex[] = u"0123456789abcdef";
+	return std::u16string(volume_prefix) + hex[(letter >> 4) & 15] + hex[letter & 15] + u"}\\";
+}
+
+std::vector<std::u16string> NativePaths::path_folders(std::u16string_view value)
+{
+	std::vector<std::u16string> folders;
+	for (size_t at = 0; at <= value.size();) {
+		const auto end = std::min(value.find(u';', at), value.size());
+		auto folder = std::u16string(value.substr(at, end - at));
+		if (folder.size() >= 2 && folder.front() == u'"' && folder.back() == u'"')
+			folder = folder.substr(1, folder.size() - 2);
+		if (!folder.empty())
+			folders.push_back(std::move(folder));
+		at = end + 1;
+	}
+	return folders;
+}
+
+std::optional<std::u16string> NativePaths::environment_value(std::u16string_view block, std::u16string_view name)
+{
+	for (size_t at = 0; at < block.size();) {
+		const auto end = std::min(block.find(u'\0', at), block.size());
+		const auto entry = block.substr(at, end - at);
+		if (entry.empty())
+			break;
+		if (entry.size() > name.size() && entry[name.size()] == u'=' && equal_fold(entry.substr(0, name.size()), name))
+			return std::u16string(entry.substr(name.size() + 1));
+		at = end + 1;
+	}
+	return std::nullopt;
 }
 
 NativePaths::NativePaths(const NativePrefix &prefix) : prefix(prefix), directory(u"C:\\")
@@ -257,6 +301,10 @@ std::optional<NativePaths::Resolved> NativePaths::find_library(std::u16string_vi
 		folders.push_back(u"C:\\Windows\\System");
 		folders.push_back(u"C:\\Windows");
 		if (!dll_folder) folders.push_back(directory);
+		// The standard search order ends with the folders of the PATH variable.
+		if (search_path)
+			for (auto &folder : path_folders(search_path()))
+				folders.push_back(std::move(folder));
 	}
 	for (const auto &folder : folders) {
 		const auto found = resolve(folder + u"\\" + std::u16string(name));

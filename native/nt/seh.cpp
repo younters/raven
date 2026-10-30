@@ -164,6 +164,7 @@ public:
 				// A search raised from a handler that an unwind is running continues in the frames of whoever called the unwind,
 				// then in the contexts of the dispatches that the unwind has already crossed.
 				if (pc == context.process.return_gate() && continuation_cursor < mine().continuation.size()) {
+					level = mine().continuation_depths[continuation_cursor];
 					current = mine().continuation[continuation_cursor++];
 					continue;
 				}
@@ -274,6 +275,52 @@ public:
 			uint64_t rsp = 0;
 			std::memcpy(&rsp, origin.data() + 0x98, 8);
 			describe_record(record, rsp);
+			if (le32(record, 0) == 0xe06d7363U && le32(record, 0x18) >= 4) {
+				// A C++ exception names the types it can be caught as, from its throw information, and shows the start of the thrown object.
+				try {
+					const uint64_t object = load64(record, 0x28), throw_info = load64(record, 0x30), image = load64(record, 0x38);
+					const auto info = context.process.read_memory(throw_info, 16);
+					const auto types = context.process.read_memory(image + le32(info, 12), 4 + 4 * 8);
+					bool standard = false;
+					std::fprintf(stderr, "raven:   thrown");
+					for (uint32_t index = 0; index < std::min<uint32_t>(le32(types, 0), 8); ++index) {
+						const auto type = context.process.read_memory(image + le32(types, 4 + index * 4), 8);
+						const auto bytes = context.process.read_memory(image + le32(type, 4) + 16, 96);
+						const std::string name(reinterpret_cast<const char *>(bytes.data()), strnlen(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
+						standard = standard || name == ".?AVexception@std@@";
+						std::fprintf(stderr, " %s", name.c_str());
+					}
+					const auto bytes = context.process.read_memory(object, 32);
+					std::fprintf(stderr, "\nraven:   object");
+					for (size_t at = 0; at < bytes.size(); at += 8) {
+						uint64_t value = 0;
+						std::memcpy(&value, bytes.data() + at, 8);
+						std::fprintf(stderr, " %016llx", (unsigned long long)value);
+					}
+					std::fprintf(stderr, "\n");
+					// A std::exception keeps its message pointer after the table pointer.
+					uint64_t message = 0;
+					std::memcpy(&message, bytes.data() + 8, 8);
+					if (standard && message) {
+						const auto text = context.process.read_memory(message, 200);
+						std::fprintf(stderr, "raven:   what %s\n", std::string(reinterpret_cast<const char *>(text.data()), strnlen(reinterpret_cast<const char *>(text.data()), text.size())).c_str());
+					}
+				} catch (const std::exception &) {
+				}
+			}
+			if (const uint32_t code = le32(record, 0); (code == 0xc06d007eU || code == 0xc06d007fU) && le32(record, 0x18) >= 1) {
+				// A failed delay load names the library and the procedure in the DelayLoadInfo its one parameter points to.
+				try {
+					const auto info = context.process.read_memory(load64(record, 0x20), 0x30);
+					const auto text = [&](uint64_t address) {
+						const auto bytes = context.process.read_memory(address, 128);
+						return std::string(reinterpret_cast<const char *>(bytes.data()), strnlen(reinterpret_cast<const char *>(bytes.data()), bytes.size()));
+					};
+					const std::string procedure = le32(info, 0x20) ? text(load64(info, 0x28)) : "#" + std::to_string(le32(info, 0x28));
+					std::fprintf(stderr, "raven:   delay load of %s!%s\n", text(load64(info, 0x18)).c_str(), procedure.c_str());
+				} catch (const std::exception &) {
+				}
+			}
 			try {
 				const auto stack = context.process.read_memory(rsp, 0x300);
 				for (size_t at = 0; at + 8 <= stack.size(); at += 8) {
@@ -500,19 +547,27 @@ public:
 		size_t outer_cursor = previous_start;
 		mine().continuation_start = mine().continuation.size();
 		mine().continuation.push_back(current);
+		mine().continuation_depths.push_back(depth);
 		struct Release {
 			std::vector<ContextBytes> &stack;
+			std::vector<size_t> &depths;
 			size_t &start, previous_start, previous_size;
-			~Release() { stack.resize(previous_size); start = previous_start; }
-		} release{mine().continuation, mine().continuation_start, previous_start, previous_size};
+			~Release()
+			{
+				stack.resize(previous_size);
+				depths.resize(previous_size);
+				start = previous_start;
+			}
+		} release{mine().continuation, mine().continuation_depths, mine().continuation_start, previous_start, previous_size};
 		bool reached = false;
 		for (int frames = 0; frames < 1024 && !reached; ++frames) {
 			const uint64_t pc = context_rip(current);
 			if (pc == context.process.return_gate() && !mine().active.empty()) {
 				// The host callback boundary stands in for the dispatcher's own frames: continue from where the exception was raised.
 				current = mine().active.back().origin;
-				mine().continuation.push_back(current);
 				depth = mine().active.back().depth;
+				mine().continuation.push_back(current);
+				mine().continuation_depths.push_back(depth);
 				resume_mark = std::min(resume_mark, mine().active.back().mark);
 				mine().unwinds.back().mark = resume_mark;
 				mine().active.pop_back();
@@ -520,7 +575,9 @@ public:
 			}
 			// With no dispatch left to cross, an unwind raised from inside another unwind continues through the contexts
 			// that the enclosing unwind recorded.
+			// Execution resumes no deeper than the callback nesting those contexts were left at.
 			if (pc == context.process.return_gate() && outer_cursor < previous_size) {
+				depth = std::min(depth, mine().continuation_depths[outer_cursor]);
 				current = mine().continuation[outer_cursor++];
 				continue;
 			}
@@ -657,6 +714,8 @@ public:
 		std::vector<Active> unwinds;
 		// The contexts a running unwind was called from and the dispatch contexts it has crossed, in the order a stack walk meets them.
 		std::vector<ContextBytes> continuation;
+		// The callback nesting at each of those contexts.
+		std::vector<size_t> continuation_depths;
 		size_t continuation_start = 0;
 		std::vector<Consolidation> consolidations;
 		Scratch scratch;
@@ -813,6 +872,23 @@ void register_exception_api(ApiRegistry &registry, KernelContext &context, Nativ
 		if (call[1]) call.store<uint64_t>(call[1], function ? function->image_base : 0);
 		call.ret(function ? function->address : 0);
 	});
+	// dbghelp's symbol handler, as far as walking a stack needs it: the options are kept, a process's handler starts and ends (no
+	// symbol files are found for it, so it names no symbols), and a code address gives its function table entry, as
+	// RtlLookupFunctionEntry finds it, and the base of its module, as RtlPcToFileHeader does.
+	auto symbol_options = std::make_shared<uint32_t>(0);
+	registry.add("SymSetOptions", 1, [symbol_options](ApiCall &call) { call.ret(*symbol_options = call.u32(0)); });
+	registry.add("SymGetOptions", 0, [symbol_options](ApiCall &call) { call.ret(*symbol_options); });
+	for (const auto *name : {"SymInitialize", "SymInitializeW"})
+		registry.add(name, 3, [](ApiCall &call) { call.ret(1); });
+	registry.add("SymCleanup", 1, [](ApiCall &call) { call.ret(1); });
+	registry.add("SymFunctionTableAccess64", 2, [&unwinder](ApiCall &call) {
+		const auto function = unwinder.lookup(call[1]);
+		call.ret(function ? function->address : 0);
+	});
+	registry.add("SymGetModuleBase64", 2, [&unwinder](ApiCall &call) {
+		const auto *module = unwinder.module_at(call[1]);
+		call.ret(module ? module->loaded.base() : 0);
+	});
 	registry.add("RtlPcToFileHeader", 2, [&unwinder](ApiCall &call) {
 		const auto *module = unwinder.module_at(call[0]);
 		const uint64_t base = module ? module->loaded.base() : 0;
@@ -948,8 +1024,11 @@ void register_exception_api(ApiRegistry &registry, KernelContext &context, Nativ
 			exceptions->vectored.push_back(item);
 		call.ret(cookie);
 	};
-	registry.add("AddVectoredExceptionHandler", 2, [add_vectored](ApiCall &call) { add_vectored(call, false); });
-	registry.add("AddVectoredContinueHandler", 2, [add_vectored](ApiCall &call) { add_vectored(call, true); });
+	// ntdll's Rtl forms are the same functions.
+	for (const auto *name : {"AddVectoredExceptionHandler", "RtlAddVectoredExceptionHandler"})
+		registry.add(name, 2, [add_vectored](ApiCall &call) { add_vectored(call, false); });
+	for (const auto *name : {"AddVectoredContinueHandler", "RtlAddVectoredContinueHandler"})
+		registry.add(name, 2, [add_vectored](ApiCall &call) { add_vectored(call, true); });
 	const auto remove_vectored = [exceptions, &context](ApiCall &call) {
 		auto &list = exceptions->vectored;
 		const auto found = std::find_if(list.begin(), list.end(), [&](const auto &item) { return item.cookie == call[0]; });
@@ -961,8 +1040,9 @@ void register_exception_api(ApiRegistry &registry, KernelContext &context, Nativ
 		context.allocator.release(call[0]);
 		call.ret(1);
 	};
-	registry.add("RemoveVectoredExceptionHandler", 1, remove_vectored);
-	registry.add("RemoveVectoredContinueHandler", 1, remove_vectored);
+	for (const auto *name : {"RemoveVectoredExceptionHandler", "RtlRemoveVectoredExceptionHandler", "RemoveVectoredContinueHandler",
+			 "RtlRemoveVectoredContinueHandler"})
+		registry.add(name, 1, remove_vectored);
 	// Function tables of generated code: the unwinder reads them from the program's memory, and calls a table's callback from there to
 	// find the entry of an address, as a runtime that compiles code registers its code heaps.
 	unwinder.set_guest_call([&context](uint64_t function, uint64_t first, uint64_t second) {

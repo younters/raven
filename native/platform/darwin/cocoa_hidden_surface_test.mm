@@ -22,21 +22,27 @@ int main(int argc, char **argv)
 		auto ui = host.callbacks();
 		__weak CAMetalLayer *released = nil;
 		@autoreleasepool {
-			const auto first = ui.host_surface(1, 0, 0, 1, 1);
+			const auto first = ui.host_surface(1, 1, 0, 0, 1, 1, true);
 			check(first && first->platform == raven::HostPlatform::metal, "hidden layer was not created");
 			CAMetalLayer *layer = (__bridge CAMetalLayer *)first->surface;
 			released = layer;
 			check(CGSizeEqualToSize(layer.drawableSize, CGSizeMake(1, 1)), "hidden layer dimensions differ");
-			const auto resized = ui.host_surface(1, 0, 0, 17, 23);
+			const auto resized = ui.host_surface(1, 1, 0, 0, 17, 23, true);
 			check(resized && resized->surface == first->surface && CGSizeEqualToSize(layer.drawableSize, CGSizeMake(17, 23)),
 				"hidden surface resize replaced its layer");
-			const auto second = ui.host_surface(2, 0, 0, 1, 1);
+			const auto child = ui.host_surface(1, 11, 2, 3, 7, 9, false);
+			check(child && child->surface != first->surface, "child window shares its root layer");
+			check(ui.host_surface(1, 11, 4, 5, 9, 11, true)->surface == child->surface,
+				"showing a child replaced its layer");
+			ui.release_host_surface(11);
+			check(ui.host_surface(1, 1, 0, 0, 17, 23, true)->surface == first->surface, "child release affected root");
+			const auto second = ui.host_surface(2, 2, 0, 0, 1, 1, true);
 			check(second && second->surface != first->surface, "hidden windows share a layer");
 			check(NSApp.windows.count == 0 && NSApp.keyWindow == nil && NSApp.activationPolicy == NSApplicationActivationPolicyAccessory,
 				"hidden surface created a native window or Dock presence");
 			check(NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == foreground, "hidden surface stole activation");
 			ui.release_host_surface(1);
-			check(ui.host_surface(2, 0, 0, 1, 1)->surface == second->surface, "release affected another hidden surface");
+			check(ui.host_surface(2, 2, 0, 0, 1, 1, true)->surface == second->surface, "release affected another hidden surface");
 			ui.release_host_surface(2);
 			layer = nil;
 		}
@@ -49,13 +55,13 @@ int main(int argc, char **argv)
 		check(released == nil, "released hidden surface retained its layer");
 		if (argc > 1 && std::string_view(argv[1]) == "--show-transition") {
 			std::vector<uint8_t> pixels(40 * 30 * 4, 255);
-			const auto regular = ui.host_surface(3, 0, 0, 40, 30);
+			const auto regular = ui.host_surface(3, 3, 0, 0, 40, 30, true);
 			ui.present(3, "Hidden surface transition", 40, 30, pixels);
-			check(ui.host_surface(3, 0, 0, 40, 30)->surface == regular->surface,
+			check(ui.host_surface(3, 3, 0, 0, 40, 30, true)->surface == regular->surface,
 				"showing a normal window replaced its Vulkan layer");
-			const auto popup = ui.host_surface(4, 0, 0, 40, 30);
+			const auto popup = ui.host_surface(4, 4, 0, 0, 40, 30, true);
 			ui.owned_popup(4, 3, 0, 0, 40, 30, pixels);
-			check(ui.host_surface(4, 0, 0, 40, 30)->surface == popup->surface,
+			check(ui.host_surface(4, 4, 0, 0, 40, 30, true)->surface == popup->surface,
 				"showing an owned popup replaced its Vulkan layer");
 			ui.remove(4);
 			ui.remove(3);

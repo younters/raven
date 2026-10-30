@@ -340,7 +340,7 @@ int main(int argc, char **argv)
 						for (const auto &[from, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}})
 							for (const char *program : {"cmd.exe", "msiexec.exe", "regsvr32.exe", "control.exe", "dism.exe", "fondue.exe", "regedit.exe", "mscoree.dll", "riched20.dll",
 									"msftedit.dll", "l_intl.nls", "find.exe", "findstr.exe", "more.com", "sort.exe", "where.exe", "xcopy.exe", "attrib.exe",
-									"timeout.exe", "choice.exe", "whoami.exe", "hostname.exe", "tasklist.exe", "taskkill.exe", "reg.exe"}) {
+									"timeout.exe", "choice.exe", "whoami.exe", "hostname.exe", "tasklist.exe", "taskkill.exe", "reg.exe", "rundll32.exe"}) {
 								std::error_code error;
 								// The 64-bit Registry Editor lives in the Windows folder itself.
 								const bool windows_folder = std::string_view(program) == "regedit.exe" && std::string_view(folder) == "system32";
@@ -423,7 +423,8 @@ int main(int argc, char **argv)
 								manifest.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
 								break;
 							}
-						raven::activation_contexts().prepare(prefix.root() / "drive_c" / "windows" / "WinSxS" / "Manifests", entry->image.is_64, manifest, directory);
+						raven::activation_contexts().prepare(prefix.root() / "drive_c" / "windows" / "WinSxS" / "Manifests", entry->image.is_64, manifest,
+							std::filesystem::absolute(argv[first_file]).parent_path());
 					}
 					// A library of the other width is passed over, as the Windows loader goes on searching past it.
 					const auto find_file = [&](const std::filesystem::path &folder, std::string_view name) {
@@ -450,6 +451,9 @@ int main(int argc, char **argv)
 						}
 						return selected;
 					};
+					// The last places the standard search order looks, the current directory and the folders of PATH, as host folders; they are
+					// known once the program's launch is (below), before its libraries are loaded.
+					std::vector<std::filesystem::path> later_folders;
 					// The components for 32-bit programs are the same libraries built for 32 bits, in a directory beside the runtime.
 					const auto component_directory = std::filesystem::read_symlink("/proc/self/exe").parent_path() / (entry->image.is_64 ? "" : "x86");
 					const auto source = [&](std::string_view name) -> std::optional<raven::ModuleBytes> {
@@ -520,8 +524,12 @@ int main(int argc, char **argv)
 						// Then the system directory, where installers put the libraries programs share. The system's own libraries are the
 						// runtime's whatever files there carry their names.
 						const auto system_names = raven::system_library_names();
-						if (!selected && std::find(system_names.begin(), system_names.end(), name) == system_names.end())
+						if (!selected && std::find(system_names.begin(), system_names.end(), name) == system_names.end()) {
 							selected = find_file(system_directory, name);
+							for (const auto &folder : later_folders)
+								if (!selected)
+									selected = find_file(folder, name);
+						}
 						if (!selected)
 							return std::nullopt;
 						return read_module(selected->c_str());
@@ -576,8 +584,10 @@ int main(int argc, char **argv)
 						}
 						return names;
 					}();
-					// A .NET program reaches every system library through its runtime, which loads them as it needs them: it gets every component.
-					const bool managed = entry->image.directories[14].address && entry->image.directories[14].size;
+					// A .NET program reaches every system library through its runtime, which loads them as it needs them, and rundll32 and regsvr32 run a
+					// library they know nothing about: they get every component.
+					const bool managed = (entry->image.directories[14].address && entry->image.directories[14].size) ||
+						std::filesystem::path(argv[first_file]).filename() == "rundll32.exe" || std::filesystem::path(argv[first_file]).filename() == "regsvr32.exe";
 					// Packed programs rebuild their imports through GetProcAddress: their file's import table does not name the libraries whose
 					// components they need. Put those components in place before the runtime providers and their forwarders are bound.
 					const bool resolves_imports = std::any_of(entry->imports.begin(), entry->imports.end(), [](const auto &symbol) {
@@ -696,6 +706,18 @@ int main(int argc, char **argv)
 							std::u16string block(bytes.size()/2,u'\0');
 							std::memcpy(block.data(),bytes.data(),block.size()*2);
 							launch->environment=std::move(block);
+						}
+						{
+							std::vector<std::u16string> folders{launch->directory.empty() ? std::u16string(u"C:\\") : launch->directory};
+							const char *guest_path = std::getenv("RAVEN_GUEST_PATH");
+							const auto value = launch->environment ? raven::NativePaths::environment_value(*launch->environment, u"PATH") :
+								guest_path ? std::optional<std::u16string>(raven::from_utf8(guest_path)) : std::nullopt;
+							if (value)
+								for (auto &folder : raven::NativePaths::path_folders(*value))
+									folders.push_back(std::move(folder));
+							for (const auto &folder : folders)
+								if (const auto resolved = paths.resolve(folder); resolved && resolved->exists)
+									later_folders.push_back(resolved->host);
 						}
 						// A console program started from a terminal has the terminal for its console, as Windows gives a console program the
 						// console it was started from, and runs for as long as it is used.

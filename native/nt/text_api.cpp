@@ -28,7 +28,18 @@ constexpr std::pair<std::u16string_view, uint32_t> known_locales[]{{u"ar", 0x01}
 	{u"sl-SI", 0x424}, {u"et-EE", 0x425}, {u"lv-LV", 0x426}, {u"lt-LT", 0x427}, {u"fa-IR", 0x429}, {u"vi-VN", 0x42a}, {u"hy-AM", 0x42b},
 	{u"eu-ES", 0x42d}, {u"mk-MK", 0x42f}, {u"af-ZA", 0x436}, {u"ka-GE", 0x437}, {u"hi-IN", 0x439}, {u"ms-MY", 0x43e}, {u"kk-KZ", 0x43f},
 	{u"sw-KE", 0x441}, {u"bn-IN", 0x445}, {u"pa-IN", 0x446}, {u"gu-IN", 0x447}, {u"ta-IN", 0x449}, {u"te-IN", 0x44a}, {u"kn-IN", 0x44b},
-	{u"ml-IN", 0x44c}, {u"mr-IN", 0x44e}, {u"gl-ES", 0x456}, {u"zh-CN", 0x804}, {u"de-CH", 0x807}, {u"en-GB", 0x809}, {u"es-MX", 0x80a},
+	{u"ml-IN", 0x44c}, {u"mr-IN", 0x44e}, {u"gl-ES", 0x456}, {u"rm-CH", 0x417}, {u"az-Latn-AZ", 0x42c}, {u"hsb-DE", 0x42e},
+	{u"tn-ZA", 0x432}, {u"xh-ZA", 0x434}, {u"zu-ZA", 0x435}, {u"fo-FO", 0x438}, {u"mt-MT", 0x43a}, {u"se-NO", 0x43b}, {u"ky-KG", 0x440},
+	{u"tk-TM", 0x442}, {u"uz-Latn-UZ", 0x443}, {u"tt-RU", 0x444}, {u"or-IN", 0x448}, {u"as-IN", 0x44d}, {u"sa-IN", 0x44f},
+	{u"mn-MN", 0x450}, {u"bo-CN", 0x451}, {u"cy-GB", 0x452}, {u"km-KH", 0x453}, {u"lo-LA", 0x454}, {u"my-MM", 0x455}, {u"kok-IN", 0x457},
+	{u"sd-Deva-IN", 0x459}, {u"syr-SY", 0x45a}, {u"si-LK", 0x45b}, {u"am-ET", 0x45e}, {u"ne-NP", 0x461}, {u"fy-NL", 0x462},
+	{u"ps-AF", 0x463}, {u"dv-MV", 0x465}, {u"yo-NG", 0x46a}, {u"ba-RU", 0x46d}, {u"lb-LU", 0x46e}, {u"kl-GL", 0x46f}, {u"ig-NG", 0x470},
+	{u"ii-CN", 0x478}, {u"br-FR", 0x47e}, {u"ug-CN", 0x480}, {u"mi-NZ", 0x481}, {u"oc-FR", 0x482}, {u"co-FR", 0x483}, {u"sah-RU", 0x485},
+	{u"rw-RW", 0x487}, {u"wo-SN", 0x488}, {u"prs-AF", 0x48c}, {u"ku-Arab-IQ", 0x492}, {u"ar-IQ", 0x801}, {u"zh-CN", 0x804},
+	{u"bn-BD", 0x845}, {u"pa-Arab-PK", 0x846}, {u"sd-Arab-PK", 0x859}, {u"ar-EG", 0xc01}, {u"ar-LY", 0x1001}, {u"zh-SG", 0x1004},
+	{u"ar-DZ", 0x1401}, {u"zh-MO", 0x1404}, {u"ar-MA", 0x1801}, {u"ar-TN", 0x1c01}, {u"ar-OM", 0x2001}, {u"ar-YE", 0x2401},
+	{u"ar-SY", 0x2801}, {u"ar-JO", 0x2c01}, {u"ar-LB", 0x3001}, {u"ar-KW", 0x3401}, {u"ar-AE", 0x3801}, {u"ar-BH", 0x3c01},
+	{u"ar-QA", 0x4001}, {u"de-CH", 0x807}, {u"en-GB", 0x809}, {u"es-MX", 0x80a},
 	{u"fr-BE", 0x80c}, {u"it-CH", 0x810}, {u"nl-BE", 0x813}, {u"nn-NO", 0x814}, {u"pt-PT", 0x816}, {u"zh-HK", 0xc04}, {u"de-AT", 0xc07},
 	{u"en-AU", 0xc09}, {u"es-ES", 0xc0a}, {u"fr-CA", 0xc0c}, {u"en-CA", 0x1009}, {u"fr-CH", 0x100c}, {u"en-IE", 0x1809}, {u"sr-Latn-RS", 0x241a},
 	{u"sr-Cyrl-RS", 0x281a}, {u"en-IN", 0x4009}, {u"es-US", 0x540a}};
@@ -412,7 +423,7 @@ std::optional<std::u16string> module_message(KernelContext &context, uint64_t ba
 	if (!image || image->runtime_api)
 		return std::nullopt;
 	const auto directory = image->image.directories[2];
-	if (!directory.address || !directory.size || directory.size > 16 * 1024 * 1024)
+	if (!directory.address || !directory.size || directory.size > image->image.image_size)
 		return std::nullopt;
 	const auto resources = read_resources(directory, context.process.read_memory(image->loaded.base() + directory.address, directory.size),
 		image->image.image_size);
@@ -823,39 +834,36 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(left < right ? 1 : left == right ? 2 : 3);
 	});
-	const auto map_string = [](ApiCall &call, uint32_t flags, std::u16string text, uint64_t destination, int32_t capacity) {
+	// LCMAP_LOWERCASE and LCMAP_UPPERCASE.
+	const auto map_case = [](uint32_t flags, std::u16string text) {
 		if (flags & 0x100) for (auto &character : text) character = fold_case(character);
 		else if (flags & 0x200) for (auto &character : text) character = upper_case(character);
-		const size_t needed = text.size();
+		return text;
+	};
+	// What LCMapString answers: a source given with its length maps to that many units and no more, one ended by a zero (length -1)
+	// maps, counts and writes its zero too. Without a destination the count is the answer; a destination too small fails with
+	// ERROR_INSUFFICIENT_BUFFER and is not written.
+	const auto deliver = [](ApiCall &call, std::span<const uint8_t> bytes, size_t units, uint64_t destination, int32_t capacity) {
 		if (!capacity) {
-			call.ret(needed);
+			call.ret(units);
 			return;
 		}
-		if (size_t(capacity) < needed) {
+		if (capacity < 0 || size_t(capacity) < units) {
 			call.fail(122);
 			return;
 		}
-		call.put_wide(destination, text, size_t(capacity) + 1);
-		std::vector<uint8_t> bytes(text.size() * 2);
-		std::memcpy(bytes.data(), text.data(), bytes.size());
 		call.write(destination, bytes);
-		call.ret(needed);
+		call.ret(units);
 	};
-	registry.add("LCMapStringW", 6, [map_string](ApiCall &call) {
-		const int32_t length = call.i32(3);
-		auto text = counted_wide(call, call[2], length);
-		if (length < 0) text.push_back(u'\0');
-		const auto zero = length < 0;
-		if (zero) text.pop_back();
-		map_string(call, call.u32(1), text, call[4], call.i32(5));
-		if (zero && call.result) call.ret(call.result + 1);
-	});
-	registry.add("LCMapStringEx", 9, [map_string](ApiCall &call) {
-		const int32_t length = call.i32(3);
-		auto text = counted_wide(call, call[2], length);
-		map_string(call, call.u32(1), text, call[4], call.i32(5));
-		if (length < 0 && call.result) call.ret(call.result + 1);
-	});
+	const auto map_wide = [map_case, deliver](ApiCall &call, size_t source_at) {
+		const int32_t length = call.i32(source_at + 1);
+		auto text = map_case(call.u32(1), counted_wide(call, call[source_at], length));
+		if (length < 0)
+			text.push_back(u'\0');
+		deliver(call, {reinterpret_cast<const uint8_t *>(text.data()), text.size() * 2}, text.size(), call[source_at + 2], call.i32(source_at + 3));
+	};
+	registry.add("LCMapStringW", 6, [map_wide](ApiCall &call) { map_wide(call, 2); });
+	registry.add("LCMapStringEx", 9, [map_wide](ApiCall &call) { map_wide(call, 2); });
 	registry.add("FoldStringW", 5, [](ApiCall &call) {
 		const uint32_t flags = call.u32(0);
 		const int32_t length = call.i32(2), capacity = call.i32(4);
@@ -914,26 +922,13 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("IdnToAscii", 5, [convert_name](ApiCall &call) { convert_name(call, idn_to_ascii); });
 	registry.add("IdnToUnicode", 5, [convert_name](ApiCall &call) { convert_name(call, idn_to_unicode); });
-	registry.add("LCMapStringA", 6, [&, map_string, ansi_page](ApiCall &call) {
+	registry.add("LCMapStringA", 6, [&, map_case, deliver, ansi_page](ApiCall &call) {
 		const int32_t length = call.i32(3);
-		const auto narrow = counted_narrow(call, call[2], length);
 		const auto page = ansi_page(0);
-		auto text = decode_ansi(narrow, page);
-		const uint32_t flags = call.u32(1);
-		if (flags & 0x100) for (auto &character : text) character = fold_case(character);
-		else if (flags & 0x200) for (auto &character : text) character = upper_case(character);
-		auto result = encode_ansi(text, page);
-		const int32_t capacity = call.i32(5);
-		if (!capacity) {
-			call.ret(result.size());
-			return;
-		}
-		if (size_t(capacity) < result.size()) {
-			call.fail(122);
-			return;
-		}
-		call.write(call[4], std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(result.data()), result.size()));
-		call.ret(result.size());
+		auto result = encode_ansi(map_case(call.u32(1), decode_ansi(counted_narrow(call, call[2], length), page)), page);
+		if (length < 0)
+			result.push_back('\0');
+		deliver(call, {reinterpret_cast<const uint8_t *>(result.data()), result.size()}, result.size(), call[4], call.i32(5));
 	});
 	// The character classes of a text for CT_CTYPE1, CT_CTYPE2 and CT_CTYPE3.
 	const auto classify = [](uint32_t kind, const std::u16string &text) {

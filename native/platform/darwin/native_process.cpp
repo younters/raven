@@ -1063,7 +1063,7 @@ uint64_t NativeProcess::map_memory(size_t size, int protection, uint64_t address
 	return mapped;
 }
 
-uint64_t NativeProcess::map_shared(int descriptor, size_t size, uint64_t offset)
+uint64_t NativeProcess::map_shared(int descriptor, size_t size, uint64_t offset, uint64_t requested)
 {
 	if (const auto surface = darwin::pixel_surface(descriptor); surface && !offset) {
 		if (size > IOSurfaceGetAllocSize(surface)) throw std::runtime_error("invalid IOSurface mapping size");
@@ -1076,7 +1076,7 @@ uint64_t NativeProcess::map_shared(int descriptor, size_t size, uint64_t offset)
 		// and enough space for every host page of the IOSurface. A 4 KiB anonymous reservation
 		// can sit beside live guest mappings while the arm64 source has a 16 KiB page extent.
 		const size_t allocation = IOSurfaceGetAllocSize(surface);
-		const auto address = map_file(descriptor, allocation, 0, true);
+		const auto address = map_file(descriptor, allocation, 0, true, requested);
 		mach_vm_address_t mapped = address;
 		vm_prot_t current = 0, maximum = 0;
 		const auto status = mach_vm_remap(state->child->task, &mapped, allocation, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE,
@@ -1085,6 +1085,13 @@ uint64_t NativeProcess::map_shared(int descriptor, size_t size, uint64_t offset)
 			unmap_memory(address);
 			throw std::runtime_error("cannot map IOSurface into native guest: " + std::to_string(status));
 		}
+		try { state->shared_views.emplace(address, std::move(view)); }
+		catch (...) { unmap_memory(address); throw; }
+		return address;
+	}
+	if (requested) {
+		auto view = State::host_view(descriptor, size, offset);
+		const auto address = map_file(descriptor, size, offset, true, requested);
 		try { state->shared_views.emplace(address, std::move(view)); }
 		catch (...) { unmap_memory(address); throw; }
 		return address;
@@ -1115,7 +1122,7 @@ uint64_t NativeProcess::receive_descriptor(int, uint64_t)
 	throw std::runtime_error("native descriptor transfer goes through the guest agent on macOS");
 }
 
-uint64_t NativeProcess::map_file(int descriptor, size_t size, uint64_t offset, bool)
+uint64_t NativeProcess::map_file(int descriptor, size_t size, uint64_t offset, bool, uint64_t address)
 {
 	state->trap_page.clear();
 	state->require_memory();
@@ -1123,9 +1130,9 @@ uint64_t NativeProcess::map_file(int descriptor, size_t size, uint64_t offset, b
 	state->allocations.reserve(state->allocations.size() + 1);
 	// Windows places views on the 64 KiB allocation granularity, and programs round view addresses down to it.
 	state->child->send_descriptor(descriptor);
-	const uint64_t flags = state->mode == NativeMode::x86 ? RAVEN_MAP_LOW : RAVEN_MAP_GRANULAR;
-	const auto mapped = state->service(RAVEN_SERVICE_MAP_DESCRIPTOR, {0, size, offset, flags, PROT_READ | PROT_WRITE}, "shared mapping");
-	if (mapped >= state->limit() || size > state->limit() - mapped) {
+	const uint64_t flags = address ? RAVEN_MAP_EXACT : state->mode == NativeMode::x86 ? RAVEN_MAP_LOW : RAVEN_MAP_GRANULAR;
+	const auto mapped = state->service(RAVEN_SERVICE_MAP_DESCRIPTOR, {address, size, offset, flags, PROT_READ | PROT_WRITE}, "shared mapping");
+	if (mapped >= state->limit() || size > state->limit() - mapped || (address && mapped != address)) {
 		state->child->stop();
 		throw std::runtime_error("host returned an invalid shared mapping address");
 	}
@@ -1545,6 +1552,21 @@ void NativeProcess::pause_thread(NativeThreadState &thread)
 	}
 	child.select(caller);
 	state->stopped = stopped;
+}
+
+void NativeProcess::set_thread_registers(NativeThreadState &thread, const user_regs_struct &registers)
+{
+	thread.context.registers = registers;
+	if (!parallel() || (thread.stopped && !thread.context_in_task)) return;
+	auto &child = *state->child;
+	const auto caller = child.selected;
+	try {
+		child.select(thread.task);
+		if (load(&child.thread().state) != RAVEN_THREAD_STOPPED)
+			throw std::runtime_error("cannot set registers of a running native thread");
+		std::memcpy(&child.registers(), &registers, sizeof registers);
+	} catch (...) { child.select(caller); throw; }
+	child.select(caller);
 }
 
 void NativeProcess::enter_fault_dispatch()

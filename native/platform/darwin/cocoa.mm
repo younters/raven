@@ -193,6 +193,9 @@ struct CocoaPresentation::State {
 	// layer detached until a normal visible frame creates the native window.
 	struct HiddenHostSurface {
 		CAMetalLayer *layer = nil;
+		RavenMetalView *view = nil;
+		uint64_t root = 0;
+		bool shown = false;
 		int32_t x = 0, y = 0;
 		uint32_t width = 0, height = 0;
 	};
@@ -1216,7 +1219,10 @@ struct CocoaPresentation::State {
 
 	void forget(uint64_t handle, bool replacing = false)
 	{
-		hidden_host_surfaces.erase(handle);
+		for (auto &[window, pending] : hidden_host_surfaces)
+			if (pending.root == handle) [pending.view removeFromSuperview];
+		if (!replacing)
+			std::erase_if(hidden_host_surfaces, [handle](const auto &entry) { return entry.first == handle || entry.second.root == handle; });
 		visibility_intent.erase(handle);
 		if (!replacing && dock_windows.erase(handle) && dock_windows.empty()) reconcile_dock = true;
 		std::erase_if(numbers, [&](const auto &entry) { return entry.second == handle; });
@@ -1230,17 +1236,11 @@ struct CocoaPresentation::State {
 		surfaces.erase(handle);
 	}
 
-	void attach_hidden_host_surface(uint64_t handle, Surface &target)
+	void attach_hidden_host_surface(uint64_t handle, Surface &)
 	{
-		const auto hidden = hidden_host_surfaces.find(handle);
-		if (hidden == hidden_host_surfaces.end()) return;
-		const auto pending = hidden->second;
-		target.child = [[RavenMetalView alloc] initWithFrame:NSZeroRect];
-		target.child.layer = pending.layer;
-		target.child.wantsLayer = YES;
-		[target.view addSubview:target.child];
-		hidden_host_surfaces.erase(hidden);
-		host_surface(handle, pending.x, pending.y, pending.width, pending.height);
+		for (auto &[window, pending] : hidden_host_surfaces)
+			if (pending.root == handle)
+				host_surface(handle, window, pending.x, pending.y, pending.width, pending.height, pending.shown);
 	}
 
 	void present(uint64_t handle, std::string_view title, uint32_t width, uint32_t height, std::span<const uint8_t> pixels)
@@ -1465,29 +1465,26 @@ struct CocoaPresentation::State {
 		target->pending_changed = std::chrono::steady_clock::now();
 	}
 
-	std::optional<HostSurface> host_surface(uint64_t handle, int32_t x, int32_t y, uint32_t width, uint32_t height)
+	std::optional<HostSurface> host_surface(uint64_t handle, uint64_t window, int32_t x, int32_t y, uint32_t width, uint32_t height, bool shown)
 	{
 		connect();
-		Surface *target = surface(handle);
-		CAMetalLayer *layer;
-		if (target) {
-			if (!target->child) {
-				target->child = [[RavenMetalView alloc] initWithFrame:NSZeroRect];
-				target->child.wantsLayer = YES;
-				[target->view addSubview:target->child];
+		auto &pending = hidden_host_surfaces[window];
+		pending.root = handle;
+		pending.x = x; pending.y = y; pending.width = width; pending.height = height; pending.shown = shown;
+		if (!pending.layer) pending.layer = [CAMetalLayer layer];
+		if (auto *target = surface(handle)) {
+			if (!pending.view) {
+				pending.view = [[RavenMetalView alloc] initWithFrame:NSZeroRect];
+				pending.view.layer = pending.layer;
+				pending.view.wantsLayer = YES;
 			}
-			target->child.frame = NSMakeRect((x - target->insets[0]) / scale, (y - target->insets[1]) / scale,
+			if (pending.view.superview != target->view) [target->view addSubview:pending.view];
+			pending.view.hidden = !shown;
+			pending.view.frame = NSMakeRect((x - target->insets[0]) / scale, (y - target->insets[1]) / scale,
 				std::max<uint32_t>(width, 1) / scale, std::max<uint32_t>(height, 1) / scale);
-			layer = (CAMetalLayer *)target->child.layer;
-		} else {
-			auto &pending = hidden_host_surfaces[handle];
-			if (!pending.layer) pending.layer = [CAMetalLayer layer];
-			pending.x = x;
-			pending.y = y;
-			pending.width = width;
-			pending.height = height;
-			layer = pending.layer;
+			if (window == handle) target->child = pending.view;
 		}
+		CAMetalLayer *layer = pending.layer;
 		layer.opaque = !alpha_windows.contains(handle);
 		layer.contentsScale = scale;
 		layer.drawableSize = CGSizeMake(width, height);
@@ -1750,11 +1747,14 @@ DesktopPresentation CocoaPresentation::callbacks()
 	result.interactive = [this](uint64_t handle, uint32_t action) { state->interactive(handle, action); };
 	result.clipboard_publish = [this](std::string_view text) { state->publish(text); };
 	result.clipboard_fetch = [this]() { return state->fetch(); };
-	result.host_surface = [this](uint64_t handle, int32_t x, int32_t y, uint32_t width, uint32_t height) {
-		return state->host_surface(handle, x, y, width, height);
+	result.host_surface = [this](uint64_t handle, uint64_t window, int32_t x, int32_t y, uint32_t width, uint32_t height, bool shown) {
+		return state->host_surface(handle, window, x, y, width, height, shown);
 	};
 	result.release_host_surface = [this](uint64_t handle) {
-		state->hidden_host_surfaces.erase(handle);
+		if (auto found = state->hidden_host_surfaces.find(handle); found != state->hidden_host_surfaces.end()) {
+			[found->second.view removeFromSuperview];
+			state->hidden_host_surfaces.erase(found);
+		}
 		if (auto *target = state->surface(handle)) {
 			[target->child removeFromSuperview];
 			target->child = nil;

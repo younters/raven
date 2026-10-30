@@ -238,7 +238,7 @@ void NativeWindows::present(uint64_t handle, bool force)
 		// A window whose client area nothing reached yet would show as a black rectangle too: a program that draws it from another
 		// process, as a browser's compositor does, ends WM_PAINT without drawing. In a program drawn that way its first frame waits a
 		// moment for that drawing. A window that hands its client area to a graphics driver shows that surface instead and is not held.
-		const bool blank=!pending && !waiting->presented && !foreign_content.empty() && !hosting_surface.contains(handle) && blank_client(handle);
+		const bool blank=!pending && !waiting->presented && !foreign_content.empty() && !hosts_surface(handle) && blank_client(handle);
 		const auto now=std::chrono::steady_clock::now();
 		if (pending || blank) {
 			if (!waiting->present_waiting) waiting->present_waiting=now;
@@ -299,6 +299,7 @@ void NativeWindows::present(uint64_t handle, bool force)
 	if (presentation.owned_popup && owning && shown_on_owner(*window)) {
 		try {
 			presentation.owned_popup(handle,owner,window->outer.left-owning->outer.left,window->outer.top-owning->outer.top,bitmap->width,bitmap->height,pixels);
+			place_host_surface(handle);
 			return;
 		} catch (const std::exception &) {}
 	}
@@ -314,42 +315,53 @@ void NativeWindows::present(uint64_t handle, bool force)
 	place_host_surface(handle);
 }
 
-std::optional<HostSurface> NativeWindows::host_surface(uint64_t handle)
+std::optional<HostSurface> NativeWindows::host_surface(uint64_t handle,bool hidden)
 {
 	if (!presentation.host_surface) return std::nullopt;
 	const auto root=objects.window_root(handle);
+	if (!objects.window(root) || !objects.window(handle) || (!hidden && !objects.window_visible(handle))) return std::nullopt;
+	// GPU drawing supplies the client pixels itself, so it cannot wait for WM_PAINT. A hidden window may get a surface nothing shows yet,
+	// as a program makes its swap chain before it shows the window.
+	if (objects.window_visible(root)) {
+		try { present(root,true); } catch (...) { return std::nullopt; }
+	}
+	if (!objects.window(handle)) return std::nullopt;
+	hosted_windows[handle]=root;
+	auto surface=place_hosted(handle);
+	if (!surface) hosted_windows.erase(handle);
+	return surface;
+}
+
+bool NativeWindows::hosts_surface(uint64_t root) const
+{
+	for (const auto &[window,placed] : hosted_windows) if (placed==root) return true;
+	return false;
+}
+
+std::optional<HostSurface> NativeWindows::place_hosted(uint64_t handle)
+{
+	const auto root=objects.window_root(handle);
 	const auto *top=objects.window(root);
-	if (!top || !objects.window(handle)) return std::nullopt;
+	const auto *window=objects.window(handle);
+	if (!top || !window) return std::nullopt;
+	hosted_windows[handle]=root;
 	// GPU drawing supplies the client pixels itself, so it cannot wait for WM_PAINT.
 	try { if (objects.window_visible(handle)) present(root,true); } catch (...) { return std::nullopt; }
 	top=objects.window(root);
 	if (!top) return std::nullopt;
 	// Window positions are on the screen, children's included, so the client origin inside the frame the host window shows is the
 	// window's position less the frame's.
-	const auto *window=objects.window(handle);
-	const int32_t x=window->x-top->outer.left,y=window->y-top->outer.top;
-	const auto width=uint32_t(std::max(window->width,1)),height=uint32_t(std::max(window->height,1));
-	const auto surface=presentation.host_surface(root,x,y,width,height);
-	if (surface) {
-		hosting_surface.insert(root);
-		hosted_areas[root]={int64_t(handle),x,y,width,height};
-	}
-	return surface;
+	return presentation.host_surface(root,handle,window->x-top->outer.left,window->y-top->outer.top,uint32_t(std::max(window->width,1)),
+		uint32_t(std::max(window->height,1)),objects.window_visible(handle));
 }
 
 void NativeWindows::place_host_surface(uint64_t root)
 {
-	const auto found=hosted_areas.find(root);
-	if (found==hosted_areas.end() || !presentation.host_surface) return;
-	const auto handle=uint64_t(found->second[0]);
-	const auto *top=objects.window(root);
-	const auto *window=objects.window(handle);
-	if (!top || !window || objects.window_root(handle)!=root) return;
-	const std::array<int64_t,5> area{int64_t(handle),window->x-top->outer.left,window->y-top->outer.top,std::max(window->width,1),
-		std::max(window->height,1)};
-	if (area==found->second) return;
-	found->second=area;
-	presentation.host_surface(root,int32_t(area[1]),int32_t(area[2]),uint32_t(area[3]),uint32_t(area[4]));
+	if (!presentation.host_surface) return;
+	std::vector<uint64_t> placed;
+	for (const auto &[window,last] : hosted_windows)
+		if (last==root || objects.window_root(window)==root) placed.push_back(window);
+	for (const auto window:placed) place_hosted(window);
 }
 
 std::optional<std::pair<uint32_t,uint32_t>> NativeWindows::client_size(uint64_t handle)
@@ -362,10 +374,8 @@ std::optional<std::pair<uint32_t,uint32_t>> NativeWindows::client_size(uint64_t 
 void NativeWindows::release_host_surface(uint64_t handle)
 {
 	if (!presentation.release_host_surface) return;
-	const auto root=objects.window_root(handle);
-	hosting_surface.erase(root);
-	hosted_areas.erase(root);
-	if (root) presentation.release_host_surface(root);
+	hosted_windows.erase(handle);
+	presentation.release_host_surface(handle);
 }
 
 void NativeWindows::drawing(uint64_t handle)
@@ -1469,6 +1479,11 @@ bool NativeWindows::destroy(uint64_t handle)
 				relative(int64_t(window->outer.right)-parent->x),relative(int64_t(window->outer.bottom)-parent->y)},true)) throw uint32_t(8);
 		}
 	}
+	// A driver may still hold the surface of a window going away, which then only stops showing.
+	if (hosted_windows.contains(handle) && presentation.host_surface) {
+		place_hosted(handle);
+		hosted_windows.erase(handle);
+	}
 	release_surface(handle);
 	painted_frames.erase(handle);
 	// The window menu goes with its window.
@@ -1676,7 +1691,6 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 	if ((effective_style & 0x10000000U) && !presentation.present) throw uint32_t(120);
 	const auto *parent=child ? objects.window(args[8]) : nullptr;
 	if (child && (!parent || parent->destroying)) throw uint32_t(1400);
-	if (parent && !parent->client_ready) throw uint32_t(120);
 	// An owner of a top-level window must be a top-level window; message-only parents (HWND_MESSAGE) are not modelled.
 	if (!child && owner_handle && !objects.window(owner_handle)) throw uint32_t(1400);
 	const auto class_atom=atom(args[1],args[10]);
@@ -1726,7 +1740,18 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 		if (!menu_loader) throw uint32_t(120);
 		record.menu=menu_loader(definition->instance,definition->menu_id);
 		if (std::getenv("RAVEN_TRACE_API")) std::cerr << "class menu " << definition->menu_id << " instance " << std::hex << definition->instance << " -> " << record.menu << std::dec << "\n";
-	} else if (!child && !args[9] && !definition->menu_name.empty()) throw uint32_t(120);
+	} else if (!child && !args[9] && !definition->menu_name.empty()) {
+		// A class menu named by a string loads by that name; a name the module has no menu for leaves the window without one.
+		if (!menu_loader) throw uint32_t(120);
+		std::vector<uint8_t> name((definition->menu_name.size()+1)*2);
+		std::memcpy(name.data(),definition->menu_name.data(),definition->menu_name.size()*2);
+		const auto at=process.map_memory(4096,PROT_READ | PROT_WRITE);
+		try {
+			process.write_memory(at,std::span<const uint8_t>(name.data(),std::min<size_t>(name.size(),4096)));
+			record.menu=menu_loader(definition->instance,at);
+		} catch (...) { process.unmap_memory(at); throw; }
+		process.unmap_memory(at);
+	}
 	record.extra.resize(definition->window_extra);
 	const auto handle=objects.add(std::move(record));
 	if (!handle) throw uint32_t(8);
@@ -1790,7 +1815,13 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 			throw uint32_t(120);
 		}
 		auto *geometry=objects.window(handle);
+		// Children the window made during WM_NCCREATE were laid out in its window rectangle; they follow the client origin.
+		const std::pair<int32_t,int32_t> laid_out{geometry->x,geometry->y};
 		geometry->x=left; geometry->y=top;
+		if (left!=laid_out.first || top!=laid_out.second)
+			for (const auto inner : objects.child_windows(handle))
+				shift_window(inner,left-laid_out.first,top-laid_out.second);
+		geometry=objects.window(handle);
 		geometry->width=int32_t(right-uint32_t(left)); geometry->height=int32_t(bottom-uint32_t(top));
 		objects.update_window_dcs(handle);geometry->client_ready=true;
 		const auto created=send(handle,1,0,scratch);
@@ -2480,11 +2511,11 @@ bool NativeWindows::dispatch(std::string_view name)
 	uint64_t result=name=="GetMessageW" ? UINT64_MAX : 0;
 	try {
 		if (name=="GetSystemMetrics") {
+			// The icon size belongs to the display the icons are drawn for; every other metric comes from the shared table.
 			const auto index=int32_t(uint32_t(args[0]));
 			if (index==11 || index==12) {
 				const auto display=objects.display();result=index==11 ? display.width : display.height;
-				if (result>INT32_MAX) throw uint32_t(120);
-			} else result=uint32_t(objects.nonclient_metrics().get(index));
+			} else result=system_metric(objects.nonclient_metrics(),index);
 		}
 		else if (adjustment) {
 			const auto bytes=process.read_memory(args[0],16);

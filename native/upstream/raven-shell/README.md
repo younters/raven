@@ -13,6 +13,8 @@ public Windows headers. It supplies what the system libraries of the guest canno
 - the task allocator, through `CoGetMalloc` and the shell's `SHGetMalloc`.
 - the OLE clipboard (`clipboard.c`): `OleSetClipboard` renders a data object's global-memory formats onto the Win32
   clipboard, `OleGetClipboard` answers with a data object reading it, and `ReleaseStgMedium` frees every kind of medium.
+- the free-threaded marshaler (`CoCreateFreeThreadedMarshaler`), which agile objects aggregate: it marshals interface pointers between
+  the apartments of the process as the pointers themselves.
 - streams over registry values (`SHOpenRegStream`, `SHOpenRegStream2`, `OpenRegStream`), written back when a writable one is released.
 - the network address control that `InitNetworkAddressControl` registers (`netaddress.c`): an edit field that reads a host name or an
   IPv4 or IPv6 address with an optional port.

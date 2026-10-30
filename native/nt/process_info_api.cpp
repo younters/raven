@@ -358,7 +358,22 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		request.kind = "process:query";
 		request.handle = call.u32(1);
 		request.flags = uint32_t(call.pointer_width());
-		const auto answer = own ? std::optional(local_process_information(context, call.u32(1), call.pointer_width())) : request_process(call[0], request);
+		// A child that has ended can no longer answer; its basic information (class 0) stays with its object: the exit status, its id
+		// and this process as its parent.
+		std::optional<InheritedHandle> answer;
+		if (const auto child = own ? nullptr : objects.object_as<ProcessObject>(call[0]); child && child->exited() && call.u32(1) == 0) {
+			const size_t width = call.pointer_width();
+			std::string data(6 * width, '\0');
+			const auto put = [&](size_t offset, uint64_t value, size_t size) { std::memcpy(data.data() + offset, &value, size); };
+			put(0, child->exit_code(), 4);
+			put(3 * width, 8, 4);
+			put(4 * width, uint32_t(child->pid), width);
+			put(5 * width, uint32_t(::getpid()), width);
+			answer.emplace();
+			answer->path = std::move(data);
+		} else {
+			answer = own ? std::optional(local_process_information(context, call.u32(1), call.pointer_width())) : request_process(call[0], request);
+		}
 		if (!answer || answer->access) {
 			call.ret(answer ? answer->access : 0xc0000001U);
 			return;
@@ -613,6 +628,25 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		call.store<uint64_t>(call[4], (uint64_t(cpu.tv_sec) * 1000000000ULL + uint64_t(cpu.tv_nsec)) / 100);
 		call.ret(1);
 	});
+	// IO_COUNTERS: the read, write and other operation counts, then the bytes of each. Raven's host process performs a program's I/O,
+	// so its Linux counters (/proc/<pid>/io) are the program's; no operation is counted as "other".
+	registry.add("GetProcessIoCounters", 2, [is_self, &objects](ApiCall &call) {
+		const auto child = objects.object_as<ProcessObject>(call[0]);
+		if ((!child && !is_self(call[0])) || !call[1]) {
+			call.fail(call[1] ? 6 : 87);
+			return;
+		}
+		std::ifstream source("/proc/" + (child ? std::to_string(child->pid) : std::string("self")) + "/io");
+		std::map<std::string, uint64_t> counts;
+		for (std::string name; source >> name;) {
+			uint64_t value = 0;
+			source >> value;
+			counts[name] = value;
+		}
+		const uint64_t values[6] = {counts["syscr:"], counts["syscw:"], 0, counts["rchar:"], counts["wchar:"], 0};
+		call.write(call[1], std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(values), sizeof values));
+		call.ret(1);
+	});
 	registry.add("GetThreadTimes", 5, [started](ApiCall &call) {
 		if (!call[1] || !call[2] || !call[3] || !call[4]) {
 			call.fail(87);
@@ -833,15 +867,8 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 				return module;
 		return nullptr;
 	};
-	const auto base_name = [module_at, is_self](ApiCall &call, bool wide) {
-		const auto *module = is_self(call[0]) ? module_at(call[1] ? call[1] : 0) : nullptr;
-		if (!module && is_self(call[0]) && !call[1])
-			module = nullptr;
-		if (!module) {
-			call.fail(is_self(call[0]) ? 126 : 6);
-			return;
-		}
-		const auto text = from_utf8(module->name);
+	// A module's file name into the caller's buffer, cut to fit; the count of characters copied is the result.
+	const auto put_module_name = [](ApiCall &call, const std::u16string &text, bool wide) {
 		const size_t capacity = call.u32(3);
 		if (!call[2] || !capacity) {
 			call.ret(0);
@@ -852,8 +879,15 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		else
 			call.ret(call.put_narrow(call[2], to_utf8(text), capacity) > capacity ? capacity : std::min(text.size(), capacity - 1));
 	};
-	registry.add("GetModuleBaseNameW", 4, [base_name](ApiCall &call) { base_name(call, true); });
-	registry.add("GetModuleBaseNameA", 4, [base_name](ApiCall &call) { base_name(call, false); });
+	// A module of the calling process by its handle; the program itself (no module named) is answered below, for any process.
+	const auto base_name = [module_at, is_self, put_module_name](ApiCall &call, bool wide) {
+		const auto *module = is_self(call[0]) ? module_at(call[1]) : nullptr;
+		if (!module) {
+			call.fail(is_self(call[0]) ? 126 : 6);
+			return;
+		}
+		put_module_name(call, from_utf8(module->name), wide);
+	};
 	// MODULEINFO: the base, the size of the image and the entry point.
 	registry.add("GetModuleInformation", 4, [is_self, module_at](ApiCall &call) {
 		const auto *module = is_self(call[0]) ? module_at(call[1]) : nullptr;
@@ -984,6 +1018,22 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 			else call.put_narrow(call[2], narrow, length + 1);
 			call.store<uint32_t>(call[3], uint32_t(length));
 			call.ret(1);
+		});
+	// Without a module, GetModuleBaseName names the file the process was started from.
+	for (const bool wide : {true, false})
+		registry.add(wide ? "GetModuleBaseNameW" : "GetModuleBaseNameA", 4, [base_name, image_path, put_module_name, wide](ApiCall &call) {
+			if (call[1]) {
+				base_name(call, wide);
+				return;
+			}
+			const auto found = image_path(call[0], false);
+			if (const auto *error = std::get_if<uint32_t>(&found)) {
+				call.fail(*error);
+				return;
+			}
+			const auto &path = std::get<std::u16string>(found);
+			const auto slash = path.find_last_of(u"\\/");
+			put_module_name(call, slash == path.npos ? path : path.substr(slash + 1), wide);
 		});
 	// GetProcessImageFileName answers the device path and its length, cut to the buffer as GetModuleFileName does.
 	for (const bool wide : {true, false})

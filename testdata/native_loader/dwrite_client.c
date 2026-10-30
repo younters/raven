@@ -113,6 +113,14 @@ int raven_entry(void)
 		return 7;
 	if (IDWriteFont_GetWeight(font) != DWRITE_FONT_WEIGHT_REGULAR)
 		return 8;
+	{
+		/* A face found under Arial goes by Arial in its Win32 family name, whichever host font stands for it. */
+		IDWriteLocalizedStrings *win32 = NULL;
+		if (FAILED(IDWriteFont_GetInformationalStrings(font, DWRITE_INFORMATIONAL_STRING_WIN32_FAMILY_NAMES, &win32, &exists)) || !exists ||
+			FAILED(IDWriteLocalizedStrings_GetString(win32, 0, name, 64)) || lstrcmpW(name, L"Arial"))
+			return 22;
+		IDWriteLocalizedStrings_Release(win32);
+	}
 	if (FAILED(IDWriteFont_CreateFontFace(font, &face)))
 		return 9;
 	IDWriteFontFace_GetMetrics(face, &metrics);
@@ -159,6 +167,22 @@ int raven_entry(void)
 			++lit;
 	if (lit < 40)
 		return 18;
+	{
+		/* A text format and an empty layout made from it answer with the settings they were given. */
+		IDWriteTextFormat *format;
+		IDWriteTextLayout *layout;
+		if (FAILED(IDWriteFactory_CreateTextFormat(factory, L"Arial", NULL, DWRITE_FONT_WEIGHT_BOLD, DWRITE_FONT_STYLE_ITALIC, DWRITE_FONT_STRETCH_NORMAL,
+			14.0f, L"en-us", &format)))
+			return 19;
+		if (IDWriteTextFormat_GetFontSize(format) != 14.0f || IDWriteTextFormat_GetFontWeight(format) != DWRITE_FONT_WEIGHT_BOLD ||
+			IDWriteTextFormat_GetFontStyle(format) != DWRITE_FONT_STYLE_ITALIC)
+			return 20;
+		if (FAILED(IDWriteFactory_CreateTextLayout(factory, L"", 0, format, 100.0f, 20.0f, &layout)) ||
+			IDWriteTextFormat_GetFontSize((IDWriteTextFormat *)layout) != 14.0f || IDWriteTextFormat_GetFontWeight((IDWriteTextFormat *)layout) != DWRITE_FONT_WEIGHT_BOLD)
+			return 21;
+		IDWriteTextLayout_Release(layout);
+		IDWriteTextFormat_Release(format);
+	}
 	IDWriteGlyphRunAnalysis_Release(analysis);
 	IDWriteFontFace_Release(face);
 	IDWriteFont_Release(font);

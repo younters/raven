@@ -86,8 +86,8 @@ public:
 	// The same for pages of a mapped program image, which the program may protect although it did not allocate them.
 	void protect_image(uint64_t address, size_t size, int protection);
 	void unmap_memory(uint64_t address);
-	// Maps a host-owned memfd into the guest at a fresh address; release it with unmap_memory.
-	uint64_t map_shared(int descriptor, size_t size, uint64_t offset = 0);
+	// Maps a host-owned memfd into the guest at a fresh address, or at the free page-aligned address given; release it with unmap_memory.
+	uint64_t map_shared(int descriptor, size_t size, uint64_t offset = 0, uint64_t address = 0);
 	// Transfers the same open file description, including device mapping permissions, instead of reopening it.
 	uint64_t map_descriptor(int descriptor, size_t size, uint64_t offset = 0);
 	bool memory_available(uint64_t address, size_t size) const;
@@ -142,6 +142,9 @@ public:
 	void set_execution_wait(std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> wait);
 	void stop_thread(const NativeThreadState &thread);
 	void pause_thread(NativeThreadState &thread);
+	// The general registers a thread that is not running continues with: a thread paused in its own task gets them there, a saved
+	// thread in its snapshot (SetThreadContext on a suspended thread).
+	void set_thread_registers(NativeThreadState &thread, const user_regs_struct &registers);
 	// A fault stop becomes an API-style stop, so host code may run guest callbacks and redirect execution.
 	void enter_fault_dispatch();
 	// Continues the guest at a new context, dropping callbacks nested above depth (exception unwinding abandons them).
@@ -181,7 +184,7 @@ public:
 
 private:
 	void make_served_block(uint64_t teb, uint64_t &guest, uint64_t *&host);
-	uint64_t map_file(int descriptor, size_t size, uint64_t offset, bool transfer);
+	uint64_t map_file(int descriptor, size_t size, uint64_t offset, bool transfer, uint64_t address = 0);
 	uint64_t receive_descriptor(int descriptor, uint64_t scratch);
 	void install_seccomp();
 	bool serve_pending();

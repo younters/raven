@@ -189,9 +189,18 @@ void NativeRegistry::register_runtime_classes()
 		}
 	}
 	// The Windows Runtime classes the runtime brings, in-process (activation type 0) and callable from any apartment (threading 0):
-	// installers ask the package manager whether a packaged version of what they install is present.
+	// installers ask the package manager whether a packaged version of what they install is present, and Office asks the UI settings
+	// for the theme's colours and the text scale while it starts, along with the network, the device's profile, the system's accounts
+	// and the application model.
 	static constexpr std::pair<const char16_t *, const char16_t *> runtime_classes[] = {
-		{u"Windows.Management.Deployment.PackageManager", u"raven-deployment.dll"}};
+		{u"Windows.Management.Deployment.PackageManager", u"raven-deployment.dll"},
+		{u"Windows.UI.ViewManagement.UISettings", u"raven-uisettings.dll"},
+		{u"Windows.System.Profile.RetailInfo", u"raven-twinapi.dll"}, {u"Windows.System.Profile.SharedModeSettings", u"raven-twinapi.dll"},
+		{u"Windows.Networking.Connectivity.NetworkInformation", u"raven-twinapi.dll"},
+		{u"Windows.Security.Authentication.OnlineId.OnlineIdSystemAuthenticator", u"raven-twinapi.dll"},
+		{u"Windows.Security.Authentication.OnlineId.OnlineIdServiceTicketRequest", u"raven-twinapi.dll"},
+		{u"Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager", u"raven-twinapi.dll"},
+		{u"Windows.ApplicationModel.Core.CoreApplication", u"raven-twinapi.dll"}};
 	for (const bool wow : {false, true})
 		for (const auto &[name, library] : runtime_classes) {
 			const std::u16string path = std::u16string(wow ? u"SOFTWARE\\Wow6432Node" : u"SOFTWARE") +
@@ -365,6 +374,10 @@ void NativeRegistry::seed()
 		// DirectX 9.0c, which Windows 10 reports as its DirectX version and the DirectX redistributable checks before it installs.
 		const auto directx = root + u"\\Microsoft\\DirectX";
 		text(directx.c_str(), u"Version", u"4.09.00.0904");
+		// Internet Explorer 11, a part of Windows 10 whose version installers read as a requirement.
+		const auto explorer = root + u"\\Microsoft\\Internet Explorer";
+		text(explorer.c_str(), u"Version", u"9.11.19041.2364");
+		text(explorer.c_str(), u"svcVersion", u"11.0.19041.2364");
 		uint64_t key = 0;
 		uint32_t disposition = 0;
 		if (!create(0x80000002ULL, directx, key, disposition)) {
@@ -502,7 +515,11 @@ uint32_t NativeRegistry::close(uint64_t key)
 {
 	if (predefined(key))
 		return 0;
-	return open_keys.erase(key) ? 0 : bad_handle;
+	if (!open_keys.erase(key))
+		return bad_handle;
+	if (release)
+		release(key);
+	return 0;
 }
 
 uint32_t NativeRegistry::query(uint64_t key, std::u16string_view name, uint32_t &type, std::vector<uint8_t> &data) const

@@ -166,7 +166,7 @@ constexpr std::string_view shared_allowed[] = {
 	"RegCloseKey", "RegDisablePredefinedCache", "RegDisablePredefinedCacheEx", "RegCreateKeyExA", "RegCreateKeyExW", "RegOpenKeyA", "RegOpenKeyW", "RegOpenKeyExA", "RegOpenKeyExW", "RegQueryValueExA",
 	"RegQueryValueExW", "RegSetValueExA", "RegSetValueExW", "RegDeleteKeyA", "RegDeleteKeyW", "RegDeleteValueA", "RegDeleteValueW",
 	"RegEnumKeyA", "RegEnumKeyW", "RegEnumKeyExA", "RegEnumKeyExW", "RegEnumValueA", "RegEnumValueW", "RegGetValueA", "RegGetValueW",
-	"GetAdaptersInfo", "RtlConvertDeviceFamilyInfoToString", "GetPackagesByPackageFamily", "GetUserDefaultGeoName", "SLGetWindowsInformation", "SLGetWindowsInformationDWORD",
+	"GetAdaptersInfo", "GetNetworkParams", "RtlConvertDeviceFamilyInfoToString", "GetPackagesByPackageFamily", "GetUserDefaultGeoName", "SLGetWindowsInformation", "SLGetWindowsInformationDWORD",
 	"GetWindowLongW", "SetWindowLongW", "GetFileVersionInfoA", "GetFileVersionInfoExW", "GetFileVersionInfoSizeA", "GetFileVersionInfoSizeExW",
 	"GetFileVersionInfoSizeW", "GetFileVersionInfoW", "VerQueryValueA", "VerQueryValueW", "GetSystemDirectoryW", "GetSystemDirectoryA", "GetWindowsDirectoryW", "LocalAlloc", "LocalReAlloc", "GlobalReAlloc", "GlobalSize", "GetComputerNameA",
 	"GetComputerNameW", "FileTimeToSystemTime", "SystemTimeToFileTime", "GetTimeZoneInformation", "SetFileAttributesA",
@@ -523,8 +523,8 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		static constexpr Rule rules[] = {{"ntdll.dll", "ucrtbase.dll", "ucrtbase."},
 			{"user32.dll", "raven-user32.dll", "raven-user32."}, {"comdlg32.dll", "raven-shell.dll", "raven-shell."},
 			{"ole32.dll", "raven-shell.dll", "raven-shell."}, {"shell32.dll", "raven-shell.dll", "raven-shell."}, {"msvcrt.dll", "ucrtbase.dll", "ucrtbase."}, {"shlwapi.dll", "raven-shell.dll", "raven-shell."}, {"setupapi.dll", "raven-setupapi.dll", "raven-setupapi."},
-			{"ole32.dll", "raven-storage.dll", "raven-storage."}, {"combase.dll", "raven-shell.dll", "raven-shell."},
-			{"uiautomationcore.dll", "raven-shell.dll", "raven-shell."}, {"runtimeobject.dll", "raven-shell.dll", "raven-shell."}};
+			{"ole32.dll", "raven-storage.dll", "raven-storage."}, {"combase.dll", "raven-shell.dll", "raven-shell."}, {"runtimeobject.dll", "raven-shell.dll", "raven-shell."},
+			{"uiautomationcore.dll", "raven-shell.dll", "raven-shell."}, {"api-ms-win-core-winrt-l1-1-0.dll", "raven-shell.dll", "raven-shell."}};
 		for (const auto &rule : rules) {
 			if (library != rule.library)
 				continue;
@@ -826,7 +826,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		const auto inherited = kernel_objects.inherit_file(launch->standard_fds[i]);
 		if (inherited.status)
 			throw std::runtime_error("cannot inherit native standard file");
-		// A process's standard handles are inheritable, as Windows makes them, so a child can be given them by name.
+		// Inherited from the creator, so inheritable, as handle lists that name them require.
 		kernel_objects.set_inherit(inherited.value, true);
 		standard_handles[i] = inherited.value;
 	}
@@ -940,7 +940,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	windows.set_deadline(deadline);
 #ifdef RAVEN_VULKAN_THUNK32
 	VulkanBridge vulkan(process, modules);
-	vulkan.set_surface_source({[&windows](uint64_t window) { return windows.host_surface(window); },
+	vulkan.set_surface_source({[&windows](uint64_t window) { return windows.host_surface(window,true); },
 		[&windows](uint64_t window) { windows.release_host_surface(window); },
 		[&windows](uint64_t window) { return windows.client_size(window); }, presentation.platform});
 	VulkanThunk32 vulkan32(process, vulkan);
@@ -1274,7 +1274,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				process.abandon_call();
 				throw ProcessExit{uint32_t(words[1]), result.instruction};
 			}
-			if (api == "ExitProcess" || api == "exit" || api == "_exit") {
+			if (api == "ExitProcess" || api == "RtlExitUserProcess" || api == "exit" || api == "_exit") {
 				const auto code = uint32_t(process.api_arguments(1)[0]);
 				process.abandon_call();
 				throw ProcessExit{code, result.instruction};
@@ -1368,6 +1368,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	guest_threads.set_watched([reactor = kernel.reactor](std::vector<pollfd> &descriptors) { reactor->watch(descriptors); });
 	// Waits that also wake for messages ask the window system, and the window system sleeps as the scheduler does.
 	kernel.queue_status = [&windows](uint32_t thread,uint32_t mask,bool clear) { return windows.queue_status(thread,mask,clear); };
+	kernel.module_named = [&module_api](uint64_t address, bool wide) { return module_api.module_handle(address, wide); };
 	windows.set_idle_sources([&guest_threads](std::chrono::steady_clock::time_point limit) { return guest_threads.idle_until(limit); },
 		[&guest_threads](std::vector<pollfd> &descriptors) { return guest_threads.idle_descriptors(descriptors); }, [&guest_threads] { guest_threads.drain_wake(); });
 	register_file_api(shared_api, kernel);
@@ -1404,6 +1405,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_process_info_api(shared_api, kernel);
 	register_font_service(shared_api, kernel);
 	register_canvas_service(shared_api, kernel);
+	register_shader_service(shared_api, kernel);
 	// A 32-bit program runs under WOW64 on the 64-bit system Raven presents, its System32 being SysWOW64 until it switches redirection
 	// off. The value it keeps for the switch back is 1 when redirection was on.
 	shared_api.add("Wow64DisableWow64FsRedirection", 1, [&paths](ApiCall &call) {

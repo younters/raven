@@ -224,6 +224,15 @@ static int virtual_package_files(void)
 		CloseHandle(file);
 	if (!result && GetFileAttributesW(L"C:\\Program Files\\Common Files\\RavenShared\\absent.txt") != INVALID_FILE_ATTRIBUTES)
 		result = 5;
+	/* Looking a missing file up in the packages takes no handle with it. */
+	if (!result) {
+		DWORD before = 0, after = 0;
+		GetProcessHandleCount(GetCurrentProcess(), &before);
+		for (int index = 0; index < 20; ++index)
+			GetFileAttributesW(L"C:\\Program Files\\Common Files\\RavenShared\\absent.txt");
+		if (!GetProcessHandleCount(GetCurrentProcess(), &after) || after != before)
+			result = 7;
+	}
 	RegDeleteValueW(key, L"C:\\RavenPackage");
 	RegCloseKey(key);
 	if (!result && GetFileAttributesW(L"C:\\Program Files\\Common Files\\RavenShared\\probe.txt") != INVALID_FILE_ATTRIBUTES)
@@ -328,14 +337,14 @@ int raven_entry(void)
 	if ((size = virtual_package_files()))
 		return 250 + (int)size;
 	{
-		/* Without a compiler behind it, a compile is refused and leaves no blobs. */
+		/* The runtime's compiler stands behind the library: a compile gives code and, with no warning, no message blob. */
 		typedef HRESULT (WINAPI *compile_type)(const void *, SIZE_T, const char *, const void *, void *, const char *, const char *, UINT, UINT,
 			void **, void **);
 		HMODULE compiler = LoadLibraryW(L"d3dcompiler_47.dll");
 		compile_type compile = compiler ? (compile_type)(void *)GetProcAddress(compiler, "D3DCompile") : NULL;
-		void *code = (void *)1, *errors = (void *)1;
-		if (!compile || compile("float4 main() : SV_Target { return 1; }", 39, NULL, NULL, NULL, "main", "ps_4_0", 0, 0, &code, &errors) !=
-			(HRESULT)0x80004001 || code || errors)
+		void *code = NULL, *errors = (void *)1;
+		if (!compile || compile("float4 main() : SV_Target { return 1; }", 39, NULL, NULL, NULL, "main", "ps_4_0", 0, 0, &code, &errors) != S_OK ||
+			!code || errors)
 			return 260;
 	}
 
@@ -374,6 +383,15 @@ int raven_entry(void)
 		return 62;
 	if (GetAdaptersInfo(NULL, NULL) != ERROR_INVALID_PARAMETER)
 		return 63;
+	{
+		FIXED_INFO fixed;
+		ULONG fixed_size = 0;
+		if (GetNetworkParams(NULL, NULL) != ERROR_INVALID_PARAMETER || GetNetworkParams(NULL, &fixed_size) != ERROR_BUFFER_OVERFLOW ||
+			fixed_size != sizeof(fixed))
+			return 64;
+		if (GetNetworkParams(&fixed, &fixed_size) != NO_ERROR || !fixed.HostName[0])
+			return 65;
+	}
 
 	if (!CryptProtectData(&plain, L"note", &entropy, NULL, NULL, 0, &sealed) || sealed.cbData <= plain.cbData)
 		return 8;
@@ -624,6 +642,11 @@ int raven_entry(void)
 	WCHAR clean[MAX_PATH];
 	if (!canonicalize || canonicalize(clean, MAX_PATH, L"C:\\a\\.\\b\\..\\c.txt") || lstrcmpW(clean, L"C:\\a\\c.txt") ||
 		canonicalize(clean, 4, L"C:\\a\\c.txt") != (HRESULT)0x8007007a) return 179;
+	/* PathCchRemoveFileSpec keeps the root and reports S_FALSE once only the root is left. */
+	HRESULT (WINAPI *remove_spec)(WCHAR *, size_t) = (void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "PathCchRemoveFileSpec");
+	WCHAR spec[MAX_PATH] = L"C:\\a\\b.txt";
+	if (!remove_spec || remove_spec(spec, MAX_PATH) || lstrcmpW(spec, L"C:\\a") || remove_spec(spec, MAX_PATH) || lstrcmpW(spec, L"C:\\") ||
+		remove_spec(spec, MAX_PATH) != S_FALSE || lstrcmpW(spec, L"C:\\")) return 179;
 	if ((key_size = click_to_run_natives(key))) return 180 + (int)key_size;
 	RegDeleteKeyW(key, L"Inner");
 	RegCloseKey(key);

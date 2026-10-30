@@ -159,10 +159,11 @@ static HRESULT STDMETHODCALLTYPE tl_format_family(IDWriteTextLayout *self, WCHAR
 	memcpy(name, LAYOUT_OF(self)->family, (length + 1) * sizeof(WCHAR));
 	return S_OK;
 }
-static DWRITE_FONT_WEIGHT STDMETHODCALLTYPE tl_format_weight(IDWriteTextLayout *self) { return (DWRITE_FONT_WEIGHT)(LAYOUT_OF(self)->length ? LAYOUT_OF(self)->weights[0] : 400); }
-static DWRITE_FONT_STYLE STDMETHODCALLTYPE tl_format_style(IDWriteTextLayout *self) { return (DWRITE_FONT_STYLE)(LAYOUT_OF(self)->length ? LAYOUT_OF(self)->styles[0] : 0); }
+/* The first slot holds the format's own settings, also when there is no text. */
+static DWRITE_FONT_WEIGHT STDMETHODCALLTYPE tl_format_weight(IDWriteTextLayout *self) { return (DWRITE_FONT_WEIGHT)LAYOUT_OF(self)->weights[0]; }
+static DWRITE_FONT_STYLE STDMETHODCALLTYPE tl_format_style(IDWriteTextLayout *self) { return (DWRITE_FONT_STYLE)LAYOUT_OF(self)->styles[0]; }
 static DWRITE_FONT_STRETCH STDMETHODCALLTYPE tl_format_stretch(IDWriteTextLayout *self) { return LAYOUT_OF(self)->stretch; }
-static FLOAT STDMETHODCALLTYPE tl_format_size(IDWriteTextLayout *self) { return LAYOUT_OF(self)->length ? LAYOUT_OF(self)->sizes[0] : 0.0f; }
+static FLOAT STDMETHODCALLTYPE tl_format_size(IDWriteTextLayout *self) { return LAYOUT_OF(self)->sizes[0]; }
 static UINT32 STDMETHODCALLTYPE tl_format_locale_length(IDWriteTextLayout *self) { return (UINT32)wlen(LAYOUT_OF(self)->locale); }
 static HRESULT STDMETHODCALLTYPE tl_format_locale(IDWriteTextLayout *self, WCHAR *name, UINT32 size)
 {

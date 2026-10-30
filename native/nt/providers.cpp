@@ -68,14 +68,14 @@ static std::vector<uint8_t> read_host_file(const std::filesystem::path &path)
 	return bytes;
 }
 
-// The PathCch functions live in kernelbase.dll on Windows and are not in the public import libraries.
-static constexpr std::array<std::string_view, 51> names{
+// The PathCch functions live in kernelbase.dll on Windows and are not in the import libraries the public lists come from.
+static constexpr std::array<std::string_view, 52> names{
 	"CloseHandle","CreateEventA","CreateEventW","ExitProcess",
 	"FindResourceA", "FindResourceExA", "FindResourceExW", "FindResourceW", "FreeLibrary",
 	"GetACP", "GetCommandLineA", "GetCommandLineW", "GetCurrentProcessId", "GetCurrentThreadId", "GetFileType", "GetLastError", "GetModuleHandleA",
 	"GetModuleHandleW", "GetProcAddress", "GetProcessHeap", "GetStartupInfoA", "GetStartupInfoW", "GetStdHandle", "HeapAlloc", "HeapCreate", "HeapDestroy", "HeapFree", "HeapReAlloc", "HeapSize",
 	"LoadLibraryA", "LoadLibraryW", "LoadResource",
-	"LockResource", "MultiByteToWideChar", "OpenProcessToken", "OpenThreadToken", "PathCchCanonicalize", "PathCchCanonicalizeEx", "PathCchCombineEx", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
+	"LockResource", "MultiByteToWideChar", "OpenProcessToken", "OpenThreadToken", "PathCchCanonicalize", "PathCchCanonicalizeEx", "PathCchCombineEx", "PathCchRemoveFileSpec", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
 	"VirtualAlloc", "VirtualFree", "VirtualProtect", "VirtualQuery", "WaitForSingleObject", "WriteFile"
 };
 
@@ -546,13 +546,13 @@ static const std::vector<uint8_t> &screen_device_caps_prelude()
 {
 	// mov r10,[pointer]; test r10,r10; jz slow; test rcx,rcx; jz slow; cmp edx,127; ja slow; the screen's context answers from the
 	// caps table; another context answers when the attribute table holds its slot (see dc_text_color_prelude) and the index does not
-	// depend on its bitmap: TECHNOLOGY from the slot's window flag (display for a window's context, 0 for a memory one), LOGPIXELSX and
-	// LOGPIXELSY 96, PLANES 1, SHADEBLENDCAPS 0, as device_caps answers them; anything else: jmp breakpoint. GDI+ asks these thousands of
-	// times while it paints.
+	// depend on its bitmap: TECHNOLOGY 1 (DT_RASDISPLAY, a memory context's too), LOGPIXELSX and LOGPIXELSY 96, PLANES 1, SHADEBLENDCAPS
+	// 0, as device_caps answers them; anything else: jmp breakpoint. GDI+ asks these thousands of times while it paints. The slot's
+	// window flag that TECHNOLOGY once read is left unreached (mov eax,[rax+0x18]; ret).
 	static const std::vector<uint8_t> code{
 		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x6f, 0x48, 0x85, 0xc9, 0x74, 0x6a, 0x83, 0xfa, 0x7f, 0x77, 0x65, 0x49, 0x3b,
 		0x8a, 0x00, 0x06, 0x00, 0x00, 0x74, 0x51, 0x4d, 0x8b, 0x9a, 0x48, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x50, 0x89, 0xc8, 0x25, 0xff, 0x03,
-		0x00, 0x00, 0xc1, 0xe0, 0x05, 0x49, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x48, 0x3b, 0x08, 0x75, 0x39, 0x83, 0xfa, 0x02, 0x74, 0x16, 0x83,
+		0x00, 0x00, 0xc1, 0xe0, 0x05, 0x49, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x48, 0x3b, 0x08, 0x75, 0x39, 0x83, 0xfa, 0x02, 0x74, 0x20, 0x83,
 		0xfa, 0x58, 0x74, 0x15, 0x83, 0xfa, 0x5a, 0x74, 0x10, 0x83, 0xfa, 0x0e, 0x74, 0x11, 0x83, 0xfa, 0x78, 0x74, 0x12, 0xeb, 0x1e, 0x8b, 0x40, 0x18,
 		0xc3, 0xb8, 0x60, 0x00, 0x00, 0x00, 0xc3, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x31, 0xc0, 0xc3, 0x89, 0xd0, 0x41, 0x8b, 0x84, 0x82, 0x00, 0x04,
 		0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
@@ -1669,9 +1669,16 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	for (const auto name : {"NtSetInformationThread", "NtOpenThreadToken", "NtOpenThreadTokenEx", "NtOpenThread", "NtOpenProcess", "NtOpenProcessToken", "NtOpenProcessTokenEx", "NtQueryInformationProcess", "NtReadVirtualMemory", "NtWriteVirtualMemory", "NtQuerySection", "NtFlushInstructionCache", "RtlAddGrowableFunctionTable", "RtlGrowFunctionTable", "RtlDeleteGrowableFunctionTable",
 		"NtWriteFile", "NtQueryDirectoryFile", "ZwQueryDirectoryFile", "RtlNtStatusToDosError", "NtQueryObject", "NtMapViewOfSection", "NtUnmapViewOfSection",
 		"RtlAcquireSRWLockExclusive", "RtlAcquireSRWLockShared", "RtlWakeConditionVariable", "RtlWakeAllConditionVariable", "RtlWaitOnAddress",
-		"RtlWakeAddressSingle", "RtlWakeAddressAll", "RtlReleaseSRWLockExclusive", "RtlReleaseSRWLockShared",
+		"RtlWakeAddressSingle", "RtlWakeAddressAll",
+		// The processor a thread runs on.
+		"NtGetCurrentProcessorNumber", "NtGetCurrentProcessorNumberEx", "RtlGetCurrentProcessorNumber", "RtlGetCurrentProcessorNumberEx",
+		// The C runtime string functions ntdll exports.
+		"strlen", "strcmp", "strncmp",
+		// Opening files by their native names, which Rust's standard library and mio look up at run time.
+		"NtCreateFile", "NtOpenFile",
 		"RtlRunOnceExecuteOnce", "RtlSetLastWin32Error", "RtlCompareMemory", "RtlMoveMemory", "RtlFillMemory", "RtlZeroMemory",
-		"memcpy", "memmove", "memset", "memcmp", "strlen", "wcslen",
+		"memcpy", "memmove", "memset", "memcmp", "wcslen",
+		"RtlReleaseSRWLockExclusive", "RtlReleaseSRWLockShared",
 		// What the runtime's own components import from ntdll, which they need whether a program loads them at start or later.
 		"DbgPrint", "NtCancelIoFileEx", "NtDeviceIoControlFile", "NtOpenDirectoryObject", "NtQueryDirectoryObject",
 		"RtlDosPathNameToNtPathName_U_WithStatus", "NtCancelIoFile", "NtCreateSection", "NtFsControlFile", "NtReadFile", "RtlCreateUnicodeStringFromAsciiz", "RtlFreeHeap",
@@ -1820,6 +1827,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				{"shlwapi.dll", "raven-shell.dll", "raven-shell."}, {"setupapi.dll", "raven-setupapi.dll", "raven-setupapi."},
 				{"ole32.dll", "raven-storage.dll", "raven-storage."}, {"combase.dll", "raven-shell.dll", "raven-shell."},
 				{"uiautomationcore.dll", "raven-shell.dll", "raven-shell."}, {"runtimeobject.dll", "raven-shell.dll", "raven-shell."},
+				{"api-ms-win-core-winrt-l1-1-0.dll", "raven-shell.dll", "raven-shell."},
 				// The heap, critical sections and the free paths of SRW locks and condition variables run in the guest RTL.
 				{"kernel32.dll", "raven-rtl.dll", "raven-rtl."}, {"kernelbase.dll", "raven-rtl.dll", "raven-rtl."},
 				// The generic AVL tables of ntdll; its heap stays with the host, which calls the guest RTL itself.
@@ -1951,7 +1959,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		if (launch->standard_fds[i]<0) continue;
 		const auto inherited=kernel_objects.inherit_file(launch->standard_fds[i]);
 		if (inherited.status) throw std::runtime_error("cannot inherit native standard file");
-		// A process's standard handles are inheritable, as Windows makes them, so a child can be given them by name.
+		// The standard handles came from the creator by inheritance, so they are inheritable, as programs that pass them on in a
+		// handle list (PROC_THREAD_ATTRIBUTE_HANDLE_LIST) require.
 		kernel_objects.set_inherit(inherited.value,true);
 		standard_handles[i]=inherited.value;
 	}
@@ -1990,7 +1999,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	desktop.set_updated([&](uint64_t window) { windows.drawing(window); });
 #ifdef RAVEN_VULKAN
 	VulkanBridge vulkan(process, modules);
-	vulkan.set_surface_source({[&windows](uint64_t window) { return windows.host_surface(window); },
+	vulkan.set_surface_source({[&windows](uint64_t window) { return windows.host_surface(window,true); },
 		[&windows](uint64_t window) { windows.release_host_surface(window); },
 		[&windows](uint64_t window) { return windows.client_size(window); }, windows.host_platform()});
 #endif
@@ -2107,7 +2116,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			if (!service_name && found == traps.end())
 				return result;
 			const auto &api_name = service_name ? *service_name : found->second;
-			if (api_name == "ExitProcess") {
+			// ntdll's RtlExitUserProcess is the ExitProcess of programs that do without kernel32.
+			if (api_name == "ExitProcess" || api_name == "RtlExitUserProcess") {
 				const auto code=uint32_t(process.api_arguments(1)[0]);
 				process.abandon_call();
 				throw ProcessExit{code,result.instruction};
@@ -2141,6 +2151,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 						std::cerr << " from " << module_name << '+' << std::hex << caller - module->loaded.base() << std::dec;
 				if (std::getenv("RAVEN_TRACE_STACK") && kernel_ptr && kernel_ptr->describe_stack)
 					std::cerr << " stack:" << kernel_ptr->describe_stack();
+				if (threads_ptr)
+					std::cerr << " on thread " << threads_ptr->current_id();
 				std::cerr << '\n';
 			}
 			if (const char *spec = std::getenv("RAVEN_STEP")) {
@@ -2149,6 +2161,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				const std::string text(spec);
 				const auto first = text.find(':'), second = text.find(':', first + 1);
 				if (first != text.npos && second != text.npos && api_name == text.substr(0, first) &&
+					(!trace_program || equal_fold(from_utf8(entry.name), from_utf8(trace_program))) &&
 					++seen[api_name] == std::stoi(text.substr(first + 1, second - first - 1)))
 					process.trace_instructions(size_t(std::stoul(text.substr(second + 1))), [&modules, &process](uint64_t rip) {
 						std::cerr << "step";
@@ -2586,6 +2599,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_bcrypt_api(api_registry, kernel);
 	register_process_info_api(api_registry, kernel);
 	register_font_service(api_registry, kernel);
+	register_shader_service(api_registry, kernel);
 	register_canvas_service(api_registry, kernel);
 	register_sync_api(api_registry, kernel);
 	register_thread_api(api_registry, kernel);
@@ -2686,6 +2700,31 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		else if (found->second != UINT64_MAX)
 			++found->second;
 	};
+	// A library named by its path is in the process when the module of that file name came from that file. The libraries Raven
+	// serves itself live in the system folder, where GetModuleFileName reports them.
+	module_api.set_path_lookup([&](const std::string &name) -> uint64_t {
+		const auto slash = name.find_last_of("/\\");
+		auto identity = name.substr(slash == name.npos ? 0 : slash + 1);
+		for (auto &character : identity)
+			if (character >= 'A' && character <= 'Z')
+				character = static_cast<char>(character + ('a' - 'A'));
+		if (identity.find('.') == identity.npos)
+			identity += ".dll";
+		const auto found = modules.all().find(identity);
+		if (found == modules.all().end())
+			return 0;
+		const auto requested = paths.resolve(from_utf8(name));
+		if (!requested)
+			return 0;
+		std::error_code error;
+		const auto explicit_file = explicit_files.find(identity);
+		const auto file = explicit_file != explicit_files.end() ? explicit_file->second : found->second->file;
+		if (!file.empty())
+			return std::filesystem::equivalent(requested->host, file, error) ? found->second->loaded.base() : 0;
+		const auto system = paths.resolve(u"C:\\Windows\\System32\\" + from_utf8(identity));
+		return system && requested->host == system->host ? found->second->loaded.base() : 0;
+	});
+	kernel.module_named = [&](uint64_t address, bool wide) { return module_api.module_handle(address, wide); };
 	module_api.set_loader([&](std::string name) -> uint64_t {
 		await_loader();
 		// DONT_RESOLVE_DLL_REFERENCES maps the library alone: its imports are not followed and it is not started, so even an image of

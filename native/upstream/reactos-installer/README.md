@@ -8,9 +8,8 @@ programs and, with `--arch x86`, for 32-bit ones:
 
 - `msi.dll` (`dll/win32/msi`): the installer engine, its SQL and condition grammars
   (bison) and the RPC stubs of its custom action server (widl);
-- `msiexec.exe` (`base/system/msiexec`) and `regsvr32.exe` (`base/system/regsvr32`),
+- `msiexec.exe` (`base/system/msiexec`),
   which each prefix also keeps in its system directories;
-- `cabinet.dll` (`dll/win32/cabinet`, on `sdk/lib/3rdparty/zlib`);
 - `sxs.dll` (`dll/win32/sxs`): the side-by-side assembly cache;
 - `rpcrt4.dll` (`dll/win32/rpcrt4`): remote procedure calls over local named pipes;
 - `raven-storage.dll`: the structured storage of `dll/win32/ole32` and
@@ -39,8 +38,8 @@ build. `support.c`, `storage.c`, `codecs.c`, `setup.c`, `printers.c`, `dllmain.c
 `entry_wide.c` and `clicktorun.c` are Raven code: they answer the compatibility database,
 binary file patches, the class key helper and the delay-loaded imports the sources expect
 from libraries Raven does not ship, give the programs and plain libraries their entry
-points, and let the installer's queries find the components of Click-to-Run products in
-the manifests their packages keep. Binary patches of installed files are not applied yet.
+points, and let the installer's queries find the components of Click-to-Run products, and
+the files those products publish by qualifier, in the manifests their packages keep. Binary patches of installed files are not applied yet.
 The build records every command, the hash of each extracted source and of each
 component in `provenance.json`.
 

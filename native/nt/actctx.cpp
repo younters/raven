@@ -97,7 +97,7 @@ void ActivationContexts::attach(KernelContext &context)
 	// The program's own manifest, resource 1 of type RT_MANIFEST, is the context in effect when no other is active.
 	const auto &image = context.entry;
 	const auto directory = image.image.directories[2];
-	if (!directory.address || !directory.size)
+	if (!directory.address || !directory.size || directory.size > image.image.image_size)
 		return;
 	try {
 		// An installer may carry its whole payload in resources; only the manifest itself is limited below. No guest code has run yet.
@@ -230,7 +230,25 @@ std::optional<ActivationContexts::Assembly> ActivationContexts::parse(std::strin
 std::optional<ActivationContexts::Assembly> ActivationContexts::resolve(const Assembly &identity) const
 {
 	std::error_code error;
-	if (identity.name.empty())
+	// A private assembly (no public key token) lives with the program, as Windows looks for it: <name>.manifest in the program's
+	// folder, then <name>\<name>.manifest; its files are beside its manifest.
+	if (identity.token.empty() && !identity.name.empty() && !application.empty() &&
+		std::filesystem::path(identity.name).filename() == identity.name && identity.name != "." && identity.name != "..")
+		for (const auto &place : {application / (identity.name + ".manifest"), application / identity.name / (identity.name + ".manifest")}) {
+			if (!std::filesystem::is_regular_file(place, error))
+				continue;
+			std::ifstream input(place, std::ios::binary);
+			const std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+			auto candidate = parse(bytes, false);
+			if (!candidate || lowered(candidate->name) != lowered(identity.name) ||
+				(!identity.version.empty() && candidate->version != identity.version) ||
+				(!candidate->architecture.empty() && candidate->architecture != "*" &&
+				 candidate->architecture != (identity.architecture.empty() || identity.architecture == "*" ? (wide_process ? "amd64" : "x86") : identity.architecture)))
+				continue;
+			candidate->folder = place.parent_path().string();
+			return candidate;
+		}
+	if (manifests.empty() || identity.name.empty() || !std::filesystem::is_directory(manifests, error))
 		return std::nullopt;
 	const std::string architecture = identity.architecture.empty() || identity.architecture == "*" ? (wide_process ? "amd64" : "x86") : identity.architecture;
 	const auto wanted = version_parts(identity.version);
@@ -254,31 +272,22 @@ std::optional<ActivationContexts::Assembly> ActivationContexts::resolve(const As
 	}
 	if (best)
 		return best;
-	// Private assemblies sit beside the application, either as name.manifest or in name/name.manifest. Their versions match exactly.
-	if (!application_directory.empty() && std::filesystem::path(identity.name).filename() == identity.name && identity.name != "." && identity.name != "..")
-		for (const auto &folder : {application_directory, application_directory / identity.name}) {
-			std::ifstream input(folder / (identity.name + ".manifest"), std::ios::binary);
-			if (!input)
-				continue;
-			const std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-			auto candidate = parse(bytes, false);
-			if (!candidate || lowered(candidate->name) != lowered(identity.name) ||
-				(!identity.version.empty() && candidate->version != identity.version) ||
-				(!identity.token.empty() && candidate->token != identity.token) ||
-				(!candidate->architecture.empty() && candidate->architecture != "*" && candidate->architecture != architecture))
-				continue;
-			candidate->folder = std::filesystem::absolute(folder).string();
-			return candidate;
-		}
 	return std::nullopt;
 }
 
-void ActivationContexts::prepare(const std::filesystem::path &store, bool wide, std::string_view program_manifest, const std::filesystem::path &directory)
+void ActivationContexts::prepare(const std::filesystem::path &store, bool wide, std::string_view program_manifest,
+	const std::filesystem::path &application_folder)
 {
-	application_directory = directory;
 	manifests = store;
 	wide_process = wide;
+	application = application_folder;
 	program = program_manifest.empty() ? std::nullopt : parse(program_manifest, false);
+}
+
+std::filesystem::path ActivationContexts::folder_of(const Assembly &assembly) const
+{
+	const std::filesystem::path folder(assembly.folder);
+	return folder.is_absolute() ? folder : manifests.parent_path() / folder;
 }
 
 const ActivationContexts::Assembly *ActivationContexts::declaring(const Assembly &root, std::string_view name, uint32_t &index) const
@@ -305,14 +314,14 @@ std::optional<std::filesystem::path> ActivationContexts::library_folder(std::str
 	}
 	uint32_t index = 1;
 	if (const auto *assembly = root ? declaring(*root, name, index) : nullptr)
-		return manifests.parent_path() / assembly->folder;
+		return folder_of(*assembly);
 	return std::nullopt;
 }
 
 std::optional<ActivationContexts::Assembly> ActivationContexts::module_manifest(const PEImage &image) const
 {
 	const auto directory = image.directories[2];
-	if (!directory.address || !directory.size)
+	if (!directory.address || !directory.size || directory.size > image.image_size)
 		return std::nullopt;
 	try {
 		for (const auto &resource : read_resources(directory, image.file_span(directory.address, directory.size), image.image_size))
@@ -329,7 +338,7 @@ std::optional<std::filesystem::path> ActivationContexts::assembly_folder(const A
 {
 	uint32_t index = 1;
 	if (const auto *assembly = declaring(root, name, index))
-		return manifests.parent_path() / assembly->folder;
+		return folder_of(*assembly);
 	return std::nullopt;
 }
 

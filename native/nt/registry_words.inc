@@ -643,6 +643,7 @@
 {"GetNamedSecurityInfoW", 8},
 {"GetNativeSystemInfo", 1},
 {"GetNearestColor", 2},
+{"GetNetworkParams", 2},
 {"GetNumaHighestNodeNumber", 1},
 {"GetNumberFormatEx", 6},
 {"GetNumberFormatW", 6},

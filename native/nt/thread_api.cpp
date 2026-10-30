@@ -264,6 +264,25 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		const uint32_t value = call.load<uint32_t>(array + index * 4ULL);
 		return value >= 0xfffffffaU ? uint64_t(int64_t(int32_t(value))) : value;
 	};
+	// The end of a native timeout: a LARGE_INTEGER in 100-nanosecond units, negative for a time from now and positive for a system time.
+	// Without one, or with one too far away to count, there is none.
+	const auto native_wake = [](ApiCall &call, uint64_t timeout) -> std::optional<std::chrono::steady_clock::time_point> {
+		if (!timeout)
+			return std::nullopt;
+		const int64_t interval = call.load<int64_t>(timeout);
+		uint64_t from_now = 0;
+		if (interval < 0) {
+			from_now = uint64_t(-(interval + 1)) + 1;
+		} else {
+			const auto since_epoch = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch());
+			const uint64_t now = uint64_t(since_epoch.count() / 100) + filetime_epoch_offset;
+			from_now = uint64_t(interval) > now ? uint64_t(interval) - now : 0;
+		}
+		// A hundred years and more is forever.
+		if (from_now > 100ULL * 365 * 24 * 3600 * 10000000ULL)
+			return std::nullopt;
+		return std::chrono::steady_clock::now() + std::chrono::nanoseconds(from_now * 100);
+	};
 	const auto multiple = [wait, handle_at](ApiCall &call, bool alertable) {
 		const uint32_t count = call.u32(0);
 		if (count > 64 || !call[1]) {
@@ -277,6 +296,34 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("WaitForMultipleObjects", 4, [multiple](ApiCall &call) { multiple(call, false); });
 	registry.add("WaitForMultipleObjectsEx", 5, [multiple](ApiCall &call) { multiple(call, call.u32(4)); });
+	// The native waits wait as the Win32 ones do, for a native timeout (native_wake), and their results are the same numbers:
+	// STATUS_WAIT_0 and STATUS_ABANDONED_WAIT_0 plus the index, STATUS_USER_APC and STATUS_TIMEOUT. A wait that fails answers the
+	// status of its error.
+	const auto native_wait = [wait, native_wake](ApiCall &call, const std::vector<uint64_t> &handles, bool all, bool alertable, uint64_t timeout) {
+		uint32_t milliseconds = UINT32_MAX;
+		if (const auto wake = native_wake(call, timeout)) {
+			const auto left = std::chrono::ceil<std::chrono::milliseconds>(*wake - std::chrono::steady_clock::now()).count();
+			milliseconds = uint32_t(std::clamp<int64_t>(left, 0, UINT32_MAX - 1));
+		}
+		const uint32_t before = call.last_error();
+		const uint32_t result = wait(call, handles, all, milliseconds, alertable);
+		const uint32_t error = call.last_error();
+		call.set_last_error(before);
+		call.ret(result != wait_failed ? result : error == 6 ? 0xc0000008U : error == 5 ? 0xc0000022U : 0xc000000dU);
+	};
+	registry.add("NtWaitForSingleObject", 3, [native_wait](ApiCall &call) { native_wait(call, {call[0]}, false, call.u32(1) & 0xff, call[2]); });
+	// NtWaitForMultipleObjects: wait type 0 waits for all of the handles, 1 for any.
+	registry.add("NtWaitForMultipleObjects", 5, [native_wait, handle_at](ApiCall &call) {
+		const uint32_t count = call.u32(0);
+		if (!count || count > 64 || !call[1] || call.u32(2) > 1) {
+			call.ret(0xc000000dU);
+			return;
+		}
+		std::vector<uint64_t> handles(count);
+		for (uint32_t index = 0; index < count; ++index)
+			handles[index] = handle_at(call, call[1], index);
+		native_wait(call, handles, call.u32(2) == 0, call.u32(3) & 0xff, call[4]);
+	});
 	// The input event follows the explicit handles, so a signaled handle wins a wait-any tie.
 	const auto message_wait = [&context, &objects, &threads, handle_at, run_apcs](ApiCall &call, uint32_t count, uint64_t array,
 			uint32_t milliseconds, uint32_t mask, uint32_t flags) -> uint32_t {
@@ -370,24 +417,72 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
 		threads.block([] { return false; }, wake);
 	});
-	registry.add("SleepEx", 2, [&threads, run_apcs](ApiCall &call) {
-		const uint32_t milliseconds = call.u32(0);
-		const bool alertable = call.u32(1);
-		if (alertable && run_apcs()) {
-			call.ret(wait_io_completion);
-			return;
-		}
-		if (!milliseconds) {
+	// How a sleep ended: its time came, it ran the thread's queued APCs, or (for a native wait) the thread was alerted.
+	enum class Woken { time, apcs, alerted };
+	// A sleep until the time given (forever without one), or a yield when that time has come; an alertable sleep ends early to run the
+	// thread's queued APCs, and a native one also when NtAlertThread alerts the thread.
+	const auto sleep = [&threads, run_apcs](std::optional<std::chrono::steady_clock::time_point> wake, bool alertable, bool native) {
+		auto *me = &threads.current();
+		const auto woken = [&] {
+			if (alertable && native && std::exchange(me->alerted, false))
+				return Woken::alerted;
+			return alertable && run_apcs() ? Woken::apcs : Woken::time;
+		};
+		if (const auto early = woken(); early != Woken::time)
+			return early;
+		if (wake && *wake <= std::chrono::steady_clock::now()) {
 			threads.yield();
-			return;
+			return Woken::time;
 		}
+		threads.block([me, alertable, native] { return alertable && (!me->apcs.empty() || (native && me->alerted)); }, wake);
+		return woken();
+	};
+	registry.add("SleepEx", 2, [sleep](ApiCall &call) {
+		const uint32_t milliseconds = call.u32(0);
 		std::optional<std::chrono::steady_clock::time_point> wake;
 		if (milliseconds != UINT32_MAX)
 			wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
-		const auto *me = &threads.current();
-		threads.block([me, alertable] { return alertable && !me->apcs.empty(); }, wake);
-		if (alertable && run_apcs())
+		if (sleep(wake, call.u32(1), false) == Woken::apcs)
 			call.ret(wait_io_completion);
+	});
+	constexpr uint32_t status_alerted = 0x101, status_timeout = 0x102, status_user_apc = 0xc0;
+	// NtDelayExecution: a sleep for a native timeout; an alertable one answers STATUS_USER_APC when APCs ran and STATUS_ALERTED when
+	// the thread was alerted.
+	registry.add("NtDelayExecution", 2, [sleep, native_wake](ApiCall &call) {
+		const auto woken = sleep(native_wake(call, call[1]), call.u32(0) & 0xff, true);
+		call.ret(woken == Woken::apcs ? status_user_apc : woken == Woken::alerted ? status_alerted : 0);
+	});
+	registry.add("NtAlertThread", 1, [thread_from](ApiCall &call) {
+		const auto thread = thread_from(call[0]);
+		if (!thread) {
+			call.ret(0xc0000008U);
+			return;
+		}
+		thread->alerted = true;
+		call.ret(0);
+	});
+	// NtTestAlert runs the thread's APCs and takes an alert that waits for it.
+	registry.add("NtTestAlert", 0, [&threads, run_apcs](ApiCall &call) {
+		const bool alerted = std::exchange(threads.current().alerted, false);
+		run_apcs();
+		call.ret(alerted ? status_alerted : 0);
+	});
+	// The thread-id alerts that wait-on-address and parking are built on: an alert that comes first is kept for the next wait.
+	registry.add("NtWaitForAlertByThreadId", 2, [&threads, native_wake](ApiCall &call) {
+		auto *me = &threads.current();
+		const auto wake = native_wake(call, call[1]);
+		if (!me->alerted_by_id && !(wake && *wake <= std::chrono::steady_clock::now()))
+			threads.block([me] { return me->alerted_by_id; }, wake);
+		call.ret(std::exchange(me->alerted_by_id, false) ? status_alerted : status_timeout);
+	});
+	registry.add("NtAlertThreadByThreadId", 1, [&threads](ApiCall &call) {
+		const auto thread = threads.find(uint32_t(call[0]));
+		if (!thread) {
+			call.ret(0xc000000bU);
+			return;
+		}
+		thread->alerted_by_id = true;
+		call.ret(0);
 	});
 	registry.add("SwitchToThread", 0, [&threads](ApiCall &call) { call.ret(threads.yield()); });
 
@@ -511,6 +606,41 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			put(0xb8, registers.r8); put(0xc0, registers.r9); put(0xc8, registers.r10); put(0xd0, registers.r11);
 			put(0xd8, registers.r12); put(0xe0, registers.r13); put(0xe8, registers.r14); put(0xf0, registers.r15);
 		}
+		call.ret(1);
+	});
+	// The registers of a suspended thread from a CONTEXT (x64): the control and integer groups, which it continues with when resumed. A
+	// thread that is not suspended, the caller among them, keeps its registers: Windows leaves the outcome of that undefined.
+	registry.add("SetThreadContext", 2, [thread_from, &threads, &context](ApiCall &call) {
+		if (call.pointer_width() == 4 || !call[1]) {
+			call.fail(call[1] ? 50 : 87);
+			return;
+		}
+		const auto thread = thread_from(call[0]);
+		if (!thread) {
+			call.fail(6);
+			return;
+		}
+		if (thread->id == threads.current_id() || !thread->suspend_count) {
+			call.fail(5);
+			return;
+		}
+		auto registers = thread->snapshot.context.registers;
+		const uint32_t flags = call.load<uint32_t>(call[1] + 0x30);
+		const auto get = [&](size_t at) { return call.load<uint64_t>(call[1] + at); };
+		if (flags & 0x1) {
+			// The flags a program may change: the status flags, direction and trap; the rest stay as the processor needs them.
+			registers.eflags = (registers.eflags & ~uint64_t(0xdd5)) | (call.load<uint32_t>(call[1] + 0x44) & 0xdd5);
+			registers.rsp = get(0x98);
+			registers.rbp = get(0xa0);
+			registers.rip = get(0xf8);
+		}
+		if (flags & 0x2) {
+			registers.rax = get(0x78); registers.rcx = get(0x80); registers.rdx = get(0x88); registers.rbx = get(0x90);
+			registers.rsi = get(0xa8); registers.rdi = get(0xb0);
+			registers.r8 = get(0xb8); registers.r9 = get(0xc0); registers.r10 = get(0xc8); registers.r11 = get(0xd0);
+			registers.r12 = get(0xd8); registers.r13 = get(0xe0); registers.r14 = get(0xe8); registers.r15 = get(0xf0);
+		}
+		context.process.set_thread_registers(thread->snapshot, registers);
 		call.ret(1);
 	});
 	// A thread's description is a name the program gives it; it is kept per thread and handed back in memory the program frees with LocalFree.
@@ -840,6 +970,22 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		}
 	});
 	registry.add("QueueUserAPC", 3, [thread_from](ApiCall &call) {
+		const auto thread = thread_from(call[1]);
+		if (!thread) {
+			call.fail(6);
+			return;
+		}
+		thread->apcs.push_back({call[0], call[2]});
+		call.ret(1);
+	});
+	// QueueUserAPC2 with no flags queues the APC QueueUserAPC queues. Special user-mode APCs, which interrupt a thread that is not in
+	// an alertable wait (QUEUE_USER_APC_FLAGS_SPECIAL_USER_APC, with or without the interrupted context), are not delivered here, so
+	// those flags are refused, as callers that test for them expect from a system without them.
+	registry.add("QueueUserAPC2", 4, [thread_from](ApiCall &call) {
+		if (call.u32(3)) {
+			call.fail(87);
+			return;
+		}
 		const auto thread = thread_from(call[1]);
 		if (!thread) {
 			call.fail(6);

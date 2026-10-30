@@ -64,9 +64,10 @@ bool NativeObjectAPI::dispatch(std::string_view name)
 	const bool close=name=="NtClose" || name=="CloseHandle" || name=="_lclose" || name=="LZClose";
 	const bool set=name=="NtSetEvent" || name=="SetEvent" || name=="NtResetEvent" || name=="ResetEvent";
 	const bool query=name=="NtQueryEvent";
-	const bool wait=name=="NtWaitForSingleObject" || (!cooperative && name=="WaitForSingleObject");
+	// The native waits are the scheduler's (thread_api), which also runs APCs for an alertable one.
+	const bool wait=!cooperative && name=="WaitForSingleObject";
 	if (!create && !close && !set && !query && !wait) return false;
-	const auto args=process.api_arguments(create ? (nt ? 5 : 4) : close ? 1 : set ? (nt ? 2 : 1) : query ? 5 : nt ? 3 : 2);
+	const auto args=process.api_arguments(create ? (nt ? 5 : 4) : close ? 1 : set ? (nt ? 2 : 1) : query ? 5 : 2);
 	uint32_t status=0;
 	uint64_t result=0;
 	const auto writable=[&](uint64_t address,size_t size) {
@@ -75,11 +76,20 @@ bool NativeObjectAPI::dispatch(std::string_view name)
 	try {
 		if (create) {
 			if (nt) writable(args[0],8);
-			if (nt && args[2]) status=0xc00000bbU;
+			// OBJECT_ATTRIBUTES without a name (the Cygwin runtime passes them for inheritance and security) make an unnamed event,
+			// inheritable with OBJ_INHERIT; a named native event is not made here.
+			bool named=false,inherit=false;
+			if (nt && args[2]) {
+				const auto attributes=process.read_memory(args[2],32);
+				for (size_t byte=16; byte<24; ++byte) named|=attributes[byte]!=0;
+				inherit=attributes[24] & 2;
+			}
+			if (named) status=0xc00000bbU;
 			else {
 				const auto made=objects.create_event(nt ? uint32_t(args[1]) : 0x1f0003,
 					nt ? uint32_t(args[3]) : uint32_t(args[1]) ? 0 : 1,nt ? uint8_t(args[4])!=0 : uint32_t(args[2])!=0);
 				status=made.status; result=made.value;
+				if (!status && inherit) objects.set_inherit(result,true);
 				if (nt && !status) {
 					std::array<uint8_t,8> output{}; put(output,0,result,8);
 					try { process.write_memory(args[0],output); }
@@ -104,34 +114,11 @@ bool NativeObjectAPI::dispatch(std::string_view name)
 				}
 			}
 		} else {
-			if (nt && uint8_t(args[1])) status=0xc00000bbU;
-			else {
-				std::optional<int64_t> timeout;
-				if (nt && args[2]) {
-					const auto bytes=process.read_memory(args[2],8); uint64_t value=0;
-					for (size_t byte=0; byte<8; ++byte) value|=uint64_t(bytes[byte])<<(byte*8);
-					timeout=int64_t(value);
-				} else if (!nt && uint32_t(args[1])!=UINT32_MAX) timeout=-int64_t(uint32_t(args[1]))*10000;
-				if (threads && nt) {
-					// Waits for what another thread will do: run the others meanwhile. A negative time is relative, in units of 100 ns.
-					std::optional<std::chrono::steady_clock::time_point> wake;
-					if (timeout && *timeout<0) wake=std::chrono::steady_clock::now()+std::chrono::nanoseconds(-*timeout*100);
-					const bool immediate=timeout && *timeout>=0;
-					const uint32_t id=threads->current_id();
-					const uint64_t handle=args[0];
-					for (;;) {
-						const int state=objects.signaled(handle,id);
-						if (state<0) { status=state==-3 ? 0xc0000022U : 0xc0000008U; break; }
-						if (state==1 && objects.try_consume(handle,id)) { status=0; break; }
-						if (immediate || (wake && std::chrono::steady_clock::now()>=*wake)) { status=0x102; break; }
-						threads->block([&] { return objects.signaled(handle,id)==1; },wake);
-					}
-				} else {
-					const auto waited=objects.wait(args[0],timeout,deadline);
-					if (waited.runtime_timeout) throw NativeResult{NativeStop::timeout,0,process.context().registers.rip,0};
-					status=waited.status;
-				}
-			}
+			std::optional<int64_t> timeout;
+			if (uint32_t(args[1])!=UINT32_MAX) timeout=-int64_t(uint32_t(args[1]))*10000;
+			const auto waited=objects.wait(args[0],timeout,deadline);
+			if (waited.runtime_timeout) throw NativeResult{NativeStop::timeout,0,process.context().registers.rip,0};
+			status=waited.status;
 		}
 	} catch (const std::bad_alloc &) { status=0xc000009aU; }
 	catch (const std::runtime_error &failure) {

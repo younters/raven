@@ -86,7 +86,8 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 #endif
 	const uint32_t ansi_page = context.launch.ansi_code_page;
 	// Key handles come from the same space as every other handle, so CloseHandle and NtClose close them too.
-	hive.set_allocator([&objects = context.objects, &hive] { return objects.reserve([&hive](uint64_t key) { hive.close(key); }); });
+	hive.set_allocator([&objects = context.objects, &hive] { return objects.reserve([&hive](uint64_t key) { hive.close(key); }); },
+		[&objects = context.objects](uint64_t key) { objects.release_reserved(key); });
 	const size_t handle_width = context.process.mode() == NativeMode::x86 ? 4 : 8;
 	const auto text_of = [](ApiCall &call, uint64_t address, bool wide) {
 		if (!address)
@@ -745,6 +746,7 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 			unit = upper_case(unit);
 		return text;
 	};
+	registry.add("RtlUpcaseUnicodeChar", 1, [](ApiCall &call) { call.ret(upper_case(char16_t(call[0]))); });
 	registry.add("RtlCompareUnicodeString", 3, [name_of, upper_text](ApiCall &call) {
 		auto left = name_of(call, call[0]), right = name_of(call, call[1]);
 		if (call.u32(2) & 0xff) {
@@ -855,6 +857,13 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 		case 0xc0000023U: call.ret(122); break;
 		case 0x80000005U: call.ret(234); break;
 		case 0xc0000008U: call.ret(6); break;
+		case 0x80000006U: call.ret(18); break;
+		case 0xc000000fU: call.ret(2); break;
+		case 0xc0000103U: call.ret(267); break;
+		case 0xc0000003U: call.ret(87); break;
+		case 0xc00000bbU: call.ret(50); break;
+		case 0xc0000004U: call.ret(24); break;
+		case 0xc0000005U: call.ret(998); break;
 		default: call.ret(317); break;
 		}
 	});
@@ -865,11 +874,7 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 		call.ret(hive.remove_tree(call[0], call[1] ? view(call[0], text_of(call, call[1], false)) : std::u16string()));
 	});
 	registry.add("RegDeleteKeyExW", 4, [&hive, text_of, view](ApiCall &call) { call.ret(hive.remove_key(call[0], view(call[0], text_of(call, call[1], true), call.u32(2)))); });
-	registry.add("RegCloseKey", 1, [&hive, &context](ApiCall &call) {
-		const auto status = hive.close(call[0]);
-		context.objects.release_reserved(call[0]);
-		call.ret(status);
-	});
+	registry.add("RegCloseKey", 1, [&hive](ApiCall &call) { call.ret(hive.close(call[0])); });
 	registry.add("RegFlushKey", 1, [](ApiCall &call) { call.ret(0); });
 	// Predefined keys are resolved for each operation; no cached handles need invalidating.
 	registry.add("RegDisablePredefinedCache", 0, [](ApiCall &call) { call.ret(0); });

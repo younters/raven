@@ -50,6 +50,15 @@ NativeX86Loader::NativeX86Loader(NativeProcess &process, NativeEnvironment &envi
 
 std::optional<std::vector<uint8_t>> NativeX86Loader::read_library(const std::string &name, std::string &identity, std::filesystem::path &file) const
 {
+	// A replaceable runtime component may also be supplied by the application (for example d3dcompiler_47.dll).
+	if (program_may_replace(name) && std::find(std::begin(runtime_components), std::end(runtime_components), name) != std::end(runtime_components)) {
+		const auto local = paths.find_library(application_directory + u"\\program.exe", from_utf8(name), false, library_flags);
+		if (local && std::filesystem::is_regular_file(local->host)) {
+			identity = lowered(local->host.filename().string());
+			file = local->host;
+			return read_all(file);
+		}
+	}
 	// The runtime's own components come from beside it, in their 32-bit builds.
 	if (std::find(std::begin(runtime_components), std::end(runtime_components), name) != std::end(runtime_components)) {
 		const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "x86" / name;

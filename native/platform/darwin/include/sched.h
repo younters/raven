@@ -22,6 +22,8 @@ static inline int raven_darwin_cpu_count(const cpu_set_t *set)
 #ifdef __cplusplus
 extern "C" {
 #endif
+// Darwin exposes no public current CPU index; group zero CPU zero is a valid advisory answer.
+static inline int sched_getcpu(void) { return 0; }
 int sched_getaffinity(pid_t pid, size_t size, cpu_set_t *set);
 #ifdef __cplusplus
 }

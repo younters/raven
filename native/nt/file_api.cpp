@@ -118,6 +118,26 @@ bool wildcard(std::u16string_view pattern, std::u16string_view name)
 	return p == pattern.size();
 }
 
+// The NTSTATUS a native file call returns for the Win32 error of the call it is built on.
+uint32_t status_from_error(uint32_t error)
+{
+	switch (error) {
+	case 2: return 0xc0000034U;
+	case 3: return 0xc000003aU;
+	case 5: return 0xc0000022U;
+	case 6: return 0xc0000008U;
+	case 24: case 87: return 0xc000000dU;
+	case 32: return 0xc0000043U;
+	case 80: case 183: return 0xc0000035U;
+	case 109: case 232: return 0xc000014bU;
+	case 112: return 0xc000007fU;
+	case 123: return 0xc0000033U;
+	case 145: return 0xc0000101U;
+	case 267: return 0xc0000103U;
+	default: return 0xc0000001U;
+	}
+}
+
 FindObject::Entry entry_of(const std::filesystem::path &path, const std::u16string &name)
 {
 	FindObject::Entry entry{name, attribute_normal, 0, 0, 0, 0};
@@ -465,14 +485,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		const uint64_t count = positioned ? call.load_pointer(overlapped + width) : call.load<uint32_t>(written);
 		uint32_t status = 0;
 		if (!inner.result) {
-			switch (call.last_error()) {
-			case 6: status = 0xc0000008U; break;
-			case 5: status = 0xc0000022U; break;
-			case 87: status = 0xc000000dU; break;
-			case 112: status = 0xc000007fU; break;
-			case 109: case 232: status = 0xc000014bU; break;
-			default: status = 0xc0000001U; break;
-			}
+			status = status_from_error(call.last_error());
 			call.set_last_error(before);
 		}
 		call.store_pointer(call[4], status);
@@ -501,7 +514,10 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			if (!(objects.access_of(call[0]) & (0x80000000U | 0x10000000U | 1U))) { finish(0xc0000022U); return; }
 			if (call[1] || call[2] || call[3] || file->port) { finish(0xc00000bbU); return; }
 			const auto information = call.u32(7), capacity = call.u32(6);
-			const size_t header = information == 1 ? 64 : information == 2 ? 68 : information == 3 ? 94 : information == 12 ? 12 : 0;
+			// The record classes: directory (1), full (2), both (3), names (12), and the full (38), both (37) and extended (60) ones that
+			// add the file's identifier. Each record's fixed part ends where its name begins.
+			const size_t header = information == 1 ? 64 : information == 2 ? 68 : information == 3 ? 94 : information == 12 ? 12 :
+				information == 37 ? 104 : information == 38 ? 80 : information == 60 ? 88 : 0;
 			if (!header) { finish(0xc0000003U); return; }
 			if (capacity < header) { finish(0xc0000023U); return; }
 			if (!call[5]) { finish(0xc0000005U); return; }
@@ -536,7 +552,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 					if (::fstatat(file->descriptor, item->d_name, &metadata, 0)) continue;
 					scan->entries.push_back({name, attributes_of(metadata, item->d_name), filetime(metadata.st_ctim),
 						filetime(metadata.st_atim), filetime(metadata.st_mtim), S_ISDIR(metadata.st_mode) ? 0 : uint64_t(metadata.st_size),
-						uint64_t(metadata.st_blocks) * 512});
+						uint64_t(metadata.st_blocks) * 512, uint64_t(metadata.st_ino)});
 				}
 				file->directory_pattern = std::move(pattern);
 				file->directory_scan = std::move(scan);
@@ -566,6 +582,10 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 					put64(bytes, start + 48, entry.allocation);
 					put32(bytes, start + 56, entry.attributes);
 				}
+				if (information == 37)
+					put64(bytes, start + 96, entry.id);
+				else if (information == 38 || information == 60)
+					put64(bytes, start + 72, entry.id);
 				std::memcpy(bytes.data() + start + header, entry.name.data(), copied - header);
 				if (copied < size) { status = 0x80000005U; break; }
 				++next;
@@ -579,6 +599,129 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("NtQueryDirectoryFile", 11, query_directory);
 	registry.add("ZwQueryDirectoryFile", 11, query_directory);
+	// NtCreateFile and NtOpenFile: the object name (relative to a directory handle when one is given) becomes a Win32 path, and the
+	// disposition and options become CreateFileW's, as the NtCreateFile documentation pairs them; a directory is made first when one
+	// is asked to be created. The IO_STATUS_BLOCK says what happened to the file.
+#ifndef __APPLE__
+	const auto native_create = [&registry, &context, file_of](ApiCall &call, uint32_t access, uint64_t attributes_block, uint64_t status_block,
+		uint32_t file_attributes, uint32_t share, uint32_t disposition, uint32_t options) -> uint32_t {
+		const size_t width = call.pointer_width();
+		if (!call[0] || !attributes_block || !status_block)
+			return 0xc000000dU;
+		const uint64_t root = call.load_pointer(attributes_block + width), name_block = call.load_pointer(attributes_block + 2 * width);
+		if (!name_block)
+			return 0xc0000033U;
+		const uint16_t length = call.load<uint16_t>(name_block);
+		std::u16string name(length / 2, u'\0');
+		if (length) {
+			const auto bytes = call.read(call.load_pointer(name_block + width), length);
+			std::memcpy(name.data(), bytes.data(), length);
+		}
+		const auto set_status = [&](uint32_t status, uint64_t information) {
+			call.store_pointer(status_block, status);
+			call.store_pointer(status_block + width, information);
+		};
+		std::u16string path;
+		if (root) {
+			const auto directory = file_of(root);
+			if (!directory || !directory->directory)
+				return 0xc0000008U;
+			path = directory->dos_path + (name.empty() ? u"" : u"\\" + name);
+		} else if (name.starts_with(u"\\??\\UNC\\") || name.starts_with(u"\\DosDevices\\UNC\\")) {
+			path = u"\\" + name.substr(name.find(u"UNC\\") + 3);
+		} else if (name.starts_with(u"\\??\\")) {
+			path = name.substr(4);
+		} else if (name.starts_with(u"\\DosDevices\\")) {
+			path = name.substr(12);
+		} else {
+			return 0xc000003bU;
+		}
+		constexpr uint32_t directory_file = 0x1, write_through = 0x2, sequential_only = 0x4, no_buffering = 0x8, synchronous_alert = 0x10,
+			synchronous_nonalert = 0x20, non_directory_file = 0x40, random_access = 0x800, delete_on_close = 0x1000, open_reparse_point = 0x200000;
+		// FILE_SUPERSEDE, FILE_OPEN, FILE_CREATE, FILE_OPEN_IF, FILE_OVERWRITE, FILE_OVERWRITE_IF.
+		static constexpr uint32_t dispositions[] = {2, 3, 1, 4, 5, 2};
+		if (disposition > 5)
+			return 0xc000000dU;
+		if ((options & directory_file) && (options & non_directory_file))
+			return 0xc000000dU;
+		const auto run = [&](const char *function, std::initializer_list<uint64_t> words) {
+			const auto handler = registry.find(function);
+			if (!handler) {
+				call.set_last_error(120);
+				return uint64_t(0);
+			}
+			ApiCall inner(call.process, call.environment, std::vector<uint64_t>(words));
+			handler->second(inner);
+			return inner.result;
+		};
+		const size_t bytes = (path.size() + 1) * 2;
+		const uint64_t text = call.process.map_memory((bytes + 4095) & ~size_t(4095), PROT_READ | PROT_WRITE);
+		struct Unmap {
+			NativeProcess &process;
+			uint64_t address;
+			~Unmap() { try { process.unmap_memory(address); } catch (...) {} }
+		} unmap{call.process, text};
+		call.put_wide(text, path, path.size() + 1);
+		const uint32_t before = call.last_error();
+		bool created = false;
+		if ((options & directory_file) && (disposition == 2 || disposition == 3)) {
+			if (run("CreateDirectoryW", {text, 0}))
+				created = true;
+			else if (disposition == 2 || call.last_error() != 183)
+				goto failed;
+		}
+		{
+			uint32_t flags = (file_attributes & 0x7fa7) | 0x02000000U;
+			if (options & write_through) flags |= 0x80000000U;
+			if (options & sequential_only) flags |= 0x08000000U;
+			if (options & no_buffering) flags |= 0x20000000U;
+			if (options & random_access) flags |= 0x10000000U;
+			if (options & delete_on_close) flags |= 0x04000000U;
+			if (options & open_reparse_point) flags |= 0x00200000U;
+			if (!(options & (synchronous_alert | synchronous_nonalert))) flags |= 0x40000000U;
+			const uint32_t win32 = (options & directory_file) && (disposition == 2 || disposition == 3) ? 3 : dispositions[disposition];
+			call.set_last_error(0);
+			const uint64_t handle = run("CreateFileW", {text, access, share, 0, win32, flags, 0});
+			if (handle == UINT64_MAX || !handle)
+				goto failed;
+			const bool existed = call.last_error() == 183;
+			const auto file = file_of(handle);
+			if (file && (options & directory_file) && !file->directory) {
+				context.objects.close(handle);
+				call.set_last_error(before);
+				return 0xc0000103U;
+			}
+			if (file && (options & non_directory_file) && file->directory) {
+				context.objects.close(handle);
+				call.set_last_error(before);
+				return 0xc00000baU;
+			}
+			// FILE_SUPERSEDED 0, FILE_OPENED 1, FILE_CREATED 2, FILE_OVERWRITTEN 3.
+			uint64_t information = 1;
+			switch (disposition) {
+			case 0: information = existed ? 0 : 2; break;
+			case 2: information = 2; break;
+			case 3: information = (options & directory_file) ? (created ? 2 : 1) : (existed ? 1 : 2); break;
+			case 4: information = 3; break;
+			case 5: information = existed ? 3 : 2; break;
+			}
+			call.store_pointer(call[0], handle);
+			set_status(0, information);
+			call.set_last_error(before);
+			return 0;
+		}
+	failed:
+		const uint32_t error = call.last_error();
+		call.set_last_error(before);
+		return status_from_error(error);
+	};
+	registry.add("NtCreateFile", 11, [native_create](ApiCall &call) {
+		call.ret(native_create(call, call.u32(1), call[2], call[3], call.u32(5), call.u32(6), call.u32(7), call.u32(8)));
+	});
+	registry.add("NtOpenFile", 6, [native_create](ApiCall &call) {
+		call.ret(native_create(call, call.u32(1), call[2], call[3], 0, call.u32(4), 1, call.u32(5)));
+	});
+#endif
 	// No file is encrypted: decrypting one that exists has nothing to do, and encryption is not offered.
 	const auto decrypt = [&, resolve](ApiCall &call, bool wide) {
 		const auto name = wide ? call.wide(call[0]) : from_utf8(call.narrow(call[0]));
@@ -774,10 +917,155 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		if (call[3]) call.write(call[3], std::vector<uint8_t>(call.pointer_width() == 4 ? 16 : 32));
 		call.ret(0);
 	});
-	registry.add("DeviceIoControl", 8, [](ApiCall &call) {
+	// Reparse points are the host's symbolic links. FSCTL_SET_REPARSE_POINT makes an empty directory a mount point (a junction) or
+	// a file or directory a symbolic link to the target its REPARSE_DATA_BUFFER names; FSCTL_GET_REPARSE_POINT describes a link,
+	// as a mount point when it holds an absolute path to a directory (what a junction is) and as a symbolic link otherwise; and
+	// FSCTL_DELETE_REPARSE_POINT removes the link, leaving an empty directory or file. Other control codes are not supported by
+	// the host file system, as from a volume whose driver lacks them, and nothing comes back.
+	constexpr uint32_t fsctl_set_reparse_point = 0x900a4, fsctl_get_reparse_point = 0x900a8, fsctl_delete_reparse_point = 0x900ac;
+	constexpr uint32_t tag_mount_point = 0xa0000003U, tag_symbolic_link = 0xa000000cU;
+	registry.add("DeviceIoControl", 8, [&, file_of](ApiCall &call) {
+		const uint32_t code = call.u32(1);
 		if (call[6])
 			call.store<uint32_t>(call[6], 0);
-		call.fail(1);
+		const auto file = file_of(call[0]);
+		if (code != fsctl_set_reparse_point && code != fsctl_get_reparse_point && code != fsctl_delete_reparse_point) {
+			call.fail(1);
+			return;
+		}
+		if (!file) {
+			call.fail(6);
+			return;
+		}
+		struct stat own{};
+		if (::lstat(file->path.c_str(), &own)) {
+			call.fail(error_of(errno));
+			return;
+		}
+		const bool link = S_ISLNK(own.st_mode);
+		if (code == fsctl_get_reparse_point) {
+			if (!link) {
+				call.fail(4390);
+				return;
+			}
+			std::error_code error;
+			const auto target = std::filesystem::read_symlink(file->path, error);
+			if (error) {
+				call.fail(error_of(error.value()));
+				return;
+			}
+			const bool absolute = target.is_absolute();
+			const bool mount_point = absolute && std::filesystem::is_directory(file->path, error);
+			const auto print = absolute ? paths.dos(target) : [&] {
+				auto text = from_utf8(target.string());
+				for (auto &character : text)
+					if (character == u'/')
+						character = u'\\';
+				return text;
+			}();
+			const auto substitute = absolute ? u"\\??\\" + print : print;
+			// The header, the offsets and lengths of the two names, the flags of a symbolic link, then the names one after the other.
+			const size_t names_at = mount_point ? 16 : 20;
+			std::vector<uint8_t> bytes(names_at + (substitute.size() + print.size() + 2) * 2, 0);
+			put32(bytes, 0, mount_point ? tag_mount_point : tag_symbolic_link);
+			const auto put16 = [&](size_t at, size_t value) { const uint16_t word = uint16_t(value); std::memcpy(bytes.data() + at, &word, 2); };
+			put16(4, bytes.size() - 8);
+			put16(8, 0);
+			put16(10, substitute.size() * 2);
+			put16(12, (substitute.size() + 1) * 2);
+			put16(14, print.size() * 2);
+			if (!mount_point)
+				put32(bytes, 16, absolute ? 0 : 1);
+			std::memcpy(bytes.data() + names_at, substitute.data(), substitute.size() * 2);
+			std::memcpy(bytes.data() + names_at + (substitute.size() + 1) * 2, print.data(), print.size() * 2);
+			if (call.u32(5) < bytes.size()) {
+				if (call.u32(5) >= 8 && call[4])
+					call.write(call[4], std::span<const uint8_t>(bytes.data(), 8));
+				call.fail(call.u32(5) >= 8 ? 234 : 122);
+				return;
+			}
+			call.write(call[4], bytes);
+			if (call[6])
+				call.store<uint32_t>(call[6], uint32_t(bytes.size()));
+			call.ret(1);
+			return;
+		}
+		if (code == fsctl_delete_reparse_point) {
+			if (!link) {
+				call.fail(4390);
+				return;
+			}
+			std::error_code error;
+			const bool directory = std::filesystem::is_directory(file->path, error);
+			if (::unlink(file->path.c_str()) || (directory ? ::mkdir(file->path.c_str(), 0777) : ::close(::open(file->path.c_str(), O_CREAT | O_WRONLY | O_CLOEXEC, 0666)))) {
+				call.fail(error_of(errno));
+				return;
+			}
+			call.ret(1);
+			return;
+		}
+		// FSCTL_SET_REPARSE_POINT: the tag, the data length, then the names' offsets and lengths (and a symbolic link's flags).
+		if (!call[2] || call.u32(3) < 16) {
+			call.fail(4392);
+			return;
+		}
+		const auto header = call.read(call[2], 20);
+		uint32_t tag;
+		std::memcpy(&tag, header.data(), 4);
+		if (tag != tag_mount_point && tag != tag_symbolic_link) {
+			call.fail(4394);
+			return;
+		}
+		const auto word = [&](size_t at) { uint16_t value; std::memcpy(&value, header.data() + at, 2); return size_t(value); };
+		const size_t names_at = tag == tag_mount_point ? 16 : 20;
+		uint32_t flags = 0;
+		if (tag == tag_symbolic_link)
+			std::memcpy(&flags, header.data() + 16, 4);
+		if (word(10) == 0 || names_at + word(8) + word(10) > call.u32(3)) {
+			call.fail(4392);
+			return;
+		}
+		const auto bytes = call.read(call[2] + names_at + word(8), word(10));
+		std::u16string substitute(bytes.size() / 2, u'\0');
+		std::memcpy(substitute.data(), bytes.data(), substitute.size() * 2);
+		const bool relative = tag == tag_symbolic_link && (flags & 1);
+		if (!relative && substitute.starts_with(u"\\??\\"))
+			substitute = substitute.substr(4);
+		std::filesystem::path content;
+		if (relative) {
+			auto text = substitute;
+			for (auto &character : text)
+				if (character == u'\\')
+					character = u'/';
+			content = to_utf8(text);
+		} else {
+			const auto target = paths.resolve(substitute);
+			if (!target) {
+				call.fail(123);
+				return;
+			}
+			content = target->host;
+		}
+		if (link) {
+			call.fail(4391);
+			return;
+		}
+		// A mount point goes on an empty directory, a symbolic link on any file or directory that is empty.
+		std::error_code error;
+		const bool directory = S_ISDIR(own.st_mode);
+		if (tag == tag_mount_point && !directory) {
+			call.fail(267);
+			return;
+		}
+		if (directory ? !std::filesystem::is_empty(file->path, error) : own.st_size != 0) {
+			call.fail(145);
+			return;
+		}
+		if ((directory ? ::rmdir(file->path.c_str()) : ::unlink(file->path.c_str())) || ::symlink(content.c_str(), file->path.c_str())) {
+			call.fail(error_of(errno));
+			return;
+		}
+		call.ret(1);
 	});
 	registry.add("GetFileTime", 4, [&, resolve, missing, file_of](ApiCall &call) {
 		const auto file = file_of(call[0]);
@@ -791,9 +1079,11 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		if (call[3]) call.store<uint64_t>(call[3], filetime(metadata.st_mtim));
 		call.ret(1);
 	});
+	// Setting the times takes FILE_WRITE_ATTRIBUTES, which write access includes; a directory opened for it may be given its times too.
 	registry.add("SetFileTime", 4, [&, resolve, missing, file_of](ApiCall &call) {
 		const auto file = file_of(call[0]);
-		if (!file || !file->writable()) {
+		constexpr uint32_t write_attributes = 0x100, generic_write = 0x40000000, generic_all = 0x10000000, maximum_allowed = 0x02000000;
+		if (!file || !(file->writable() || (objects.access_of(call[0]) & (write_attributes | generic_write | generic_all | maximum_allowed)))) {
 			call.fail(file ? 5 : 6);
 			return;
 		}
@@ -967,7 +1257,34 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("SetCachedSigningLevel", 4, [file_of](ApiCall &call) {
 		call.fail(file_of(call[3]) ? 50 : 6);
 	});
-	registry.add("GetFileInformationByHandleEx", 4, [&, resolve, missing, file_of](ApiCall &call) {
+	registry.add("GetFileInformationByHandleEx", 4, [&, resolve, missing, file_of, query_directory](ApiCall &call) {
+		// The directory classes read a directory's entries as NtQueryDirectoryFile does, in the record of the matching native class:
+		// FileIdBothDirectoryInfo (10), FileFullDirectoryInfo (14) and FileIdExtdDirectoryInfo (19), and their restarting forms.
+		if (const uint32_t kind = call.u32(1); kind == 10 || kind == 11 || kind == 14 || kind == 15 || kind == 19 || kind == 20) {
+			const uint32_t native = kind <= 11 ? 37 : kind <= 15 ? 2 : 60;
+			const uint64_t status_block = call.process.map_memory(4096, PROT_READ | PROT_WRITE);
+			struct Unmap {
+				NativeProcess &process;
+				uint64_t address;
+				~Unmap() { try { process.unmap_memory(address); } catch (...) {} }
+			} unmap{call.process, status_block};
+			ApiCall inner(call.process, call.environment, {call[0], 0, 0, 0, status_block, call[2], call.u32(3), native, 0, 0,
+				uint64_t(kind == 11 || kind == 15 || kind == 20)});
+			query_directory(inner);
+			const uint32_t status = uint32_t(inner.result);
+			if (status == 0) {
+				call.ret(1);
+				return;
+			}
+			uint32_t error = 317;
+			if (const auto translator = registry.find("RtlNtStatusToDosError")) {
+				ApiCall translate(call.process, call.environment, {status});
+				translator->second(translate);
+				error = uint32_t(translate.result);
+			}
+			call.fail(error);
+			return;
+		}
 		const auto file = file_of(call[0]);
 		const auto pipe = std::dynamic_pointer_cast<PipeObject>(file);
 		const int descriptor = pipe && pipe->descriptor < 0 && pipe->listener ? pipe->listener->descriptor : file ? file->descriptor : -1;
@@ -1376,6 +1693,8 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(text.size());
 	});
+	// The path as given, each component after its root in the long form the directory holds: the folders keep no 8.3 names, so that is
+	// the entry's own name (its case may differ from the caller's). Relative paths stay relative and the separators stay as written.
 	registry.add("GetLongPathNameW", 3, [&, resolve, missing, file_of, copy_file](ApiCall &call) {
 		const auto name = call.wide(call[0]);
 		const auto resolved = resolve(call, name);
@@ -1385,7 +1704,41 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			call.set_last_error(missing(*resolved));
 			return;
 		}
-		const auto text = paths.dos(resolved->host);
+		const auto separator = [](char16_t c) { return c == u'\\' || c == u'/'; };
+		size_t root = 0;
+		if (name.starts_with(u"\\\\?\\") || name.starts_with(u"\\\\.\\"))
+			root = 4;
+		if (name.size() >= root + 2 && name[root + 1] == u':')
+			root += 2;
+		else if (root == 0 && name.size() >= 2 && separator(name[0]) && separator(name[1])) {
+			// \\server\share: both stay as written.
+			size_t at = 2;
+			for (int parts = 0; parts < 2 && at < name.size(); ++parts) {
+				while (at < name.size() && !separator(name[at]))
+					++at;
+				if (parts == 0 && at < name.size())
+					++at;
+			}
+			root = at;
+		}
+		std::u16string text = name.substr(0, root);
+		for (size_t at = root; at < name.size();) {
+			if (separator(name[at])) {
+				text.push_back(name[at++]);
+				continue;
+			}
+			size_t end = at;
+			while (end < name.size() && !separator(name[end]))
+				++end;
+			const auto component = name.substr(at, end - at);
+			if (component != u"." && component != u"..") {
+				const auto here = paths.resolve(name.substr(0, end));
+				text += here && here->exists && !here->host.filename().empty() ? from_utf8(here->host.filename().string()) : component;
+			} else {
+				text += component;
+			}
+			at = end;
+		}
 		const size_t capacity = call.u32(2);
 		call.put_wide(call[1], text, capacity);
 		call.ret(capacity > text.size() ? text.size() : text.size() + 1);
@@ -1818,6 +2171,15 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("DuplicateHandle", 7, [&, resolve, missing, file_of, find_first, copy_file](ApiCall &call) {
 		constexpr uint64_t current = UINT64_MAX;
 		constexpr uint32_t same_access = 0x2, close_source = 0x1;
+		// DUPLICATE_CLOSE_SOURCE closes a handle of this process whatever else happens, failures included: programs (Go's process
+		// start among them) close handles with no target process at all this way.
+		struct CloseSource {
+			NativeObjects &objects;
+			uint64_t handle;
+			bool wanted;
+			~CloseSource() { if (wanted) objects.close(handle); }
+		} close_after{objects, call[1], (call.u32(6) & close_source) && call[1] != UINT64_MAX && call[1] != UINT64_MAX - 1 &&
+			(call[0] == current || objects.object_as<SelfProcessObject>(call[0]) != nullptr)};
 		const auto source_process = call[0] == current ? nullptr : objects.object(call[0]);
 		const auto target_process = call[2] == current ? nullptr : objects.object(call[2]);
 		for (const auto handle : {call[0], call[2]}) {
@@ -1872,8 +2234,6 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			}
 			if (call[3])
 				call.store_pointer(call[3], made.value);
-			if ((call.u32(6) & close_source) && call[1] != UINT64_MAX && call[1] != UINT64_MAX - 1)
-				objects.close(call[1]);
 			call.ret(1);
 			return;
 		}
@@ -1953,9 +2313,6 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			objects.set_inherit(made.value, true);
 		if (call[3])
 			call.store_pointer(call[3], made.value);
-		// DUPLICATE_CLOSE_SOURCE closes the original whatever else happens.
-		if ((call.u32(6) & close_source) && call[1] != UINT64_MAX && call[1] != UINT64_MAX - 1)
-			objects.close(call[1]);
 		call.ret(1);
 	});
 	// NtDuplicateObject takes the arguments of DuplicateHandle, with OBJ_INHERIT among the attributes, and answers with a status.
