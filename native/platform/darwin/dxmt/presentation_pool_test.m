@@ -99,6 +99,41 @@ static void test_retirement(id<MTLDevice> device)
 	mach_port_deallocate(mach_task_self(), port);
 }
 
+static void test_forward_right(id<MTLDevice> device)
+{
+	struct layer_props props = {.width = 16, .height = 16, .format = 80};
+	RavenDXMTDrawable *drawable = [[RavenDXMTDrawable alloc] initWithDevice:device window:2001 properties:&props];
+	mach_port_t receive;
+	check(mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &receive) == KERN_SUCCESS, "allocate foreign queue");
+	check(mach_port_insert_right(mach_task_self(), receive, receive, MACH_MSG_TYPE_MAKE_SEND) == KERN_SUCCESS, "queue send right");
+	struct { mach_msg_header_t header; mach_msg_body_t body; mach_msg_port_descriptor_t surface; } message = {0};
+	message.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0) | MACH_MSGH_BITS_COMPLEX;
+	message.header.msgh_size = sizeof(message);
+	message.header.msgh_remote_port = receive;
+	message.body.msgh_descriptor_count = 1;
+	message.surface.name = IOSurfaceCreateMachPort(drawable->surface);
+	message.surface.disposition = MACH_MSG_TYPE_COPY_SEND;
+	message.surface.type = MACH_MSG_PORT_DESCRIPTOR;
+	check(IOSurfaceIsInUse(drawable->surface), "send right protects source before forwarding");
+	check(mach_msg(&message.header, MACH_SEND_MSG, sizeof(message), 0, MACH_PORT_NULL, 0, MACH_PORT_NULL) == KERN_SUCCESS, "queue foreign surface");
+	mach_port_deallocate(mach_task_self(), message.surface.name);
+	check(IOSurfaceIsInUse(drawable->surface), "queued COPY_SEND protects source before receiver runs");
+	struct { mach_msg_header_t header; mach_msg_body_t body; mach_msg_port_descriptor_t surface; mach_msg_max_trailer_t trailer; } received;
+	check(mach_msg(&received.header, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0, sizeof(received), receive, 1000, MACH_PORT_NULL) == KERN_SUCCESS, "receive foreign surface");
+	check(IOSurfaceIsInUse(drawable->surface), "received send right protects source before show");
+	IOSurfaceRef imported = IOSurfaceLookupFromMachPort(received.surface.name);
+	check(imported != NULL, "lookup received surface");
+	IOSurfaceIncrementUseCount(imported);
+	mach_port_deallocate(mach_task_self(), received.surface.name);
+	check(IOSurfaceIsInUse(drawable->surface), "show use count takes over before received right is released");
+	check(![drawable acquireSlot], "cannot overwrite forwarded surface across handoff");
+	IOSurfaceDecrementUseCount(imported);
+	CFRelease(imported);
+	check(!IOSurfaceIsInUse(drawable->surface), "handoff protection ends only after display releases surface");
+	mach_port_destroy(mach_task_self(), receive);
+	[drawable release];
+}
+
 int main(void)
 {
 	@autoreleasepool {
@@ -109,6 +144,7 @@ int main(void)
 		check(stale.state == RAVEN_SURFACE_AVAILABLE, "matching release acknowledges presentation");
 		id<MTLDevice> device = MTLCreateSystemDefaultDevice();
 		if (!device) return 77;
+		test_forward_right(device);
 		test_retirement(device);
 		RavenDXMTLayer *layers[128];
 		for (unsigned i = 0; i < 128; ++i) {

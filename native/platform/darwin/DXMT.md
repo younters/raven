@@ -340,6 +340,12 @@ process-wide slots are transport records for pending and imported presentations,
 not a limit on live views. WRITING, READY and IMPORTING records cannot be stolen.
 DISPLAYED means import is complete: the host owns an independent surface snapshot,
 so another drawable may recycle that record while the last image remains visible.
+Forwarding uses COPY_SEND surface rights: the queued message protects the surface
+before the receiver runs, and the received right remains alive until `show()` has
+incremented the use count (or rejected the frame). There is no unprotected gap
+between a successful send and foreign display. The pool fixture checks the actual
+Mach queue, receive and use-count handoff with IOSurfaceIsInUse.
+
 Recycling a record never permits overwriting its former surface: each drawable
 checks IOSurfaceIsInUse on its own surface before allowing GPU writes.
 
