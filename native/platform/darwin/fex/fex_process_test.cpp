@@ -7,6 +7,7 @@
 #include <iostream>
 #include <iterator>
 #include <stdexcept>
+#include <sys/mman.h>
 
 static void check(bool value, const char *message)
 {
@@ -80,6 +81,9 @@ int main(int argc, char **argv)
 			// Recovery/valid completion has its own deterministic result.
 			code.insert(code.end(), {0xb8, 42, 0, 0, 0, 0xc3});
 			memcpy(loaded.data().data() + image.entry, code.data(), code.size());
+		} else if (mode == "selfmodify") {
+			const uint8_t code[]{0xb8, 1, 0, 0, 0, 0xc3};
+			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
 		} else if (mode == "timeout") {
 			loaded.data()[image.entry] = 0xeb; loaded.data()[image.entry + 1] = 0xfe; loaded.data()[image.entry + 2] = 0xc3;
 		} else if (mode == "ud2") {
@@ -103,7 +107,15 @@ int main(int argc, char **argv)
 		raven::FexProcess process(images, root);
 		if (mode == "internal") asm volatile("brk #0");
 		auto result = process.call(loaded.base() + image.entry, {}, std::chrono::milliseconds(mode == "timeout" ? 20 : 5000));
-		if (mode == "timeout") {
+		if (mode == "selfmodify") {
+			check(result.stop == raven::NativeStop::returned && result.value == 1, "first code result mismatch");
+			const auto address = loaded.base() + image.entry;
+			process.protect_image(address & ~uint64_t(4095), 4096, PROT_READ | PROT_WRITE | PROT_EXEC);
+			const uint8_t code[]{0xb8, 42, 0, 0, 0, 0xc3};
+			process.write_memory(address, code);
+			process.protect_image(address & ~uint64_t(4095), 4096, PROT_READ | PROT_EXEC);
+			result = process.call(address, {});
+		} else if (mode == "timeout") {
 			check(result.stop == raven::NativeStop::timeout, "doorbell failed to interrupt guest loop");
 			auto context = process.context();
 			check(context.registers.rip == loaded.base() + image.entry, "doorbell RIP imprecise");

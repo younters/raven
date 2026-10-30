@@ -700,9 +700,9 @@ volatile sig_atomic_t first_faults = 0, second_faults = 0;
 void gap_fault(int, siginfo_t *info, void *) {
 	auto offset = uintptr_t(info->si_addr) - uintptr_t(gap_base);
 	if (offset < 4096)
-		++first_faults;
+		first_faults = first_faults + 1;
 	else if (offset < 8192)
-		++second_faults;
+		second_faults = second_faults + 1;
 	else
 		_exit(2);
 	if (mprotect(gap_base, second_faults ? 16384 : 4096, PROT_READ | PROT_WRITE))

@@ -47,7 +47,7 @@ if(TARGET raven_cpu)
                 DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_cpu/entry.c VERBATIM)
             add_custom_target(fex_entry_fixture DEPENDS ${FEX_ENTRY_FIXTURE})
             add_dependencies(fex_process_test fex_entry_fixture)
-            foreach(contract entry syscall fault breakpoint divide ud2 timeout)
+            foreach(contract entry syscall fault breakpoint divide ud2 timeout selfmodify)
                 add_test(NAME native_${contract}_fex COMMAND fex_process_test ${FEX_ENTRY_FIXTURE} ${contract})
                 set_tests_properties(native_${contract}_fex PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77
                     LABELS "fex;m2" ENVIRONMENT "RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")
@@ -855,4 +855,45 @@ if(RAVEN_FEX_MODHOST AND TARGET raven_cpu AND RAVEN_MINGW64)
             --raven $<TARGET_FILE:raven> --fixture ${fixture} --modules "${RAVEN_FEX_MODULE_ROOT}")
         set_tests_properties(native_kernel-seh_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;m2;process;seh")
     endif()
+endif()
+
+if(RAVEN_FEX_MODHOST AND TARGET raven_cpu AND RAVEN_MINGW64)
+    set(FEX_PLACEMENT ${CMAKE_CURRENT_BINARY_DIR}/fex-placement.exe)
+    add_custom_command(OUTPUT ${FEX_PLACEMENT}
+        COMMAND ${RAVEN_MINGW64} -O1 -nostdlib -fno-stack-protector -fno-builtin -mno-stack-arg-probe
+            -Wl,--entry,raven_entry,--image-base,0x400000,--no-insert-timestamp
+            -o ${FEX_PLACEMENT} ${RAVEN_DARWIN_DIR}/fex/placement_client.c -lkernel32
+        DEPENDS ${RAVEN_DARWIN_DIR}/fex/placement_client.c VERBATIM)
+    set(FEX_FIXED ${CMAKE_CURRENT_BINARY_DIR}/fex-fixed-low.exe)
+    add_custom_command(OUTPUT ${FEX_FIXED}
+        COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
+            -Wl,--entry,raven_entry,--image-base,0x400000,--no-insert-timestamp
+            -o ${FEX_FIXED} ${PROJECT_SOURCE_DIR}/testdata/native_cpu/entry.c
+        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_cpu/entry.c VERBATIM)
+    add_custom_target(fex_placement_fixtures DEPENDS ${FEX_PLACEMENT} ${FEX_FIXED})
+    add_test(NAME native_placement_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+        --raven $<TARGET_FILE:raven> --fixture ${FEX_PLACEMENT} --modules "${RAVEN_FEX_MODULE_ROOT}")
+    add_test(NAME native_fixed_image_conflict_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+        --raven $<TARGET_FILE:raven> --fixture ${FEX_FIXED} --modules "${RAVEN_FEX_MODULE_ROOT}" --expect-placement-conflict)
+    set_tests_properties(native_placement_fex native_fixed_image_conflict_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;m2;placement")
+endif()
+
+if(RAVEN_FEX_MODHOST AND TARGET kernel_seh_fixture)
+    set(FEX_WRITE_AV ${CMAKE_CURRENT_BINARY_DIR}/fex-write-av.exe)
+    add_custom_command(OUTPUT ${FEX_WRITE_AV}
+        COMMAND ${RAVEN_CLANG} --target=x86_64-w64-mingw32 ${RAVEN_CLANG_MINGW_INCLUDE}
+            -O0 -fms-extensions -fseh-exceptions -Xclang -fasync-exceptions -fno-stack-protector -mno-stack-arg-probe
+            -c -o ${CMAKE_CURRENT_BINARY_DIR}/fex-write-av.o ${RAVEN_DARWIN_DIR}/fex/write_av_client.c
+        # Reuse the original fixture's guest scope-table handler, unchanged.
+        COMMAND ${RAVEN_CLANG} --target=x86_64-w64-mingw32 ${RAVEN_CLANG_MINGW_INCLUDE}
+            -O0 -fms-extensions -fseh-exceptions -Xclang -fasync-exceptions -Wno-inconsistent-dllimport
+            -fno-stack-protector -mno-stack-arg-probe -Draven_entry=raven_seh_support_entry
+            -c -o ${CMAKE_CURRENT_BINARY_DIR}/fex-seh-support.o ${PROJECT_SOURCE_DIR}/testdata/native_loader/kernel_seh_client.c
+        COMMAND ${RAVEN_MINGW64} -nostdlib -Wl,--entry,raven_entry,--image-base,0x10000000000,--no-insert-timestamp
+            -o ${FEX_WRITE_AV} ${CMAKE_CURRENT_BINARY_DIR}/fex-write-av.o ${CMAKE_CURRENT_BINARY_DIR}/fex-seh-support.o -lkernel32
+        DEPENDS ${RAVEN_DARWIN_DIR}/fex/write_av_client.c ${PROJECT_SOURCE_DIR}/testdata/native_loader/kernel_seh_client.c VERBATIM)
+    add_custom_target(fex_write_av_fixture DEPENDS ${FEX_WRITE_AV})
+    add_test(NAME native_write_av_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+        --raven $<TARGET_FILE:raven> --fixture ${FEX_WRITE_AV} --modules "${RAVEN_FEX_MODULE_ROOT}")
+    set_tests_properties(native_write_av_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;m2;seh")
 endif()

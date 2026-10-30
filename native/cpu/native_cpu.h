@@ -33,6 +33,7 @@ struct NativeResult {
 	int signal_code = 0;
 	uint32_t exception_flags = 0;
 	std::vector<uint64_t> exception_information{};
+	uint32_t exception_code = 0;
 };
 
 struct NativeContext {

@@ -41,6 +41,21 @@ int32_t process_exception(void *opaque, void *packet, void *)
 	last_stop = {record.code == 0x102 ? raven::NativeStop::timeout : raven::NativeStop::exception, record.code, packet_word(packet, 0xf8), record};
 	siglongjmp(stop_frame, 1);
 }
+uint32_t guest_protection(int protection)
+{
+	if (protection & PROT_EXEC) return protection & PROT_WRITE ? 0x40 : 0x20;
+	return protection & PROT_WRITE ? 4 : protection & PROT_READ ? 2 : 1;
+}
+void notify_memory(const char *name, uint64_t *args, size_t after)
+{
+	// The module's public notification protocol brackets its tracker mutex.
+	// This cooperative backend has no concurrent guest worker; issue the paired
+	// notification at the stopped boundary after the host mapping change.
+	args[after] = 0;
+	raven_ec_call(mapped_image->export_address(name), args, thread_environment->teb.data());
+	args[after] = 1;
+	raven_ec_call(mapped_image->export_address(name), args, thread_environment->teb.data());
+}
 void initialize_process(Bytes bytes, size_t opt)
 {
 	initialize_image(bytes, opt, process_dispatch, process_exception);
@@ -61,12 +76,11 @@ struct FexProcess::State {
 	uint64_t teb = 0;
 	uint64_t stack_top = 0;
 	std::function<void()> unix_pump;
-	bool initialized_environment = false;
 	std::chrono::milliseconds budget{5000}, slice{0};
 	std::function<bool()> slice_wanted;
 	std::function<void()> slice_yield;
 	void *stack = MAP_FAILED, *gate = MAP_FAILED;
-	static constexpr size_t stack_size = 1024 * 1024;
+	size_t stack_size = 1024 * 1024;
 	std::unique_ptr<RavenFault::Scope> faults;
 	bool active = false;
 	State() = default;
@@ -84,9 +98,10 @@ struct FexProcess::State {
 			throw std::runtime_error("FEX process used from another host thread");
 	}
 };
-FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &root)
+FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &root, uint64_t stack_reserve)
 	: state(std::make_unique<State>())
 {
+	state->stack_size = (std::clamp<uint64_t>(stack_reserve, 256 * 1024, 64 * 1024 * 1024) + 16383) & ~uint64_t(16383);
 	if (module_claimed)
 		throw std::runtime_error("FEX module supports one process lifetime per host");
 	if (root.empty())
@@ -100,7 +115,7 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 	// Guest x86 code is data to the arm64 host. Keep it non-executable; only FEX's
 	// separate native code cache uses MAP_JIT. Never replace an existing host mapping.
 	for (auto *image : images) map_image(*image);
-	state->stack = mmap(nullptr, State::stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	state->stack = mmap(nullptr, state->stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	state->gate = mmap(nullptr, 16384, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (state->stack == MAP_FAILED || state->gate == MAP_FAILED)
 		throw std::runtime_error("FEX guest stack/gate allocation failed");
@@ -108,8 +123,8 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 	uint8_t gate[]{0x49, 0x89, 0xc2, 0xb8, 0xfe, 0xff, 0xff, 0x7f, 0x0f, 0x05, 0x0f, 0x0b};
 	memcpy(state->gate, gate, sizeof(gate));
 	uint64_t args[8]{uintptr_t(state->gate), 16384, 0x3000, 0x40, 1, 0};
-	raven_ec_call(mapped_image->export_address("NotifyMemoryAlloc"), args, thread_environment->teb.data());
-	state->stack_top = uintptr_t(state->stack) + State::stack_size;
+	notify_memory("NotifyMemoryAlloc", args, 4);
+	state->stack_top = uintptr_t(state->stack) + state->stack_size;
 	state->thread.stack_top = state->stack_top;
 	for (uint64_t at = uintptr_t(state->stack); at < state->stack_top; at += 4096) state->pages[at] = PROT_READ | PROT_WRITE;
 	state->pages[uintptr_t(state->gate)] = PROT_READ | PROT_EXEC;
@@ -144,8 +159,8 @@ NativeResult FexProcess::call(uint64_t address, std::span<const uint64_t> argume
 NativeResult FexProcess::resume()
 {
 	state->require_owner();
-	if (!state->active)
-		throw std::runtime_error("FEX has no stopped call to resume");
+	if (!state->active || state->thread.awaiting_api)
+		throw std::runtime_error("FEX has no resumable call or awaits an API result");
 	if (state->resume_hook) state->resume_hook();
 	std::mutex timer_mutex;
 	std::condition_variable_any timer_wake;
@@ -191,6 +206,7 @@ NativeResult FexProcess::resume()
 	}
 	if (!state->traps.empty() && result.stop == NativeStop::exception) {
 		result.stop = NativeStop::fault;
+		result.exception_code = uint32_t(result.value);
 		result.signal = result.value == 0xc000001d ? SIGILL : result.value == 0xc0000094 ? SIGFPE :
 			result.value == 0x80000003 ? SIGTRAP : SIGSEGV;
 		if (result.signal == SIGFPE) result.signal_code = FPE_INTDIV;
@@ -243,7 +259,7 @@ void FexProcess::set_context(const NativeContext &value)
 	state->teb = r.gs_base;
 	guest_teb = state->teb ? reinterpret_cast<void *>(state->teb) : nullptr;
 	RavenFault::execution_teb = guest_teb;
-	if (value.xstate.size() != 512)
+	if (!value.xstate.empty() && value.xstate.size() != 512)
 		throw std::runtime_error("FEX requires a 512-byte legacy floating-point packet");
 	const uint64_t registers[]{r.rax, r.rcx, r.rdx, r.rbx, r.rsp, r.rbp, r.rsi, r.rdi,
 		r.r8, r.r9, r.r10, r.r11, r.r12, r.r13, r.r14, r.r15, r.rip};
@@ -251,7 +267,7 @@ void FexProcess::set_context(const NativeContext &value)
 	memcpy(p + 0x78, registers, sizeof(registers));
 	uint32_t flags = uint32_t(r.eflags);
 	memcpy(p + 0x44, &flags, 4);
-	memcpy(p + 0x100, value.xstate.data(), 512);
+	if (!value.xstate.empty()) memcpy(p + 0x100, value.xstate.data(), 512);
 }
 NativeResult run_fex_entry(const PEImage &image, LoadedImage &loaded, const std::string &root)
 {
@@ -269,7 +285,7 @@ void select_fex_execution(bool enabled) { selected_fex = enabled; }
 bool fex_execution_selected() { return selected_fex; }
 bool fex_address_available(uint64_t address, uint64_t size)
 {
-	if (!size || address > UINT64_MAX - size) return false;
+	if (!size || address < 0x100000000ULL || address > UINT64_MAX - size) return false;
 	mach_vm_address_t base = address;
 	mach_vm_size_t length = 0;
 	vm_region_basic_info_data_64_t info{};
@@ -288,6 +304,7 @@ bool FexProcess::memory_available(uint64_t address, size_t size) const { return 
 std::vector<uint8_t> FexProcess::read_memory(uint64_t address, size_t size) const
 {
 	state->require_owner();
+	if (address > UINT64_MAX - size) throw std::runtime_error("FEX read range overflow");
 	for (auto at = address & ~uint64_t(4095); at < address + size; at += 4096)
 		if (!state->pages.contains(at) || !(state->pages.at(at) & PROT_READ))
 			throw std::runtime_error("FEX read exceeds readable guest memory at " + std::to_string(address));
@@ -332,6 +349,8 @@ uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 		if (begin + n + 65536 > address + n) munmap(reinterpret_cast<void *>(address + n), begin + n + 65536 - address - n);
 	}
 	state->regions.emplace(address, State::Region{n, false});
+	uint64_t args[8]{address, n, 0x3000, guest_protection(protection), 0, 0};
+	notify_memory("NotifyMemoryAlloc", args, 4);
 	for (size_t at = 0; at < n; at += 4096) state->pages[address + at] = PROT_READ | PROT_WRITE;
 	protect_memory(address, n, protection);
 	return address;
@@ -356,8 +375,8 @@ void FexProcess::protect_memory(uint64_t address, size_t size, int protection)
 		if (mprotect(reinterpret_cast<void *>(page), 16384, combined)) throw std::runtime_error("FEX host protection failed");
 	}
 	if (mapped_image) {
-		uint64_t args[8]{address, size, 0x40};
-		raven_ec_call(mapped_image->export_address("NotifyMemoryProtect"), args, thread_environment->teb.data());
+		uint64_t args[8]{address, size, guest_protection(protection)};
+		notify_memory("NotifyMemoryProtect", args, 3);
 	}
 }
 void FexProcess::protect_image(uint64_t address, size_t size, int protection) { protect_memory(address, size, protection); }
@@ -376,12 +395,16 @@ void FexProcess::unmap_memory(uint64_t address)
 	if (found == state->regions.end()) throw std::runtime_error("FEX allocation not found");
 	const auto n = found->second.size;
 	uint64_t args[8]{address, n, 0x8000};
-	raven_ec_call(mapped_image->export_address("NotifyMemoryFree"), args, thread_environment->teb.data());
+	notify_memory("NotifyMemoryFree", args, 3);
 	munmap(reinterpret_cast<void *>(address), n);
 	for (auto at = address; at < address + n; at += 4096) state->pages.erase(at);
 	state->regions.erase(found);
 }
-void FexProcess::unmap_image(uint64_t address) { unmap_memory(address); }
+void FexProcess::unmap_image(uint64_t address)
+{
+	std::erase_if(state->images, [&](auto *image) { return image->base() == address; });
+	unmap_memory(address);
+}
 void FexProcess::map_image(LoadedImage &image)
 {
 	const auto address = image.base();
@@ -398,7 +421,7 @@ void FexProcess::map_image(LoadedImage &image)
 		for (uint64_t at = mapping.address; at < mapping.address + mapping.size; at += 4096) state->pages[at] = mapping.protection;
 	// Register the view before changing protections; FEX tracks executable pages.
 	uint64_t args[8]{address, n, 0x3000, 0x40, 1, 0};
-	raven_ec_call(mapped_image->export_address("NotifyMemoryAlloc"), args, thread_environment->teb.data());
+	notify_memory("NotifyMemoryAlloc", args, 4);
 	for (size_t at = 0; at < n; at += 4096) protect_memory(address + at, 4096, state->pages.at(address + at));
 }
 std::pair<uint64_t, uint64_t> FexProcess::stack_bounds() const { return {uintptr_t(state->stack), state->stack_top}; }
@@ -553,6 +576,7 @@ void FexProcess::set_time_slicing(std::chrono::milliseconds slice, std::function
 }
 uint64_t FexProcess::compare_exchange(uint64_t address, uint64_t expected, uint64_t desired, size_t size)
 {
+	if (size != 4 && size != 8) throw std::runtime_error("FEX compare exchange width unsupported");
 	validate_write_memory(address, size);
 	if (address % size) throw std::runtime_error("FEX unaligned compare exchange unsupported");
 	if (size == 8) __atomic_compare_exchange_n(reinterpret_cast<uint64_t *>(address), &expected, desired, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);

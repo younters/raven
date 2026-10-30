@@ -4,11 +4,11 @@
 
 namespace raven {
 
-// Experimental stopped-context engine. NativeProcess integration is a separate gate.
+// Opt-in in-process x64 engine behind the Darwin NativeProcess forwarding seam.
 // One module instance per host process, on its constructing thread.
 class FexProcess {
 public:
-	FexProcess(std::span<LoadedImage *const> images, const std::string &module_root);
+	FexProcess(std::span<LoadedImage *const> images, const std::string &module_root, uint64_t stack_reserve = 1024 * 1024);
 	~FexProcess();
 	FexProcess(const FexProcess &) = delete;
 	FexProcess &operator=(const FexProcess &) = delete;

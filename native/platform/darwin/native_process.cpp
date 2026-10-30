@@ -730,7 +730,8 @@ NativeProcess::NativeProcess(std::span<LoadedImage *const> images, const std::st
 	if (fex_execution_selected()) {
 		if (mode != NativeMode::x64) throw std::runtime_error("FEX WoW64 is a later milestone");
 		const char *root = std::getenv("RAVEN_FEX_MODULE_ROOT");
-		fex = std::make_shared<FexProcess>(images, root ? root : "");
+		if (setup_timeout.count() <= 0) throw std::runtime_error("native execution requires a positive timeout");
+		fex = std::make_shared<FexProcess>(images, root ? root : "", stack_reserve);
 		return;
 	}
 #endif

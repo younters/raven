@@ -32,7 +32,7 @@ extern "C" void raven_fault_handler(int, siginfo_t *, void *opaque) {
 	auto *uc = static_cast<ucontext_t *>(opaque);
 	if (native18() != 0 || uc->uc_mcontext->__ss.__x[18] != signal_teb)
 		bad_signal18 = 1;
-	++signals;
+	signals = signals + 1;
 }
 static uint64_t sum16(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f,
 	uint64_t g, uint64_t h, uint64_t i, uint64_t j, uint64_t k, uint64_t l, uint64_t m, uint64_t n,
