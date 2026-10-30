@@ -1,0 +1,60 @@
+diff --git a/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h b/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
+--- a/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
++++ b/FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h
+@@ -420,8 +420,12 @@
+ private:
+   void* Alloc(size_t Size) override {
+     auto Ptr = FEXCore::Allocator::VirtualAlloc(Size);
+-    uintptr_t LastPageAddr = AlignDown(reinterpret_cast<uintptr_t>(Ptr) + Size - 1, FEXCore::Utils::FEX_PAGE_SIZE);
+-    if (!FEXCore::Allocator::VirtualProtect(reinterpret_cast<void*>(LastPageAddr), FEXCore::Utils::FEX_PAGE_SIZE,
++    size_t GuardSize = FEXCore::Utils::FEX_PAGE_SIZE;
++#ifdef _WIN32
++    if (FEXCore::Allocator::VirtualJitWriteProtect) GuardSize = 16384;
++#endif
++    uintptr_t LastPageAddr = AlignDown(reinterpret_cast<uintptr_t>(Ptr) + Size - 1, GuardSize);
++    if (!FEXCore::Allocator::VirtualProtect(reinterpret_cast<void*>(LastPageAddr), GuardSize,
+                                             FEXCore::Allocator::ProtectOptions::None)) {
+       LogMan::Msg::EFmt("Failed to mprotect last page of code buffer.");
+     }
+diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+--- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+@@ -883,13 +883,17 @@
+ 
+   // Fairly excessive buffer range to make sure we don't overflow
+   // One page baseline, plus SSANodeMultipler bytes, plus another page for guard page.
+-  const uint32_t DesiredBufferRange = AlignUp(FEXCore::Utils::FEX_PAGE_SIZE * 2 + SSACount * SSANodeMultiplier, FEXCore::Utils::FEX_PAGE_SIZE);
++  uint32_t NativeGuardSize = FEXCore::Utils::FEX_PAGE_SIZE;
++#ifdef _WIN32
++  if (FEXCore::Allocator::VirtualJitWriteProtect) NativeGuardSize = 16384;
++#endif
++  const uint32_t DesiredBufferRange = AlignUp(NativeGuardSize * 2 + SSACount * SSANodeMultiplier, NativeGuardSize);
+ 
+   // JIT output is first written to a temporary buffer and later relocated to the CodeBuffer.
+   // This minimizes lock contention of CodeBufferWriteMutex.
+   auto TempCodeBufferInfo = TempCodeBufferAllocator.ReownOrClaimBufferWithSize(DesiredBufferRange);
+   auto TempCodeBuffer = TempCodeBufferInfo.Ptr;
+-  const uint32_t UsableBufferRange = TempCodeBufferInfo.Size - FEXCore::Utils::FEX_PAGE_SIZE;
++  const uint32_t UsableBufferRange = TempCodeBufferInfo.Size - NativeGuardSize;
+ 
+   SetBuffer(TempCodeBuffer, UsableBufferRange);
+ 
+diff --git a/Source/Windows/Common/JITGuardPage.h b/Source/Windows/Common/JITGuardPage.h
+--- a/Source/Windows/Common/JITGuardPage.h
++++ b/Source/Windows/Common/JITGuardPage.h
+@@ -5,13 +5,13 @@
+ 
+ namespace FEX::Windows::JITGuardPage {
+ static constexpr bool IsAddressInJITGuardPage(uintptr_t GuardPage, uintptr_t Address) {
+-  return GuardPage != 0 && Address >= GuardPage && Address < GuardPage + FEXCore::Utils::FEX_PAGE_SIZE;
++  return GuardPage != 0 && Address >= GuardPage && Address < GuardPage + 16384;
+ }
+ 
+ static_assert(!IsAddressInJITGuardPage(0, 0));
+ static_assert(IsAddressInJITGuardPage(0x1000, 0x1000));
+ static_assert(IsAddressInJITGuardPage(0x1000, 0x1fff));
+-static_assert(!IsAddressInJITGuardPage(0x1000, 0x2000));
++static_assert(!IsAddressInJITGuardPage(0x1000, 0x5000));
+ 
+ static inline bool HandleJITGuardPage(FEXCore::Core::InternalThreadState* Thread, void* Address, uint64_t* GPRs, __uint128_t* FPRs, uint64_t* PC) {
+   if (IsAddressInJITGuardPage(Thread->JITGuardPage, reinterpret_cast<uintptr_t>(Address))) {

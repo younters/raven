@@ -1,5 +1,10 @@
 # macOS adjustments to targets native/CMakeLists.txt defines, applied after it so that file stays as upstream wrote it.
 
+option(RAVEN_FEX_MODHOST "Build standalone experimental FEX module-host tests" OFF)
+if(RAVEN_FEX_MODHOST)
+    add_subdirectory(${RAVEN_DARWIN_DIR}/fex/modhost ${CMAKE_CURRENT_BINARY_DIR}/fex-modhost)
+endif()
+
 if(RAVEN_KOSMICKRISP_ROOT)
     file(READ ${RAVEN_DARWIN_DIR}/graphics/kosmickrisp.json RAVEN_KOSMICKRISP_PIN)
     foreach(component lib/libvulkan_kosmickrisp.dylib share/vulkan/icd.d/libkosmickrisp_icd.json)

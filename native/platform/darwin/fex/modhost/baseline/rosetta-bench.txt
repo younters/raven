@@ -1,0 +1,6 @@
+engine=Rosetta iterations=10000000 samples=5 serial_dependency_loops=1
+sample=0 integer_ns=9226208 float_ns=12104458 integer_result=5292597211099207303 float_result=4295705.5919631328
+sample=1 integer_ns=8957125 float_ns=12316042 integer_result=5292597211099207303 float_result=4295705.5919631328
+sample=2 integer_ns=9273375 float_ns=12201625 integer_result=5292597211099207303 float_result=4295705.5919631328
+sample=3 integer_ns=9281375 float_ns=12277667 integer_result=5292597211099207303 float_result=4295705.5919631328
+sample=4 integer_ns=9148875 float_ns=12412541 integer_result=5292597211099207303 float_result=4295705.5919631328
