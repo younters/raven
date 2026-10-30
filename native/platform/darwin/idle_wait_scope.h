@@ -23,7 +23,11 @@ public:
 		if (!watch) return;
 		auto *outer = previous;
 		while (outer && outer->owner != owner) outer = outer->previous;
-		watch(outer ? outer->descriptors : std::span<const pollfd>{});
+		// A destructor may run while an exception unwinds; a failed restore only costs an early wake, so it must not terminate.
+		try {
+			watch(outer ? outer->descriptors : std::span<const pollfd>{});
+		} catch (...) {
+		}
 	}
 	DarwinIdleWaitScope(const DarwinIdleWaitScope &) = delete;
 	DarwinIdleWaitScope &operator=(const DarwinIdleWaitScope &) = delete;

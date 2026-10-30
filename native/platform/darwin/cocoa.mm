@@ -993,7 +993,8 @@ struct CocoaPresentation::State {
 			legacy_watch_waits({});
 			CFFileDescriptorEnableCallBacks(wait_source, kCFFileDescriptorReadCallBack);
 		} else {
-			// Keep the previous path for descriptors kqueue cannot watch, or resource exhaustion.
+			// Keep the previous path for descriptors kqueue cannot watch, or resource exhaustion; drop the queue's earlier registrations.
+			idle_wait_queue.disarm();
 			legacy_watch_waits(descriptors);
 		}
 	}
