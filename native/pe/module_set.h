@@ -51,7 +51,8 @@ struct PEModule {
 class ModuleSet {
 public:
 	void set_address_space(std::function<bool(uint64_t, uint64_t)> available, uint64_t relocation_base) {
-		address_available = std::move(available); relocation_base64 = relocation_base;
+		address_available = std::move(available);
+		relocation_base64 = relocation_base;
 	}
 	// Keep a free preferred base; relocate colliding images into graph-owned space.
 	// A process loader also excludes its allocations through available.

@@ -286,7 +286,8 @@ int main(int argc, char **argv)
 	const bool fex_entry = run_entry && argc == 4 && std::string(argv[2]) == "--execution=fex";
 	const bool valid = fex_entry || (inspect && argc == 3) || (map_image && (argc == 3 || argc == 4)) ||
 		(run_entry && argc == 4 && std::string(argv[2]) == "--execution=native") || (bind_imports && argc >= 3) ||
-		((run_modules || run_process) && last_file > first_file && (std::string(argv[2]) == "--execution=native" || std::string(argv[2]) == "--execution=fex"));
+		((run_modules || run_process) && last_file > first_file &&
+			(std::string(argv[2]) == "--execution=native" || std::string(argv[2]) == "--execution=fex"));
 	if (!valid) {
 		std::cerr << "Usage: raven --inspect|--inspect-imports|--inspect-exports|--inspect-delay-imports|--inspect-resources program.exe\n"
 			<< "       raven --map-image|--dump-image program.exe [base-address]\n"
