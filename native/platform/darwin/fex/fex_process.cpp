@@ -9,6 +9,8 @@
 #include <sys/mman.h>
 #include <atomic>
 #include <condition_variable>
+#include <sys/eventfd.h>
+#include <unistd.h>
 
 namespace {
 // The frontend has no qualified detach/reinitialization protocol. Keep the PE
@@ -16,13 +18,14 @@ namespace {
 Mapping *const module_mapping = new Mapping{MAP_FAILED, 0};
 bool module_claimed = false;
 bool selected_fex = false;
-void *guest_teb = nullptr;
-sigjmp_buf stop_frame;
+thread_local void *guest_teb = nullptr;
+thread_local sigjmp_buf stop_frame;
 struct StopPacket {
 	raven::NativeStop kind;
 	uint64_t value, rip;
 	RavenFault::Record exception;
-} last_stop{};
+};
+thread_local StopPacket last_stop{};
 constexpr uint32_t completion = 0x7ffffffe;
 uint64_t packet_word(void *packet, size_t offset)
 {
@@ -48,13 +51,21 @@ uint32_t guest_protection(int protection)
 	if (protection & PROT_EXEC) return protection & PROT_WRITE ? 0x40 : 0x20;
 	return protection & PROT_WRITE ? 4 : protection & PROT_READ ? 2 : 1;
 }
-void notify_memory(const char *name, uint64_t *args, size_t after)
+void notify_memory(const char *name, uint64_t *args, size_t after, const std::function<void()> &change = {})
 {
 	// The module's public notification protocol brackets its tracker mutex.
-	// This cooperative backend has no concurrent guest worker; issue the paired
-	// notification at the stopped boundary after the host mapping change.
+	// New allocations are notified before publication to the guest. Protection
+	// and release operations also bracket the actual mapping change below.
 	args[after] = 0;
 	raven_ec_call(mapped_image->export_address(name), args, thread_environment->teb.data());
+	try {
+		if (change) change();
+	} catch (...) {
+		args[after] = 1;
+		args[after + 1] = 0xc0000001;
+		raven_ec_call(mapped_image->export_address(name), args, thread_environment->teb.data());
+		throw;
+	}
 	args[after] = 1;
 	raven_ec_call(mapped_image->export_address(name), args, thread_environment->teb.data());
 }
@@ -65,8 +76,111 @@ void initialize_process(Bytes bytes, size_t opt)
 }
 
 namespace raven {
+// Workers execute only translated code. The existing NT scheduler retains all API
+// handlers on its controller/coroutine stacks, just as with the Rosetta agent.
+struct FexWorker {
+	std::mutex mutex;
+	std::condition_variable wake;
+	std::thread host;
+	std::unique_ptr<RavenNT::ThreadEnvironment> environment;
+	std::exception_ptr failure;
+	StopPacket result{};
+	bool ready = false, requested = false, quit = false;
+	std::atomic<bool> stopped{true};
+	uint64_t teb = 0;
+	int descriptor;
+	explicit FexWorker(int fd) : descriptor(fd) {
+		host = std::thread([this] {
+			AlternateSignalStack alternate;
+			try {
+				environment = std::make_unique<RavenNT::ThreadEnvironment>(*process_environment);
+				RavenNT::active_thread = environment.get();
+				mapped_image->install_tls(*environment);
+				uint64_t args[8]{};
+				if (raven_ec_call(mapped_image->export_address("ThreadInit"), args, environment->teb.data()))
+					throw std::runtime_error("FEX worker ThreadInit failed");
+				std::unique_lock lock(mutex);
+				ready = true;
+				wake.notify_all();
+				for (;;) {
+					wake.wait(lock, [this] { return requested || quit; });
+					if (quit) break;
+					requested = false;
+					guest_teb = teb ? reinterpret_cast<void *>(teb) : environment->teb.data();
+					RavenFault::execution_teb = guest_teb;
+					lock.unlock();
+					auto previous = NativeJit::protect(1);
+					if (!sigsetjmp(stop_frame, 1)) {
+						raven_ec_call(mapped_image->export_address("BeginSimulation"), args, guest_teb);
+						std::abort();
+					}
+					asm volatile("mov x18,xzr");
+					NativeJit::protect(previous);
+					lock.lock();
+					result = last_stop;
+					stopped.store(true, std::memory_order_release);
+					wake.notify_all();
+					uint64_t one = 1;
+					(void)::write(descriptor, &one, sizeof(one));
+				}
+				lock.unlock();
+				// The public module frontend tears down the current FEX state without
+				// terminating the pthread. Use its private TEB/identity for this call.
+				RavenFault::execution_teb = nullptr;
+				args[0] = uint64_t(-2);
+				if (raven_ec_call(mapped_image->export_address("ThreadTerm"), args, environment->teb.data()))
+					throw std::runtime_error("FEX worker ThreadTerm failed");
+			} catch (...) {
+				std::lock_guard lock(mutex);
+				failure = std::current_exception();
+				ready = true;
+				stopped.store(true, std::memory_order_release);
+				wake.notify_all();
+			}
+			RavenNT::active_thread = nullptr;
+		});
+		std::unique_lock lock(mutex);
+		wake.wait(lock, [this] { return ready; });
+		if (failure) { lock.unlock(); host.join(); std::rethrow_exception(failure); }
+	}
+	void pause() {
+		if (!stopped.load(std::memory_order_acquire)) {
+			__atomic_store_n(environment->cpu.doorbell, 1u, __ATOMIC_RELEASE);
+			std::unique_lock lock(mutex);
+			wake.wait(lock, [this] { return stopped.load(std::memory_order_acquire); });
+		}
+	}
+	void shutdown() {
+		if (!host.joinable()) return;
+		pause();
+		{ std::lock_guard lock(mutex); quit = true; }
+		wake.notify_all();
+		if (host.joinable()) host.join();
+		if (failure) std::rethrow_exception(failure);
+	}
+	~FexWorker() {
+		try { shutdown(); }
+		catch (const std::exception &error) {
+			std::cerr << error.what() << "\n";
+			std::abort(); // Teardown failure must not masquerade as guest success.
+		}
+	}
+};
 struct FexProcess::State {
 	pthread_t owner = pthread_self();
+	bool parallel = std::getenv("RAVEN_PARALLEL") != nullptr;
+	int execution = -1;
+	pid_t next_worker = 1, selected = 0;
+	std::map<pid_t, std::unique_ptr<FexWorker>> workers;
+	std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> execution_wait;
+	RavenNT::ThreadEnvironment *environment() const {
+		return parallel ? workers.at(selected)->environment.get() : thread_environment.get();
+	}
+	pid_t make_worker() {
+		auto id = next_worker++;
+		workers.emplace(id, std::make_unique<FexWorker>(execution));
+		return id;
+	}
 	struct Region { size_t size; bool image; };
 	std::map<uint64_t, Region> regions;
 	std::map<uint64_t, int> pages;
@@ -88,6 +202,8 @@ struct FexProcess::State {
 	State() = default;
 	~State()
 	{
+		workers.clear();
+		if (execution >= 0) ::close(execution);
 		faults.reset();
 		// Mapping is a simple scope owner; the vector entries are released here.
 		if (stack != MAP_FAILED) munmap(stack, stack_size);
@@ -130,6 +246,12 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 	state->thread.stack_top = state->stack_top;
 	for (uint64_t at = uintptr_t(state->stack); at < state->stack_top; at += 4096) state->pages[at] = PROT_READ | PROT_WRITE;
 	state->pages[uintptr_t(state->gate)] = PROT_READ | PROT_EXEC;
+	if (state->parallel) {
+		state->execution = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+		if (state->execution < 0) throw std::runtime_error("FEX execution eventfd failed");
+		state->selected = state->make_worker();
+		state->thread.task = state->selected;
+	}
 	state->initial = context();
 	state->faults = std::make_unique<RavenFault::Scope>(mapped_image->export_address("RavenHandleFault"));
 }
@@ -139,7 +261,7 @@ NativeResult FexProcess::call(uint64_t address, std::span<const uint64_t> argume
 	state->require_owner();
 	if (state->active || arguments.size() > 128)
 		throw std::runtime_error("FEX entry requires an idle frame and at most 128 arguments");
-	auto *packet = thread_environment->context.data();
+	auto *packet = state->environment()->context.data();
 	// Preserve ThreadInit's segment selectors and floating-point defaults.
 	memset(packet + 0x78, 0, 17 * 8);
 	auto rsp = (state->thread.stack_top - 32 - std::max<size_t>(arguments.size(), 4) * 8) & ~uint64_t(15);
@@ -164,26 +286,47 @@ NativeResult FexProcess::resume()
 	if (!state->active || state->thread.awaiting_api)
 		throw std::runtime_error("FEX has no resumable call or awaits an API result");
 	if (state->resume_hook) state->resume_hook();
-	std::mutex timer_mutex;
-	std::condition_variable_any timer_wake;
-	auto *doorbell = thread_environment->cpu.doorbell;
-	std::jthread timer([&](std::stop_token stop) {
-		std::unique_lock lock(timer_mutex);
-		timer_wake.wait_for(lock, stop, state->budget, [] { return false; });
-		if (!stop.stop_requested()) __atomic_store_n(doorbell, 1u, __ATOMIC_RELEASE);
-	});
-	uint64_t args[8]{};
-	auto previous = NativeJit::protect(1);
-	if (!sigsetjmp(stop_frame, 1)) {
-		raven_ec_call(mapped_image->export_address("BeginSimulation"), args, guest_teb ? guest_teb : thread_environment->teb.data());
-		std::abort();
+	if (state->parallel) {
+		auto *worker = state->workers.at(state->selected).get();
+		const auto deadline = std::chrono::steady_clock::now() + state->budget;
+		{
+			std::lock_guard lock(worker->mutex);
+			worker->teb = state->teb;
+			__atomic_store_n(worker->environment->cpu.doorbell, 0u, __ATOMIC_RELEASE);
+			worker->stopped.store(false, std::memory_order_release);
+			worker->requested = true;
+		}
+		worker->wake.notify_all();
+		auto ready = [worker] { return worker->stopped.load(std::memory_order_acquire); };
+		if (state->execution_wait) state->execution_wait(ready, deadline);
+		else {
+			std::unique_lock lock(worker->mutex);
+			worker->wake.wait_until(lock, deadline, ready);
+		}
+		worker->pause();
+		last_stop = worker->result;
+	} else {
+		std::mutex timer_mutex;
+		std::condition_variable_any timer_wake;
+		auto *doorbell = state->environment()->cpu.doorbell;
+		std::jthread timer([&](std::stop_token stop) {
+			std::unique_lock lock(timer_mutex);
+			timer_wake.wait_for(lock, stop, state->budget, [] { return false; });
+			if (!stop.stop_requested()) __atomic_store_n(doorbell, 1u, __ATOMIC_RELEASE);
+		});
+		uint64_t args[8]{};
+		auto previous = NativeJit::protect(1);
+		if (!sigsetjmp(stop_frame, 1)) {
+			raven_ec_call(mapped_image->export_address("BeginSimulation"), args, guest_teb ? guest_teb : state->environment()->teb.data());
+			std::abort();
+		}
+		timer.request_stop();
+		timer_wake.notify_all();
+		timer.join();
+		__atomic_store_n(doorbell, 0u, __ATOMIC_RELEASE);
+		asm volatile("mov x18,xzr");
+		NativeJit::protect(previous);
 	}
-	timer.request_stop();
-	timer_wake.notify_all();
-	timer.join();
-	__atomic_store_n(doorbell, 0u, __ATOMIC_RELEASE);
-	asm volatile("mov x18,xzr");
-	NativeJit::protect(previous);
 	if (std::getenv("RAVEN_FEX_TRACE"))
 		std::cerr << "FEX stop rip=" << std::hex << last_stop.rip << " address=" << last_stop.exception.information[1] << std::dec << "\n";
 	if (last_stop.kind == NativeStop::returned)
@@ -229,9 +372,10 @@ NativeResult FexProcess::resume()
 NativeContext FexProcess::context() const
 {
 	state->require_owner();
+	if (!stopped()) throw std::runtime_error("FEX context requires a stopped worker");
 	NativeContext result{};
 	auto &r = result.registers;
-	auto *p = thread_environment->context.data();
+	auto *p = state->environment()->context.data();
 	unsigned long long *registers[]{&r.rax, &r.rcx, &r.rdx, &r.rbx, &r.rsp, &r.rbp, &r.rsi, &r.rdi,
 		&r.r8, &r.r9, &r.r10, &r.r11, &r.r12, &r.r13, &r.r14, &r.r15, &r.rip};
 	for (size_t i = 0; i < 17; ++i)
@@ -244,11 +388,12 @@ NativeContext FexProcess::context() const
 void FexProcess::set_context(const NativeContext &value)
 {
 	state->require_owner();
+	if (!stopped()) throw std::runtime_error("FEX context update requires a stopped worker");
 	const auto &r = value.registers;
 	if (r.fs_base) throw std::runtime_error("FEX x64 FS base is unsupported");
 	if (r.gs_base) {
 		validate_write_memory(r.gs_base + 0x1788, 8);
-		auto cpu = uintptr_t(&thread_environment->cpu);
+		auto cpu = uintptr_t(&state->environment()->cpu);
 		memcpy(reinterpret_cast<void *>(r.gs_base + 0x1788), &cpu, 8);
 		uint64_t peb = 0;
 		memcpy(&peb, reinterpret_cast<void *>(r.gs_base + 0x60), 8);
@@ -265,7 +410,7 @@ void FexProcess::set_context(const NativeContext &value)
 		throw std::runtime_error("FEX requires a 512-byte legacy floating-point packet");
 	const uint64_t registers[]{r.rax, r.rcx, r.rdx, r.rbx, r.rsp, r.rbp, r.rsi, r.rdi,
 		r.r8, r.r9, r.r10, r.r11, r.r12, r.r13, r.r14, r.r15, r.rip};
-	auto *p = thread_environment->context.data();
+	auto *p = state->environment()->context.data();
 	memcpy(p + 0x78, registers, sizeof(registers));
 	uint32_t flags = uint32_t(r.eflags);
 	memcpy(p + 0x44, &flags, 4);
@@ -326,7 +471,7 @@ void FexProcess::write_memory(uint64_t address, std::span<const uint8_t> bytes)
 	auto *p = address >= 0x7ffe0000 && address + bytes.size() <= 0x7ffe1000 ? user_shared_data.data() + address - 0x7ffe0000 : reinterpret_cast<uint8_t *>(address);
 	memcpy(p, bytes.data(), bytes.size());
 	uint64_t args[8]{address, bytes.size()};
-	raven_ec_call(mapped_image->export_address("BTCpu64NotifyMemoryDirty"), args, thread_environment->teb.data());
+	raven_ec_call(mapped_image->export_address("BTCpu64NotifyMemoryDirty"), args, state->environment()->teb.data());
 }
 uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 {
@@ -363,23 +508,22 @@ void FexProcess::protect_memory(uint64_t address, size_t size, int protection)
 		throw std::runtime_error("FEX invalid protection range");
 	for (uint64_t at = address; at < address + size; at += 4096)
 		if (!state->pages.contains(at)) throw std::runtime_error("FEX protection range is unmapped");
-	for (uint64_t at = address; at < address + size; at += 4096) state->pages[at] = protection;
-	if (address == 0x7ffe0000 && size == 4096) return;
-	// Tier 0: union the four logical protections of each real 16K page. Guest
-	// executable bytes remain host data; MAP_JIT owns native executable code.
-	for (auto page = address & ~uint64_t(16383); page < address + size; page += 16384) {
-		int combined = 0;
-		for (uint64_t at = page; at < page + 16384; at += 4096) {
-			const auto found = state->pages.find(at);
-			if (found != state->pages.end()) combined |= found->second;
+	uint64_t args[8]{address, size, guest_protection(protection)};
+	notify_memory("NotifyMemoryProtect", args, 3, [&] {
+		for (uint64_t at = address; at < address + size; at += 4096) state->pages[at] = protection;
+		if (address == 0x7ffe0000 && size == 4096) return;
+		// Tier 0: union the four logical protections of each real 16K page. Guest
+		// executable bytes remain host data; MAP_JIT owns native executable code.
+		for (auto page = address & ~uint64_t(16383); page < address + size; page += 16384) {
+			int combined = 0;
+			for (uint64_t at = page; at < page + 16384; at += 4096) {
+				const auto found = state->pages.find(at);
+				if (found != state->pages.end()) combined |= found->second;
+			}
+			combined = (combined & (PROT_READ | PROT_WRITE)) | (combined & PROT_EXEC ? PROT_READ : 0);
+			if (mprotect(reinterpret_cast<void *>(page), 16384, combined)) throw std::runtime_error("FEX host protection failed");
 		}
-		combined = (combined & (PROT_READ | PROT_WRITE)) | (combined & PROT_EXEC ? PROT_READ : 0);
-		if (mprotect(reinterpret_cast<void *>(page), 16384, combined)) throw std::runtime_error("FEX host protection failed");
-	}
-	if (mapped_image) {
-		uint64_t args[8]{address, size, guest_protection(protection)};
-		notify_memory("NotifyMemoryProtect", args, 3);
-	}
+	});
 }
 void FexProcess::protect_image(uint64_t address, size_t size, int protection) { protect_memory(address, size, protection); }
 bool FexProcess::has_protection(uint64_t address, size_t size, int protection) const
@@ -397,8 +541,9 @@ void FexProcess::unmap_memory(uint64_t address)
 	if (found == state->regions.end()) throw std::runtime_error("FEX allocation not found");
 	const auto n = found->second.size;
 	uint64_t args[8]{address, n, 0x8000};
-	notify_memory("NotifyMemoryFree", args, 3);
-	munmap(reinterpret_cast<void *>(address), n);
+	notify_memory("NotifyMemoryFree", args, 3, [&] {
+		if (munmap(reinterpret_cast<void *>(address), n)) throw std::runtime_error("FEX unmap failed");
+	});
 	for (auto at = address; at < address + n; at += 4096) state->pages.erase(at);
 	state->regions.erase(found);
 }
@@ -429,8 +574,8 @@ void FexProcess::map_image(LoadedImage &image)
 std::pair<uint64_t, uint64_t> FexProcess::stack_bounds() const { return {uintptr_t(state->stack), state->stack_top}; }
 NativeMode FexProcess::mode() const { return NativeMode::x64; }
 bool FexProcess::active() const { return state->active; }
-bool FexProcess::stopped() const { return true; }
-bool FexProcess::parallel() const { return false; }
+bool FexProcess::stopped() const { return !state->parallel || state->workers.at(state->selected)->stopped.load(std::memory_order_acquire); }
+bool FexProcess::parallel() const { return state->parallel; }
 uint64_t FexProcess::return_gate() const { return uintptr_t(state->gate); }
 uint64_t FexProcess::unix_call_gate() const { return 0; } // No same-process unix-library gate in M2.
 void FexProcess::add_api_trap(uint64_t address, uint32_t callee_cleanup)
@@ -472,7 +617,7 @@ void FexProcess::return_api(uint64_t value)
 	set_context(saved);
 	state->thread.awaiting_api = false;
 }
-void FexProcess::end_call() { state->active = state->thread.active_call = state->thread.awaiting_api = false; state->thread.callbacks.clear(); }
+void FexProcess::end_call() { if (state->parallel) state->workers.at(state->selected)->pause(); state->active = state->thread.active_call = state->thread.awaiting_api = false; state->thread.callbacks.clear(); }
 void FexProcess::abandon_call() { end_call(); }
 void FexProcess::enter_fault_dispatch() { state->thread.awaiting_api = true; }
 void FexProcess::redirect(const NativeContext &saved, size_t depth)
@@ -495,30 +640,36 @@ NativeResult FexProcess::callback(uint64_t address, std::span<const uint64_t> ar
 	state->thread.stack_top = ceiling;
 	return result;
 }
-NativeThreadState FexProcess::save_thread(bool) const
+NativeThreadState FexProcess::save_thread(bool snapshot) const
 {
 	auto saved = state->thread;
-	saved.context = context();
+	saved.stopped = stopped();
+	saved.context_in_task = state->parallel && !snapshot;
+	if (saved.stopped) saved.context = context();
+	else saved.context.registers.gs_base = state->teb;
 	saved.active_call = state->active;
 	return saved;
 }
 void FexProcess::load_thread(const NativeThreadState &saved)
 {
+	if (state->parallel) state->selected = saved.task;
 	state->thread = saved;
+	state->teb = saved.context.registers.gs_base;
 	state->active = saved.active_call;
-	set_context(saved.context);
+	if (saved.stopped && !saved.context_in_task) set_context(saved.context);
 }
 NativeThreadState FexProcess::new_thread(uint64_t stack_top, uint64_t teb)
 {
 	NativeThreadState thread;
 	thread.stack_top = stack_top;
+	if (state->parallel) thread.task = state->make_worker();
 	thread.context = state->initial;
 	thread.context.registers.gs_base = teb;
 	return thread;
 }
-int FexProcess::execution_descriptor() const { return -1; }
-void FexProcess::drain_execution() {}
-void FexProcess::set_execution_wait(std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)>) {}
+int FexProcess::execution_descriptor() const { return state->execution; }
+void FexProcess::drain_execution() { uint64_t value; while (state->execution >= 0 && ::read(state->execution, &value, sizeof(value)) > 0) {} }
+void FexProcess::set_execution_wait(std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> wait) { state->execution_wait = std::move(wait); }
 void FexProcess::set_unix_pump(std::function<void()> pump) { state->unix_pump = std::move(pump); }
 void FexProcess::drain_unix_events(const std::function<void(uint64_t)> &) {}
 uint64_t FexProcess::serving_teb() const { return 0; }
@@ -532,12 +683,20 @@ void FexProcess::set_served_calls(uint64_t *, std::vector<uint64_t> stubs, size_
 	if (!yield_traps.empty() && (stub_size != 112 || wait_offset != 85))
 		throw std::runtime_error("FEX served stub layout is unsupported");
 	std::vector<uint8_t *> pointers;
+	std::vector<uint64_t> local_stubs;
 	for (auto trap : yield_traps) {
 		// Providers also append non-served prelude fragments to `stubs` for the
 		// Rosetta scheduler. Only actual served stubs have the canonical yield.
 		if (trap < 109 || std::find(stubs.begin(), stubs.end(), trap - 109) == stubs.end())
 			throw std::runtime_error("FEX served yield trap has no canonical stub");
 		const auto stub = trap - 109;
+		if (state->parallel) {
+			const std::vector<uint8_t> local{0x65, 0x4c, 0x8b, 0x14, 0x25, 0xf0, 0x1f, 0, 0, 0x90, 0x90, 0x90};
+			if (read_memory(stub, local.size()) != local)
+				throw std::runtime_error("FEX parallel served stub encoding is unsupported");
+			local_stubs.push_back(stub);
+			continue;
+		}
 		const auto code = read_memory(stub, 7);
 		if (code[0] != 0x4c || code[1] != 0x8b || code[2] != 0x15)
 			throw std::runtime_error("FEX served stub encoding is unsupported");
@@ -558,6 +717,16 @@ void FexProcess::set_served_calls(uint64_t *, std::vector<uint64_t> stubs, size_
 	// Validate every real stub before clearing any pointer. Guest execution then
 	// reaches its registered API breakpoint with the original arguments intact.
 	for (auto *pointer : pointers) memset(pointer, 0, 8);
+	// The parallel provider replaces the null check with a GS load. FEX serves
+	// APIs on the controller, so bypass that protocol at its canonical API trap.
+	const std::array<uint8_t, 12> fallback{0xe9, 107, 0, 0, 0, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
+	for (auto stub : local_stubs) {
+		for (auto *image : state->images)
+			if (stub >= image->base() && stub - image->base() + fallback.size() <= image->data().size()) {
+				memcpy(image->data().data() + stub - image->base(), fallback.data(), fallback.size());
+				break;
+			}
+	}
 }
 }
 
@@ -575,9 +744,11 @@ NativeResult FexProcess::resume(std::chrono::milliseconds timeout)
 	for (;;) {
 		const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
 		if (remaining.count() <= 0) return {NativeStop::timeout, 0, context().registers.rip, 0};
-		const bool slicing = state->slice.count() > 0 && state->slice_wanted && state->slice_yield && state->slice_wanted();
+		const bool slicing = !state->parallel && state->slice.count() > 0 && state->slice_wanted && state->slice_yield && state->slice_wanted();
 		state->budget = slicing ? std::min(remaining, state->slice) : remaining;
 		auto result = resume();
+		if (state->parallel && result.stop == NativeStop::timeout && std::chrono::steady_clock::now() < deadline)
+			continue; // A remote suspend consumed this doorbell; resume the edited packet.
 		if (result.stop != NativeStop::timeout || !slicing || state->budget >= remaining) return result;
 		state->slice_yield();
 	}
@@ -633,12 +804,26 @@ uint64_t FexProcess::map_descriptor(int descriptor, size_t size, uint64_t offset
 namespace raven {
 void FexProcess::stop_thread(const NativeThreadState &thread)
 {
-	// Cooperative guest threads have no independently running host worker. Their
-	// context/stack/TEB lifetime is owned and released by NativeThreads.
-	if (thread.task) throw std::runtime_error("FEX parallel worker termination is unavailable");
+	if (state->parallel && thread.task && thread.task != state->selected) {
+		auto found = state->workers.find(thread.task);
+		if (found != state->workers.end()) {
+			found->second->shutdown();
+			state->workers.erase(found);
+		}
+	}
 }
 void FexProcess::pause_thread(NativeThreadState &thread)
 {
-	if (thread.task || !thread.stopped) throw std::runtime_error("FEX parallel worker pause is unavailable");
+	if (!state->parallel || thread.stopped) return;
+	auto selected = state->selected;
+	auto teb = state->teb;
+	state->selected = thread.task;
+	state->teb = thread.context.registers.gs_base;
+	state->workers.at(thread.task)->pause();
+	thread.context = context();
+	thread.stopped = true;
+	thread.context_in_task = false;
+	state->selected = selected;
+	state->teb = teb;
 }
 }

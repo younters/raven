@@ -1,4 +1,7 @@
 #include "child_process.h"
+#ifdef RAVEN_FEX_PROCESS
+#include "platform/darwin/fex/thread_api.h"
+#endif
 #include "kernel_context.h"
 #include "mutex.h"
 #include "semaphore.h"
@@ -513,6 +516,9 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(1);
 	});
+#ifdef RAVEN_FEX_PROCESS
+	register_fex_thread_context(registry, threads, thread_from);
+#endif
 	// A thread's description is a name the program gives it; it is kept per thread and handed back in memory the program frees with LocalFree.
 	auto descriptions = std::make_shared<std::map<uint32_t, std::u16string>>();
 	registry.add("SetThreadDescription", 2, [thread_from, descriptions](ApiCall &call) {
