@@ -8,6 +8,11 @@
 #include "sync.h"
 #include "nt_strings.h"
 #include "environment.h"
+#include "vm.h"
+#include "pe_view.h"
+#include "nt_io.h"
+#include "nt_system.h"
+#include "format.h"
 #include <thread>
 #include <atomic>
 #include <mach/mach_time.h>
@@ -21,73 +26,13 @@
 #include <cassert>
 
 namespace {
-constexpr int32_t invalid = int32_t(0xc000000d), no_memory = int32_t(0xc0000017);
-size_t page_size() { return size_t(getpagesize()); }
-size_t host_round_size(size_t n) {
-  if (!n || n > SIZE_MAX - page_size() + 1) return 0;
-  return (n + page_size() - 1) & ~(page_size() - 1);
-}
-int protection(uint32_t p) {
-  switch (p & 255) {
-  case 1: return PROT_NONE;
-  case 2: return PROT_READ;
-  case 4: return PROT_READ | PROT_WRITE;
-  case 0x10: return PROT_EXEC;
-  case 0x20: return PROT_READ | PROT_EXEC;
-  case 0x40: return PROT_READ | PROT_WRITE | PROT_EXEC;
-  default: return -1;
-  }
-}
-struct Region { size_t size; uint32_t protect, state; };
-std::mutex vm_mutex;
-std::map<uintptr_t, Region> regions;
-int32_t allocate(void *, void **base, uintptr_t zero_bits, size_t *size, uint32_t type, uint32_t prot) {
-  if (!base || !size || zero_bits || *base || (type != 0x3000 && type != 0x2000)) return invalid;
-  auto n = host_round_size(*size); auto p = protection(prot);
-  if (!n || p < 0 || (prot & ~255u)) return invalid;
-  // Executable native JIT requires the explicit MAP_JIT hook, never RWX mmap.
-  if (p & PROT_EXEC) return int32_t(0xc00000bb);
-  void *v = mmap(nullptr, n, type == 0x2000 ? PROT_NONE : p, MAP_PRIVATE | MAP_ANON, -1, 0);
-  if (v == MAP_FAILED) return no_memory;
-  { std::lock_guard<std::mutex> lock(vm_mutex); regions.emplace(uintptr_t(v), Region{n, type == 0x2000 ? 1u : prot, type == 0x2000 ? 0x2000u : 0x1000u}); }
-  *base = v; *size = n; return 0;
-}
-int32_t release(void *, void **base, size_t *size, uint32_t type) {
-  if (!base || !size || type != 0x8000 || *size) return invalid;
-  std::lock_guard<std::mutex> lock(vm_mutex);
-  auto it = regions.find(uintptr_t(*base));
-  if (it == regions.end() || munmap(*base, it->second.size)) return invalid;
-  regions.erase(it); *base = nullptr; return 0;
-}
-int32_t protect(void *, void **base, size_t *size, uint32_t prot, uint32_t *old) {
-  if (!base || !size || !old || (uintptr_t(*base) % page_size()) || protection(prot) < 0 || (prot & ~255u)) return invalid;
-  std::lock_guard<std::mutex> lock(vm_mutex);
-  auto it = regions.find(uintptr_t(*base)); auto n = host_round_size(*size);
-  // Deliberately require a whole owned region: mixed/subpage protection isn't modeled.
-  if (it == regions.end() || n != it->second.size || (protection(prot) & PROT_EXEC)) return invalid;
-  if (mprotect(*base, n, protection(prot))) return invalid;
-  *old = it->second.protect; it->second.protect = prot; *size = n; return 0;
-}
-struct MemoryInfo {
-  void *base, *allocation_base;
-  uint32_t allocation_protect, pad;
-  uint64_t region_size;
-  uint32_t state, protect, type, pad2;
-};
-static_assert(sizeof(MemoryInfo) == 48);
-int32_t query(void *, void *address, uint32_t klass, void *output, size_t length, size_t *written) {
-  if (klass || !output || length < sizeof(MemoryInfo)) return invalid;
-  std::lock_guard<std::mutex> lock(vm_mutex);
-  auto it = regions.upper_bound(uintptr_t(address));
-  if (it == regions.begin()) return invalid;
-  --it;
-  if (uintptr_t(address) - it->first >= it->second.size) return invalid;
-  auto &r = it->second;
-  *static_cast<MemoryInfo*>(output) = {reinterpret_cast<void*>(it->first), reinterpret_cast<void*>(it->first), r.protect, 0,
-                                    r.size, r.state, r.protect, 0x20000, 0};
-  if (written) *written = sizeof(MemoryInfo);
-  return 0;
-}
+using RavenVM::allocate;
+using RavenVM::release;
+using RavenVM::protect;
+using RavenVM::query;
+using RavenVM::MemoryInfo;
+constexpr int32_t invalid = int32_t(0xc000000d);
+size_t page_size() { return RavenVM::page(); }
 void *heap_alloc(void *, uint32_t flags, size_t size) { if (flags & ~8u) return nullptr; return (flags & 8) ? calloc(1, size ? size : 1) : malloc(size ? size : 1); }
 uint8_t heap_free(void *, uint32_t, void *p) { free(p); return 1; }
 int32_t qpc(int64_t *counter, int64_t *frequency) {
@@ -123,7 +68,8 @@ int32_t delete_lock(void *key) {
 void *resolve_native(const char *dll, const char *name) {
   if (std::string(dll) != "ntdll.dll") return nullptr;
 #define ENTRY(n, f) if (std::string(name) == n) return reinterpret_cast<void*>(&f)
-  ENTRY("NtAllocateVirtualMemory", allocate); ENTRY("NtFreeVirtualMemory", release);
+  ENTRY("NtAllocateVirtualMemory", allocate); ENTRY("NtAllocateVirtualMemoryEx", RavenVM::allocate_ex);
+  ENTRY("NtFlushInstructionCache", RavenVM::flush); ENTRY("NtFreeVirtualMemory", release);
   ENTRY("NtProtectVirtualMemory", protect); ENTRY("NtQueryVirtualMemory", query);
   ENTRY("RtlAllocateHeap", heap_alloc); ENTRY("RtlFreeHeap", heap_free);
   ENTRY("RtlQueryPerformanceCounter", qpc);
@@ -133,15 +79,41 @@ void *resolve_native(const char *dll, const char *name) {
 #undef ENTRY
   if (auto *p = RavenCRT::resolve(name)) return p;
   if (auto *p = RavenSync::resolve(name)) return p;
-  return RavenNT::resolve_strings(name);
+  if (auto *p = RavenNT::resolve_strings(name)) return p;
+  if (auto *p = RavenNT::resolve_system(name)) return p;
+  return RavenFormat::resolve(name);
 }
 NativeJit import_jit;
 void *resolve(const char *dll, const char *name) {
+  unsigned stack = 0;
   auto *target = resolve_native(dll, name);
-  return target ? native_adapter(import_jit, target) : nullptr;
+  if (!target && !strcmp(dll,"ntdll.dll")) target = RavenNT::resolve_io(name, stack);
+  return target ? native_adapter(import_jit, target, stack) : nullptr;
+}
+std::unique_ptr<PEView> mapped_image;
+std::unique_ptr<RavenNT::ProcessEnvironment> process_environment;
+std::unique_ptr<RavenNT::ThreadEnvironment> thread_environment;
+void inspect_image(Bytes image, size_t opt) {
+  mapped_image = std::make_unique<PEView>(PEView{image,opt});
+  RavenNT::active_image=mapped_image.get();
+  process_environment=std::make_unique<RavenNT::ProcessEnvironment>();
+  thread_environment=std::make_unique<RavenNT::ThreadEnvironment>(*process_environment);
+  RavenNT::active_process=process_environment.get(); RavenNT::active_thread=thread_environment.get();
+  RavenNT::import_lookup=resolve;
+  process_environment->put(0x10,image.data);
+  mapped_image->install_tls(*thread_environment);
+  auto *entry=mapped_image->export_address("RavenProcessInit");
+  if(!entry) throw std::runtime_error("missing RavenProcessInit native export");
+  std::cout << "CHPE native RavenProcessInit RVA=" << std::hex << uintptr_t(entry)-uintptr_t(image.data) << std::dec
+            << " TLS_bytes=" << thread_environment->static_tls.size() << " TEB/CPU-area prepared (not entered)\n";
 }
 void self_test() {
   assert(page_size() == 16384);
+  char formatted[64]; uint64_t va[3]{42,uintptr_t("bird"),0x3ff4000000000000ull};
+  assert(RavenFormat::output(formatted,64,"%d %s %.2f",va)==12 && !strcmp(formatted,"42 bird 1.25"));
+  int scanned=0;char scanned_text[16]{};
+  assert(RavenFormat::scan("42 bird","%d %15s",uintptr_t(&scanned),uintptr_t(scanned_text),nullptr,0)==2);
+  assert(scanned==42 && !strcmp(scanned_text,"bird"));
   uint64_t srw = 0, condition = 0;
   RavenSync::init_rw(&srw); RavenSync::init_cv(&condition);
   bool ready = false;
@@ -163,6 +135,33 @@ void self_test() {
   assert(RavenSync::wait_address(&address_value, &compare_value, 8, &immediate) == 0x102);
   compare_value = 2;
   assert(RavenSync::wait_address(&address_value, &compare_value, 8, nullptr) == 0);
+  void *reservation=nullptr;size_t reserved_size=32768;
+  assert(allocate(nullptr,&reservation,0,&reserved_size,0x2000,4)==0);
+  auto *second=static_cast<char*>(reservation)+16384;void *commit=second;size_t committed=1;
+  assert(allocate(nullptr,&commit,0,&committed,0x1000,4)==0 && committed==16384);
+  memset(commit,0x6b,committed);
+  size_t decommitted=committed;assert(release(nullptr,&commit,&decommitted,0x4000)==0);
+  assert(allocate(nullptr,&commit,0,&committed,0x1000,4)==0);
+  assert(*static_cast<char*>(commit)==0);
+  size_t zero=0;assert(release(nullptr,&reservation,&zero,0x8000)==0);
+  RavenVM::Extended ec{5,0x40};void *native_code=nullptr;size_t native_size=16;
+  assert(RavenVM::allocate_ex(reinterpret_cast<void*>(-1),&native_code,&native_size,0x3000,0x40,&ec,1)==0);
+  uint32_t ret_instruction=0xd65f03c0;NativeJit::write(native_code,&ret_instruction,4);
+  reinterpret_cast<void(*)()>(native_code)();
+  zero=0;assert(release(nullptr,&native_code,&zero,0x8000)==0);
+  char temporary[]="/tmp/raven-modhost-io-XXXXXX";int fd=mkstemp(temporary);assert(fd>=0);close(fd);
+  auto path=RavenNT::decode(temporary,strlen(temporary));RavenNT::String name{};RavenNT::init_unicode(&name,path.c_str());
+  RavenNT::ObjectAttributes object{48,0,nullptr,&name,0,0,nullptr,nullptr};
+  RavenNT::IoStatus io{};void *file=nullptr;
+  assert(RavenNT::create_file(&file,0xc0000000,&object,&io,nullptr,0,7,1,0x20,0,0)==0);
+  int64_t position=0;
+  assert(RavenNT::write_file(file,nullptr,nullptr,nullptr,&io,"bird",4,&position,0)==0 && io.information==4);
+  char readback[4]{};assert(RavenNT::read_file(file,nullptr,nullptr,nullptr,&io,readback,4,&position,0)==0 && !memcmp(readback,"bird",4));
+  void *section=nullptr;assert(RavenNT::create_section(&section,0,nullptr,nullptr,2,0x8000000,file)==0);
+  void *view=nullptr;size_t view_size=0;
+  assert(RavenNT::map_section(section,reinterpret_cast<void*>(-1),&view,0,0,nullptr,&view_size,1,0,2)==0 && view_size==4 && !memcmp(view,"bird",4));
+  assert(RavenNT::unmap_section(reinterpret_cast<void*>(-1),view)==0);
+  assert(RavenNT::close_handle(section)==0 && RavenNT::close_handle(file)==0);unlink(temporary);
   RavenNT::ProcessEnvironment process;
   RavenNT::ThreadEnvironment thread(process);
   uint32_t initial_tls = 0x12345678;
@@ -209,5 +208,5 @@ void self_test() {
 }
 int main(int argc, char **argv) {
   if (argc == 2 && std::string(argv[1]) == "--self-test") { self_test(); return 0; }
-  return map_module(argc, argv, resolve);
+  return map_module(argc, argv, resolve, inspect_image);
 }

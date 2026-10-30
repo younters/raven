@@ -113,3 +113,26 @@ vector and demand-zero EC-code bitmap. Self-tests check Unicode surrogate pairs,
 truncation boundaries, bitmap allocation and TEB/TLS/CPU-area wiring. Native
 substrate tests pass. These objects are not yet passed to module init; the
 remaining PE loader/import work continues. No new hard blocker is established.
+
+### Continuation: VM, image audit, I/O and system services
+
+Preflight now resolves **108/127 imports**, with **19 unresolved** (latest list in
+`modhost/m1d-continuation-evidence.json`). Added actual file read/write/query/seek,
+byte locks, owned handles/duplication and file/anonymous section mappings; native
+system information/time/frequency/CPU identity; counted loader lookup; image
+metadata queries; run-once; and Windows varargs formatting/scanning adapters.
+Unsupported operations return explicit failures. The harness namespace maps
+native paths and Z: paths; it is not a general Windows filesystem provider.
+
+The mapper now audits CHPE and constructs the environment while pages remain
+non-executable. `RavenProcessInit` resolves to native RVA **0x57a4** from the pinned
+DLL's own metadata. This DLL has no PE TLS directory (TLS template size 0); its
+runtime TLS bitmap/TEB slots are provided. No module entry has run.
+
+Added checks for file/section round trips, Windows-format integer/string/float
+arguments, reserve/commit/decommit/recommit and execution through the EC-code
+allocation path. The recommit-zero test exposed Darwin `MADV_DONTNEED` retaining
+anonymous contents; decommit now replaces owned non-JIT pages with demand-zero
+anonymous pages. Native JIT decommit explicitly clears memory under a write scope.
+All native substrate checks pass. Ordinary anonymous RX native code also executes
+on this unentitled host. No qualifying hard blocker has been found; work continues.

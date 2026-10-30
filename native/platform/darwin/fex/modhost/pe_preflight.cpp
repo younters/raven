@@ -33,7 +33,8 @@ struct Mapping {
 };
 #ifdef RAVEN_HOST_LOADER
 using ImportResolver = void *(*)(const char *, const char *);
-int map_module(int argc, char **argv, ImportResolver resolve) {
+using MapObserver = void (*)(Bytes, size_t);
+int map_module(int argc, char **argv, ImportResolver resolve, MapObserver observer = nullptr, MapObserver execute = nullptr) {
 #else
 int main(int argc, char **argv) {
 #endif
@@ -84,6 +85,9 @@ int main(int argc, char **argv) {
     }
     std::cout << "machine=0x" << std::hex << machine << std::dec << " sections=" << nsec
               << " image_size=" << image_size << " DIR64_relocations=" << fixed << '\n';
+#ifdef RAVEN_HOST_LOADER
+    if (observer) observer(image, opt);
+#endif
     auto imports = f.get<uint32_t>(opt + 120), isize = f.get<uint32_t>(opt + 124);
     image.check(imports, isize);
     size_t count = 0, resolved = 0;
@@ -112,6 +116,9 @@ int main(int argc, char **argv) {
       }
     }
     std::cout << "resolved=" << resolved << "\n";
+#ifdef RAVEN_HOST_LOADER
+    if (!count && execute) { execute(image, opt); return 0; }
+#endif
     std::cout << "STOP: " << count << " unresolved imports; no NT provider, CHPE initialization, or execution attempted\n";
     return 3;
   } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 2; }
