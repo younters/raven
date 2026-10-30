@@ -128,44 +128,44 @@
   "roundtrips_per_sample": 100000,
   "samples": [
     {
-      "integer_ns": 20417042,
-      "float_ns": 25607666
+      "integer_ns": 20324500,
+      "float_ns": 25762250
     },
     {
-      "integer_ns": 20685000,
-      "float_ns": 25667291
+      "integer_ns": 20447500,
+      "float_ns": 25526292
     },
     {
-      "integer_ns": 19947375,
-      "float_ns": 25675500
+      "integer_ns": 20355417,
+      "float_ns": 25713875
     },
     {
-      "integer_ns": 20539250,
-      "float_ns": 25607000
+      "integer_ns": 20202041,
+      "float_ns": 25700834
     },
     {
-      "integer_ns": 20627000,
-      "float_ns": 25199459
+      "integer_ns": 20061000,
+      "float_ns": 25805834
     }
   ],
   "roundtrip_samples_ns": [
-    11819917,
-    12056834,
-    11793625,
-    11683416,
-    12086792
+    12007667,
+    11938750,
+    12042292,
+    12054250,
+    11931875
   ],
   "medians": {
-    "integer_ms": 20.53925,
-    "float_ms": 25.607666,
-    "roundtrip_ns": 118.19917
+    "integer_ms": 20.3245,
+    "float_ms": 25.713875,
+    "roundtrip_ns": 120.07667
   },
   "prior_rosetta_ms": {
     "integer": 9.293,
     "float": 12.525
   },
   "kernel_assembly_sha256": "e50996af9f68cc9a80984bc70a7999c66903c2e034bd7bcb3c3f17efead441ed",
-  "runtime_stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19187\nCHPE native RavenProcessInit RVA=5bc4 TLS_bytes=0 TEB/CPU-area prepared (not entered)\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nPASS: x86-64 dispatch args=7,11,13,17 host_result=224 resumed_result=4884 calls=1\nPASS: precise AV guest_rip=1012bc00a fault_address=1012b8000 repaired_result=4665\nPASS: nested harness-to-guest callback argument=41 result=124 outer_resumed_result=5008\nBENCH sample=0 iterations=10000000 integer_ns=20417042 float_ns=25607666 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=1 iterations=10000000 integer_ns=20685000 float_ns=25667291 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=2 iterations=10000000 integer_ns=19947375 float_ns=25675500 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=3 iterations=10000000 integer_ns=20539250 float_ns=25607000 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=4 iterations=10000000 integer_ns=20627000 float_ns=25199459 integer_result=5292597211099207303 float_result=4295705.5919631328\nROUNDTRIP sample=0 calls=100000 elapsed_ns=11819917 ns_per_call=118.19917\nROUNDTRIP sample=1 calls=100000 elapsed_ns=12056834 ns_per_call=120.56834000000001\nROUNDTRIP sample=2 calls=100000 elapsed_ns=11793625 ns_per_call=117.93625\nROUNDTRIP sample=3 calls=100000 elapsed_ns=11683416 ns_per_call=116.83416\nROUNDTRIP sample=4 calls=100000 elapsed_ns=12086792 ns_per_call=120.86792\n",
+  "runtime_stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19187\nCHPE native RavenProcessInit RVA=5bc4 TLS_bytes=0 TEB/CPU-area prepared (not entered)\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nPASS: x86-64 dispatch args=7,11,13,17 host_result=224 resumed_result=4884 calls=1\nPASS: precise AV guest_rip=1043ec00a fault_address=1043e8000 repaired_result=4665\nPASS: nested harness-to-guest callback argument=41 result=124 outer_resumed_result=5008\nBENCH sample=0 iterations=10000000 integer_ns=20324500 float_ns=25762250 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=1 iterations=10000000 integer_ns=20447500 float_ns=25526292 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=2 iterations=10000000 integer_ns=20355417 float_ns=25713875 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=3 iterations=10000000 integer_ns=20202041 float_ns=25700834 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=4 iterations=10000000 integer_ns=20061000 float_ns=25805834 integer_result=5292597211099207303 float_result=4295705.5919631328\nROUNDTRIP sample=0 calls=100000 elapsed_ns=12007667 ns_per_call=120.07666999999999\nROUNDTRIP sample=1 calls=100000 elapsed_ns=11938750 ns_per_call=119.3875\nROUNDTRIP sample=2 calls=100000 elapsed_ns=12042292 ns_per_call=120.42292\nROUNDTRIP sample=3 calls=100000 elapsed_ns=12054250 ns_per_call=120.5425\nROUNDTRIP sample=4 calls=100000 elapsed_ns=11931875 ns_per_call=119.31874999999999\n",
   "runtime_stderr": "",
   "runtime_exit": 0,
   "reproduction_commands": [
@@ -186,13 +186,13 @@
     "native/platform/darwin/fex/modhost/fault.h": "d93bc8c874a3b47167b0edfc6f7c7bc54f66f206604f4a1da8f2d8089882ae83",
     "native/platform/darwin/fex/modhost/format.h": "308b8e8dd7d7d30d9dd6505f339c1c8df4c213ceb5c56ebcd0e109db08aaec46",
     "native/platform/darwin/fex/modhost/jit.h": "dc76e63635352635ac46c8b263c64401e306bd3ab98b660e91b48c09ffecf6d8",
-    "native/platform/darwin/fex/modhost/native_host.cpp": "2b8f98314b8ea5b1d549b5d8931e68393d7a94e6f6c2da95d2bbc8926126e3ca",
+    "native/platform/darwin/fex/modhost/native_host.cpp": "c5a3b4a447e0971bf6428d13e1c7796b2c7b00e5a3be624a5e97dfc89d13f30d",
     "native/platform/darwin/fex/modhost/nt_io.h": "94f414060aece5179ae93f2b1e4cb9ce58ee9129e1ee36427b0b258652ba4ae0",
     "native/platform/darwin/fex/modhost/nt_registry.h": "4f35d0bbad58ab10dbd0fa47610e9e6aa4f1d6035452e5c689888eeb9d83e3e7",
     "native/platform/darwin/fex/modhost/nt_strings.h": "63217103db5a28215ed19045370707fa835db91e00a4fd6f658121b1e5ee016b",
     "native/platform/darwin/fex/modhost/nt_system.h": "e393f4aca1146487f67cc9a2808541f71a7ebd7aa6b229d05aa253a6371d19ee",
     "native/platform/darwin/fex/modhost/nt_threads.h": "f2c4c3baa4f5e568760a5e4b32eeb05fbd15951ed04e012e49cf0c0d952b0942",
-    "native/platform/darwin/fex/modhost/pe_preflight.cpp": "046109f72bf0590f564752cfa93bffd7305b202c411b6198caf3ce7504d63c57",
+    "native/platform/darwin/fex/modhost/pe_preflight.cpp": "45e7b4b05c0ee0a67a35245f97b8b125f602fb2209c89dafb3079110d13057ac",
     "native/platform/darwin/fex/modhost/pe_view.h": "aecd8fbe98474bc0f0055198157a5d32b62afde96f7d103462de43aa0f725afe",
     "native/platform/darwin/fex/modhost/raven_host.h": "7326d7c6372d291ddba00dd8758111232cf076e0bd8edf04d1fe50060eff2daa",
     "native/platform/darwin/fex/modhost/sync.h": "7f4b3275339355aeafda65adc6b251a413cb7937055a7b2c93f0f86a80bbc2eb",

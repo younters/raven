@@ -168,7 +168,7 @@ int32_t exception_callback(void *opaque,void *packet,void *) {
   if(record->code!=0xc0000005 || record->count!=2 || record->information[0]!=0 || record->information[1]!=expected_fault_address || rip!=expected_fault_rip || record->address!=reinterpret_cast<void*>(rip))return RavenNT::not_supported;
   ++faults_repaired;rip+=3;uint64_t value=0x1234;memcpy(context+0xf8,&rip,8);memcpy(context+0x78,&value,8);return 0;
 }
-void *cpu_area(void *) { return &thread_environment->cpu; }
+void *cpu_area(void *teb) { void *area=nullptr; if(teb)memcpy(&area,static_cast<uint8_t*>(teb)+0x1788,8);return area; }
 void host_log(const char *message) { std::cerr << "FEX: " << message << std::flush; }
 uint32_t jit_protect(uint32_t mode) { auto previous=NativeJit::protect(mode); if(getenv("RAVEN_MODHOST_TRACE"))fprintf(stderr,"jit mode=%u previous=%u\n",mode,previous); return previous; }
 void *native_jit(uint64_t size) { auto *p=callback_jit.allocate(size);process_environment->mark_ec(uintptr_t(p),size);return p; }
@@ -385,6 +385,7 @@ void self_test() {
   assert(*static_cast<uint32_t*>(thread.tls_vector[0]) == initial_tls);
   assert(thread.static_tls[15]==0 && thread.cpu.context==thread.context.data());
   assert(*reinterpret_cast<void**>(thread.teb.data()+0x1788)==&thread.cpu);
+  assert(cpu_area(thread.teb.data())==&thread.cpu);
   RavenNT::active_process=&process;RavenNT::active_thread=&thread;RavenNT::pseudo_handle=RavenNT::current_handle;
   auto worker_entry=+[](void *p)->uint64_t{return *static_cast<uint64_t*>(p)+1;};
   uint64_t worker_input=41;void *worker_handle=nullptr;

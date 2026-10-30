@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-// Non-executing PE mapper for the M1b stop report. No import stubs or guest execution.
+// Standalone mode inspects PE data. Host mode can bind imports and invoke a
+// gated executor only after every import resolves.
 #include <sys/mman.h>
 #include <cstdint>
 #include <cstring>
@@ -131,7 +132,7 @@ int main(int argc, char **argv) {
 #ifdef RAVEN_HOST_LOADER
     if (!count && execute) { execute(image, opt); return 0; }
 #endif
-    std::cout << "STOP: " << count << " unresolved imports; no NT provider, CHPE initialization, or execution attempted\n";
+    std::cout << "STOP: " << count << " unresolved imports; inspection only, no module entry attempted\n";
     return 3;
   } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 2; }
 }

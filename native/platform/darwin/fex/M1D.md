@@ -84,7 +84,8 @@ native test frame. It cannot pass merely by reaching the host once.
 The host owns PEB/process parameters, TEB, runtime TLS slots/bitmap, a static TLS
 vector, AMD64 context, CHPE CPU area and EC code bitmap. This DLL has no PE TLS
 directory; the zero-size static template is explicitly observed. Its runtime TLS
-allocation is used by the real CRT. x18 designates the TEB while executing EC code.
+allocation is used by the real CRT. x18 designates the TEB while executing EC code; CPU-area lookup honors the supplied
+TEB, including owned secondary thread environments.
 Both module and dynamically allocated native EC-code pages are classified in the
 bitmap. Imports use adapters preserving EC vector nonvolatiles and x18; entry
 adapters preserve Darwin registers that EC may clobber.
@@ -116,15 +117,15 @@ SSE2 scalar multiply/add with no FMA. The driver independently assembles
 
 | Median | Prior Rosetta baseline | FEX Tier 0 | FEX / Rosetta |
 | --- | ---: | ---: | ---: |
-| Integer, 10M iterations | 9.293 ms | **20.539 ms** | **2.21×** |
-| Float, 10M iterations | 12.525 ms | **25.608 ms** | **2.04×** |
+| Integer, 10M iterations | 9.293 ms | **20.325 ms** | **2.19×** |
+| Float, 10M iterations | 12.525 ms | **25.714 ms** | **2.05×** |
 
 Verified integer result: `5292597211099207303`. Verified float result:
 `4295705.5919631328`, bit-identical to the native C++ reference with
 `-ffp-contract=off`.
 
-Guest/native round-trip median: **118.199 ns/call**, five samples of 100,000 calls.
-The range was 116.834–120.868 ns/call. This includes the guest loop, syscall state
+Guest/native round-trip median: **120.077 ns/call**, five samples of 100,000 calls.
+The range was 119.319–120.543 ns/call. This includes the guest loop, syscall state
 spill, native dispatch, context application and dispatcher reentry. It is not an
 isolated native function-call latency or an ARM64EC fast-call measurement.
 
@@ -132,11 +133,11 @@ Raw compute samples in ns:
 
 | Sample | Integer | Float |
 | --- | ---: | ---: |
-| 0 | 20,417,042 | 25,607,666 |
-| 1 | 20,685,000 | 25,667,291 |
-| 2 | 19,947,375 | 25,675,500 |
-| 3 | 20,539,250 | 25,607,000 |
-| 4 | 20,627,000 | 25,199,459 |
+| 0 | 20,324,500 | 25,762,250 |
+| 1 | 20,447,500 | 25,526,292 |
+| 2 | 20,355,417 | 25,713,875 |
+| 3 | 20,202,041 | 25,700,834 |
+| 4 | 20,061,000 | 25,805,834 |
 
 Sample 0 includes first compilation of that benchmark's blocks; the other samples
 reuse them. Timings cover guest entry through verified completion; the wrapper
