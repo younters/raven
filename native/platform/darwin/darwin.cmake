@@ -77,12 +77,15 @@ if(TARGET raven_cpu)
                 -o ${RAVEN_DARWIN_HANDOFF_BENCHMARK} ${RAVEN_DARWIN_DIR}/handoff_benchmark.c -lkernel32
             DEPENDS ${RAVEN_DARWIN_DIR}/handoff_benchmark.c VERBATIM)
         add_custom_target(darwin_handoff_benchmark ALL DEPENDS ${RAVEN_DARWIN_HANDOFF_BENCHMARK})
-        add_test(NAME native_darwin_handoff COMMAND raven --run-process --execution=native --timeout-ms=15000
+        add_test(NAME native_darwin_handoff COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_handoff.py
+            $<TARGET_FILE:raven> --run-process --execution=native --timeout-ms=15000
             --stdio=inherit ${RAVEN_DARWIN_HANDOFF_BENCHMARK})
-        add_test(NAME native_darwin_handoff_parallel COMMAND raven --run-process --execution=native --timeout-ms=15000
+        add_test(NAME native_darwin_handoff_parallel COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_handoff.py
+            $<TARGET_FILE:raven> --run-process --execution=native --timeout-ms=15000
             --stdio=inherit ${RAVEN_DARWIN_HANDOFF_BENCHMARK})
-        set_tests_properties(native_darwin_handoff native_darwin_handoff_parallel PROPERTIES TIMEOUT 30
-            PASS_REGULAR_EXPRESSION "2000 [0-9]+ [0-9]+")
+        set_tests_properties(native_darwin_handoff native_darwin_handoff_parallel PROPERTIES TIMEOUT 30)
+        add_test(NAME native_darwin_handoff_runner COMMAND ${Python3_EXECUTABLE}
+            ${RAVEN_DARWIN_DIR}/tests/handoff_runner_test.py)
         set_tests_properties(native_darwin_handoff_parallel PROPERTIES ENVIRONMENT RAVEN_PARALLEL=1)
     endif()
 endif()
