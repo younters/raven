@@ -397,7 +397,8 @@ uint64_t invoke_nested(void *packet) {
 		std::abort();
 	return nested_result;
 }
-void execute_image(Bytes image, size_t opt) {
+void initialize_image(Bytes image, size_t opt, uint64_t (*dispatch)(uint64_t, void *) = guest_dispatch,
+	int32_t (*exception)(void *, void *, void *) = exception_callback) {
 	PEView view{image, opt};
 	auto &process = *process_environment;
 	RavenVM::code_event =
@@ -433,9 +434,9 @@ void execute_image(Bytes image, size_t opt) {
 		mark(adapter, 32);
 		return adapter;
 	};
-	host.dispatch = reinterpret_cast<decltype(host.dispatch)>(callback(guest_dispatch));
+	host.dispatch = reinterpret_cast<decltype(host.dispatch)>(callback(dispatch));
 	host.unix_call = reinterpret_cast<decltype(host.unix_call)>(callback(unix_call));
-	host.exception = reinterpret_cast<decltype(host.exception)>(callback(exception_callback));
+	host.exception = reinterpret_cast<decltype(host.exception)>(callback(exception));
 	host.cpu_area = reinterpret_cast<decltype(host.cpu_area)>(callback(cpu_area));
 	host.log = reinterpret_cast<decltype(host.log)>(callback(host_log));
 	host.jit_write_protect =
@@ -478,6 +479,12 @@ void execute_image(Bytes image, size_t opt) {
 	if (status)
 		throw std::runtime_error("ThreadInit returned " + std::to_string(status));
 	std::cout << "PASS: ThreadInit\n" << std::flush;
+}
+void execute_image(Bytes image, size_t opt) {
+	initialize_image(image, opt);
+	PEView view{image, opt};
+	uint64_t args[8]{};
+	auto teb = thread_environment->teb.data();
 	const uint8_t code[]{0xb9, 7, 0, 0, 0, 0xba, 11, 0, 0, 0, 0x41, 0xb8, 13, 0, 0, 0, 0x41, 0xb9,
 		17, 0, 0, 0, 0x49, 0x89, 0xca, 0xb8, 0, 1, 0, 0, 0x0f, 0x05, 0x48, 0x05, 0x34, 0x12, 0, 0,
 		0x49, 0x89, 0xc2, 0xb8, 1, 1, 0, 0, 0x0f, 0x05, 0xeb, 0xfe};
@@ -1084,6 +1091,7 @@ void self_test() {
 		<< "PASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)\n";
 }
 } // namespace
+#ifndef RAVEN_FEX_EMBEDDED
 int main(int argc, char **argv) {
 	require_native_x18();
 	if (argc == 2 && std::string(argv[1]) == "--tier0-second-fault")
@@ -1102,3 +1110,5 @@ int main(int argc, char **argv) {
 		return map_module(argc - 1, argv + 1, resolve, inspect_image, execute_image);
 	return map_module(argc, argv, resolve, inspect_image);
 }
+
+#endif
