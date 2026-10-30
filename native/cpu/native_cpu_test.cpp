@@ -364,6 +364,12 @@ static void image_mapping_contracts(const std::string &bootstrap)
 			const auto trap = process.call(dynamic.base() + 0x1040, {}, timeout);
 			check(trap.stop == raven::NativeStop::fault && trap.signal == SIGTRAP,
 				"unmapped image retained an API trap after remapping");
+#ifdef __APPLE__
+			auto continued = process.context();
+			check(continued.registers.rip == dynamic.base() + 0x1040, "remapped INT3 lost Windows fault RIP");
+			++continued.registers.rip;
+			process.set_context(continued);
+#endif
 			check(process.resume(timeout).stop == raven::NativeStop::returned, "remapped image trap could not resume");
 			process.unmap_image(dynamic.base());
 			const auto collision = process.map_memory(dynamic.data().size(), PROT_READ | PROT_WRITE, dynamic.base());
@@ -641,6 +647,10 @@ static void persistent_contracts(const std::string &bootstrap)
 		const auto result = process.call(image.image_base + 0x1000, {}, timeout);
 		check(result.stop == raven::NativeStop::fault && result.signal == SIGTRAP,
 			"registered API elsewhere consumed an unrelated guest breakpoint");
+#ifdef __APPLE__
+		check(result.instruction == image.image_base + 0x1000 && process.context().registers.rip == image.image_base + 0x1000,
+			"Darwin non-API INT3 did not use Windows fault RIP");
+#endif
 		rejected([&] { process.return_api(0); });
 	}
 	no_children();

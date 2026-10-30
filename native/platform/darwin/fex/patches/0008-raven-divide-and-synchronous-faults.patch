@@ -1,0 +1,197 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9b611e4..1e95d5f 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -126,6 +126,9 @@ else()
+   set(ENABLE_GUEST_WINDOW_DEFAULT FALSE)
+ endif()
+ option(ENABLE_GUEST_WINDOW "Support running a 32-bit guest at a non-zero host base (iOS WoW64)" ${ENABLE_GUEST_WINDOW_DEFAULT})
++if(RAVEN_HOST)
++  add_compile_definitions(FEX_RAVEN_DIVIDE=1)
++endif()
+ set(FEX_GENERATOR_FEATURES "")
+ if (ENABLE_GUEST_WINDOW)
+   if (ARCHITECTURE_arm64ec)
+diff --git a/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp b/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
+index b1d011e..11d727f 100644
+--- a/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/MiscOps.cpp
+@@ -61,6 +61,93 @@ DEF_OP(Break) {
+   EmitSynchronousFault(Op->Reason);
+ }
+ 
++
++// Raven Tier 0: #DE is required for both zero divisor and quotient overflow.
++// This guard precedes Div/UDiv, so RA's no-upper-input folding cannot remove it.
++DEF_OP(CheckDiv) {
++  const auto Op = IROp->C<IR::IROp_CheckDiv>();
++  const auto X = ARMEmitter::Size::i64Bit;
++  ARMEmitter::ForwardLabel Fault, Valid, Done;
++  // Preserve incoming guest flags on both success and fault. No architectural
++  // register is updated until the check succeeds. ResetStack handles fault exit.
++  sub(X, ARMEmitter::Reg::rsp, ARMEmitter::Reg::rsp, 64);
++  mrs(TMP4, ARMEmitter::SystemRegister::NZCV);
++  str(TMP4, ARMEmitter::Reg::rsp, 0);
++  mov(X, TMP1, GetReg(Op->Lower));
++  mov(X, TMP2, GetReg(Op->Upper));
++  if (Op->Bits < 64) {
++    ubfx(X, TMP3, GetReg(Op->Divisor), 0, Op->Bits);
++  } else {
++    mov(X, TMP3, GetReg(Op->Divisor));
++  }
++  cbz(X, TMP3, &Fault);
++  if (!Op->Signed) {
++    if (Op->Bits == 8) {
++      ubfx(X, TMP2, TMP1, 8, 8);
++    } else if (Op->Bits < 64) {
++      ubfx(X, TMP2, TMP2, 0, Op->Bits);
++    }
++    // For an unsigned 2n/n division, quotient fits iff high < divisor.
++    cmp(X, TMP2, TMP3);
++    b(ARMEmitter::Condition::CC_HS, &Fault);
++  } else if (Op->Bits < 64) {
++    if (Op->Bits == 8) {
++      sbfx(X, TMP1, TMP1, 0, 16);
++    } else {
++      ubfx(X, TMP1, TMP1, 0, Op->Bits);
++      bfi(X, TMP1, TMP2, Op->Bits, Op->Bits);
++      if (Op->Bits == 16) sbfx(X, TMP1, TMP1, 0, 32);
++    }
++    sbfx(X, TMP3, TMP3, 0, Op->Bits);
++    sdiv(X, TMP2, TMP1, TMP3);
++    sbfx(X, TMP4, TMP2, 0, Op->Bits);
++    cmp(X, TMP2, TMP4);
++    b(ARMEmitter::Condition::CC_NE, &Fault);
++  } else {
++    // Compare |128-bit dividend| against |divisor| * (max_magnitude + 1).
++    // Positive quotient max=2^63-1, negative quotient max magnitude=2^63.
++    eor(X, TMP4, TMP2, TMP3);
++    lsr(X, TMP4, TMP4, 63);
++    str(TMP4, ARMEmitter::Reg::rsp, 16);
++    ARMEmitter::ForwardLabel AbsDone, ThresholdDone;
++    tbz(TMP2, 63, &AbsDone);
++    subs(X, TMP1, ARMEmitter::Reg::zr, TMP1);
++    sbc(X, TMP2, ARMEmitter::Reg::zr, TMP2);
++    Bind(&AbsDone);
++    str(TMP1, ARMEmitter::Reg::rsp, 32);
++    str(TMP2, ARMEmitter::Reg::rsp, 40);
++    cmp(X, TMP3, 0);
++    cneg(X, TMP3, TMP3, ARMEmitter::Condition::CC_MI);
++    lsl(X, TMP1, TMP3, 63);
++    lsr(X, TMP2, TMP3, 1);
++    ldr(TMP4, ARMEmitter::Reg::rsp, 16);
++    cbz(X, TMP4, &ThresholdDone);
++    adds(X, TMP1, TMP1, TMP3);
++    adc(X, TMP2, TMP2, ARMEmitter::Reg::zr);
++    Bind(&ThresholdDone);
++    ldr(TMP3, ARMEmitter::Reg::rsp, 40);
++    cmp(X, TMP3, TMP2);
++    b(ARMEmitter::Condition::CC_HI, &Fault);
++    b(ARMEmitter::Condition::CC_LO, &Valid);
++    ldr(TMP3, ARMEmitter::Reg::rsp, 32);
++    cmp(X, TMP3, TMP1);
++    b(ARMEmitter::Condition::CC_HS, &Fault);
++  }
++  Bind(&Valid);
++  ldr(TMP4, ARMEmitter::Reg::rsp, 0);
++  msr(ARMEmitter::SystemRegister::NZCV, TMP4);
++  add(X, ARMEmitter::Reg::rsp, ARMEmitter::Reg::rsp, 64);
++  b(&Done);
++  Bind(&Fault);
++  ldr(TMP4, ARMEmitter::Reg::rsp, 0);
++  msr(ARMEmitter::SystemRegister::NZCV, TMP4);
++  add(X, ARMEmitter::Reg::rsp, ARMEmitter::Reg::rsp, 64);
++  str(GetReg(Op->RIP).X(), STATE, offsetof(FEXCore::Core::CPUState, rip));
++  EmitSynchronousFault({.ErrorRegister = 0, .Signal = Core::FAULT_SIGTRAP,
++                        .TrapNumber = FEXCore::X86State::X86_TRAPNO_DE, .si_code = 1});
++  Bind(&Done);
++}
++
+ DEF_OP(CheckGuestMemSpan) {
+   const auto Op = IROp->C<IR::IROp_CheckGuestMemSpan>();
+   ARMEmitter::ForwardLabel Valid;
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+index c75bba5..c0f7241 100644
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+@@ -3673,6 +3673,15 @@ void OpDispatchBuilder::DIVOp(OpcodeArgs) {
+     return;
+   }
+ 
++#ifdef FEX_RAVEN_DIVIDE
++  // Check the architectural double-width dividend before division optimization,
++  // before any quotient/remainder stores, and with recoverable flags/x87 state.
++  if (MMXState == MMXState_X87) _SyncStackToSlow();
++  FlushRegisterCache();
++  _CheckDiv(LoadGPRRegister(X86State::REG_RAX), LoadGPRRegister(X86State::REG_RDX), Divisor,
++            GetRelocatedPC(Op, -Op->InstSize), IR::OpSizeAsBits(Size), false);
++#endif
++
+   Ref Quotient = _AllocateGPR(!DivRemainderDead);
+   Ref Remainder = DivRemainderDead ? Invalid() : _AllocateGPR(true);
+ 
+@@ -3718,6 +3727,15 @@ void OpDispatchBuilder::IDIVOp(OpcodeArgs) {
+     return;
+   }
+ 
++#ifdef FEX_RAVEN_DIVIDE
++  // Check the architectural double-width dividend before division optimization,
++  // before any quotient/remainder stores, and with recoverable flags/x87 state.
++  if (MMXState == MMXState_X87) _SyncStackToSlow();
++  FlushRegisterCache();
++  _CheckDiv(LoadGPRRegister(X86State::REG_RAX), LoadGPRRegister(X86State::REG_RDX), Divisor,
++            GetRelocatedPC(Op, -Op->InstSize), IR::OpSizeAsBits(Size), true);
++#endif
++
+   Ref Quotient = _AllocateGPR(!DivRemainderDead);
+   Ref Remainder = DivRemainderDead ? Invalid() : _AllocateGPR(true);
+ 
+diff --git a/FEXCore/Source/Interface/IR/IR.json b/FEXCore/Source/Interface/IR/IR.json
+index c4332fa..1fa64f9 100644
+--- a/FEXCore/Source/Interface/IR/IR.json
++++ b/FEXCore/Source/Interface/IR/IR.json
+@@ -327,6 +327,9 @@
+         "HasSideEffects": true,
+         "Desc": ["Checks the full flat 32-bit operand span before any access or architectural update."]
+       },
++      "CheckDiv GPR:$Lower, GPR:$Upper, GPR:$Divisor, GPR:$RIP, i8:$Bits, i1:$Signed": {
++        "HasSideEffects": true
++      },
+       "CallbackReturn": {
+         "HasSideEffects": true
+       },
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+index 5af866f..18865cd 100644
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -671,7 +671,16 @@ extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, ARM64_NT_CONTEXT
+   if (!CTX->IsAddressInCodeBuffer(Thread, Native->Pc) && !IsDispatcherAddress(Native->Pc)) return STATUS_NOT_SUPPORTED;
+   if (!IsDispatcherAddress(Native->Pc)) Exception::ReconstructThreadState(Thread, *Native);
+   auto &Context = Exception::StoreRavenContext(Thread, Native->Fpcr, Native->Fpsr);
+-  Record->ExceptionAddress = reinterpret_cast<void*>(Context.Rip);
++  auto &Fault = Thread->CurrentFrame->SynchronousFaultData;
++  // Only the dispatcher's faultless signal stubs own this metadata. A native
++  // assertion BRK must not consume stale guest metadata or become a breakpoint.
++  const bool Synthetic = Fault.FaultToTopAndGeneratedException;
++  if (Record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION && !Synthetic) return STATUS_NOT_SUPPORTED;
++  BOOL FirstChance = TRUE;
++  *Record = FEX::Windows::HandleGuestException(Fault, *Record, Context.Rip, Context.Rax, Context.Rcx, FirstChance);
++  // Windows reports the breakpoint address; Raven's API stop advances it again.
++  if (Record->ExceptionCode == EXCEPTION_BREAKPOINT) Context.Rip -= 1;
++
+   const auto Status = RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->exception),
+     reinterpret_cast<uintptr_t>(Record), reinterpret_cast<uintptr_t>(&Context), reinterpret_cast<uintptr_t>(Native));
+   if (Status) return Status;
+diff --git a/Source/Windows/Common/Exception.h b/Source/Windows/Common/Exception.h
+index d9fee6e..b71557a 100644
+--- a/Source/Windows/Common/Exception.h
++++ b/Source/Windows/Common/Exception.h
+@@ -30,6 +30,8 @@ static inline EXCEPTION_RECORD HandleGuestException(FEXCore::Core::CpuStateFrame
+   case FEXCore::Core::FAULT_SIGILL: Dst.ExceptionCode = EXCEPTION_ILLEGAL_INSTRUCTION; return Dst;
+   case FEXCore::Core::FAULT_SIGTRAP:
+     switch (Fault.TrapNo) {
++    // x86 #DE covers zero divisor AND quotient overflow (INTO is #OF).
++    case FEXCore::X86State::X86_TRAPNO_DE: Dst.ExceptionCode = EXCEPTION_INT_DIVIDE_BY_ZERO; return Dst;
+     case FEXCore::X86State::X86_TRAPNO_DB: Dst.ExceptionCode = EXCEPTION_SINGLE_STEP; return Dst;
+     case FEXCore::X86State::X86_TRAPNO_BP:
+       Dst.ExceptionAddress = reinterpret_cast<void*>(Rip - 1);

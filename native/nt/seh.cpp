@@ -385,7 +385,9 @@ public:
 			} catch (const std::exception &) {
 			}
 		}
-		throw unhandled();
+		auto stopped = unhandled();
+		stopped.exception_code = code;
+		throw stopped;
 	}
 
 	// Execution resumes at the callback nesting where the exception was raised; handler calls above it are abandoned.
@@ -765,7 +767,11 @@ void register_exception_api(ApiRegistry &registry, KernelContext &context, Nativ
 		case SIGTRAP: status = 0x80000003U; break;
 		default: break;
 		}
-		auto record = exceptions->new_record(status, 0, rip, parameters);
+		if (fault.exception_code) {
+			status = fault.exception_code;
+			parameters = fault.exception_information;
+		}
+		auto record = exceptions->new_record(status, fault.exception_flags, rip, parameters);
 		// As KiUserExceptionDispatcher finds them: the CONTEXT on a 16-byte boundary below the faulting stack pointer and the record above
 		// it, and the handlers' calls below both. The .NET runtime turns a fault in managed code into an exception from these.
 		const uint64_t frame = (context_rsp(origin) - 0x40 - x64_context::size - ((record_size + 15) & ~size_t(15))) & ~uint64_t(15);
