@@ -17,6 +17,7 @@
 #include <unistd.h>
 #ifdef __APPLE__
 #include <raven_darwin_system.h>
+#include "platform/darwin/processor_count.h"
 #include "../platform/darwin/dxmt/identity.h"
 #endif
 
@@ -140,6 +141,8 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 {
 #ifdef __APPLE__
 	raven_darwin::register_firmware_api(registry);
+	raven_darwin::register_processor_count_api(registry);
+	raven_darwin::register_appcontainer_api(registry);
 #endif
 	auto &objects = context.objects;
 	registry.add("GetAdaptersAddresses", 5, [](ApiCall &call) {
@@ -866,7 +869,11 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		std::vector<uint8_t> data;
 		if (level == 11) {
 			// PROCESSOR_POWER_INFORMATION per processor: number, maximum, current and limit in MHz, idle states.
+#ifdef __APPLE__
+			const long count = darwin::processor_count(call.pointer_width() == 4);
+#else
 			const long count = std::max<long>(1, ::sysconf(_SC_NPROCESSORS_ONLN));
+#endif
 			for (long index = 0; index < count; ++index) {
 #ifdef __APPLE__
 				const auto frequency = raven_darwin::cpu_frequency(unsigned(index));

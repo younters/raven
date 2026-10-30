@@ -7,4 +7,6 @@
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>NSHighResolutionCapable</key><true/>
+<key>NSMicrophoneUsageDescription</key>
+<string>Allow a Windows program running in Raven to record audio.</string>
 </dict></plist>

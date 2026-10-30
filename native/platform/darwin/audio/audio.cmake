@@ -3,8 +3,14 @@ add_library(raven_darwin_audio STATIC ${RAVEN_DARWIN_DIR}/audio/output.cpp ${RAV
 target_link_libraries(raven_darwin_audio PUBLIC "-framework AudioToolbox" "-framework CoreAudio" "-framework AVFoundation")
 target_compile_options(raven_darwin_audio PRIVATE -Wall -Wextra)
 target_link_libraries(raven_cpu PUBLIC raven_darwin_audio)
-target_link_options(raven PRIVATE "-Wl,-sectcreate,__TEXT,__info_plist,${RAVEN_DARWIN_DIR}/audio/microphone.plist")
-set_property(TARGET raven APPEND PROPERTY LINK_DEPENDS ${RAVEN_DARWIN_DIR}/audio/microphone.plist)
+# The runtime identity and microphone usage string share runtime-info.plist.
+# Two -sectcreate options for __info_plist make the linker discard one dictionary.
+add_executable(darwin_capture_permission_test ${RAVEN_DARWIN_DIR}/audio/permission_test.mm)
+target_link_libraries(darwin_capture_permission_test PRIVATE raven_darwin_audio)
+target_link_options(darwin_capture_permission_test PRIVATE "-Wl,-sectcreate,__TEXT,__info_plist,${RAVEN_DARWIN_DIR}/runtime-info.plist")
+set_property(TARGET darwin_capture_permission_test APPEND PROPERTY LINK_DEPENDS ${RAVEN_DARWIN_DIR}/runtime-info.plist)
+add_test(NAME native_darwin_capture_permission COMMAND darwin_capture_permission_test)
+set_tests_properties(native_darwin_capture_permission PROPERTIES TIMEOUT 10)
 add_executable(darwin_audio_test ${RAVEN_DARWIN_DIR}/audio/output_test.cpp)
 target_link_libraries(darwin_audio_test PRIVATE raven_darwin_audio)
 add_test(NAME native_darwin_audio_offline COMMAND darwin_audio_test)
@@ -193,3 +199,5 @@ foreach(width IN ITEMS 64 32)
             ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-xaudio-prefix${width};RAVEN_AUDIO_TRACE=1;RAVEN_PARALLEL=1")
     endif()
 endforeach()
+add_test(NAME native_darwin_runtime_microphone_plist COMMAND ${Python3_EXECUTABLE}
+    ${RAVEN_DARWIN_DIR}/audio/runtime_plist_test.py $<TARGET_FILE:raven>)

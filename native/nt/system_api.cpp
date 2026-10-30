@@ -1,3 +1,6 @@
+#ifdef __APPLE__
+#include "platform/darwin/processor_count.h"
+#endif
 #include "kernel_context.h"
 #include "actctx.h"
 #include "text.h"
@@ -144,6 +147,18 @@ void zone_transitions(std::span<uint8_t> bytes, int year, const ZoneInfo &januar
 	std::memcpy(cached.data() + 16, bytes.data() + 152, 16);
 }
 
+static unsigned guest_processor_count(size_t width, bool topology = false)
+{
+#ifdef __APPLE__
+	(void)topology;
+	return darwin::processor_count(width == 4);
+#else
+	if (topology)
+		return unsigned(std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1));
+	return std::max(1U, std::min(unsigned(width * 8), std::thread::hardware_concurrency()));
+#endif
+}
+
 std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_environment(const NativePaths &paths, bool wow64)
 {
 	const auto user = paths.user_name();
@@ -170,7 +185,11 @@ std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_envi
 	add(u"HOMEDRIVE", u"C:");
 	add(u"HOMEPATH", u"\\Users\\" + user);
 	add(u"LOCALAPPDATA", profile + u"\\AppData\\Local");
-	add(u"NUMBER_OF_PROCESSORS", widen_ascii(std::to_string(std::max(1U, std::min(64U, std::thread::hardware_concurrency())))));
+#ifdef __APPLE__
+	add(u"NUMBER_OF_PROCESSORS", widen_ascii(std::to_string(guest_processor_count(wow64 ? 4 : 8))));
+#else
+	add(u"NUMBER_OF_PROCESSORS", widen_ascii(std::to_string(guest_processor_count(8))));
+#endif
 	add(u"OS", u"Windows_NT");
 	add(u"Path", u"C:\\Windows\\system32;C:\\Windows;C:\\Windows\\System32\\Wbem");
 	add(u"PATHEXT", u".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC");
@@ -444,7 +463,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	const auto system_information = [](ApiCall &call) {
 		// A 32-bit program sees the 36-byte layout and its own address range; GetNativeSystemInfo still names the x64 processor.
 		if (call.pointer_width() == 4) {
-			const uint32_t processors = std::max(1U, std::min(32U, std::thread::hardware_concurrency()));
+			const uint32_t processors = guest_processor_count(4);
 			const uint32_t mask = processors >= 32 ? ~0U : (1U << processors) - 1;
 			const uint32_t fields[9] = {9, 4096, 0x10000, 0x7ffeffff, mask, processors, 8664, 65536, 6};
 			std::vector<uint8_t> bytes(36);
@@ -455,7 +474,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		std::vector<uint8_t> bytes(48);
 		const uint16_t architecture = 9;
 		std::memcpy(bytes.data(), &architecture, 2);
-		const uint32_t page = 4096, granularity = 65536, processors = std::max(1U, std::min(64U, std::thread::hardware_concurrency())), type = 8664;
+		const uint32_t page = 4096, granularity = 65536, processors = guest_processor_count(8), type = 8664;
 		const uint64_t minimum = 0x10000, maximum = native_user_limit - 1, mask = processors >= 64 ? ~0ULL : (1ULL << processors) - 1;
 		std::memcpy(bytes.data() + 4, &page, 4);
 		std::memcpy(bytes.data() + 8, &minimum, 8);
@@ -593,8 +612,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("SLRegisterPlugin", 4, [](ApiCall &call) { call.ret(0xc004f016U); });
 	registry.add("SLPersistRTSPayloadOverride", 4, [](ApiCall &call) { call.ret(0xc004f016U); });
 	// All logical processors form one group of at most 64: the masks of the process and the system are the same.
-	const auto processor_mask = [] {
-		const long count = std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1);
+	const auto processor_mask = [](size_t width) {
+		const long count = guest_processor_count(width, true);
 		return count >= 64 ? ~uint64_t(0) : (uint64_t(1) << count) - 1;
 	};
 	registry.add("GetProcessAffinityMask", 3, [processor_mask](ApiCall &call) {
@@ -602,8 +621,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(87);
 			return;
 		}
-		call.store_pointer(call[1], processor_mask());
-		call.store_pointer(call[2], processor_mask());
+		call.store_pointer(call[1], processor_mask(call.pointer_width()));
+		call.store_pointer(call[2], processor_mask(call.pointer_width()));
 		call.ret(1);
 	});
 	// Affinity is not enforced: the call reports the mask the thread had, which is every processor.
@@ -612,7 +631,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 #ifdef __APPLE__
 	registry.add("GetSystemCpuSetInformation",5,[](ApiCall &call) {
 		if (!call[2]) { call.fail(87,0); return; }
-		const auto count=std::min<uint32_t>(std::max(1u,std::thread::hardware_concurrency()),64);
+		const auto count=guest_processor_count(call.pointer_width());
 		const uint32_t needed=count*32;
 		call.store<uint32_t>(call[2],needed);
 		if (!call[0] || call.u32(1)<needed) { call.fail(122,0); return; }
@@ -642,8 +661,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		const size_t width = call.pointer_width();
 		// Each record: relationship, size, then flags, efficiency class, 20 reserved bytes, the group count and one group affinity.
 		const size_t record = (32 + width + 8 + width - 1) / width * width;
-		const long count = std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1);
-		const auto mask = processor_mask();
+		const long count = guest_processor_count(width, true);
+		const auto mask = processor_mask(call.pointer_width());
 		std::vector<uint8_t> bytes;
 		const auto add = [&](uint32_t kind, uint64_t group_mask) {
 			std::vector<uint8_t> entry(record);
@@ -690,7 +709,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const size_t width = call.pointer_width(), record = width == 4 ? 24 : 32;
-		const long count = std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1);
+		const long count = guest_processor_count(width, true);
 		std::vector<uint8_t> bytes;
 		const auto add = [&](uint32_t kind, uint64_t mask) {
 			std::vector<uint8_t> entry(record);
@@ -700,8 +719,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		};
 		for (long index = 0; index < std::min<long>(count, long(width * 8)); ++index)
 			add(0, uint64_t(1) << index);
-		add(1, processor_mask());
-		add(3, processor_mask());
+		add(1, processor_mask(call.pointer_width()));
+		add(3, processor_mask(call.pointer_width()));
 		const uint32_t capacity = call.load<uint32_t>(call[1]);
 		call.store<uint32_t>(call[1], uint32_t(bytes.size()));
 		if (!call[0] || capacity < bytes.size()) {

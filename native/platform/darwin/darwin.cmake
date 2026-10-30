@@ -521,6 +521,8 @@ endif()
 # Host-only shortcut parser and generated bundle ownership/lifecycle contracts.
 add_test(NAME native_darwin_apps COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/apps_test.py)
 
+include(${RAVEN_DARWIN_DIR}/app_compat.cmake)
+
 # Both guest widths exercise the same printer contracts and verify the resulting PDF on the host.
 # Orphaned children: a parent host killed outright leaves its child a broken pipe, a signalled process handle and a failed
 # completion, and a detached child running.
@@ -534,6 +536,30 @@ if(TARGET raven AND RAVEN_MINGW64)
             set(ORPHAN_ENTRY _raven_entry)
         endif()
         if(ORPHAN_COMPILER)
+            set(TEARDOWN_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/teardown-wait${width}.exe)
+            add_custom_command(OUTPUT ${TEARDOWN_FIXTURE}
+                COMMAND ${ORPHAN_COMPILER} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                    -Wl,--entry,${ORPHAN_ENTRY},--no-insert-timestamp -o ${TEARDOWN_FIXTURE}
+                    ${RAVEN_DARWIN_DIR}/tests/teardown_wait.c -lkernel32 -lgcc
+                DEPENDS ${RAVEN_DARWIN_DIR}/tests/teardown_wait.c VERBATIM)
+            add_custom_target(teardown_wait_fixture${width} ALL DEPENDS ${TEARDOWN_FIXTURE})
+            add_test(NAME native_darwin_teardown_wait_x${width} COMMAND ${Python3_EXECUTABLE}
+                ${RAVEN_DARWIN_DIR}/tests/teardown_wait.py $<TARGET_FILE:raven> ${TEARDOWN_FIXTURE})
+            set_tests_properties(native_darwin_teardown_wait_x${width} PROPERTIES TIMEOUT 30)
+            add_test(NAME native_darwin_teardown_multi_x${width} COMMAND ${Python3_EXECUTABLE}
+                ${RAVEN_DARWIN_DIR}/tests/teardown_wait.py $<TARGET_FILE:raven> ${TEARDOWN_FIXTURE} multi)
+            set_tests_properties(native_darwin_teardown_multi_x${width} PROPERTIES TIMEOUT 30)
+            set(CREATION_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/process-creation${width}.exe)
+            add_custom_command(OUTPUT ${CREATION_FIXTURE}
+                COMMAND ${ORPHAN_COMPILER} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                    -Wl,--entry,${ORPHAN_ENTRY},--no-insert-timestamp -o ${CREATION_FIXTURE}
+                    ${RAVEN_DARWIN_DIR}/tests/process_creation.c -ladvapi32 -lkernel32 -lgcc
+                DEPENDS ${RAVEN_DARWIN_DIR}/tests/process_creation.c VERBATIM)
+            add_custom_target(process_creation_fixture${width} ALL DEPENDS ${CREATION_FIXTURE})
+            add_test(NAME native_darwin_process_creation_x${width} COMMAND raven --run-process
+                --execution=native --timeout-ms=15000 ${CREATION_FIXTURE})
+            set_tests_properties(native_darwin_process_creation_x${width} PROPERTIES TIMEOUT 20
+                PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
             set(ORPHAN_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/orphan-contract${width}.exe)
             add_custom_command(OUTPUT ${ORPHAN_FIXTURE}
                 COMMAND ${ORPHAN_COMPILER} -nostdlib -O1 -fno-builtin -fno-stack-protector
@@ -637,3 +663,6 @@ if(TEST native_outer_surface_input)
 endif()
 
 include(${RAVEN_DARWIN_DIR}/x87sidecar.cmake)
+
+add_test(NAME native_darwin_teardown_ps_rows COMMAND ${Python3_EXECUTABLE}
+    ${RAVEN_DARWIN_DIR}/tests/teardown_wait.py --check-ps)

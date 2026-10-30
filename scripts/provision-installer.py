@@ -37,8 +37,14 @@ COMPONENTS = ("cabinet.dll", "sxs.dll", "rpcrt4.dll", "msi.dll", "raven-storage.
               "libtiff.dll", "propsys.dll", "mlang.dll", "windowscodecs.dll", "gdiplus.dll", "urlmon.dll", "riched20.dll", "msftedit.dll", "msvfw32.dll", "advpack.dll", "raven-setupapi.dll", "xmllite.dll")
 
 
+def widl_target(triple):
+    # Width alone retains the host ISA on arm64. RPC stubs need the guest ABI.
+    return ["widl", "-b", triple]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build the pinned ReactOS Windows Installer components: msi, cabinet, sxs and structured storage")
+    parser.add_argument("--rpc-abi-probe", action="store_true", help="generate a minimal RPC client using the installer WIDL command, then exit")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--arch", choices=("x64", "x86"), default="x64", help="build the 64-bit components, or the 32-bit ones for PE32 programs")
@@ -53,6 +59,16 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, TMPDIR=str(output), TMP=str(output), TEMP=str(output))
+    widl = widl_target(triple)
+    if args.rpc_abi_probe:
+        probe = output / "probe.idl"
+        probe.write_text("""[uuid(39c732ad-1d36-47f3-9ca8-a8cc307aa859), version(1.0), explicit_handle]
+interface probe {
+    long check([in] handle_t binding, [in] long first, [in] long second);
+}
+""")
+        subprocess.run(widl + ["-Oif", "-c", "-o", str(output / "probe.c"), str(probe)], check=True)
+        return
     repo = Path(__file__).resolve().parents[1]
     archive = args.archive.resolve() if args.archive else output / "reactos-source.tar.gz"
     if not archive.exists():
@@ -116,7 +132,8 @@ def main():
     run(["clang", "-O1", "-w", source / "sdk/tools/spec2def/spec2def.c", "-o", output / "spec2def"])
     for name in ("winnt", "ntdef", "devioctl"):
         run([output / "hpp", name + ".template.h", generated / "psdk" / (name + ".h")], source / "sdk/include/xdk")
-    widl = ["widl", "-m32" if x86 else "-m64", "-D__REACTOS__", "-I", source / "sdk/include/psdk", "-I", source / "sdk/include", "-I", generated / "psdk"]
+
+    widl += ["-D__REACTOS__", "-I", source / "sdk/include/psdk", "-I", source / "sdk/include", "-I", generated / "psdk"]
     idls = set()
 
     def idl(name):

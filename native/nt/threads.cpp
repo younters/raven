@@ -1,5 +1,8 @@
 #include "threads.h"
 #include "handle_channel.h"
+#ifdef __APPLE__
+#include "platform/darwin/thread_teardown.h"
+#endif
 
 #include <cstdlib>
 #include <fcntl.h>
@@ -552,6 +555,9 @@ void NativeThreads::unwind_all()
 	if (!running || !running->main)
 		return;
 	tearing_down = true;
+#ifdef __APPLE__
+	raven_darwin::prepare_teardown_caller(*running);
+#endif
 	std::vector<std::shared_ptr<GuestThread>> remaining;
 	for (const auto &thread : threads)
 		if (!thread->main && thread->state != GuestThread::State::done) {

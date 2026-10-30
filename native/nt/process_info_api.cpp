@@ -1,3 +1,6 @@
+#ifdef __APPLE__
+#include "platform/darwin/processor_count.h"
+#endif
 #include "access_token.h"
 #include "child_process.h"
 #include "elevation.h"
@@ -139,7 +142,11 @@ static InheritedHandle local_process_information(KernelContext &context, uint32_
 			answer.access = 0xc00000bbU;
 			return answer;
 		}
+#ifdef __APPLE__
+		const auto processors = darwin::processor_count(width == 4);
+#else
 		const auto processors = std::clamp<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1, width * 8);
+#endif
 		const uint64_t affinity = processors == 64 ? UINT64_MAX : (uint64_t(1) << processors) - 1;
 		data.assign(6 * width, 0);
 		put(0, 259, 4);

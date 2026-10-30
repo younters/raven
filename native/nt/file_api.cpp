@@ -11,6 +11,9 @@
 #include "file_objects.h"
 #include "restart.h"
 #include "text.h"
+#ifdef __APPLE__
+#include "platform/darwin/path_search.h"
+#endif
 
 #include <algorithm>
 #include <cerrno>
@@ -1589,7 +1592,11 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(87);
 			return;
 		}
+#ifdef __APPLE__
+		if (call[2] && !raven_darwin::search_path_has_extension(file))
+#else
 		if (call[2] && file.find(u'.') == std::u16string::npos)
+#endif
 			file += call.wide(call[2]);
 		std::vector<std::u16string> directories;
 		if (call[0]) {
@@ -1608,6 +1615,9 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			if (candidate.empty() || candidate.back() != u'\\')
 				candidate.push_back(u'\\');
 			candidate += file;
+#ifdef __APPLE__
+			raven_darwin::use_qualified_search_path(candidate, file);
+#endif
 			const auto resolved = paths.resolve(candidate);
 			if (!resolved || !resolved->exists || !std::filesystem::is_regular_file(resolved->host))
 				continue;

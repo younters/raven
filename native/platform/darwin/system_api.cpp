@@ -1,5 +1,6 @@
 #include <raven_darwin_system.h>
 #include "nt/api.h"
+#include "processor_count.h"
 #include "nt/registry.h"
 #include "nt/text.h"
 
@@ -7,6 +8,7 @@
 #include <unistd.h>
 #include <cstring>
 #include <algorithm>
+#include <thread>
 
 namespace raven_darwin {
 
@@ -30,6 +32,26 @@ void register_firmware_api(raven::ApiRegistry &registry)
 		if (call[2] && call.u32(3) >= data.size())
 			call.write(call[2], data);
 		call.ret(data.size());
+	});
+}
+
+// All processor queries share the guest group model.
+void register_processor_count_api(raven::ApiRegistry &registry)
+{
+	for (const auto *name : {"GetActiveProcessorCount", "GetMaximumProcessorCount"})
+		registry.add(name, 1, [](raven::ApiCall &call) {
+			const auto group = call.u32(0) & 0xffff;
+			if (group && group != 0xffff) { call.fail(87); return; }
+			call.ret(raven::darwin::processor_count(call.pointer_width() == 4));
+		});
+}
+
+// No approximate SID hashing: callers must observe that this service is absent.
+void register_appcontainer_api(raven::ApiRegistry &registry)
+{
+	registry.add("DeriveAppContainerSidFromAppContainerName", 2, [](raven::ApiCall &call) {
+		if (call[1]) call.store_pointer(call[1], 0);
+		call.fail(120, 0x80070078U); // HRESULT_FROM_WIN32(ERROR_CALL_NOT_IMPLEMENTED)
 	});
 }
 
