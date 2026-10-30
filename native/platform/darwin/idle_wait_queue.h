@@ -12,6 +12,18 @@
 
 namespace raven {
 
+enum class DarwinIdleWaitMode { none, queue, legacy };
+
+// Decide eligibility without touching AppKit or registering filters. A failed arm still selects the legacy path at the call site.
+inline DarwinIdleWaitMode darwin_idle_wait_mode(std::span<const pollfd> descriptors, bool source_available)
+{
+	if (descriptors.empty()) return DarwinIdleWaitMode::none;
+	if (!source_available) return DarwinIdleWaitMode::legacy;
+	for (const auto &descriptor : descriptors)
+		if (descriptor.fd >= 0 && (descriptor.events & ~(POLLIN | POLLOUT))) return DarwinIdleWaitMode::legacy;
+	return DarwinIdleWaitMode::queue;
+}
+
 // One kqueue can be watched by one persistent CFRunLoop source. Borrowed descriptors are armed only for the current idle wait;
 // EV_ONESHOT prevents a still-readable descriptor from repeatedly posting AppKit events before the scheduler can consume its data.
 class DarwinIdleWaitQueue {
@@ -29,9 +41,7 @@ public:
 	{
 		disarm();
 		if (queue < 0) return false;
-		// Do not report success for an event mask this queue cannot express.
-		for (const auto &descriptor : descriptors)
-			if (descriptor.fd >= 0 && (descriptor.events & ~(POLLIN | POLLOUT))) return false;
+		if (darwin_idle_wait_mode(descriptors, true) == DarwinIdleWaitMode::legacy) return false;
 		for (const auto &descriptor : descriptors) {
 			if (descriptor.fd < 0) continue;
 			for (const auto [mask, filter] : {std::pair<short, short>{POLLIN, EVFILT_READ}, {POLLOUT, EVFILT_WRITE}}) {

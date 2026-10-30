@@ -967,7 +967,7 @@ struct CocoaPresentation::State {
 	void watch_waits(std::span<const pollfd> descriptors)
 	{
 		if (wait_source) CFFileDescriptorDisableCallBacks(wait_source, kCFFileDescriptorReadCallBack);
-		if (descriptors.empty()) {
+		if (raven::darwin_idle_wait_mode(descriptors, true) == raven::DarwinIdleWaitMode::none) {
 			idle_wait_queue.disarm();
 			legacy_watch_waits({});
 			return;
@@ -988,7 +988,8 @@ struct CocoaPresentation::State {
 				else { CFFileDescriptorInvalidate(wait_source); CFRelease(wait_source); wait_source = nullptr; }
 			}
 		}
-		if (wait_source && idle_wait_queue.arm(descriptors)) {
+		if (raven::darwin_idle_wait_mode(descriptors, wait_source != nullptr) == raven::DarwinIdleWaitMode::queue &&
+			idle_wait_queue.arm(descriptors)) {
 			legacy_watch_waits({});
 			CFFileDescriptorEnableCallBacks(wait_source, kCFFileDescriptorReadCallBack);
 		} else {

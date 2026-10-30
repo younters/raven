@@ -43,6 +43,13 @@ int main()
 		char received = 0;
 		check(read(a[0], &received, 1) == 1 && received == byte, "queue consumed borrowed descriptor data");
 		const pollfd exceptional{a[0], POLLPRI, 0};
+		using Mode = raven::DarwinIdleWaitMode;
+		check(raven::darwin_idle_wait_mode({}, false) == Mode::none, "empty wait created a source");
+		check(raven::darwin_idle_wait_mode({&first, 1}, false) == Mode::legacy, "missing source did not select fallback");
+		check(raven::darwin_idle_wait_mode({&first, 1}, true) == Mode::queue, "read wait did not select queue");
+		check(raven::darwin_idle_wait_mode({&exceptional, 1}, true) == Mode::legacy, "exception wait did not select fallback");
+		const pollfd ignored{-1, POLLPRI, 0};
+		check(raven::darwin_idle_wait_mode({&ignored, 1}, true) == Mode::queue, "negative descriptor affected eligibility");
 		check(!queue.arm({&exceptional, 1}), "except-only wait did not select fallback");
 		const std::array<pollfd, 2> mixed{{first, exceptional}};
 		check(!queue.arm(mixed) && !ready(queue.descriptor()), "unsupported mask left partial registrations");
