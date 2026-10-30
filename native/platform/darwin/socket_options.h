@@ -1,5 +1,6 @@
 #pragma once
 #include "nt/api.h"
+#include <algorithm>
 #include <netinet/in.h>
 #include <sys/socket.h>
 
@@ -10,8 +11,13 @@ struct SocketOptions {
 	{
 		if (call.u32(1) != 0xffff) return false;
 		if (call.u32(2) == 4 && setting && exclusive) {
-			if (!call[3] || call.i32(4) < 4) { call.fail(10014, UINT64_MAX); return true; }
-			if (call.load<int32_t>(call[3])) { call.fail(10022, UINT64_MAX); return true; }
+			if (!call[3] || call.i32(4) < 1) { call.fail(10014, UINT64_MAX); return true; }
+			// Winsock reads a Boolean option from as little as one byte, as the generic setsockopt path does.
+			const auto value = call.read(call[3], std::min<size_t>(size_t(call.i32(4)), sizeof(int32_t)));
+			int32_t reuse = 0;
+			for (size_t at = 0; at < value.size(); ++at)
+				reuse |= int32_t(value[at]) << (8 * at);
+			if (reuse) { call.fail(10022, UINT64_MAX); return true; }
 			// Disabling reuse preserves exclusivity and is a valid Boolean option.
 			call.ret(0); return true;
 		}

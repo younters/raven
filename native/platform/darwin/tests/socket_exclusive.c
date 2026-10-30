@@ -27,6 +27,11 @@ int raven_entry(void)
 	if (setsockopt(a,SOL_SOCKET,SO_REUSEADDR,(char *)&value,size)) return 4;
 	value=1;
 	if (!setsockopt(a,SOL_SOCKET,SO_REUSEADDR,(char *)&value,size) || WSAGetLastError()!=WSAEINVAL) return 16;
+	// A one-byte Boolean is read like a full one: false is accepted, true still rejected.
+	char flag=0;
+	if (setsockopt(a,SOL_SOCKET,SO_REUSEADDR,&flag,1)) return 22;
+	flag=1;
+	if (!setsockopt(a,SOL_SOCKET,SO_REUSEADDR,&flag,1) || WSAGetLastError()!=WSAEINVAL) return 23;
 	value=0;
 	struct sockaddr_in address={0};
 	address.sin_family=AF_INET; address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
