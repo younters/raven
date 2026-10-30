@@ -26,7 +26,65 @@ int main(int argc, char **argv)
 		raven::PEImage image(bytes);
 		raven::LoadedImage loaded(image, image.image_base);
 		const std::string mode = argv[2];
-		if (mode == "syscall") {
+		bool matrix = mode.starts_with("matrix-");
+		bool expected_fault = false;
+		size_t divide_offset = 0, divide_length = 0;
+		uint64_t quotient_register = 0, remainder_register = 0;
+		if (matrix) {
+			const bool sign = mode[7] == 's';
+			const auto dash = mode.find('-', 8);
+			const unsigned bits = unsigned(std::stoul(mode.substr(8, dash - 8)));
+			const auto kind = mode.substr(dash + 1);
+			check(bits == 8 || bits == 16 || bits == 32 || bits == 64, "bad divide width");
+			const uint64_t min = 1ULL << (bits - 1);
+			uint64_t low = 10, high = 0, divisor = 2;
+			if (kind == "zero" || kind == "fold-zero") { divisor = 0; expected_fault = true; }
+			else if (kind == "overflow" || kind == "fold-overflow") {
+				expected_fault = true;
+				if (sign) { low = uint64_t(0) - min; high = UINT64_MAX; divisor = UINT64_MAX; }
+				else { low = 0; high = 1; divisor = 1; if (bits == 8) low = 0x100; }
+			} else if (kind == "wide-valid") { low = 0; high = 1; divisor = 3; if (bits == 8) low = 0x100; }
+			else if (kind == "positive-overflow") { low = min; divisor = 1; expected_fault = true; }
+			else if (kind == "negative-limit") { low = uint64_t(0) - min; high = UINT64_MAX; divisor = 1; }
+			else if (kind == "positive-limit") { low = min - 1; divisor = 1; }
+			else if (kind == "wide-overflow") { low = 0; high = min; divisor = 1; expected_fault = true; }
+			else check(kind == "valid" || kind == "fold-valid", "bad divide case");
+			std::vector<uint8_t> code;
+			auto imm = [&](uint8_t op, uint64_t value) { code.push_back(0x48); code.push_back(op); for (unsigned i = 0; i < 8; ++i) code.push_back(uint8_t(value >> (i * 8))); };
+			imm(0xb8, low); imm(0xba, high); imm(0xb9, divisor);
+			if (kind.starts_with("fold-")) {
+				if (sign) { if (bits == 64) code.push_back(0x48); code.push_back(0x99); }
+				else { code.push_back(0x31); code.push_back(0xd2); }
+			}
+			divide_offset = code.size();
+			if (bits == 16) code.push_back(0x66);
+			if (bits == 64) code.push_back(0x48);
+			code.push_back(bits == 8 ? 0xf6 : 0xf7); code.push_back(sign ? 0xf9 : 0xf1);
+			divide_length = code.size() - divide_offset;
+			if (!expected_fault) {
+				const uint64_t mask = bits == 64 ? UINT64_MAX : (1ULL << bits) - 1;
+				__uint128_t dividend = bits == 8 ? low & 0xffff : ((__uint128_t(high & mask) << bits) | (low & mask));
+				uint64_t q, r;
+				if (sign) {
+					const auto shift = 128 - (bits == 8 ? 16 : bits * 2);
+					const __int128_t signed_dividend = __int128_t(dividend << shift) >> shift;
+					const int64_t signed_divisor = int64_t(divisor << (64 - bits)) >> (64 - bits);
+					q = uint64_t(signed_dividend / signed_divisor); r = uint64_t(signed_dividend % signed_divisor);
+				} else { q = uint64_t(dividend / (divisor & mask)); r = uint64_t(dividend % (divisor & mask)); }
+				quotient_register = bits == 8 ? (low & ~0xffffULL) | (q & 0xff) | ((r & 0xff) << 8) :
+					bits == 16 ? (low & ~mask) | (q & mask) : q & mask;
+				remainder_register = bits == 8 ? high : bits == 16 ? (high & ~mask) | (r & mask) : r & mask;
+			}
+			// Observe quotient/remainder through a real syscall before completing.
+			code.insert(code.end(), {0x48, 0x89, 0xc3, 0x48, 0x89, 0xd6, 0xb8, 0x35, 0x12, 0, 0, 0x0f, 0x05});
+			// Recovery/valid completion has its own deterministic result.
+			code.insert(code.end(), {0xb8, 42, 0, 0, 0, 0xc3});
+			memcpy(loaded.data().data() + image.entry, code.data(), code.size());
+		} else if (mode == "ud2") {
+			loaded.data()[image.entry] = 0x0f; loaded.data()[image.entry + 1] = 0x0b;
+		} else if (mode == "internal") {
+			// Tested in an isolated child: a host BRK must never become a guest exception.
+		} else if (mode == "syscall") {
 			const uint8_t code[]{0xb8, 0x34, 0x12, 0, 0, 0x0f, 0x05, 0x48, 0x83, 0xc0, 5, 0xc3};
 			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
 		} else if (mode == "fault") {
@@ -41,8 +99,29 @@ int main(int argc, char **argv)
 		} else check(mode == "entry", "unknown mode");
 		raven::LoadedImage *images[]{&loaded};
 		raven::FexProcess process(images, root);
+		if (mode == "internal") asm volatile("brk #0");
 		auto result = process.call(loaded.base() + image.entry, {});
-		if (mode == "syscall") {
+		if (matrix) {
+			if (expected_fault) {
+				check(result.stop == raven::NativeStop::exception && result.value == 0xc0000094, "divide fault not delivered");
+				auto context = process.context();
+				check(context.registers.rip == loaded.base() + image.entry + divide_offset, "divide RIP imprecise");
+				context.registers.rip += divide_length;
+				process.set_context(context);
+				result = process.resume();
+			}
+			check(result.stop == raven::NativeStop::syscall && result.value == 0x1235, "divide continuation failed");
+			if (!expected_fault) {
+				const auto context = process.context();
+				check(context.registers.rbx == quotient_register && context.registers.rsi == remainder_register, "division changed valid quotient/remainder");
+			}
+			result = process.resume();
+		} else if (mode == "ud2") {
+			check(result.stop == raven::NativeStop::exception && result.value == 0xc000001d, "UD2 misclassified");
+			check(process.context().registers.rip == loaded.base() + image.entry, "UD2 RIP imprecise");
+			std::cout << "PASS: UD2 precise illegal instruction\n";
+			return 0;
+		} else if (mode == "syscall") {
 			check(result.stop == raven::NativeStop::syscall && result.value == 0x1234, "syscall stop lost number");
 			auto context = process.context();
 			check(context.registers.rip == loaded.base() + image.entry + 7, "syscall RIP not advanced");
@@ -64,6 +143,8 @@ int main(int argc, char **argv)
 			return 0;
 		} else if (mode == "breakpoint") {
 			check(result.stop == raven::NativeStop::exception && result.value == 0x80000003, "provider breakpoint not delivered");
+			check(process.context().registers.rip == loaded.base() + image.entry, "breakpoint RIP imprecise");
+			std::cout << "PASS: INT3 precise breakpoint\n";
 			return 0;
 		}
 		check(result.stop == raven::NativeStop::returned && result.value == (mode == "entry" ? 500500 : 42), "guest result mismatch");
