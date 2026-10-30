@@ -12,7 +12,8 @@ static void retire_acknowledged(unsigned slot);
 static struct raven_control control;
 static bool acknowledge_retirement = true;
 static bool pause_retirement;
-static dispatch_semaphore_t paused, resume_retirement;
+static dispatch_semaphore_t paused, resume_retirement[2];
+static unsigned pause_index;
 struct raven_control *raven_dxmt_control(void) { return &control; }
 
 static void check(bool ok, const char *message)
@@ -31,8 +32,10 @@ static void retire_acknowledged(unsigned slot)
 {
 	(void)slot;
 	if (!pause_retirement) return;
+	const unsigned index = __atomic_fetch_add(&pause_index, 1, __ATOMIC_RELAXED);
+	check(index < 2, "bounded paused destructors");
 	dispatch_semaphore_signal(paused);
-	check(!dispatch_semaphore_wait(resume_retirement, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)), "resume paused destructor");
+	check(!dispatch_semaphore_wait(resume_retirement[index], dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)), "resume paused destructor");
 }
 
 static void *destroy_drawable(void *object)
@@ -59,7 +62,8 @@ static void test_retirement(id<MTLDevice> device)
 	check(mach_port_mod_refs(mach_task_self(), port, MACH_PORT_RIGHT_SEND, 1) == KERN_SUCCESS, "retain guard right");
 	check(send_refs(port) == 2, "one transport right plus guard");
 	paused = dispatch_semaphore_create(0);
-	resume_retirement = dispatch_semaphore_create(0);
+	resume_retirement[0] = dispatch_semaphore_create(0);
+	resume_retirement[1] = dispatch_semaphore_create(0);
 	pause_retirement = true;
 	pthread_t destructor;
 	check(!pthread_create(&destructor, NULL, destroy_drawable, old), "start destructor");
@@ -69,14 +73,24 @@ static void test_retirement(id<MTLDevice> device)
 	check(send_refs(port) == 1, "allocator releases old right exactly once");
 	mach_port_t replacement = IOSurfaceCreateMachPort(next->surface);
 	control.surfaces[slot].port = replacement;
-	dispatch_semaphore_signal(resume_retirement);
+	check(mach_port_mod_refs(mach_task_self(), replacement, MACH_PORT_RIGHT_SEND, 1) == KERN_SUCCESS, "guard replacement right");
+	pthread_t replacement_destructor;
+	check(!pthread_create(&replacement_destructor, NULL, destroy_drawable, next), "retire replacement before old destructor resumes");
+	check(!dispatch_semaphore_wait(paused, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)), "pause replacement cleanup after UNUSED");
+	const uint64_t replacement_ticket = retiring_slots[slot].ticket;
+	dispatch_semaphore_signal(resume_retirement[0]);
 	pthread_join(destructor, NULL);
+	check(send_refs(port) == 1 && send_refs(replacement) == 2 && retiring_slots[slot].active &&
+		retiring_slots[slot].ticket == replacement_ticket, "old ticket must not reap a newer acknowledged retirement");
+	dispatch_semaphore_signal(resume_retirement[1]);
+	pthread_join(replacement_destructor, NULL);
 	pause_retirement = false;
-	check(send_refs(port) == 1 && send_refs(replacement) == 1, "old destructor preserves guard and new lease right");
+	check(send_refs(replacement) == 1, "replacement destructor releases its own right exactly once");
 	mach_port_deallocate(mach_task_self(), port);
-	[next release];
+	mach_port_deallocate(mach_task_self(), replacement);
 	dispatch_release(paused);
-	dispatch_release(resume_retirement);
+	dispatch_release(resume_retirement[0]);
+	dispatch_release(resume_retirement[1]);
 
 	old = [[RavenDXMTDrawable alloc] initWithDevice:device window:1003 properties:&props];
 	check([old acquireSlot], "reserve unacknowledged victim");
