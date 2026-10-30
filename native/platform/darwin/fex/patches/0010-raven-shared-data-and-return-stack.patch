@@ -1,0 +1,22 @@
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -664,6 +664,18 @@
+   const auto Area = GetCPUArea();
+   auto *Thread = Area.ThreadState();
+   if (!Thread) return STATUS_NOT_SUPPORTED;
++  if (Record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
++    const auto Address = Record->ExceptionInformation[1];
++    if (UserSharedDataBacking && Record->ExceptionInformation[0] == 0 &&
++        Address - FEX::Windows::UserSharedData::GuestBase < FEX::Windows::UserSharedData::PageSize &&
++        CTX->IsAddressInCodeBuffer(Thread, Native->Pc) &&
++        FEX::Windows::UserSharedData::HandleLoad(UserSharedDataBacking, *reinterpret_cast<const uint32_t*>(Native->Pc),
++                                               Address, Native->X, Native->Sp, Native->V)) {
++      Native->Pc += 4;
++      return STATUS_SUCCESS;
++    }
++    if (FEX::Windows::CallRetStack::HandleAccessViolation(Thread, Address, Native->X17)) return STATUS_SUCCESS;
++  }
+   if (Record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+       FEX::Windows::JITGuardPage::HandleJITGuardPage(Thread,
+         reinterpret_cast<void*>(Record->ExceptionInformation[1]), Native->X,

@@ -286,7 +286,7 @@ int main(int argc, char **argv)
 	const bool fex_entry = run_entry && argc == 4 && std::string(argv[2]) == "--execution=fex";
 	const bool valid = fex_entry || (inspect && argc == 3) || (map_image && (argc == 3 || argc == 4)) ||
 		(run_entry && argc == 4 && std::string(argv[2]) == "--execution=native") || (bind_imports && argc >= 3) ||
-		((run_modules || run_process) && last_file > first_file && std::string(argv[2]) == "--execution=native");
+		((run_modules || run_process) && last_file > first_file && (std::string(argv[2]) == "--execution=native" || std::string(argv[2]) == "--execution=fex"));
 	if (!valid) {
 		std::cerr << "Usage: raven --inspect|--inspect-imports|--inspect-exports|--inspect-delay-imports|--inspect-resources program.exe\n"
 			<< "       raven --map-image|--dump-image program.exe [base-address]\n"
@@ -298,8 +298,17 @@ int main(int argc, char **argv)
 		return 2;
 	}
 	try {
+		const bool use_fex = argc > 2 && std::string_view(argv[2]) == "--execution=fex";
+#ifdef RAVEN_FEX_PROCESS
+		raven::select_fex_execution(use_fex);
+#else
+		if (use_fex) throw std::runtime_error("FEX requires a RAVEN_FEX_MODHOST build");
+#endif
 		if (bind_imports || run_modules || run_process) {
 			raven::ModuleSet modules;
+#ifdef RAVEN_FEX_PROCESS
+			if (use_fex) modules.set_address_space(raven::fex_address_available, 0x10000000000ULL);
+#endif
 			raven::PEModule *entry = nullptr;
 			for (int i = (run_modules || run_process) ? first_file : 2; i < last_file; ++i) {
 				auto bytes = read_file(argv[i]);

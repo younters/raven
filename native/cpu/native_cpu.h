@@ -15,6 +15,9 @@ struct raven_control;
 #endif
 
 namespace raven {
+#ifdef __APPLE__
+class FexProcess;
+#endif
 
 enum class NativeStop { returned, syscall, fault, timeout, api, exception, exited };
 
@@ -193,6 +196,9 @@ private:
 	void protect_range(uint64_t address, size_t size, int protection, bool image);
 	struct State;
 	std::unique_ptr<State> state;
+#ifdef __APPLE__
+	std::shared_ptr<FexProcess> fex;
+#endif
 	void install_segment(uint32_t entry, uint64_t base);
 	uint64_t memory_syscall(uint64_t number, uint64_t a1, uint64_t a2, uint64_t a3 = 0,
 		uint64_t a4 = 0, uint64_t a5 = 0, uint64_t a6 = 0);

@@ -80,6 +80,8 @@ int main(int argc, char **argv)
 			// Recovery/valid completion has its own deterministic result.
 			code.insert(code.end(), {0xb8, 42, 0, 0, 0, 0xc3});
 			memcpy(loaded.data().data() + image.entry, code.data(), code.size());
+		} else if (mode == "timeout") {
+			loaded.data()[image.entry] = 0xeb; loaded.data()[image.entry + 1] = 0xfe; loaded.data()[image.entry + 2] = 0xc3;
 		} else if (mode == "ud2") {
 			loaded.data()[image.entry] = 0x0f; loaded.data()[image.entry + 1] = 0x0b;
 		} else if (mode == "internal") {
@@ -100,8 +102,14 @@ int main(int argc, char **argv)
 		raven::LoadedImage *images[]{&loaded};
 		raven::FexProcess process(images, root);
 		if (mode == "internal") asm volatile("brk #0");
-		auto result = process.call(loaded.base() + image.entry, {});
-		if (matrix) {
+		auto result = process.call(loaded.base() + image.entry, {}, std::chrono::milliseconds(mode == "timeout" ? 20 : 5000));
+		if (mode == "timeout") {
+			check(result.stop == raven::NativeStop::timeout, "doorbell failed to interrupt guest loop");
+			auto context = process.context();
+			check(context.registers.rip == loaded.base() + image.entry, "doorbell RIP imprecise");
+			context.registers.rip += 2; context.registers.rax = 42;
+			process.set_context(context); result = process.resume();
+		} else if (matrix) {
 			if (expected_fault) {
 				check(result.stop == raven::NativeStop::exception && result.value == 0xc0000094, "divide fault not delivered");
 				auto context = process.context();

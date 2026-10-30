@@ -50,6 +50,9 @@ struct PEModule {
 // Owns module bytes and shared images. Resolves only explicitly supplied modules.
 class ModuleSet {
 public:
+	void set_address_space(std::function<bool(uint64_t, uint64_t)> available, uint64_t relocation_base) {
+		address_available = std::move(available); relocation_base64 = relocation_base;
+	}
 	// Keep a free preferred base; relocate colliding images into graph-owned space.
 	// A process loader also excludes its allocations through available.
 	PEModule &add(std::string name, ModuleBytes bytes, std::function<bool(uint64_t, uint64_t)> available = {});
@@ -72,6 +75,8 @@ private:
 	std::set<std::string> movable_names;
 	bool adding_data = false;
 	bool bound_any = false;
+	std::function<bool(uint64_t, uint64_t)> address_available;
+	uint64_t relocation_base64 = 0x180000000ULL;
 	uint64_t resolve(std::string module, std::string name, uint32_t ordinal, bool by_ordinal,
 		std::set<std::pair<std::string, uint32_t>> &chain, std::vector<const PEModule *> *path = nullptr) const;
 };

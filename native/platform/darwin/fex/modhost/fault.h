@@ -20,6 +20,7 @@ struct alignas(16) NativeContext {
 };
 static_assert(sizeof(NativeContext) == 0x390 && offsetof(NativeContext, v) == 0x110);
 void *entry = nullptr;
+void *execution_teb = nullptr;
 
 extern "C" void raven_signal_entry(int, siginfo_t *, void *);
 extern "C" void raven_fault_handler(int signal, siginfo_t *info, void *opaque) {
@@ -47,7 +48,7 @@ extern "C" void raven_fault_handler(int signal, siginfo_t *info, void *opaque) {
 	record.information[1] = uintptr_t(info->si_addr);
 	if (entry && RavenNT::active_thread) {
 		uint64_t args[8]{uintptr_t(&record), uintptr_t(&native)};
-		auto status = uint32_t(raven_ec_call(entry, args, RavenNT::active_thread->teb.data()));
+		auto status = uint32_t(raven_ec_call(entry, args, execution_teb ? execution_teb : RavenNT::active_thread->teb.data()));
 		if (!status) {
 			for (unsigned i = 0; i < 29; ++i)
 				ss.__x[i] = native.x[i];
