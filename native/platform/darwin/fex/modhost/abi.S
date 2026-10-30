@@ -73,3 +73,17 @@ _raven_native_call:
   ldp x29, x30, [sp, #64]
   add sp, sp, #256
   ret
+// EC call checker for this native host. All import slots contain EC-callable
+// adapters. Module-private indirect targets must be marked in the host bitmap.
+.globl _raven_check_ec_call
+_raven_check_ec_call:
+  ldr x16, [x18, #0x60]
+  ldr x16, [x16, #0x368]
+  lsr x17, x11, #18
+  ldr x16, [x16, x17, lsl #3]
+  lsr x17, x11, #12
+  lsr x16, x16, x17
+  tbnz x16, #0, 1f
+  brk #0x124
+1:
+  ret

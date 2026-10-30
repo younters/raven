@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Run standalone native substrate tests; default also requires guest execution.
-
-A preflight stop is never translated into an execution pass. Until the execution
-milestone is implemented, default mode fails with the unresolved import evidence.
-"""
+"""Run native substrate tests and require verified FEX guest dispatch/resume."""
 import argparse
 import json
 from pathlib import Path
@@ -36,7 +32,7 @@ def main():
         try:
             binaries = {}
             for name, supplied, cpp, extra in [
-                ('host', args.host, 'native_host.cpp', []),
+                ('host', args.host, 'native_host.cpp', [source / 'context.S']),
                 ('abi', args.abi, 'abi_test.cpp', [source / 'abi_fixture.S']),
             ]:
                 binary = supplied or Path(temp) / name
@@ -49,12 +45,17 @@ def main():
             run([binaries['host'], '--self-test'])
             run([binaries['abi']])
             if not args.substrate_only:
-                run([binaries['host'], args.modules / 'xtajit64.dll'], expected=3)
-                raise RuntimeError('guest execution NOT implemented; import preflight remains blocked')
+                run([binaries['host'], '--execute', args.modules / 'xtajit64.dll'])
+                output = results[-1]['stdout']
+                for required in ['resolved=127', 'PASS: RavenProcessInit', 'PASS: ThreadInit',
+                                 'host_result=224 resumed_result=4884 calls=1']:
+                    if required not in output:
+                        raise RuntimeError('missing execution evidence: ' + required)
         finally:
             if args.evidence:
                 args.evidence.write_text(json.dumps(results, indent=2) + '\n')
-    print('PASS: substrate only; no module init or guest execution claimed')
+    print('PASS: substrate only; no module init or guest execution claimed' if args.substrate_only
+          else 'PASS: native module init and verified x86-64 dispatch/resume')
 
 
 if __name__ == '__main__':

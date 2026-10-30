@@ -104,6 +104,18 @@ int main(int argc, char **argv) {
         if (!(thunk >> 63)) {
           if (void *target = resolve(image.string(name), image.string(thunk + 2))) {
             image.put<uint64_t>(iat + i * 8, reinterpret_cast<uintptr_t>(target));
+            // The EC frontend loads its native imports through the auxiliary IAT.
+            // Its layout mirrors the ordinary IAT, including descriptor terminators.
+            auto load_config = image.get<uint32_t>(opt + 112 + 10 * 8);
+            if (load_config) {
+              auto metadata_va = image.get<uint64_t>(load_config + 200);
+              if (metadata_va) {
+                auto metadata = metadata_va - reinterpret_cast<uintptr_t>(image.data);
+                auto auxiliary = image.get<uint32_t>(metadata + 44);
+                auto iat_base = image.get<uint32_t>(opt + 112 + 12 * 8);
+                if (auxiliary) image.put<uint64_t>(auxiliary + iat + i * 8 - iat_base, reinterpret_cast<uintptr_t>(target));
+              }
+            }
             ++resolved;
             continue;
           }

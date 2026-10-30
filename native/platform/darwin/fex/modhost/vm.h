@@ -43,6 +43,7 @@ int32_t allocate_impl(void *process,void **base,size_t *size,uint32_t type,uint3
   auto *p=mmap(reinterpret_cast<void*>(at),n,type&0x1000?prot(protection,ec):PROT_NONE,flags,-1,0);
   if(p==MAP_FAILED) return no_memory;
   if(at && uintptr_t(p)!=at) { munmap(p,n); return int32_t(0xc0000018); }
+  if(getenv("RAVEN_MODHOST_TRACE"))fprintf(stderr,"VM alloc %p size=%zu EC=%d type=%x protect=%x\n",p,n,ec,type,protection);
   regions.emplace(uintptr_t(p),Region{n,protection,ec,std::vector<uint32_t>(n/page(),type&0x1000?protection:0)});
   *base=p; *size=n; return 0;
 }
@@ -90,6 +91,7 @@ int32_t protect(void *p,void **base,size_t *size,uint32_t protection,uint32_t *o
   auto first=(at-i->first)/page();
   for(size_t j=0;j<n/page();++j) if(!i->second.protections[first+j]) return int32_t(0xc000002d);
   if(mprotect(reinterpret_cast<void*>(at),n,prot(protection,i->second.ec))) return invalid;
+  if(getenv("RAVEN_MODHOST_TRACE"))fprintf(stderr,"VM protect %p size=%zu EC=%d protect=%x\n",reinterpret_cast<void*>(at),n,i->second.ec,protection);
   *old=i->second.protections[first]; std::fill_n(i->second.protections.begin()+first,n/page(),protection);
   *base=reinterpret_cast<void*>(at); *size=n; return 0;
 }

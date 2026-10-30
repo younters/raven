@@ -1,4 +1,11 @@
-# M1d implementation progress — milestone incomplete
+# M1d: native module execution
+
+**Latest checkpoint:** all 127 import slots bind; native DllMain, process and
+thread init pass; an x86-64 guest makes one business dispatch and resumes with
+verified result **4884**. See the execution checkpoint below. Earlier sections
+are historical progress records, not the current execution status.
+
+## Earlier substrate checkpoint
 
 Branch `t3/fex-modhost-execution` fast-forwarded from `macos` through `a22048c`
 and `c46c333`. No push. This follow-up **does not deliver the execution milestone**.
@@ -136,3 +143,48 @@ anonymous contents; decommit now replaces owned non-JIT pages with demand-zero
 anonymous pages. Native JIT decommit explicitly clears memory under a write scope.
 All native substrate checks pass. Ordinary anonymous RX native code also executes
 on this unentitled host. No qualifying hard blocker has been found; work continues.
+
+## Execution checkpoint
+
+The standalone host now executes the module's native CHPE entry (never the x64
+export thunk), populates both IATs and installs checked native indirect-call slots.
+It executes native DllMain, `RavenProcessInit` and `ThreadInit` through Raven's table.
+A real x64 snippet supplies arguments 7, 11, 13, 17 using Windows' syscall registers;
+the native dispatch returns 224. Guest execution resumes, adds 0x1234, and a terminal
+completion syscall verifies result **4884** and the exact resumed end RIP. There
+is one business dispatch plus a distinct completion syscall; both are real JIT
+transitions. Completion transfers to the saved native harness frame.
+
+Two runtime discoveries were fixed rather than bypassed: immutable import veneers
+must be ordinary RX mappings because FEX calls imports during MAP_JIT write scopes;
+and the inherited RtlQueryPerformanceCounter binding incorrectly accepted an NT
+query's second argument. It is now a one-argument BOOLEAN adapter.
+
+Patch 0004 supplies nonnull optional allocator hooks and actual syscall packet
+spill/dispatch/reentry. Patch 0005 is a necessary, isolated **Core guard allocation
+fix**: the pinned temporary compiler buffer's 4K guard protected the whole initial
+16K host allocation. Its buffer sizes and guard placement now use 16K when the
+Darwin JIT hook is installed, matching the existing shared-code-buffer policy.
+Instruction decoding, lowering and emitted guest instruction semantics are unchanged.
+The failing guard was observed on the first emitted instruction under standalone
+arm64 lldb. No guard check was removed; guard bounds remain checked.
+
+All 127 import slots now bind to callable implementations. This does **not** mean
+a complete NT implementation: the new unwind decoder handles ordinary full-xdata
+prologs/epilogs and canonical packed body frames, rejects unsupported packed
+partial frames, and does not yet run language cleanup handlers in RtlUnwindEx.
+Unhandled RtlRaiseStatus is fatal with an explicit status diagnostic. Broad native
+SEH/C++ exception compatibility, remote thread termination, some I/O classes and
+full Windows path/locale semantics remain unqualified. No API returns invented
+success to get through init. Synthetic context-capture and unwind checks run in
+the substrate test, but those are not a full unwind qualification suite.
+
+The initial successful guest run used the incrementally rebuilt pinned module at
+`FEX-darwin/build/local/m1d/arm64ec/Bin/libarm64ecfex.dll`, built with -j8.
+The final audited reproduction/evidence is updated after the follow-on tests.
+`test-fex-modhost.py` now requires init markers and the verified guest result in
+its default mode; the provisioned-module CMake registers a separate execution
+CTest. A zero exit without those markers cannot pass.
+
+AV recovery, nested callback and timing follow-ons continue from this checkpoint.
+M2 remains NO-GO pending those contracts and the NT gaps listed above.

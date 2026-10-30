@@ -14,7 +14,7 @@ if(NOT EXISTS "${RAVEN_FEX_MODULE_ROOT}/xtajit64.dll")
 endif()
 enable_language(ASM)
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
-add_executable(fex_modhost_substrate native_host.cpp abi.S)
+add_executable(fex_modhost_substrate native_host.cpp abi.S context.S)
 add_executable(fex_modhost_abi abi_test.cpp abi.S abi_fixture.S)
 foreach(target fex_modhost_substrate fex_modhost_abi)
     target_compile_features(${target} PRIVATE cxx_std_17)
@@ -28,3 +28,9 @@ add_test(NAME fex_modhost_substrate COMMAND ${Python3_EXECUTABLE}
     "${RAVEN_MODHOST_REPO}/scripts/test-fex-modhost.py" --substrate-only
     --host $<TARGET_FILE:fex_modhost_substrate> --abi $<TARGET_FILE:fex_modhost_abi>)
 set_tests_properties(fex_modhost_substrate PROPERTIES TIMEOUT 60 LABELS "fex;substrate")
+
+add_test(NAME fex_modhost_execution COMMAND ${Python3_EXECUTABLE}
+    "${RAVEN_MODHOST_REPO}/scripts/test-fex-modhost.py"
+    --modules "${RAVEN_FEX_MODULE_ROOT}"
+    --host $<TARGET_FILE:fex_modhost_substrate> --abi $<TARGET_FILE:fex_modhost_abi>)
+set_tests_properties(fex_modhost_execution PROPERTIES TIMEOUT 60 LABELS "fex;execution")

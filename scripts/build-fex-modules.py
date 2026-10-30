@@ -95,7 +95,7 @@ def build(root, raven_host=False):
         with tarfile.open(archive) as stream:
             # Archive is authenticated above; preserve toolchain's internal symlinks.
             stream.extractall(root, filter='data')
-    output = source / ('build/local/m1c' if raven_host else 'build/local/m1b')
+    output = source / ('build/local/m1d' if raven_host else 'build/local/m1b')
     manifest = output / 'fex-result.json'
     if not manifest.exists():
         run([sys.executable, source / 'Darwin/build.py', '--output', output,
@@ -137,7 +137,8 @@ def build(root, raven_host=False):
         run(['xcrun', 'clang++', '-arch', 'arm64', '-ffixed-x18', '-std=c++17', '-O2',
              '-Wall', '-Wextra', '-Werror', '-Wl,-platform_version,macos,11.0,11.0',
              REPO / 'native/platform/darwin/fex/modhost/native_host.cpp',
-             REPO / 'native/platform/darwin/fex/modhost/abi.S', '-o', host])
+             REPO / 'native/platform/darwin/fex/modhost/abi.S',
+             REPO / 'native/platform/darwin/fex/modhost/context.S', '-o', host])
         run([host, '--self-test'])
         p = subprocess.run([str(host), str(root / 'xtajit64.dll')], capture_output=True, text=True)
         (root / 'm1c-host-preflight.log').write_text(p.stdout + p.stderr)

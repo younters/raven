@@ -24,6 +24,7 @@ int main() {
   uint64_t teb[1024] {};
   check(raven_ec_call(adapter, args, teb) == 204);
   check(NativeJit::protect(0) == 1);
+  check(raven_ec_call(adapter, args, teb) == 204);
   check(NativeJit::protect(0) == 0);
   check(NativeJit::protect(1) == 0);
   check(NativeJit::protect(1) == 1);

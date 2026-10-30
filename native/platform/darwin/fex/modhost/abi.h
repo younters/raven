@@ -14,7 +14,7 @@ inline void *native_adapter(NativeJit &jit, void *target, unsigned stack_args = 
   uintptr_t bridge = reinterpret_cast<uintptr_t>(&raven_native_call);
   memcpy(code.data() + 4, &target, 8);
   memcpy(code.data() + 6, &bridge, 8);
-  void *p = jit.allocate(sizeof(code));
-  NativeJit::write(p, code.data(), sizeof(code));
-  return p;
+  // These immutable veneers must remain executable while FEX opens a native
+  // JIT write scope. MAP_JIT veneers would fault in that thread-wide mode.
+  return jit.immutable(code.data(), sizeof(code));
 }

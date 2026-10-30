@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <fnmatch.h>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -18,18 +19,22 @@ int32_t os_error(int error) {
     case ENOMEM:case ENOSPC:return int32_t(0xc0000017); case EBADF:return bad_handle;
     case EINVAL:return invalid_parameter; default:return int32_t(0xc0000185); }
 }
+struct ThreadControl;
 struct Handle {
   enum Kind {file,section,key,thread} kind;
+  std::shared_ptr<ThreadControl> control;
+  uint32_t access=0;
   int fd=-1; DIR *directory=nullptr; std::string path;
   size_t section_size=0; uint32_t section_protection=0;
   explicit Handle(Kind k):kind(k) {}
   ~Handle(){ if(directory) closedir(directory); if(fd>=0) close(fd); }
 };
+std::shared_ptr<Handle> (*pseudo_handle)(void*)=nullptr;
 std::mutex handles_mutex;
 std::map<uintptr_t,std::shared_ptr<Handle>> handles;
 uintptr_t next_handle=0x100;
 void *new_handle(std::shared_ptr<Handle> h) { std::lock_guard<std::mutex> g(handles_mutex); auto id=next_handle;next_handle+=4;handles[id]=std::move(h);return reinterpret_cast<void*>(id); }
-std::shared_ptr<Handle> get_handle(void *h) { std::lock_guard<std::mutex> g(handles_mutex);auto i=handles.find(uintptr_t(h));return i==handles.end()?nullptr:i->second; }
+std::shared_ptr<Handle> get_handle(void *h) { if(intptr_t(h)==-2 && pseudo_handle)return pseudo_handle(h); std::lock_guard<std::mutex> g(handles_mutex);auto i=handles.find(uintptr_t(h));return i==handles.end()?nullptr:i->second; }
 int32_t close_handle(void *h) { std::lock_guard<std::mutex> g(handles_mutex);return handles.erase(uintptr_t(h))?0:bad_handle; }
 int32_t duplicate(void *source_process,void *h,void *target_process,void **out,uint32_t access,uint32_t attributes,uint32_t options) {
   (void)access;
@@ -60,7 +65,7 @@ int32_t create_file(void **out,uint32_t access,ObjectAttributes *object,IoStatus
   switch(disposition) {case 0:case 5:flags|=O_CREAT|O_TRUNC;break;case 1:break;case 2:flags|=O_CREAT|O_EXCL;break;case 3:flags|=O_CREAT;break;case 4:flags|=O_TRUNC;break;default:return io->status=invalid_parameter;}
   if(options&1) { if(disposition==2 || disposition==3) {if(mkdir(path.c_str(),0700) && (errno!=EEXIST || disposition==2)) return io->status=os_error(errno);}flags=O_RDONLY|O_DIRECTORY|O_CLOEXEC; }
   int fd=open(path.c_str(),flags,0600);if(fd<0)return io->status=os_error(errno);
-  auto h=std::make_shared<Handle>(Handle::file);h->fd=fd;h->path=path;
+  auto h=std::make_shared<Handle>(Handle::file);h->fd=fd;h->path=path;h->access=access;
   if(allocation && *allocation && ftruncate(fd,*allocation)) return io->status=os_error(errno);
   *out=new_handle(h);*io={0,disposition==2?2u:1u};return 0;
 }
@@ -131,8 +136,29 @@ int32_t map_section(void *handle,void *process,void **base,uint64_t zero,size_t 
   {std::lock_guard<std::mutex> g(handles_mutex);views[p]=n;}*base=p;*size=n;return 0;
 }
 int32_t unmap_section(void *process,void *base) {if(intptr_t(process)!=-1)return bad_handle;std::lock_guard<std::mutex> g(handles_mutex);auto i=views.find(base);if(i==views.end())return invalid_parameter;if(munmap(base,i->second))return os_error(errno);views.erase(i);return 0;}
+int32_t query_directory(void *handle,void *event,void *apc,void *,IoStatus *io,void *out,uint32_t length,uint32_t klass,uint64_t single,uint64_t pattern_value,uint64_t restart) {
+  (void)single;
+  if(!io || !out)return invalid_parameter;*io={0,0};auto h=get_handle(handle);if(!h || h->kind!=Handle::file)return io->status=bad_handle;
+  if(event || apc)return io->status=not_supported;
+  size_t header=klass==12?12:klass==1?64:klass==2?68:klass==3?94:0;
+  if(!header)return io->status=int32_t(0xc0000003);
+  if(!h->directory){h->directory=fdopendir(dup(h->fd));if(!h->directory)return io->status=os_error(errno);}
+  if(restart)rewinddir(h->directory);
+  std::string pattern="*";
+  if(auto *p=reinterpret_cast<String*>(pattern_value))pattern=encode(static_cast<char16_t*>(p->buffer),p->length/2);
+  while(true){auto position=telldir(h->directory);auto *entry=readdir(h->directory);if(!entry)return io->status=int32_t(0x80000006);
+    if(fnmatch(pattern.c_str(),entry->d_name,0))continue;
+    auto name=decode(entry->d_name,strlen(entry->d_name));auto size=name.size()*2;
+    if(header+size>length){seekdir(h->directory,position);return io->status=buffer_small;}
+    memset(out,0,header);auto *bytes=static_cast<uint8_t*>(out);auto name_length=uint32_t(size);
+    memcpy(bytes+(klass==12?8:60),&name_length,4);memcpy(bytes+header,name.data(),size);
+    if(klass!=12){struct stat st{};if(fstatat(h->fd,entry->d_name,&st,0))return io->status=os_error(errno);auto b=basic(st);memcpy(bytes+8,&b,32);int64_t eof=st.st_size,allocated=st.st_blocks*512;memcpy(bytes+40,&eof,8);memcpy(bytes+48,&allocated,8);memcpy(bytes+56,&b.attributes,4);}
+    io->information=header+size;return 0;
+  }
+}
 void *resolve_io(const char *name,unsigned &stack) {
 #define NT(n,f,s) if(!strcmp(name,n)){stack=s;return reinterpret_cast<void*>(&f);}
+  NT("NtQueryDirectoryFile",query_directory,3);
   NT("NtClose",close_handle,0); NT("NtDuplicateObject",duplicate,0);
   NT("NtCreateFile",create_file,3);NT("NtOpenFile",open_file,0);
   NT("NtReadFile",read_file,1);NT("NtWriteFile",write_file,1);
