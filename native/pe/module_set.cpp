@@ -77,8 +77,7 @@ PEModule &ModuleSet::add(std::string name, ModuleBytes bytes, std::function<bool
 	const auto has_relocs = [](const PEImage &candidate) {
 		return !(candidate.characteristics & 1) && candidate.directories[5].address && candidate.directories[5].size;
 	};
-	const bool needs_relocs = image.entry || image.directories[1].address || image.directories[9].address || image.directories[13].address;
-	if (!adding_data && !available && !bound_any && !has_relocs(image) && needs_relocs && overlap_for(base, image.image_size)) {
+	if (!adding_data && !available && !bound_any && !has_relocs(image) && overlap_for(base, image.image_size)) {
 		std::vector<PEModule *> blockers;
 		bool all_movable = true;
 		for (const auto &[key, previous] : modules) {
@@ -112,7 +111,7 @@ PEModule &ModuleSet::add(std::string name, ModuleBytes bytes, std::function<bool
 		}
 	}
 	if (overlap_for(base, image.image_size)) {
-		if (available && !adding_data && !has_relocs(image) && needs_relocs)
+		if (!adding_data && !has_relocs(image))
 			throw std::runtime_error("PE preferred base conflicts with host mappings and image has no relocation table");
 		base = image.is_64 ? relocation_base64 : 0x10000000ULL;
 		for (;;) {
