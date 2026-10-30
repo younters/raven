@@ -688,6 +688,10 @@ if(TARGET darwin_unix_call_fixtures)
         ${RAVEN_DARWIN_DIR}/tests/run_rosetta.py $<TARGET_FILE:darwin_adapter_protocol_test>
         $<TARGET_FILE:raven-bootstrap> ${RAVEN_UNIX_CALL_PE} ${ADAPTER_PROTOCOL_LIBRARIES})
     set_tests_properties(native_darwin_adapter_protocol PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77)
+else()
+    add_test(NAME native_darwin_adapter_protocol COMMAND ${Python3_EXECUTABLE} -c
+        "print('adapter protocol test unavailable: guest loader fixture requires raven_cpu and MinGW'); raise SystemExit(77)")
+    set_tests_properties(native_darwin_adapter_protocol PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 if(TARGET raven_cpu)
