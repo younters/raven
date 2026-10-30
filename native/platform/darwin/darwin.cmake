@@ -29,6 +29,31 @@ add_test(NAME native_darwin_idle_wait_queue COMMAND darwin_idle_wait_queue_test)
 # The guest controller: Linux traces an ELF child with ptrace; macOS runs an x86_64 Mach-O agent under Rosetta 2 that the host
 # drives through shared memory. Same NativeProcess interface, different implementation file.
 if(TARGET raven_cpu)
+    if(RAVEN_FEX_MODHOST)
+        target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/fex/fex_process.cpp
+            ${RAVEN_DARWIN_DIR}/fex/modhost/abi.S ${RAVEN_DARWIN_DIR}/fex/modhost/context.S)
+        set_source_files_properties(${RAVEN_DARWIN_DIR}/fex/fex_process.cpp PROPERTIES
+            COMPILE_OPTIONS "-ffixed-x18;-ffp-contract=off;-UNDEBUG;-Wno-unused-function")
+        target_link_options(raven_cpu INTERFACE -Wl,-platform_version,macos,11.0,11.0)
+        target_compile_definitions(raven PRIVATE RAVEN_FEX_PROCESS=1)
+        add_executable(fex_process_test ${RAVEN_DARWIN_DIR}/fex/fex_process_test.cpp)
+        target_link_libraries(fex_process_test PRIVATE raven_cpu)
+        if(RAVEN_MINGW64)
+            set(FEX_ENTRY_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/fex-entry.exe)
+            add_custom_command(OUTPUT ${FEX_ENTRY_FIXTURE}
+                COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
+                    -Wl,--entry,raven_entry,--image-base,0x10000000000,--no-insert-timestamp
+                    -o ${FEX_ENTRY_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/native_cpu/entry.c
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_cpu/entry.c VERBATIM)
+            add_custom_target(fex_entry_fixture DEPENDS ${FEX_ENTRY_FIXTURE})
+            add_dependencies(fex_process_test fex_entry_fixture)
+            foreach(contract entry syscall fault)
+                add_test(NAME native_${contract}_fex COMMAND fex_process_test ${FEX_ENTRY_FIXTURE} ${contract})
+                set_tests_properties(native_${contract}_fex PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77
+                    LABELS "fex;m2" ENVIRONMENT "RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")
+            endforeach()
+        endif()
+    endif()
     include(${RAVEN_DARWIN_DIR}/audio/audio.cmake)
     get_target_property(RAVEN_CPU_SOURCES raven_cpu SOURCES)
     list(REMOVE_ITEM RAVEN_CPU_SOURCES cpu/native_cpu.cpp)
