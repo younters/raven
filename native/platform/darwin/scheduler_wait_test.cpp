@@ -1,6 +1,7 @@
 // Generous aggregate bounds distinguish descriptor wakes from the old 20 ms scheduler sweep.
 #include "nt/providers.h"
 #include "nt/threads.h"
+#include "desktop/windows.h"
 #include <algorithm>
 #include <array>
 #include <iostream>
@@ -70,6 +71,34 @@ int main(int argc, char **argv)
 		std::vector<pollfd> after;
 		const auto lease = threads.idle_descriptors(after);
 		for (const auto &fd : after) check(fd.fd != ends[0], "completed wait retained borrowed descriptor");
+		// A nested desktop poll must restore the outer registration, including during exception unwinding.
+		raven::DesktopObjects desktop;
+		raven::NativeWindows windows(process, environment, desktop);
+		std::vector<pollfd> active;
+		unsigned depth = 0;
+		raven::DesktopPresentation backend;
+		backend.wait_descriptors = [&](std::span<const pollfd> descriptors) { active.assign(descriptors.begin(), descriptors.end()); };
+		backend.poll = [&](auto) {
+			if (depth++ == 0) {
+				windows.poll_idle(std::chrono::milliseconds(0));
+				check(active.size() == 1 && active[0].fd == ends[0], "nested poll disarmed outer wait");
+			}
+			--depth;
+			return std::vector<raven::DesktopEvent>{};
+		};
+		windows.set_presentation(backend);
+		windows.set_idle_sources([](auto limit) { return limit; }, [&](std::vector<pollfd> &descriptors) {
+			descriptors.push_back({ends[depth ? 1 : 0], POLLIN, 0});
+			return std::shared_ptr<void>{};
+		}, [] {});
+		windows.poll_idle(std::chrono::milliseconds(0));
+		check(active.empty(), "outer poll retained its registration");
+		backend.poll = [](auto) -> std::vector<raven::DesktopEvent> { throw std::runtime_error("poll interrupted"); };
+		windows.set_presentation(backend);
+		bool interrupted = false;
+		try { windows.poll_idle(std::chrono::milliseconds(0)); }
+		catch (const std::runtime_error &) { interrupted = true; }
+		check(interrupted && active.empty(), "exception retained an idle registration");
 		return 0;
 	} catch (const std::exception &error) {
 		std::cerr << error.what() << '\n';

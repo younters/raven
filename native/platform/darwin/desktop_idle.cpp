@@ -1,4 +1,5 @@
 #include "desktop/windows.h"
+#include "idle_wait_scope.h"
 
 namespace raven {
 
@@ -9,11 +10,10 @@ void NativeWindows::poll_idle(std::chrono::milliseconds budget)
 	const auto until = std::chrono::steady_clock::now() + budget;
 	std::vector<pollfd> descriptors;
 	const auto handles = idle_descriptors ? idle_descriptors(descriptors) : nullptr;
-	if (presentation.wait_descriptors)
-		presentation.wait_descriptors(descriptors);
-	const auto events = presentation.poll(budget);
-	if (presentation.wait_descriptors)
-		presentation.wait_descriptors({});
+	const auto events = [&] {
+		DarwinIdleWaitScope wait(this, presentation.wait_descriptors, descriptors);
+		return presentation.poll(budget);
+	}();
 	for (const auto &event : events) {
 		pending_events.push_back(event);
 		// Same queue categories as event_kinds in windows.cpp; a positive-budget poll must publish new input too.
