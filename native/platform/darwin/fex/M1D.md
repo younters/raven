@@ -124,7 +124,7 @@ Historical Rosetta inputs are now retained:
 
 - [baseline source](modhost/baseline/rosetta_bench.c), SHA256 `d1336f1cece97d6a0df1e1755c2a1f22e74d6f63b44391aea21794205616a2ad`.
 - [baseline log](modhost/baseline/rosetta-bench.txt), SHA256 `4248d5f5ec04d54796847f1e10784b3ea9fbc637339617038fbb12341ed825dd`.
-- [kernel assembly](modhost/bench_kernels_x86_64.S), SHA256 `e50996af9f68cc9a80984bc70a7999c66903c2e034bd7bcb3c3f17efead441ed`.
+- [kernel assembly](modhost/bench_kernels_x86_64.S), SHA256 `c9692eb5f85956694a2bee48df135df4c58bf2c526ac6b22558dffcc94e1dfaa`.
 
 The retained log's full medians supersede the rounded SPIKE summary values of
 9.293/12.525 ms. Warm medians exclude sample 0 for **both** engines. In the old
@@ -136,10 +136,10 @@ an advantageous sample.
 <!-- measurements:start -->
 | 10M iterations | Rosetta full / warm ms | FEX full / warm ms | Full FEX / full Rosetta | Warm FEX / full Rosetta |
 | --- | ---: | ---: | ---: | ---: |
-| Integer | 9.226208 / 9.211125 | 20.675875 / 20.582563 | 2.241× | 2.231× |
-| Float | 12.277667 / 12.296855 | 25.366541 / 25.279874 | 2.066× | 2.059× |
+| Integer | 9.226208 / 9.211125 | 21.486292 / 21.087688 | 2.329× | 2.286× |
+| Float | 12.277667 / 12.296855 | 25.555250 / 25.467750 | 2.081× | 2.074× |
 
-Round-trip median: **119.276 ns/call** (all five), **117.919 ns/call** (warm samples 1–4). Raw samples are retained in the evidence JSON.
+Round-trip median: **121.854 ns/call** (all five), **122.775 ns/call** (warm samples 1–4). Raw samples are retained in the evidence JSON.
 <!-- measurements:end -->
 
 Sample 0 includes the benchmark's initial block compilation; samples 1–4 reuse

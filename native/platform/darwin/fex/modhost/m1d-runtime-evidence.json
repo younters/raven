@@ -94,24 +94,24 @@
           "-S",
           "/Users/yount/.t3/worktrees/raven/t3-d59088a1/native/platform/darwin/fex/modhost",
           "-B",
-          "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-sjm5iny9/build",
+          "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-4gw_em5z/build",
           "-DRAVEN_FEX_MODHOST=ON",
           "-DCMAKE_BUILD_TYPE=Release",
           "-DRAVEN_FEX_MODULE_ROOT=/Users/yount/Documents/Projects/raven-components/fex-modules"
         ],
         "returncode": 0,
-        "stdout": "-- The CXX compiler identification is AppleClang 21.0.0.21000334\n-- The ASM compiler identification is AppleClang\n-- Found assembler: /usr/bin/c++\n-- Detecting CXX compiler ABI info\n-- Detecting CXX compiler ABI info - done\n-- Check for working CXX compiler: /usr/bin/c++ - skipped\n-- Detecting CXX compile features\n-- Detecting CXX compile features - done\n-- Found Python3: /opt/homebrew/Frameworks/Python.framework/Versions/3.15/bin/python3.15 (found version \"3.15.1\") found components: Interpreter\n-- Configuring done (0.4s)\n-- Generating done (0.0s)\n-- Build files have been written to: /var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-sjm5iny9/build\n",
+        "stdout": "-- The CXX compiler identification is AppleClang 21.0.0.21000334\n-- The ASM compiler identification is AppleClang\n-- Found assembler: /usr/bin/c++\n-- Detecting CXX compiler ABI info\n-- Detecting CXX compiler ABI info - done\n-- Check for working CXX compiler: /usr/bin/c++ - skipped\n-- Detecting CXX compile features\n-- Detecting CXX compile features - done\n-- Found Python3: /opt/homebrew/Frameworks/Python.framework/Versions/3.15/bin/python3.15 (found version \"3.15.1\") found components: Interpreter\n-- Configuring done (0.4s)\n-- Generating done (0.0s)\n-- Build files have been written to: /var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-4gw_em5z/build\n",
         "stderr": ""
       },
       {
         "command": [
           "cmake",
           "--build",
-          "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-sjm5iny9/build",
+          "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-4gw_em5z/build",
           "-j8"
         ],
         "returncode": 0,
-        "stdout": "[ 75%] Building ASM object CMakeFiles/fex_modhost_substrate.dir/abi.S.o\n[ 75%] Building CXX object CMakeFiles/fex_modhost_substrate.dir/native_host.cpp.o\n[ 75%] Building ASM object CMakeFiles/fex_modhost_abi.dir/abi_fixture.S.o\n[ 75%] Building ASM object CMakeFiles/fex_modhost_substrate.dir/context.S.o\n[ 75%] Building ASM object CMakeFiles/fex_modhost_abi.dir/abi.S.o\n[ 75%] Building CXX object CMakeFiles/fex_modhost_abi.dir/abi_test.cpp.o\n[ 87%] Linking CXX executable fex_modhost_abi\n[ 87%] Built target fex_modhost_abi\n[100%] Linking CXX executable fex_modhost_substrate\n[100%] Built target fex_modhost_substrate\n",
+        "stdout": "[ 12%] Building CXX object CMakeFiles/fex_modhost_substrate.dir/native_host.cpp.o\n[ 50%] Building ASM object CMakeFiles/fex_modhost_abi.dir/abi.S.o\n[ 50%] Building CXX object CMakeFiles/fex_modhost_abi.dir/abi_test.cpp.o\n[ 50%] Building ASM object CMakeFiles/fex_modhost_substrate.dir/context.S.o\n[ 62%] Building ASM object CMakeFiles/fex_modhost_abi.dir/abi_fixture.S.o\n[ 75%] Building ASM object CMakeFiles/fex_modhost_substrate.dir/abi.S.o\n[ 87%] Linking CXX executable fex_modhost_abi\n[ 87%] Built target fex_modhost_abi\n[100%] Linking CXX executable fex_modhost_substrate\n[100%] Built target fex_modhost_substrate\n",
         "stderr": "ld: warning: passed two min versions (27.0, 11.0) for platform macOS. Using 11.0.\nld: warning: passed two min versions (27.0, 11.0) for platform macOS. Using 11.0.\n"
       },
       {
@@ -120,46 +120,46 @@
           "fex-review-evidence",
           "ctest",
           "--test-dir",
-          "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-sjm5iny9/build",
+          "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-4gw_em5z/build",
           "--output-on-failure",
           "--output-junit",
-          "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-sjm5iny9/ctest.xml"
+          "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-4gw_em5z/ctest.xml"
         ],
         "returncode": 0,
-        "stdout": "Test project /var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-sjm5iny9/build\n    Start 1: fex_modhost_driver_contract\n1/4 Test #1: fex_modhost_driver_contract ..............   Passed    0.18 sec\n    Start 2: fex_modhost_substrate\n2/4 Test #2: fex_modhost_substrate ....................   Passed    0.05 sec\n    Start 3: fex_modhost_execution\n3/4 Test #3: fex_modhost_execution ....................   Passed    0.41 sec\n    Start 4: fex_modhost_tier0_gap_expected_failure\n4/4 Test #4: fex_modhost_tier0_gap_expected_failure ...   Passed    0.04 sec\n\n100% tests passed out of 4\n\nLabel Time Summary:\ncontract            =   0.18 sec*proc (1 test)\nexecution           =   0.41 sec*proc (1 test)\nexpected-failure    =   0.04 sec*proc (1 test)\nfex                 =   0.68 sec*proc (4 tests)\nsubstrate           =   0.05 sec*proc (1 test)\n\nTotal Test time (real) =   0.68 sec\n",
+        "stdout": "Test project /var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-4gw_em5z/build\n    Start 1: fex_modhost_driver_contract\n1/4 Test #1: fex_modhost_driver_contract ..............   Passed    0.18 sec\n    Start 2: fex_modhost_substrate\n2/4 Test #2: fex_modhost_substrate ....................   Passed    0.05 sec\n    Start 3: fex_modhost_execution\n3/4 Test #3: fex_modhost_execution ....................   Passed    0.41 sec\n    Start 4: fex_modhost_tier0_gap_expected_failure\n4/4 Test #4: fex_modhost_tier0_gap_expected_failure ...   Passed    0.04 sec\n\n100% tests passed out of 4\n\nLabel Time Summary:\ncontract            =   0.18 sec*proc (1 test)\nexecution           =   0.41 sec*proc (1 test)\nexpected-failure    =   0.04 sec*proc (1 test)\nfex                 =   0.69 sec*proc (4 tests)\nsubstrate           =   0.05 sec*proc (1 test)\n\nTotal Test time (real) =   0.69 sec\n",
         "stderr": ""
       }
     ]
   },
   "samples": [
     {
-      "integer_ns": 21827875,
-      "float_ns": 27398500
+      "integer_ns": 21567125,
+      "float_ns": 27290250
     },
     {
-      "integer_ns": 20489250,
-      "float_ns": 25193208
+      "integer_ns": 21486292,
+      "float_ns": 25380250
     },
     {
-      "integer_ns": 20047958,
-      "float_ns": 25176125
+      "integer_ns": 20653541,
+      "float_ns": 25555250
     },
     {
-      "integer_ns": 20675875,
-      "float_ns": 25366541
+      "integer_ns": 20689084,
+      "float_ns": 25096709
     },
     {
-      "integer_ns": 21070417,
-      "float_ns": 26303166
+      "integer_ns": 21597666,
+      "float_ns": 26776167
     }
   ],
   "medians": {
-    "integer_ms": 20.675875,
-    "float_ms": 25.366541
+    "integer_ms": 21.486292,
+    "float_ms": 25.55525
   },
   "warm_medians_samples_1_to_4": {
-    "integer_ms": 20.5825625,
-    "float_ms": 25.2798745
+    "integer_ms": 21.087688,
+    "float_ms": 25.46775
   },
   "prior_rosetta_ms": {
     "integer_ms": 9.226208,
@@ -170,55 +170,55 @@
     "float_ms": 12.2968545
   },
   "fex_over_rosetta": {
-    "integer": 2.2409938080736964,
-    "float": 2.066071754511668
+    "integer": 2.328832387043518,
+    "float": 2.0814418569912347
   },
   "warm_fex_over_full_rosetta": {
-    "integer": 2.2308799563157478,
-    "float": 2.0590128808673502
+    "integer": 2.285628938779616,
+    "float": 2.074315095856566
   },
   "roundtrip_samples_ns": [
-    119.27625,
-    119.63042,
-    115.79875,
-    120.10084,
-    116.20667
+    121.29541,
+    119.97709,
+    121.85417,
+    123.69542,
+    124.22833
   ],
-  "roundtrip_median_ns": 119.27625,
-  "roundtrip_warm_median_ns": 117.918545,
+  "roundtrip_median_ns": 121.85417,
+  "roundtrip_warm_median_ns": 122.774795,
   "baseline_sha256": {
     "rosetta-bench.txt": "4248d5f5ec04d54796847f1e10784b3ea9fbc637339617038fbb12341ed825dd",
     "rosetta_bench.c": "d1336f1cece97d6a0df1e1755c2a1f22e74d6f63b44391aea21794205616a2ad"
   },
   "host_source_sha256": {
-    "native/platform/darwin/fex/modhost/abi.S": "240ddd08ff8b684682e3a25c87e8b5d780fa6f7cfe8d0afc5c21d4d1f2cbba05",
-    "native/platform/darwin/fex/modhost/abi.h": "190498e1ccccd537054d33e2176adc88255be89d4a77342b3021ea0fb40f9695",
-    "native/platform/darwin/fex/modhost/abi_fixture.S": "31f1b92dc5ffe571e414ed4b6f6faa7324f99ff0b9b0e3094137b96113c8e7eb",
-    "native/platform/darwin/fex/modhost/abi_test.cpp": "96e0d65a1fa2794cb8fd449e676fc03249ca24e981b6e1bd42d5ebb3e20b72b5",
-    "native/platform/darwin/fex/modhost/bench.h": "2a921efb0487844d6a43c8f730396c54fb8b45c3281e3f5dd11781b79ac868fb",
-    "native/platform/darwin/fex/modhost/bench_kernels_x86_64.S": "e50996af9f68cc9a80984bc70a7999c66903c2e034bd7bcb3c3f17efead441ed",
-    "native/platform/darwin/fex/modhost/context.S": "3ebb831abed715a413751eec7f33aefed276fa4955145be760f5c533c855f4cf",
-    "native/platform/darwin/fex/modhost/context.h": "75d825a5829980b73c5b22012c0f34f966bca865417afdc7b4f62a2bdeb32c5f",
-    "native/platform/darwin/fex/modhost/crt.h": "83059d32a2719a146b551d09d51b3fb3864e781884d64471af29341c385ed75c",
-    "native/platform/darwin/fex/modhost/environment.h": "c62ca1e9dc9da2420850dea467d77755f5b024de09fe0dee8226b1a602071d1e",
-    "native/platform/darwin/fex/modhost/fault.h": "a23b68ee6829733bbd64e134bfcf3c6a665f60cccd66d7206f61fd2844c81fa6",
-    "native/platform/darwin/fex/modhost/format.h": "308b8e8dd7d7d30d9dd6505f339c1c8df4c213ceb5c56ebcd0e109db08aaec46",
-    "native/platform/darwin/fex/modhost/jit.h": "dd6b4a3bcdf21b303b2e23abc6981ed8112266930d467d0594be00c7f280ce43",
-    "native/platform/darwin/fex/modhost/module_contract.h": "ff11d082e75995278bd09040981f19faf2a8a7ff6d87b806c0c1464393604718",
-    "native/platform/darwin/fex/modhost/native_host.cpp": "f820147a79a327b6fc3ecb713595467f0729cd54c17375d99ebeec33dacb050a",
-    "native/platform/darwin/fex/modhost/nt_io.h": "c0d1cfe0382e5e2411f2653776f31f08f12eb39aa8b53119c4edd52be46458f3",
-    "native/platform/darwin/fex/modhost/nt_registry.h": "4f35d0bbad58ab10dbd0fa47610e9e6aa4f1d6035452e5c689888eeb9d83e3e7",
-    "native/platform/darwin/fex/modhost/nt_strings.h": "63217103db5a28215ed19045370707fa835db91e00a4fd6f658121b1e5ee016b",
-    "native/platform/darwin/fex/modhost/nt_system.h": "e393f4aca1146487f67cc9a2808541f71a7ebd7aa6b229d05aa253a6371d19ee",
-    "native/platform/darwin/fex/modhost/nt_threads.h": "6c40658021050f029acb948e3592cd644c5313ceab9a67ea78a5aa559d834d9a",
-    "native/platform/darwin/fex/modhost/pe_preflight.cpp": "1a7f3ceb3af221c3efdfd70779ec7f3f9a256ccf9edddb08a19cd6ac946c8c2e",
-    "native/platform/darwin/fex/modhost/pe_view.h": "aecd8fbe98474bc0f0055198157a5d32b62afde96f7d103462de43aa0f725afe",
-    "native/platform/darwin/fex/modhost/raven_host.h": "7326d7c6372d291ddba00dd8758111232cf076e0bd8edf04d1fe50060eff2daa",
-    "native/platform/darwin/fex/modhost/signal_stack.h": "4243c9672b4a848079361832042eb75a0e9a5a5fa6aaf44b0e41cdf636f6136e",
-    "native/platform/darwin/fex/modhost/sync.h": "7f4b3275339355aeafda65adc6b251a413cb7937055a7b2c93f0f86a80bbc2eb",
-    "native/platform/darwin/fex/modhost/unwind.h": "7d2b233090d58b8e2dd10fbc732064f926c168fb7be0c3ad54e4cfef2719d3c9",
-    "native/platform/darwin/fex/modhost/vm.h": "a5a0beb570adb31bf5dc07ef6921f9a35971b270d77ef4bfb7fcb03fecbfe9c3",
-    "native/platform/darwin/fex/modhost/x18_probe.c": "bfaabc368c71dd750d6a43a58f88fb55fcdd2645f6c868fa7bfaf22dcb90e8ce"
+    "native/platform/darwin/fex/modhost/abi.S": "abfa4129d633c20119528ac2f914644d45bf923480025d31c53264b8389a6a93",
+    "native/platform/darwin/fex/modhost/abi.h": "56b582639689f9715fc5364fd0c7c987ccbce531cf557f95088afe897aa11c68",
+    "native/platform/darwin/fex/modhost/abi_fixture.S": "fb5f0f8dc84e3d161c2a0a4e8c50c427442846b231a05479df9103a94e5731ce",
+    "native/platform/darwin/fex/modhost/abi_test.cpp": "d5b86cd5cded3fce273a87943eb0bbb5e03c251bc9b3f1026bc8dae49f1c2872",
+    "native/platform/darwin/fex/modhost/bench.h": "6fc69e4017f31b192e2e896f63cc2b4ba374318498145a1f87d9e302b4582219",
+    "native/platform/darwin/fex/modhost/bench_kernels_x86_64.S": "c9692eb5f85956694a2bee48df135df4c58bf2c526ac6b22558dffcc94e1dfaa",
+    "native/platform/darwin/fex/modhost/context.S": "2611242013f1c37d8c3805ae96ec08f3d21492013250ce233b3e2852820d4a45",
+    "native/platform/darwin/fex/modhost/context.h": "77d459d8561662c4025e5fdcfe643c78aec878e1c84223939895e0367709fa33",
+    "native/platform/darwin/fex/modhost/crt.h": "c66c516fd7d906236946624b29bf2019c9bee24f388259f4b8a639e7b745bc6e",
+    "native/platform/darwin/fex/modhost/environment.h": "b0df6337a4f4ba4a52c6e21b9065e3442282b69018afbece67cbdbc8abf670bc",
+    "native/platform/darwin/fex/modhost/fault.h": "e8cb9878451372ae71ae89a786acef9687d4e476eee941235eb45efc38a2763a",
+    "native/platform/darwin/fex/modhost/format.h": "14d831b4df31cf77c6d9757c7f7c51029885cb6a635a84cd0d1cbcf62b4e8a2d",
+    "native/platform/darwin/fex/modhost/jit.h": "e487f80462e8a6bdf7911a23e902a3f7f5376a1381a6340c82d689bfdf2b9a09",
+    "native/platform/darwin/fex/modhost/module_contract.h": "f5adfd3cf559cc241c3754f665f41228d1bca31f39839125abdb4f651c9ff5c2",
+    "native/platform/darwin/fex/modhost/native_host.cpp": "08144e77738ff9c5237efa4ff05402bc0161b5dbba9580a77d180801f6c46a85",
+    "native/platform/darwin/fex/modhost/nt_io.h": "b35b254654431e573f4e2ceebdcabd518b4a7163a6b3cb0cd03e49858896ff5a",
+    "native/platform/darwin/fex/modhost/nt_registry.h": "e0a0c37bbc35acb32a539047ab787d5d40e969383b24158d4da1d6d7298bd299",
+    "native/platform/darwin/fex/modhost/nt_strings.h": "14c3fde34b9aab0ddc8427fbe791735fd3159b2b0b2ea11672d1ca690eebbcc4",
+    "native/platform/darwin/fex/modhost/nt_system.h": "26e2acee04151f2c801f324ba4da371b609df796f411957fc068de29365f67bb",
+    "native/platform/darwin/fex/modhost/nt_threads.h": "ca869b727db495961ca3ea342b7600fc8c79b87be0bda6e45976d5dde0fc2c47",
+    "native/platform/darwin/fex/modhost/pe_preflight.cpp": "c93231b74d2e7e58b714cbc7403ccee7aeecfe0f8c080db4b31deeb0c6294997",
+    "native/platform/darwin/fex/modhost/pe_view.h": "c229ffc9179503cf0632522526478da6c3456581526672aca18b7aecc3a9a989",
+    "native/platform/darwin/fex/modhost/raven_host.h": "3a42e96967768223df7f2ce6c953ed6978f44d89732709f22c9cc1833c412778",
+    "native/platform/darwin/fex/modhost/signal_stack.h": "903cb48725e70a3e284fb54df06d0d4ff981f3fa54d8416374217788bfc86a4b",
+    "native/platform/darwin/fex/modhost/sync.h": "2c9d6a8316941830c32b01f9c2fdd28b4f07d29040ad8d06d38892a78593565d",
+    "native/platform/darwin/fex/modhost/unwind.h": "764e4ba467ed4b19cf26c2a020889d203ff60d00b0ce94e582fd117e868ce820",
+    "native/platform/darwin/fex/modhost/vm.h": "880dc2c068b953f0bd8d0a946cbd61b261d5053bff7f48dc4596983f244e6d6a",
+    "native/platform/darwin/fex/modhost/x18_probe.c": "71103a446a0b8bbe7f32be927c65aeca7cdc17fb5d05a595bd05200b80c05cb3"
   },
   "script_sha256": {
     "test-fex-modhost.py": "509a1a85ff7941fa4d9219bd15e3b3afda2ba1d0005b1df9441c92730a0bdfca",
@@ -228,7 +228,7 @@
   "runtime": [
     {
       "command": [
-        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-sjm5iny9/build/fex_modhost_substrate",
+        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-4gw_em5z/build/fex_modhost_substrate",
         "--self-test"
       ],
       "returncode": 0,
@@ -237,7 +237,7 @@
     },
     {
       "command": [
-        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-sjm5iny9/build/fex_modhost_abi"
+        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-4gw_em5z/build/fex_modhost_abi"
       ],
       "returncode": 0,
       "stdout": "PASS: MAP_JIT execution, nested write modes, sixteen arguments, d8-d15/q8-q15/x18 sentinels and native/signal x18\n",
@@ -245,7 +245,7 @@
     },
     {
       "command": [
-        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-sjm5iny9/build/fex_modhost_substrate",
+        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-4gw_em5z/build/fex_modhost_substrate",
         "--unsupported-unwind"
       ],
       "returncode": -6,
@@ -261,7 +261,7 @@
         "-c",
         "/Users/yount/.t3/worktrees/raven/t3-d59088a1/native/platform/darwin/fex/modhost/bench_kernels_x86_64.S",
         "-o",
-        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-modhost-test-79nzsrp5/kernels.o"
+        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-modhost-test-ailaji7d/kernels.o"
       ],
       "returncode": 0,
       "stdout": "",
@@ -273,12 +273,12 @@
     },
     {
       "command": [
-        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-sjm5iny9/build/fex_modhost_substrate",
+        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-4gw_em5z/build/fex_modhost_substrate",
         "--execute",
         "/Users/yount/Documents/Projects/raven-components/fex-modules/xtajit64.dll"
       ],
       "returncode": 0,
-      "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19187\nCHPE native RavenProcessInit RVA=5c04 TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nPASS: x86-64 dispatch args=7,11,13,17 host_result=224 resumed_result=4884 calls=1\nPASS: precise AV guest_rip=113c8c00a fault_address=113c88000 repaired_result=4665\nPASS: nested harness-to-guest callback argument=41 result=124 outer_resumed_result=5008\nPASS: occupied x87 dispatch and AV TOP/condition/tag/result preserved\nBENCH sample=0 iterations=10000000 integer_ns=21827875 float_ns=27398500 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=1 iterations=10000000 integer_ns=20489250 float_ns=25193208 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=2 iterations=10000000 integer_ns=20047958 float_ns=25176125 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=3 iterations=10000000 integer_ns=20675875 float_ns=25366541 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=4 iterations=10000000 integer_ns=21070417 float_ns=26303166 integer_result=5292597211099207303 float_result=4295705.5919631328\nROUNDTRIP sample=0 calls=100000 elapsed_ns=11927625 ns_per_call=119.27625\nROUNDTRIP sample=1 calls=100000 elapsed_ns=11963042 ns_per_call=119.63042\nROUNDTRIP sample=2 calls=100000 elapsed_ns=11579875 ns_per_call=115.79875\nROUNDTRIP sample=3 calls=100000 elapsed_ns=12010084 ns_per_call=120.10084000000001\nROUNDTRIP sample=4 calls=100000 elapsed_ns=11620667 ns_per_call=116.20667\n",
+      "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19187\nCHPE native RavenProcessInit RVA=5c04 TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nPASS: x86-64 dispatch args=7,11,13,17 host_result=224 resumed_result=4884 calls=1\nPASS: precise AV guest_rip=10240400a fault_address=102400000 repaired_result=4665\nPASS: nested harness-to-guest callback argument=41 result=124 outer_resumed_result=5008\nPASS: occupied x87 dispatch and AV TOP/condition/tag/result preserved\nBENCH sample=0 iterations=10000000 integer_ns=21567125 float_ns=27290250 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=1 iterations=10000000 integer_ns=21486292 float_ns=25380250 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=2 iterations=10000000 integer_ns=20653541 float_ns=25555250 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=3 iterations=10000000 integer_ns=20689084 float_ns=25096709 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=4 iterations=10000000 integer_ns=21597666 float_ns=26776167 integer_result=5292597211099207303 float_result=4295705.5919631328\nROUNDTRIP sample=0 calls=100000 elapsed_ns=12129541 ns_per_call=121.29541\nROUNDTRIP sample=1 calls=100000 elapsed_ns=11997709 ns_per_call=119.97709\nROUNDTRIP sample=2 calls=100000 elapsed_ns=12185417 ns_per_call=121.85417\nROUNDTRIP sample=3 calls=100000 elapsed_ns=12369542 ns_per_call=123.69542\nROUNDTRIP sample=4 calls=100000 elapsed_ns=12422833 ns_per_call=124.22833\n",
       "stderr": ""
     }
   ],
@@ -289,14 +289,14 @@
       "--modules",
       "/Users/yount/Documents/Projects/raven-components/fex-modules",
       "--host",
-      "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-sjm5iny9/build/fex_modhost_substrate",
+      "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-4gw_em5z/build/fex_modhost_substrate",
       "--abi",
-      "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-sjm5iny9/build/fex_modhost_abi",
+      "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-4gw_em5z/build/fex_modhost_abi",
       "--evidence",
-      "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-sjm5iny9/runtime.json"
+      "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-fex-evidence-4gw_em5z/runtime.json"
     ],
     "returncode": 0,
-    "stdout": "PASS: negative fault repair, dynamic checked imports/concurrency, shared sections, RX JIT, worker termination\nPASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)\nPASS: MAP_JIT execution, nested write modes, sixteen arguments, d8-d15/q8-q15/x18 sentinels and native/signal x18\nunhandled module NT exception c00000bb\nPASS: benchmark function bodies match original SPIKE assembly bytes\nmachine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19187\nCHPE native RavenProcessInit RVA=5c04 TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nPASS: x86-64 dispatch args=7,11,13,17 host_result=224 resumed_result=4884 calls=1\nPASS: precise AV guest_rip=113c8c00a fault_address=113c88000 repaired_result=4665\nPASS: nested harness-to-guest callback argument=41 result=124 outer_resumed_result=5008\nPASS: occupied x87 dispatch and AV TOP/condition/tag/result preserved\nBENCH sample=0 iterations=10000000 integer_ns=21827875 float_ns=27398500 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=1 iterations=10000000 integer_ns=20489250 float_ns=25193208 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=2 iterations=10000000 integer_ns=20047958 float_ns=25176125 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=3 iterations=10000000 integer_ns=20675875 float_ns=25366541 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=4 iterations=10000000 integer_ns=21070417 float_ns=26303166 integer_result=5292597211099207303 float_result=4295705.5919631328\nROUNDTRIP sample=0 calls=100000 elapsed_ns=11927625 ns_per_call=119.27625\nROUNDTRIP sample=1 calls=100000 elapsed_ns=11963042 ns_per_call=119.63042\nROUNDTRIP sample=2 calls=100000 elapsed_ns=11579875 ns_per_call=115.79875\nROUNDTRIP sample=3 calls=100000 elapsed_ns=12010084 ns_per_call=120.10084000000001\nROUNDTRIP sample=4 calls=100000 elapsed_ns=11620667 ns_per_call=116.20667\nPASS: native module init and verified x86-64 dispatch/resume\n",
+    "stdout": "PASS: negative fault repair, dynamic checked imports/concurrency, shared sections, RX JIT, worker termination\nPASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)\nPASS: MAP_JIT execution, nested write modes, sixteen arguments, d8-d15/q8-q15/x18 sentinels and native/signal x18\nunhandled module NT exception c00000bb\nPASS: benchmark function bodies match original SPIKE assembly bytes\nmachine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19187\nCHPE native RavenProcessInit RVA=5c04 TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nPASS: x86-64 dispatch args=7,11,13,17 host_result=224 resumed_result=4884 calls=1\nPASS: precise AV guest_rip=10240400a fault_address=102400000 repaired_result=4665\nPASS: nested harness-to-guest callback argument=41 result=124 outer_resumed_result=5008\nPASS: occupied x87 dispatch and AV TOP/condition/tag/result preserved\nBENCH sample=0 iterations=10000000 integer_ns=21567125 float_ns=27290250 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=1 iterations=10000000 integer_ns=21486292 float_ns=25380250 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=2 iterations=10000000 integer_ns=20653541 float_ns=25555250 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=3 iterations=10000000 integer_ns=20689084 float_ns=25096709 integer_result=5292597211099207303 float_result=4295705.5919631328\nBENCH sample=4 iterations=10000000 integer_ns=21597666 float_ns=26776167 integer_result=5292597211099207303 float_result=4295705.5919631328\nROUNDTRIP sample=0 calls=100000 elapsed_ns=12129541 ns_per_call=121.29541\nROUNDTRIP sample=1 calls=100000 elapsed_ns=11997709 ns_per_call=119.97709\nROUNDTRIP sample=2 calls=100000 elapsed_ns=12185417 ns_per_call=121.85417\nROUNDTRIP sample=3 calls=100000 elapsed_ns=12369542 ns_per_call=123.69542\nROUNDTRIP sample=4 calls=100000 elapsed_ns=12422833 ns_per_call=124.22833\nPASS: native module init and verified x86-64 dispatch/resume\n",
     "stderr": ""
   }
 }

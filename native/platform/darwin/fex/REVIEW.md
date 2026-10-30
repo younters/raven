@@ -17,7 +17,7 @@ No production launch, graphics or Rosetta changes were made. Nothing was pushed.
 | 7. Negative tests | Fixed: write/wrong-RIP/wrong-address repair rejection; unsupported unwind rejected; second fault in same host page is an exact expected failure. | Context and repair count stay unchanged on rejected faults; unwind child must SIGABRT with STATUS_NOT_SUPPORTED; gap runner rejects unrelated error/crash/timeout rather than hiding it with WILL_FAIL. |
 | 8. Evidence/benchmark | Fixed: generator collects checked live evidence; original Rosetta source/log retained and hashed; full/warm medians and corrected ratios computed; build ids, fresh/cached label and --clean added. | Generator runs Release -j8, locked CTest, driver, artifact/license verification; seven portable contract tests include sample-order/median checks. |
 | 9. License/lock documentation | Fixed: recipe inventory hash-verified and copied to external root/licenses; lock is explicitly an external dependency. | Generator verifies every copied license against inventory. |
-| 10. Style | Pending the separate `style:` commit after functional checks. | Native harness C/C++/assembly will use tabs and K&R braces. Python and rebasable FEX patches retain their native styles. |
+| 10. Style | Fixed after functional checks, separately in `c65602f` (`style:`). | Native harness C/C++/assembly uses tabs and K&R braces. Non-comment native tokens and assembly/CMake line content match the functional commit `d26ed7e`; post-format Release build and all four tests pass. Python, original baseline and rebasable FEX patches retain their native styles. |
 
 ## Astra correctness review
 
@@ -40,3 +40,7 @@ workers still have no FEX ThreadInit/ThreadTerm and cannot claim translated work
 execution. Arbitrary signal/nonlocal-exit JIT write-mode restoration remains
 unqualified. See [M1D.md](M1D.md) for these risks, native MAP_JIT per-region guard
 limits, the visible Tier 0 4K/16K gap, remaining NT surface and the bounded M2 GO.
+
+Functional review fixes: `d26ed7e`. Separate style commit: `c65602f`.
+Final checked source hashes and test transcripts are in the regenerated
+[execution evidence](modhost/m1d-runtime-evidence.json).
