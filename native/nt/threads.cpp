@@ -1,10 +1,12 @@
 #include "threads.h"
 #include "handle_channel.h"
+#ifdef __APPLE__
+#include "platform/darwin/idle_descriptors.h"
+#endif
 
 #include <cstdlib>
 #include <fcntl.h>
 #include <iostream>
-#include <map>
 
 #include "api.h"
 #include "shared_file.h"
@@ -452,18 +454,9 @@ std::shared_ptr<void> NativeThreads::idle_descriptors(std::vector<pollfd> &descr
 	if (watched)
 		watched(descriptors);
 	const auto handles = watch_handles(descriptors);
-	// Several Windows waits may name the same fd. Darwin poll observes only its last entry, so preserve the union without moving
-	// existing entries (desktop callers retain indices into the vector).
-	std::map<int, size_t> first;
-	for (size_t index = 0; index < descriptors.size(); ++index) {
-		auto &descriptor = descriptors[index];
-		if (descriptor.fd < 0) continue;
-		const auto [position, added] = first.emplace(descriptor.fd, index);
-		if (!added) {
-			descriptors[position->second].events |= descriptor.events;
-			descriptor.fd = -1;
-		}
-	}
+#ifdef __APPLE__
+	darwin_merge_idle_descriptors(descriptors);
+#endif
 	return handles;
 }
 
