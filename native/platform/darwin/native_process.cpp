@@ -1613,6 +1613,7 @@ void NativeProcess::pause_thread(NativeThreadState &thread)
 	try {
 		child.select(thread.task);
 		child.pause_thread();
+		thread.context_pause_interrupt = child.thread().signal == RAVEN_STOP_INTERRUPT;
 		state->stopped = true;
 		drain_queued_calls(true);
 		thread.context = context();
@@ -1634,13 +1635,14 @@ void NativeProcess::resume_context_thread(NativeThreadState &thread)
 	auto &child = *state->child;
 	const auto caller = child.selected;
 	child.select(thread.task);
-	if (child.thread().signal == RAVEN_STOP_INTERRUPT) {
+	{
 		std::memcpy(&child.registers(), &thread.context.registers, sizeof thread.context.registers);
 		std::memcpy(child.thread().xstate, thread.context.xstate.data(), thread.context.xstate.size());
 		copy_x87_slots(child.thread().xstate, thread.context.xstate.data(), false);
-		child.resume(false);
-		thread.stopped = false;
-		thread.context_in_task = true;
+        // Preserve a racing API/syscall stop for normal scheduler dispatch.
+        if (thread.context_pause_interrupt) child.resume(false);
+        thread.stopped = false;
+        thread.context_in_task = true;
 	}
 	child.select(caller);
 }
