@@ -26,7 +26,8 @@ the ABI mismatch tests require those rejections.
 `RavenNT::ThreadEnvironment::teb`. The cooperative owner and each parallel
 resident worker have separate ThreadEnvironment storage initialized before
 module ThreadInit. Worker ThreadTerm runs before worker storage is destroyed.
-The callback only reads the already initialized `active_thread` pointer; it
+When `active_thread` is absent, the callback returns fixed per-pthread fallback
+storage with separate TlsSlots and a stable allocator identity. It
 allocates nothing and takes no locks, including during module fault repair.
 The cooperative/process owner calls module ThreadTerm and then releases its private environment when FexProcess is destroyed.
 
@@ -50,10 +51,10 @@ both guest widths, cooperative and parallel.
 
 ## Private modules
 
-The series is 0001–0018. Patch 0017 is regenerated against M4's final 0016 and
+The series is 0001–0019. Patch 0017 is regenerated against M4's final 0016 and
 keeps alignment/overcommit repair after native-PC boundary validation. Patch
 0018 records the ABI/TLS change independently of reviewed history. Modules are
-built only in `/tmp/raven-integ-modules/FEX-darwin`, from upstream source
+built only in private roots (current: `/tmp/raven-review-modules/FEX-darwin`), from upstream source
 `370c63057fc9fc826b58fe15d59930876df55b5f`; shared component trees are untouched.
 The pinned module digests and entry instructions are in
 `scripts/fex-modhost-pins.json` and `modhost/module_contract.h`.
@@ -88,8 +89,7 @@ both target widths; they require the registration stamp and report elapsed
 setup-plus-fixture time. Prefix preparation registers both component widths in
 each case. Notepad++ also uses real fresh setup under both engines.
 
-Final verification provisions the new upstream RTL privately with
-`scripts/provision-rtl.py --output /tmp/raven-integ-components/rtl` and selects
-that DLL in the build cache. The copied reference option originally selected
-the older shared ReactOS RTL; early diagnostics used it, and the unchanged
-build-macos comparison still uses it. The shared component is never replaced.
+Final verification uses the provisioned RTL at
+`/Users/yount/Documents/Projects/raven-components/rtl/raven-rtl.dll`, selected
+through `RAVEN_RTL_COMPONENT_PATH`. Earlier diagnostics used a private RTL;
+those inputs are historical. Shared component trees are never modified.

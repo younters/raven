@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "xtajit64_sha256": "5e27b800b748faf531bd22400b4460f7ef38fe47648b1a54e36cabb85f4de70d",
+  "xtajit64_sha256": "703ee6a07b7f612941447272cccad9a8487b8dfa4e1e5c54d434fa643a6504bf",
   "raven_process_init_rva": 27836,
   "patches": {
     "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
@@ -21,7 +21,7 @@
     "0016-wow64-host-boundary-validation.patch": "8e3ae8ccaae4336cd5d045be4a465b280036e60f9474730c2b699bad22f6f326",
     "0017-raven-unaligned-tso.patch": "082bdfea773ee87344a90d2c7e4bf7fddc233037236bac4b2afd6c45df0751d4",
     "0018-raven-private-host-teb.patch": "3b7a4c854631feec3bda91339e5f5e60b790725b430935be837bab8f1bf12310",
-    "0019-raven-native-overcommit-repair.patch": "3ce991b3f7fd453e966e835c6be2905be9e4658a19d49536f3aa051b09e38883"
+    "0019-raven-native-overcommit-repair.patch": "95cece5f367af30a4eff3ee9b1d57e90eb0bdde068d75d8adde5c527e58a50b4"
   },
   "xtajit_sha256": "b84bca9f2b7e8797c46c51729149c4c8dfeb35b5b230960635f5493929df45d9",
   "raven_wow64_process_init_rva": 30800,

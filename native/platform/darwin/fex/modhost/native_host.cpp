@@ -196,6 +196,20 @@ void *resolve(const char *dll, const char *name) {
 }
 std::unique_ptr<PEView> mapped_image;
 std::unique_ptr<RavenNT::ProcessEnvironment> process_environment;
+// A host-created pthread can enter allocator helpers before ThreadInit or after
+// ThreadTerm. Fixed TLS storage keeps this callback allocation- and lock-free.
+static void *private_teb()
+{
+	if (RavenNT::active_thread) return RavenNT::active_thread->teb.data();
+	alignas(16) static thread_local std::array<uint8_t, 0x3000> fallback{};
+	auto *self = fallback.data();
+	memcpy(self + 0x30, &self, sizeof(self));
+	auto identity = uintptr_t(pthread_self());
+	memcpy(self + 0x48, &identity, sizeof(identity));
+	void *peb = RavenNT::active_process ? RavenNT::active_process->peb.data() : nullptr;
+	memcpy(self + 0x60, &peb, sizeof(peb));
+	return self;
+}
 std::unique_ptr<RavenNT::ThreadEnvironment> thread_environment;
 void inspect_image(Bytes image, size_t opt) {
 	mapped_image = std::make_unique<PEView>(PEView{image, opt});
@@ -452,7 +466,7 @@ void initialize_wow64_image(Bytes image, size_t opt, uint64_t (*dispatch)(uint64
 	common.dispatch = reinterpret_cast<decltype(common.dispatch)>(callback(dispatch));
 	common.exception = reinterpret_cast<decltype(common.exception)>(callback(exception));
 	common.unix_call = reinterpret_cast<decltype(common.unix_call)>(callback(unix_call));
-	common.private_teb = reinterpret_cast<decltype(common.private_teb)>(callback(+[]() -> void * { return RavenNT::active_thread->teb.data(); }));
+	common.private_teb = reinterpret_cast<decltype(common.private_teb)>(callback(private_teb));
 	common.cpu_area = reinterpret_cast<decltype(common.cpu_area)>(callback(+[](void *) -> void * { return RavenNT::active_thread->context.data(); }));
 	common.log = reinterpret_cast<decltype(common.log)>(callback(host_log));
 	common.jit_write_protect = reinterpret_cast<decltype(common.jit_write_protect)>(callback(jit_protect));
@@ -478,8 +492,8 @@ void initialize_wow64_image(Bytes image, size_t opt, uint64_t (*dispatch)(uint64
 	if (uint32_t(raven_ec_call(view.export_address("RavenWow64ProcessInit"), args, thread_environment->teb.data())) != 0xc000000d)
 		throw std::runtime_error("FEX host ABI v2 contract failed: accepted truncated WoW64 host");
 	common.size = sizeof(common);
-	std::cout << "PASS: FEX host ABI v2 rejects v1 and truncated host tables\n";
 	if (raven_ec_call(view.export_address("RavenWow64ProcessInit"), args, thread_environment->teb.data())) throw std::runtime_error("FEX WoW64 host ABI v2 registration failed; rebuild pinned modules");
+	std::cout << "PASS: FEX host ABI v2 rejects v1 and truncated host tables\n";
 	memset(args, 0, sizeof(args));
 	raven_ec_call(view.export_address("BTCpuThreadInit"), args, thread_environment->teb.data());
 	initialize_wow64_packet(*thread_environment);
@@ -525,7 +539,7 @@ void initialize_image(Bytes image, size_t opt, uint64_t (*dispatch)(uint64_t, vo
 	host.dispatch = reinterpret_cast<decltype(host.dispatch)>(callback(dispatch));
 	host.unix_call = reinterpret_cast<decltype(host.unix_call)>(callback(unix_call));
 	host.exception = reinterpret_cast<decltype(host.exception)>(callback(exception));
-	host.private_teb = reinterpret_cast<decltype(host.private_teb)>(callback(+[]() -> void * { return RavenNT::active_thread->teb.data(); }));
+	host.private_teb = reinterpret_cast<decltype(host.private_teb)>(callback(private_teb));
 	host.cpu_area = reinterpret_cast<decltype(host.cpu_area)>(callback(cpu_area));
 	host.log = reinterpret_cast<decltype(host.log)>(callback(host_log));
 	host.jit_write_protect =
@@ -567,10 +581,10 @@ void initialize_image(Bytes image, size_t opt, uint64_t (*dispatch)(uint64_t, vo
 	if (uint32_t(raven_ec_call(view.export_address("RavenProcessInit"), args, teb)) != 0xc000000d)
 		throw std::runtime_error("FEX host ABI v2 contract failed: accepted truncated x64 host");
 	host.size = sizeof(host);
-	std::cout << "PASS: FEX host ABI v2 rejects v1 and truncated host tables\n";
 	auto status = uint32_t(raven_ec_call(view.export_address("RavenProcessInit"), args, teb));
 	if (status)
 		throw std::runtime_error("FEX host ABI v2 registration failed; rebuild pinned modules: " + std::to_string(status));
+	std::cout << "PASS: FEX host ABI v2 rejects v1 and truncated host tables\n";
 	std::cout << "PASS: RavenProcessInit\n" << std::flush;
 	memset(args, 0, sizeof(args));
 	status = uint32_t(raven_ec_call(view.export_address("ThreadInit"), args, teb));

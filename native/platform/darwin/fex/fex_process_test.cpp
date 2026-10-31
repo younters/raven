@@ -119,7 +119,7 @@ int main(int argc, char **argv)
 		} else if (mode == "breakpoint") {
 			loaded.data()[image.entry] = 0xcc;
 			loaded.data()[image.entry + 1] = 0xc3;
-		} else check(mode == "entry" || mode == "lifetime" || mode == "served-malformed", "unknown mode");
+		} else check(mode == "entry" || mode == "lifetime" || mode == "served-malformed" || mode == "teb-switch", "unknown mode");
 		raven::LoadedImage *images[]{&loaded};
 		if (mode == "lifetime") {
 			auto second_rejected = [&] {
@@ -141,6 +141,28 @@ int main(int argc, char **argv)
 			return 0;
 		}
 		raven::FexProcess process(images, root);
+		if (mode == "teb-switch") {
+			const auto code = process.map_memory(16384, PROT_READ | PROT_WRITE | PROT_EXEC, 0);
+			const uint8_t load[] = {0x65, 0x48, 0x8b, 0x04, 0x25, 0x30, 0, 0, 0, 0xc3};
+			process.write_memory(code, load);
+			uint64_t tebs[2];
+			for (auto &teb : tebs) {
+				teb = process.map_memory(16384, PROT_READ | PROT_WRITE, 0);
+				process.write_memory(teb + 0x30, {reinterpret_cast<const uint8_t *>(&teb), 8});
+				const auto peb = process.map_memory(16384, PROT_READ | PROT_WRITE, 0);
+				process.write_memory(teb + 0x60, {reinterpret_cast<const uint8_t *>(&peb), 8});
+			}
+			for (unsigned i = 0; i < 100; ++i) {
+				auto context = process.context();
+				context.registers.gs_base = tebs[i % 2];
+				process.set_context(context);
+				const auto result = process.call(code, {}, std::chrono::milliseconds(1000));
+				check(result.stop == raven::NativeStop::returned && result.value == tebs[i % 2],
+					"worker retained previous guest TEB");
+			}
+			std::cout << "PASS: alternating guest TEB on one resident worker\n";
+			return 0;
+		}
 		if (mode == "debug-print") process.add_api_trap(loaded.base() + image.entry + 32, 0);
 		if (mode == "wait-unwind") {
 			process.set_execution_wait([](auto, auto) { throw std::runtime_error("wait sentinel"); });
@@ -185,6 +207,33 @@ int main(int argc, char **argv)
 			try { process.enter_nt_service(result.instruction, 0x1235); }
 			catch (const std::runtime_error &) { rejected = true; }
 			check(rejected, "NT service accepted wrong captured number");
+			auto reject = [&](uint64_t instruction) {
+				bool failed = false;
+				try { process.enter_nt_service(instruction, 0x1234); }
+				catch (const std::runtime_error &) { failed = true; }
+				check(failed, "NT service accepted invalid boundary");
+			};
+			reject(result.instruction + 1);
+			const auto page = result.instruction & ~uint64_t(4095);
+			process.protect_image(page, 4096, PROT_READ | PROT_WRITE);
+			reject(result.instruction); // readable but not executable
+			const uint8_t nop = 0x90, ret = 0xc3;
+			process.write_memory(result.instruction, {&nop, 1});
+			process.protect_image(page, 4096, PROT_READ | PROT_EXEC);
+			reject(result.instruction); // syscall without its third (ret) byte
+			process.protect_image(page, 4096, PROT_READ | PROT_WRITE);
+			process.write_memory(result.instruction, {&ret, 1});
+			process.protect_image(page, 4096, PROT_READ | PROT_EXEC);
+			const auto saved = process.context();
+			const auto boundary = process.map_memory(32768, PROT_READ | PROT_WRITE | PROT_EXEC, 0) + 16384;
+			const uint8_t syscall_ret[]{0x0f, 0x05, 0xc3};
+			process.write_memory(boundary - 2, syscall_ret);
+			process.protect_memory(boundary, 16384, PROT_NONE);
+			auto crossing = saved;
+			crossing.registers.rip = boundary;
+			process.set_context(crossing);
+			reject(boundary); // syscall bytes readable/executable, ret page inaccessible
+			process.set_context(saved);
 			process.enter_nt_service(result.instruction, 0x1234);
 			check(process.context().registers.orig_rax == uint64_t(-1), "NT service still marked syscall");
 			check(process.api_arguments(1)[0] == process.context().registers.r10, "NT argument not restored");

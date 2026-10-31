@@ -36,6 +36,7 @@ endforeach()
 add_custom_target(fex_m4_fixtures DEPENDS ${M4_OUTPUTS})
 add_executable(fex_wow64_process_test ${CMAKE_CURRENT_LIST_DIR}/wow64_process_test.cpp)
 target_link_libraries(fex_wow64_process_test PRIVATE raven_cpu)
+# x18 holds the execution TEB; the macOS 11 legacy SDK permits its use.
 target_link_options(fex_wow64_process_test PRIVATE -Wl,-platform_version,macos,11.0,11.0)
 add_dependencies(fex_wow64_process_test fex_m4_fixtures)
 foreach(contract fs fault timeout host-smc guest-smc stdcall cdecl)

@@ -313,13 +313,24 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 }
 FexProcess::~FexProcess()
 {
+	// Destruction is noexcept: fail fast rather than finalize another pthread's
+	// allocator/TLS or silently continue after failed module teardown.
+	if (!pthread_equal(state->owner, pthread_self())) {
+		std::fputs("FEX destruction requires the process owner thread\n", stderr);
+		std::terminate();
+	}
 	// Resident workers terminate their FEX thread before releasing private TLS.
 	state->workers.clear();
 	if (thread_environment) {
 		uint64_t args[8]{uint64_t(-2), 0};
 		RavenFault::execution_teb = nullptr;
-		raven_ec_call(mapped_image->export_address(wow64_module ? "BTCpuThreadTerm" : "ThreadTerm"),
+		const auto status = raven_ec_call(mapped_image->export_address(wow64_module ? "BTCpuThreadTerm" : "ThreadTerm"),
 			args, thread_environment->teb.data());
+		// BTCpuThreadTerm is void; only the x64 API returns NTSTATUS.
+		if (!wow64_module && status) {
+			std::fputs("FEX owner ThreadTerm failed\n", stderr);
+			std::terminate();
+		}
 	}
 	state.reset();
 	RavenNT::active_thread = nullptr;

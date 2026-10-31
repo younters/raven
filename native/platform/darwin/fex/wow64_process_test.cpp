@@ -30,6 +30,24 @@ int main(int argc, char **argv)
 		raven::LoadedImage loaded(image, image.image_base);
 		raven::LoadedImage *images[]{&loaded};
 		raven::FexProcess process(images, root, image.stack_reserve, raven::NativeMode::x86);
+		if (mode == "teb-switch") {
+			const auto code = process.map_memory(16384, PROT_READ | PROT_WRITE | PROT_EXEC, 0);
+			const uint8_t load[] = {0x64, 0xa1, 0x18, 0, 0, 0, 0xc3};
+			process.write_memory(code, load);
+			uint64_t tebs[2];
+			for (auto &teb : tebs) {
+				teb = process.map_memory(16384, PROT_READ | PROT_WRITE, 0);
+				process.write_memory(teb + 0x18, {reinterpret_cast<const uint8_t *>(&teb), 4});
+			}
+			for (unsigned i = 0; i < 100; ++i) {
+				process.set_teb(tebs[i % 2]);
+				const auto result = process.call(code, {});
+				check(result.stop == raven::NativeStop::returned && result.value == tebs[i % 2],
+					"worker retained previous guest TEB");
+			}
+			std::cout << "PASS: alternating guest TEB on one resident worker\n";
+			return 0;
+		}
 		if (mode == "internal") asm volatile("brk #0");
 		if (mode == "range" || mode == "range-laa") {
 			const bool laa = mode == "range-laa";

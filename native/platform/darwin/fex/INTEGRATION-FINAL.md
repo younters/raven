@@ -19,7 +19,7 @@ windowscodecs.dll. Real application launches also unset it. Do not interpret
 ordinary fixture passes as registration evidence.
 
 ```sh
-RAVEN_PREFIX_SETUP=1 RAVEN_FEX_MODULE_ROOT=/tmp/raven-integ-modules \
+RAVEN_PREFIX_SETUP=1 RAVEN_FEX_MODULE_ROOT=/tmp/raven-review-modules \
   /tmp/raven-ctest-lock.sh integration-final \
   ctest --test-dir build-integration -j8 --output-on-failure \
   --output-junit /tmp/raven-final-ctest.xml
@@ -108,10 +108,10 @@ native-host preflight. Pins and the native ProcessInit RVA were updated.
 
 ```sh
 python3 scripts/build-fex-modules.py --raven-host --build-only \
-  --root /tmp/raven-final-modules --build-id integration-final19
+  --root /tmp/raven-review-modules --build-id integration-review
 cmake -S . -B build-integration -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DRAVEN_RTL_COMPONENT_PATH=/Users/yount/Documents/Projects/raven-components/rtl/raven-rtl.dll \
-  -DRAVEN_FEX_MODULE_ROOT=/tmp/raven-final-modules
+  -DRAVEN_FEX_MODULE_ROOT=/tmp/raven-review-modules
 cmake --build build-integration -j8
 # All subsequent CTest selections still go through /tmp/raven-ctest-lock.sh.
 ```
@@ -151,5 +151,81 @@ tab, line 1, editor canvas, and status bar are visible.
 
 A prior Rosetta window-capture attempt failed transiently; the final fresh-prefix
 retry captured successfully. Earlier FEX failures and all initial suite results
-remain in `/tmp/raven-final-*.log`; machine-readable test results are
+are local-only, uncommitted evidence in `/tmp/raven-final-*.log`; the likewise
+local-only machine-readable test results are
 `/tmp/raven-final-{ctest,baseline,recheck,optimized,child-fix,rtl,qualified}.xml`.
+
+## Review fixes and final-tree qualification (2026-10-31)
+
+The review build uses the **private** clone `/tmp/raven-review-modules`, build id
+`integration-review`. The supplied `/tmp/raven-final-modules`, shared FEX trees,
+and other worktrees were not changed. Patch 0019 now also exports Raven-host-only
+qualification probes for its real overcommit tracker and CRT allocator. The
+cached build driver passed source identity, patch/module hashes, audits, and
+native-host preflight. RelWithDebInfo and the provisioned RTL above were retained.
+
+| Finding | Disposition and evidence |
+| --- | --- |
+| C1 | Both callbacks share a null-safe helper. Fixed per-pthread fallback TEBs allocate nothing and have distinct TlsSlots. Both width boundary tests exercise two simultaneous null-active-thread callers and restoration to the active environment. |
+| C2 | No defect reproduced: each width alternates two guest TEBs 100 times on one resident worker under `RAVEN_PARALLEL=1`. Every GS/FS self-pointer load matches the selected TEB. No segment-refresh bit was restored. |
+| C3 | Owner-thread destruction is enforced before teardown; failed x64 ThreadTerm terminates with a diagnostic. Destructors are noexcept. WoW64 BTCpuThreadTerm is void, so its register return is not interpreted as NTSTATUS. |
+| C4 | Parsed the built xtajit.dll export table: RavenWow64ProcessInit remains RVA `0x7850`, entry word `0xf81f0ffe`. Its SHA-256 is unchanged. The native x64 redirection still resolves to `0x6cbc`, word `0xb40001c0`. |
+| T1 | `native_module_regressions_fex` writes and verifies `0x123456789abcdef0` from module code into an actual tracker-owned reservation. `native_reserved_write_rejection_fex` performs a real Mach-O write to reserved memory in an isolated executable and requires unsupported-fault exit 138. A synthetic non-module PC is also rejected by RavenHandleFault. |
+| T2 | The module regression lane allocates 256 CRT blocks on A, frees them on B, and repeats 64 rounds while alternating A's execution TEB. B has its own initialized private TEB and is finalized on B. CTest imposes a 30-second deadline on allocator spins. |
+| T3 | Restored instruction+1 rejection; added non-executable syscall, wrong third byte, and inaccessible third-byte page rejection before valid service completion. Cooperative and parallel NT-service lanes pass. |
+| T4 | Marker checks require msxml3.dll, windowscodecs.dll, mlang.dll and propsys.dll for both component widths. A new PE32 fixture verifies the loaded codec's module path contains SysWOW64. The subprocess has a clear 105-second error, inside CTest's 120-second deadline; its nested runner has a 100-second deadline. |
+| T5 | PASS is printed only after valid registration. Removed PASS_REGULAR_EXPRESSION so exit status remains authoritative, added registration-failure rejection and SKIP_RETURN_CODE 77. |
+| T6 | Fixture wait 30 s, Raven deadline 45 s, runner deadline 55 s, CTest deadline 75 s. All eight jit stress lanes pass. |
+| T7 | Native-engine TLS-slot and jit-stress lanes at both widths/scheduling modes, and both native_fex_child widths, have recorded passing runs. |
+| D1 | Corrected series to 0001–0019. |
+| D2 | DEFAULT/M4/M5 now explicitly distinguish the initial 0018 full run from the 0019 focused rerun. This section records the later final-tree full run separately. |
+| D3 | Both integration notes specify the provisioned shared RTL DLL selected in the build cache; historical private RTL inputs are identified as historical. |
+| D4 | Reproduction commands now select the current private module root and build id. |
+| D5 | Historical /tmp logs/XML are explicitly local-only; review result excerpts below are committed. |
+| D6 | Converted both C fixtures to tabs, wrapped parity properties/commands, factored repeated fixture compilation, and documented the legacy SDK requirement for x18. |
+
+Current module SHA-256:
+
+- xtajit64.dll: `703ee6a07b7f612941447272cccad9a8487b8dfa4e1e5c54d434fa643a6504bf`
+- xtajit.dll (unchanged): `b84bca9f2b7e8797c46c51729149c4c8dfeb35b5b230960635f5493929df45d9`
+
+Every review CTest invocation used `/tmp/raven-ctest-lock.sh` with
+`RAVEN_PREFIX_SETUP=1` and `RAVEN_FEX_MODULE_ROOT=/tmp/raven-review-modules`.
+The registration lanes explicitly unset prefix setup internally.
+The final focused selection (`-R 'fex|tls|jit|fresh_prefix' -j8`) ran **197 tests:
+196 passed, 1 failed**, 19.83 seconds. The failure was x64 FEX fresh registration:
+`PE preferred base is unavailable and image has no relocation table`; the fixture
+itself returned zero, but a registration child failed and no marker was accepted.
+A subsequent locked serial registration selection passed **all four lanes** in
+13.76 seconds. An earlier focused child-x64 address collision likewise passed its
+serial recheck and the final focused selection. These address-placement failures
+are recorded as intermittent, not hidden by automatic retries in the tests.
+
+The **one final-tree full suite** ran **731 registered: 699 passed, 25 failed,
+6 skipped, 1 disabled**, in **99.56 seconds**. It is not a green qualification.
+All 19 previously classified failures remain. All four new CTest lanes, every
+TLS-slot/jit-stress engine/width/scheduling lane, both FEX child widths, and all
+four fresh-prefix lanes passed in this full run. Four additional full-suite
+failures passed the locked serial recheck; two additional failures were compared
+against existing baseline executables without modifying the baseline build:
+
+| Additional full-suite failure | Classification/evidence |
+| --- | --- |
+| native_pipe_roundtrip_x32 | Intermittent 5-second timeout; serial pass in 2.69 s. Previously seen as an environmental failure in the initial integration run. |
+| native_darwin_parallel_contracts | Intermittent scheduler wake failure; serial pass in 0.14 s. |
+| fex_modhost_substrate | Intermittent abort during full-suite concurrency; final focused and serial selections pass. Exact contention cause not established. |
+| fex_modhost_execution | Intermittent abort during full-suite concurrency; final focused and serial selections pass. Exact contention cause not established. |
+| native_fiber_x64 | Pre-existing native IsThreadAFiber implementation gap: existing macos raven with this branch's fixture reports the identical unimplemented-API failure. |
+| native_compatible_bitmap_contract | Bootstrap-input-dependent: baseline host/current bootstrap fails with the same DIB-release assertion; current host/baseline bootstrap passes. Baseline/baseline also passes. Bootstrap sources and build settings were not changed by this review; the exact agent cause remains unqualified. |
+
+These are classifications of observed failures, not a claim that every
+full-suite test now passes. Baseline cross-checks ran through a temporary CTest
+manifest under `/tmp/raven-review-baseline`, with baseline executables read-only
+and writable prefixes/logs outside the baseline worktree. The serial selection
+had **6 tests: 4 passed, 2 failed**. The final full suite was not repeated.
+Committed [review-results.json](integration-final/review-results.json) contains
+trimmed failure output, summaries, and individual review-lane pass records.
+Full untrimmed `/tmp/raven-review-*.log` and `.xml` files are local-only.
+Disk remained at least **14 GiB** free on `/System/Volumes/Data` at observed
+checkpoints (15 GiB initially). No shared components or other worktrees were
+modified, no debugger attached, and nothing was pushed.
