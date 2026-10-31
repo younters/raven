@@ -221,3 +221,19 @@ if(RAVEN_FEX_MODHOST)
         endforeach()
     endforeach()
 endif()
+
+if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
+    set(decommit_fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-decommit.exe)
+    add_fex_parity_fixture(${decommit_fixture} "${RAVEN_MINGW64}" raven_entry
+        ${RAVEN_DARWIN_DIR}/fex/decommit_client.c)
+    add_custom_target(fex_decommit_fixture DEPENDS ${decommit_fixture})
+    add_dependencies(raven fex_decommit_fixture)
+    foreach(engine native fex)
+        add_test(NAME native_decommit_mixed_${engine} COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py --require-modules --backend ${engine}
+            --raven $<TARGET_FILE:raven> --fixture ${decommit_fixture}
+            --modules "${RAVEN_FEX_MODULE_ROOT}")
+        set_tests_properties(native_decommit_mixed_${engine} PROPERTIES TIMEOUT 30
+            LABELS "engine-parity;memory")
+    endforeach()
+endif()

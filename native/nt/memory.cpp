@@ -317,7 +317,19 @@ NativeMemoryRange NativeMemory::free(uint64_t address, uint64_t size, uint32_t t
 		process.discard_memory(base,length);
 	} else {
 		close_windows(base,base+length);
-		process.discard_memory(base,length);
+		// Decommit accepts reserved pages and committed pages of any protection.
+		// Only committed runs contain data to discard. A backend that clears data
+		// through guest writes needs temporary write access even for PAGE_NOACCESS.
+		const auto first=(base-found->first)/4096, last=first+length/4096;
+		for (auto page=first; page<last;) {
+			const auto end=std::min<uint64_t>(last,found->second.pages.run_end(page));
+			if (found->second.pages.at(page)) {
+				const auto start=found->first+page*4096, bytes=(end-page)*4096;
+				process.protect_memory(start,bytes,PROT_READ|PROT_WRITE);
+				process.discard_memory(start,bytes);
+			}
+			page=end;
+		}
 		process.protect_memory(base,length,PROT_NONE);
 	}
 	const auto first=(base-found->first)/4096;
