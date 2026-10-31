@@ -42,6 +42,7 @@ uint64_t process_dispatch(uint64_t number, void *packet)
 }
 int32_t process_exception(void *opaque, void *packet, void *)
 {
+	RavenFault::alignment_recovery = nullptr;
 	auto &record = *static_cast<RavenFault::Record *>(opaque);
 	last_stop = {record.code == 0x102 ? raven::NativeStop::timeout : raven::NativeStop::exception, record.code, packet_word(packet, 0xf8), record};
 	siglongjmp(stop_frame, 1);
