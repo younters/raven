@@ -139,7 +139,8 @@ four simultaneous 1 MiB slices across four rounds, checking every page is zero.
 
 Context debug registers currently provide sanitized read-back only. Neither
 engine arms guest hardware breakpoints. DR7 reserved/global-detect bits are
-removed. This is a compatibility limitation, not breakpoint implementation.
+removed; privileged I/O, nonzero execution lengths, and 8-byte x86 breakpoint
+encodings are rejected. This is a compatibility limitation, not breakpoint implementation.
 FPCR writes from patch 0023 execute on the worker: x64 BeginSimulation calls
 SyncThreadContext -> LoadStateFromECContext; RavenWow64Run marks the CPU area
 dirty and LockJITContext calls LoadStateFromWowContext before ExecuteThread.

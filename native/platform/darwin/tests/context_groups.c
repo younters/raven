@@ -112,6 +112,10 @@ int raven_entry(void) {
     CHECK(GetThreadContext(thread,&tags));
     CHECK((tags.FloatSave.TagWord&0xffff)==0xffe4);
 #endif
+    CONTEXT invalid_debug={0};
+    invalid_debug.ContextFlags=CONTEXT_DEBUG_REGISTERS;
+    invalid_debug.Dr7=0x20401; // I/O breakpoint encoding is privileged.
+    CHECK(!SetThreadContext(thread,&invalid_debug) && GetLastError()==ERROR_INVALID_PARAMETER);
     ctx.Dr0=0x12345000; ctx.Dr7=0x400;
     CHECK(SetThreadContext(thread,&ctx));
     CHECK(ntset(thread,&ctx)==0);

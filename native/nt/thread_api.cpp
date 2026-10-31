@@ -647,7 +647,14 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
                 word((x86 ? 4 : 0x48)+i*(x86 ? 4 : 8), debug[i], x86 ? 4 : 8);
             // Register read-back only: neither engine currently arms breakpoints.
             // Discard reserved bits and the privileged global-detect bit.
-            if (set) { debug[5] = (debug[5] & 0xffff0355u) | 0x400; thread->debug_registers = debug; }
+            if (set) {
+                for (unsigned i=0; i<4; ++i) {
+                    const unsigned type=(debug[5]>>(16+i*4))&3, length=(debug[5]>>(18+i*4))&3;
+                    if (type==2 || (!type && length) || (x86 && length==2)) { fail(87); return; }
+                }
+                debug[5] = (debug[5] & 0xffff0355u) | 0x400;
+                thread->debug_registers = debug;
+            }
         }
 		if ((!x86 && (flags & 8)) || (x86 && (flags & 0x20))) {
 			const auto address = call[1] + (x86 ? 0xcc : 0x100);
