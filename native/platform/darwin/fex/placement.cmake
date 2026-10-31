@@ -12,8 +12,8 @@ if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64 AND RAVEN_MINGW32 AND RAVEN_DXMT_ARM64_RO
         add_custom_command(OUTPUT ${fixture}
             COMMAND ${RAVEN_MINGW${bits}} -O2 -nostdlib -fno-stack-protector
                 -Wl,--entry,${entry},--image-base,${base},--disable-reloc-section,--no-insert-timestamp
-                -o ${fixture} ${RAVEN_DARWIN_DIR}/fex/fixed_client.c
-            DEPENDS ${RAVEN_DARWIN_DIR}/fex/fixed_client.c VERBATIM)
+                -o ${fixture} ${RAVEN_DARWIN_DIR}/fex/fixed_default_client.c -lkernel32
+            DEPENDS ${RAVEN_DARWIN_DIR}/fex/fixed_default_client.c VERBATIM)
         add_custom_target(fex_fixed_default${bits}_fixture DEPENDS ${fixture})
         add_dependencies(raven fex_fixed_default${bits}_fixture)
         add_test(NAME native_fixed_default${bits}_pressure_fex

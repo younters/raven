@@ -23,9 +23,42 @@ namespace {
 // mapping through static teardown; the OS releases it at host-process exit.
 Mapping *const module_mapping = new Mapping{MAP_FAILED, 0};
 bool module_claimed = false;
+// A permanent Mach-O reservation, shared by initial images and later fixed
+// guest allocations. Never let host mmap/dlopen reuse its uncommitted pages.
+struct ImagePool {
+	uint64_t base = 0, size = 0;
+	std::map<uint64_t, size_t> claims;
+	bool contains(uint64_t address, uint64_t length) const {
+		return size && address >= base && address - base < size && length <= size - (address - base);
+	}
+	bool available(uint64_t address, uint64_t length) const {
+		for (auto [start, count] : claims)
+			if (address < start + count && start < address + length) return false;
+		return true;
+	}
+} image_pool;
+bool reserve_guest_range(uint64_t address, size_t size)
+{
+	if (image_pool.contains(address, size)) {
+		if (!image_pool.available(address, size)) return false;
+		if (mprotect(reinterpret_cast<void *>(address), size, PROT_READ | PROT_WRITE)) return false;
+		image_pool.claims.emplace(address, size);
+		return true;
+	}
+	mach_vm_address_t base = address;
+	return mach_vm_allocate(mach_task_self(), &base, size, VM_FLAGS_FIXED) == KERN_SUCCESS;
+}
+void release_guest_range(uint64_t address, size_t size)
+{
+	if (image_pool.contains(address, size)) {
+		if (mmap(reinterpret_cast<void *>(address), size, PROT_NONE,
+			MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0) == MAP_FAILED) std::abort();
+		image_pool.claims.erase(address);
+	} else munmap(reinterpret_cast<void *>(address), size);
+}
 struct PendingImages {
 	std::map<uint64_t, size_t> ranges;
-	~PendingImages() { for (auto [base, size] : ranges) munmap(reinterpret_cast<void *>(base), size); }
+	~PendingImages() { for (auto [base, size] : ranges) release_guest_range(base, size); }
 } pending_images;
 bool selected_fex = false;
 thread_local void *guest_teb = nullptr;
@@ -264,8 +297,8 @@ struct FexProcess::State {
 		// Mapping is a simple scope owner; the vector entries are released here.
 		if (!window && stack != MAP_FAILED) munmap(stack, stack_size);
 		if (!window && gate != MAP_FAILED) munmap(gate, 16384);
-		if (!window) for (auto [base, region] : regions) munmap(reinterpret_cast<void *>(base), region.size);
-		for (auto [base, size] : image_reservations) munmap(reinterpret_cast<void *>(base), size);
+		if (!window) for (auto [base, region] : regions) release_guest_range(base, region.size);
+		for (auto [base, size] : image_reservations) release_guest_range(base, size);
 	}
 	void require_owner() const
 	{
@@ -302,7 +335,7 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 		auto reserved = pending_images.ranges.find(base);
 		if (reserved != pending_images.ranges.end() && reserved->second == n)
 			pending_images.ranges.erase(reserved);
-		else if (mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS)
+		else if (!reserve_guest_range(base, n))
 			throw std::runtime_error("FEX guest image reservation conflict at " + std::to_string(image->base()));
 		state->image_reservations.emplace(base, n);
 	}
@@ -629,6 +662,7 @@ bool fex_execution_selected() { return selected_fex; }
 bool fex_address_available(uint64_t address, uint64_t size)
 {
 	if (!size || address < 0x100000000ULL || address > UINT64_MAX - size) return false;
+	if (image_pool.contains(address, size)) return image_pool.available(address, size);
 	mach_vm_address_t base = address;
 	mach_vm_size_t length = 0;
 	vm_region_basic_info_data_64_t info{};
@@ -643,9 +677,12 @@ bool fex_address_available(uint64_t address, uint64_t size)
 	}
 	return status == KERN_INVALID_ADDRESS || (status == KERN_SUCCESS && base >= address + size);
 }
-void fex_adopt_image_reservation(uint64_t address, uint64_t size)
+void fex_register_image_reservation(uint64_t address, uint64_t size)
 {
-	pending_images.ranges.emplace(address, size);
+	if (image_pool.size || !address || !size || mprotect(reinterpret_cast<void *>(address), size, PROT_NONE))
+		throw std::runtime_error("FEX cannot initialize Mach-O image reservation");
+	image_pool.base = address;
+	image_pool.size = size;
 }
 bool fex_reserve_image_address(uint64_t address, uint64_t size)
 {
@@ -655,7 +692,7 @@ bool fex_reserve_image_address(uint64_t address, uint64_t size)
 	if (auto it = pending_images.ranges.find(address); it != pending_images.ranges.end())
 		return it->second == n;
 	mach_vm_address_t base = address;
-	if (mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS) {
+	if (!reserve_guest_range(base, n)) {
 		if (std::getenv("RAVEN_FEX_TRACE_MEMORY")) {
 			mach_vm_address_t at = address;
 			mach_vm_size_t length = 0;
@@ -727,7 +764,7 @@ uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 		if (mprotect(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE)) throw std::runtime_error("WoW64 guest commit failed");
 	} else if (address) {
 		mach_vm_address_t base = address;
-		if (address % 16384 || mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS)
+		if (address % 16384 || !reserve_guest_range(base, n))
 			throw std::runtime_error("FEX fixed allocation unavailable");
 	} else {
 		auto *p = mmap(nullptr, n + 65536, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -787,7 +824,7 @@ void FexProcess::unmap_memory(uint64_t address)
 		if (state->window) {
 			void *p = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_NONE, MAP_FIXED | MAP_ANON | MAP_PRIVATE, -1, 0);
 			if (p == MAP_FAILED) throw std::runtime_error("WoW64 cannot restore reservation");
-		} else if (munmap(reinterpret_cast<void *>(address), n)) throw std::runtime_error("FEX unmap failed");
+		} else release_guest_range(address, n);
 	});
 	for (auto at = address; at < address + n; at += 4096) state->pages.erase(at);
 	state->regions.erase(found);
@@ -802,7 +839,7 @@ void FexProcess::map_image(LoadedImage &image)
 	const auto address = image.base();
 	const auto n = (image.data().size() + 16383) & ~size_t(16383);
 	mach_vm_address_t base = address;
-	if ((state->window && !memory_available(address, n)) || (!state->window && !state->image_reservations.contains(address) && mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS))
+	if ((state->window && !memory_available(address, n)) || (!state->window && !state->image_reservations.contains(address) && !reserve_guest_range(base, n)))
 		throw std::runtime_error("FEX guest image address conflict at " + std::to_string(address));
 	auto *p = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, image.descriptor(), 0);
 	if (p == MAP_FAILED) {
@@ -810,7 +847,7 @@ void FexProcess::map_image(LoadedImage &image)
 			(void)mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_NONE,
 				MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
 		else
-			munmap(reinterpret_cast<void *>(address), n);
+			release_guest_range(address, n);
 		throw std::runtime_error("FEX shared image mapping failed");
 	}
 	state->image_reservations.erase(address);

@@ -23,20 +23,9 @@ extern "C" char raven_pe_reserve[];
 static void reserve_main_image(int argc, char **argv)
 {
 #ifdef RAVEN_FEX_COMPANION_HOST
-	// The Mach-O zero-fill segment is already owned before dyld runs initializers.
-	// ASLR slides it with the host; use the symbol, never an assumed slide.
-	const auto start = reinterpret_cast<uint64_t>(raven_pe_reserve);
-	const auto end = start + 0x100000000ULL;
-	struct Release {
-		uint64_t start, end, keep = 0, size = 0;
-		~Release() {
-			if (!size) munmap(reinterpret_cast<void *>(start), end - start);
-			else {
-				if (keep > start) munmap(reinterpret_cast<void *>(start), keep - start);
-				if (keep + size < end) munmap(reinterpret_cast<void *>(keep + size), end - keep - size);
-			}
-		}
-	} release{start, end};
+	// Keep the Mach-O segment reserved: dyld still describes it as part of the
+	// host image. Reusing its unused pages for host dylibs/JIT confuses ownership.
+	fex_register_image_reservation(reinterpret_cast<uint64_t>(raven_pe_reserve), 0x100000000ULL);
 #endif
 	if (argc < 4 || std::strcmp(argv[2], "--execution=fex")) return;
 	int index = 3;
@@ -56,20 +45,6 @@ static void reserve_main_image(int argc, char **argv)
 	std::memcpy(&base, pe + 48, sizeof(base));
 	std::memcpy(&size, pe + 80, sizeof(size));
 	if (base < 0x100000000ULL || base % 65536 || !size || base > UINT64_MAX - size - 16383) return;
-#ifdef RAVEN_FEX_COMPANION_HOST
-	const auto length = (uint64_t(size) + 16383) & ~uint64_t(16383);
-	if (base >= start && base <= end && length <= end - base) {
-		if (mprotect(reinterpret_cast<void *>(base), length, PROT_NONE)) std::exit(1);
-		fex_adopt_image_reservation(base, length);
-		if (std::getenv("RAVEN_FEX_TRACE_MEMORY"))
-			std::fprintf(stderr, "FEX startup reservation %llx+%llx from Mach-O %llx+100000000\n",
-				static_cast<unsigned long long>(base), static_cast<unsigned long long>(length),
-				static_cast<unsigned long long>(start));
-		release.keep = base;
-		release.size = length;
-		return;
-	}
-#endif
 	(void)fex_reserve_image_address(base, size);
 }
 
