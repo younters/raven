@@ -229,3 +229,69 @@ Full untrimmed `/tmp/raven-review-*.log` and `.xml` files are local-only.
 Disk remained at least **14 GiB** free on `/System/Volumes/Data` at observed
 checkpoints (15 GiB initially). No shared components or other worktrees were
 modified, no debugger attached, and nothing was pushed.
+
+
+## Compatible bitmap allocation regression repair (2026-10-31)
+
+This supersedes the `native_compatible_bitmap_contract` classification above.
+The original integration bootstrap failed the unchanged test immediately in a
+locked reproduction (0.06 s). The defect is in the Rosetta agent's high-address
+`range_free` implementation, not GDI resource deletion or FEX memory accounting.
+It used `mmap(hint)` followed by `munmap` as an availability query. That query
+mutates the address space and executes Rosetta's mapping machinery while trying
+to establish that the just-released address is free.
+
+Temporary instrumentation (removed from the final patch) observed a failing
+query for `0x1089a4000`, length `0x1000`, returning probe `0x1089a5000`.
+A VM region query then found a read/write region at `0x1089a4000`, length
+`0x1000`, with VM user tag **230 (`VM_MEMORY_ROSETTA`)**. It was translator
+storage, not the retained DIB backing. Instrumenting the release path changed
+the reproduction, consistent with the bootstrap-input sensitivity already seen.
+
+The fix replaces the allocating probe with `mach_vm_region`: the next region
+must begin at or beyond the requested end, or the query must report no further
+region. Other query errors reject availability. Any returned object port is
+released. Existing low-reserve bookkeeping and all overlap checks remain; the
+bitmap test is unchanged. Availability checks no longer create and tear down a
+mapping that can perturb Rosetta's storage placement.
+
+There is an important limit to source-commit attribution: **all bootstrap
+sources and their CMake definitions are identical to `macos`** before this fix
+(`git diff macos..8ca7b34 -- native/platform/darwin/guest native/CMakeLists.txt
+CMakeLists.txt` is empty; the bootstrap stanza in darwin.cmake is unchanged).
+The bootstrap links no FEX code. The existing baseline binary reports Mach-O
+SDK/minimum OS 27.0, versus 27.2 in this build; compiler cache versions are
+21.0.0.21000334 and 21.0.0.21000401 respectively. Thus the binary-dependent
+trigger is exposed by the rebuilt bootstrap/toolchain; it cannot honestly be
+assigned to one of the listed FEX integration source commits. The observed
+Rosetta region identifies the conflicting owner; the precise internal Rosetta
+allocation timing is not established.
+
+Validation used RelWithDebInfo, `/tmp/raven-review-modules`, and the provisioned
+RTL already configured in build-integration. `cmake --build build-integration
+-j8` completed successfully. Every CTest invocation, including investigative
+runs, went through `/tmp/raven-ctest-lock.sh`. Final commands:
+
+```sh
+RAVEN_PREFIX_SETUP=1 RAVEN_FEX_MODULE_ROOT=/tmp/raven-review-modules \
+  /tmp/raven-ctest-lock.sh bitmap-final-20 \
+  ctest --test-dir build-integration \
+  -R '^native_compatible_bitmap_contract$' --repeat until-fail:20 --output-on-failure
+
+RAVEN_PREFIX_SETUP=1 RAVEN_FEX_MODULE_ROOT=/tmp/raven-review-modules \
+  /tmp/raven-ctest-lock.sh bitmap-related-final \
+  ctest --test-dir build-integration -j1 \
+  -R 'compatible_bitmap|bitblt|dib|memory|fex' --output-on-failure \
+  --output-junit /tmp/raven-bitmap-related-final.xml
+```
+
+- Unchanged compatible bitmap contract: **20/20 consecutive passes**, 1.26 s.
+- Related selection: **206/206 passed, zero failures/skips**, 61.71 s. Includes
+  compatible_bitmap, bitblt, dib, memory, and every registered name containing
+  fex (including fresh-prefix lanes that unset prefix setup internally).
+- `git diff --check` passed. No debugger, push, other-worktree edit, or shared
+  component/module edit was used.
+
+The full final repetition log is `/tmp/raven-bitmap-final-20.log`; the related
+log/XML are `/tmp/raven-bitmap-related-final.{log,xml}` (local-only). This is a
+focused repair qualification, not a new full-suite qualification.
