@@ -566,6 +566,16 @@ if(TARGET native_cpu_test)
 endif()
 
 if(TARGET raven_cpu AND RAVEN_MINGW64)
+    set(THEME_API_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/darwin-theme-api.exe)
+    add_custom_command(OUTPUT ${THEME_API_FIXTURE}
+        COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector -Wl,--entry,raven_entry
+            -o ${THEME_API_FIXTURE} ${RAVEN_DARWIN_DIR}/tests/theme_api.c -luxtheme -lkernel32
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/theme_api.c VERBATIM)
+    add_custom_target(darwin_theme_api_fixture ALL DEPENDS ${THEME_API_FIXTURE})
+    add_test(NAME native_darwin_theme_api COMMAND raven --run-process --execution=native ${THEME_API_FIXTURE})
+    set_tests_properties(native_darwin_theme_api PROPERTIES TIMEOUT 20
+        PASS_REGULAR_EXPRESSION "Native entry returned 0 " LABELS "rosetta"
+        ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-theme-api-prefix")
     set(CURSOR_DPI_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-aware.exe)
     set(CURSOR_UNAWARE_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-unaware.exe)
     set(CURSOR_PM_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-per-monitor.exe)
