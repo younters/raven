@@ -22,12 +22,12 @@ diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
    WowHost = Host;
    RavenHost = &Host->common;
    BTCpuProcessInit();
-@@ -1155,7 +1159,34 @@
+@@ -1155,7 +1159,32 @@
    CTX->ExecuteThread(TLS.ThreadState());
    Context::UnlockJITContext(TLS);
  }
-+// JIT buffer overflow can fault in FEX's native compiler. Only executable
-+// sections of this module may use that repair path; Mach-O host code may not.
++// FEX native compilation can fault on overcommit and JIT guard pages.
++// Only executable sections of this module may use native VM repair.
 +static bool RavenIsModuleCode(uint64_t PC) {
 +  extern IMAGE_DOS_HEADER __ImageBase;
 +  const auto Base = reinterpret_cast<uintptr_t>(&__ImageBase);
@@ -43,13 +43,11 @@ diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
  extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, CONTEXT *Native) {
 +  const auto Thread = GetTLS().ThreadState();
 +  if (!Thread) return STATUS_NOT_SUPPORTED;
-+  if (!IsAddressInJit(Native->Pc)) {
-+    if (Record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && RavenIsModuleCode(Native->Pc) &&
-+        FEX::Windows::JITGuardPage::HandleJITGuardPage(Thread,
-+          reinterpret_cast<void*>(Record->ExceptionInformation[1]), Native->X,
-+          reinterpret_cast<__uint128_t*>(Native->V), &Native->Pc)) return STATUS_SUCCESS;
-+    return STATUS_NOT_SUPPORTED;
-+  }
++  // The native compiler also touches lazily committed FEX buffers. Let the
++  // existing VM repair handlers service those faults, but never host Mach-O PCs.
++  // BTCpuResetToConsistentStateImpl separately gates guest reconstruction on JIT.
++  if (!IsAddressInJit(Native->Pc) &&
++      (Record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || !RavenIsModuleCode(Native->Pc))) return STATUS_NOT_SUPPORTED;
 +  const bool Doorbell = IsAddressInJit(Native->Pc) && *reinterpret_cast<const uint32_t*>(Native->Pc) == (0xd4200000u | (0xcafeu << 5)) &&
 +                        Thread->CurrentFrame->SuspendDoorbell;
 +  if (Record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION &&
