@@ -1,0 +1,83 @@
+Test project /tmp/raven-m5-build
+      Start 601: native_nt-service_fex
+ 1/32 Test #601: native_nt-service_fex ...................   Passed    0.06 sec
+      Start 602: native_nt-service_parallel_fex
+ 2/32 Test #602: native_nt-service_parallel_fex ..........   Passed    0.04 sec
+      Start 603: native_unaligned_fex
+ 3/32 Test #603: native_unaligned_fex ....................   Passed    0.04 sec
+      Start 604: native_unaligned_parallel_fex
+ 4/32 Test #604: native_unaligned_parallel_fex ...........   Passed    0.03 sec
+      Start 605: native_parity_kernel-ansi_native_0
+ 5/32 Test #605: native_parity_kernel-ansi_native_0 ......   Passed    0.50 sec
+      Start 606: native_parity_kernel-ansi_native_1
+ 6/32 Test #606: native_parity_kernel-ansi_native_1 ......   Passed    0.25 sec
+      Start 607: native_parity_kernel-ansi_fex_0
+ 7/32 Test #607: native_parity_kernel-ansi_fex_0 .........   Passed    0.33 sec
+      Start 608: native_parity_kernel-ansi_fex_1
+ 8/32 Test #608: native_parity_kernel-ansi_fex_1 .........   Passed    0.23 sec
+      Start 609: native_parity_kernel-file_native_0
+ 9/32 Test #609: native_parity_kernel-file_native_0 ......   Passed    0.31 sec
+      Start 610: native_parity_kernel-file_native_1
+10/32 Test #610: native_parity_kernel-file_native_1 ......   Passed    0.26 sec
+      Start 611: native_parity_kernel-file_fex_0
+11/32 Test #611: native_parity_kernel-file_fex_0 .........   Passed    0.32 sec
+      Start 612: native_parity_kernel-file_fex_1
+12/32 Test #612: native_parity_kernel-file_fex_1 .........   Passed    0.25 sec
+      Start 613: native_parity_kernel-threads_native_0
+13/32 Test #613: native_parity_kernel-threads_native_0 ...   Passed    1.13 sec
+      Start 614: native_parity_kernel-threads_native_1
+14/32 Test #614: native_parity_kernel-threads_native_1 ...   Passed    1.16 sec
+      Start 615: native_parity_kernel-threads_fex_0
+15/32 Test #615: native_parity_kernel-threads_fex_0 ......   Passed    1.16 sec
+      Start 616: native_parity_kernel-threads_fex_1
+16/32 Test #616: native_parity_kernel-threads_fex_1 ......   Passed    1.09 sec
+      Start 617: native_parity_kernel-seh_native_0
+17/32 Test #617: native_parity_kernel-seh_native_0 .......   Passed    0.25 sec
+      Start 618: native_parity_kernel-seh_native_1
+18/32 Test #618: native_parity_kernel-seh_native_1 .......   Passed    0.22 sec
+      Start 619: native_parity_kernel-seh_fex_0
+19/32 Test #619: native_parity_kernel-seh_fex_0 ..........   Passed    0.25 sec
+      Start 620: native_parity_kernel-seh_fex_1
+20/32 Test #620: native_parity_kernel-seh_fex_1 ..........   Passed    0.21 sec
+      Start 621: native_parity_contention_native
+21/32 Test #621: native_parity_contention_native .........   Passed    0.21 sec
+      Start 622: native_parity_contention_fex
+22/32 Test #622: native_parity_contention_fex ............   Passed    0.22 sec
+      Start 623: native_parity_context_native
+23/32 Test #623: native_parity_context_native ............***Failed    0.22 sec
+raven: unimplemented native API SetThreadContext
+raven: unimplemented native process API at 0x6fff000069cf
+FAIL: expected verified zero entry return, host exit=1
+
+      Start 624: native_parity_context_fex
+24/32 Test #624: native_parity_context_fex ...............   Passed    0.25 sec
+      Start 625: native_parity_worker-seh_native
+25/32 Test #625: native_parity_worker-seh_native .........   Passed    0.22 sec
+      Start 626: native_parity_worker-seh_fex
+26/32 Test #626: native_parity_worker-seh_fex ............   Passed    0.20 sec
+      Start 627: native_parity_apc_native
+27/32 Test #627: native_parity_apc_native ................   Passed    0.24 sec
+      Start 628: native_parity_apc_fex
+28/32 Test #628: native_parity_apc_fex ...................   Passed    0.23 sec
+      Start 629: native_parity_lifecycle_native
+29/32 Test #629: native_parity_lifecycle_native ..........   Passed    0.29 sec
+      Start 630: native_parity_lifecycle_fex
+30/32 Test #630: native_parity_lifecycle_fex .............   Passed    0.26 sec
+      Start 631: native_parity_negatives_native
+31/32 Test #631: native_parity_negatives_native ..........   Passed    0.22 sec
+      Start 632: native_parity_negatives_fex
+32/32 Test #632: native_parity_negatives_fex .............   Passed    0.20 sec
+
+97% tests passed, 1 tests failed out of 32
+
+Label Time Summary:
+fex           =   0.17 sec*proc (4 tests)
+fex-parity    =  10.84 sec*proc (32 tests)
+parallel      =   2.76 sec*proc (12 tests)
+process       =   7.91 sec*proc (16 tests)
+
+Total Test time (real) =  10.87 sec
+
+The following tests FAILED:
+	623 - native_parity_context_native (Failed)             fex-parity parallel
+Errors while running CTest
