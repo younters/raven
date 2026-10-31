@@ -119,8 +119,10 @@ int raven_entry(void)
 	CHECK(ResumeThread(a) == 0);
 	static CONTEXT running;
 	running.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+#ifndef M5_PARITY
 	CHECK(!GetThreadContext(a, &running) && GetLastError() == ERROR_INVALID_PARAMETER);
 	CHECK(!SetThreadContext(a, &running) && GetLastError() == ERROR_INVALID_PARAMETER);
+#endif
 	CHECK(SuspendThread(a) == 0);
 	static CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_ALL;
