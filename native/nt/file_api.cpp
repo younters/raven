@@ -621,6 +621,15 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			call.store_pointer(status_block, status);
 			call.store_pointer(status_block + width, information);
 		};
+		if (!root && equal_fold(std::u16string_view(name).substr(0, std::min<size_t>(name.size(), 11)), u"\\Device\\Afd") &&
+			(name.size() == 11 || name[11] == u'\\')) {
+			const auto made = context.objects.add_object(make_afd_endpoint());
+			if (made.status)
+				return made.status;
+			call.store_pointer(call[0], made.value);
+			set_status(0, 1);
+			return 0;
+		}
 		std::u16string path;
 		if (root) {
 			const auto directory = file_of(root);
@@ -890,7 +899,8 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// Files of a prefix lie on a host file system that answers no device or file system control codes: the caller hears that the
 	// function is not supported, as from a volume whose driver lacks it, and nothing comes back.
-	registry.add("NtDeviceIoControlFile", 10, [](ApiCall &call) {
+	registry.add("NtDeviceIoControlFile", 10, [&context](ApiCall &call) {
+		if (afd_device_control(context, call)) return;
 		const uint32_t status = 0xc0000010U; // STATUS_INVALID_DEVICE_REQUEST
 		if (call[4]) {
 			call.store_pointer(call[4], status);

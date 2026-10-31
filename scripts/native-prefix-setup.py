@@ -18,7 +18,9 @@ def main():
         shutil.copy2(raven, runtime / "raven")
         (runtime / "raven-bootstrap").symlink_to(raven.parent / "raven-bootstrap")
         (runtime / "regsvr32.exe").symlink_to(client)
-        for name in ("msxml3.dll", "windowscodecs.dll", "mlang.dll", "propsys.dll"):
+        servers = ("oleaut32.dll", "msxml3.dll", "windowscodecs.dll", "mlang.dll", "propsys.dll")
+        # oleaut32 is loaded eagerly; leave its image absent in this probe runtime.
+        for name in servers[1:]:
             (runtime / name).write_bytes(b"registration probe")
         prefix = work / "prefix"
         env = os.environ | {"RAVEN_PREFIX": str(prefix), "TMPDIR": str(work), "TMP": str(work), "TEMP": str(work)}
@@ -29,8 +31,8 @@ def main():
             if result.returncode:
                 raise RuntimeError(f"prefix setup client failed: {result.stdout}")
             count = (prefix / "drive_c" / "registration-count.bin").read_bytes()
-            if count != b"x" * (4 * (attempt + 1)):
-                raise RuntimeError(f"registration ran {len(count)} times after {attempt + 1} independent launches; expected {4 * (attempt + 1)}")
+            if count != b"x" * (len(servers) * (attempt + 1)):
+                raise RuntimeError(f"registration ran {len(count)} times after {attempt + 1} independent launches; expected {len(servers) * (attempt + 1)}")
         print("Failed registrations retry once per independent launch; suspended children accept tokens without repeating setup")
 
 

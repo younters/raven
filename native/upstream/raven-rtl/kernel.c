@@ -75,11 +75,42 @@ HANDLE WINAPI RavenGetProcessHeap(VOID)
 	return PEB_PROCESS_HEAP;
 }
 
-/* ---- critical sections: without spinning, since only one guest thread runs at a time and spinning only delays the owner. No debug record: DebugInfo holds
-   -1 as on Windows when it is left out, and the wait goes on LockCount itself, so nothing here needs a handle a program could close by mistake. ---- */
-static void init_section(PRTL_CRITICAL_SECTION section)
+/* ---- critical sections: without spinning, since only one guest thread runs at a time and spinning only delays the owner. The wait goes on
+   LockCount itself, so nothing here needs a handle a program could close by mistake. ---- */
+
+/* A section has a debug record unless its caller asks for none (CRITICAL_SECTION_NO_DEBUG_INFO), as Windows documents and as the runtime's
+   32-bit sections have; callers may write into it, as the components built from Wine sources name their sections there. The records live
+   in a heap of their own, made when the first is asked for, so deleting a section gives back only a record that came from there and
+   leaves a program's own, static one alone. Without memory for a record, DebugInfo holds -1, as for a section without one. */
+static PVOID section_records;
+
+static PRTL_CRITICAL_SECTION_DEBUG new_section_record(PRTL_CRITICAL_SECTION section)
 {
-	section->DebugInfo = (PRTL_CRITICAL_SECTION_DEBUG)(LONG_PTR)-1;
+	PVOID records = section_records;
+	PRTL_CRITICAL_SECTION_DEBUG record;
+	if (!records) {
+		PVOID made = RtlCreateHeap(HEAP_GROWABLE, NULL, 0, 0, NULL, NULL);
+		if (!made)
+			return NULL;
+		records = InterlockedCompareExchangePointer(&section_records, made, NULL);
+		if (records)
+			RtlDestroyHeap(made);
+		else
+			records = made;
+	}
+	record = RtlAllocateHeap(records, HEAP_ZERO_MEMORY, sizeof(*record));
+	if (!record)
+		return NULL;
+	record->Type = RTL_CRITSECT_TYPE;
+	record->CriticalSection = section;
+	record->ProcessLocksList.Flink = record->ProcessLocksList.Blink = &record->ProcessLocksList;
+	return record;
+}
+
+static void init_section(PRTL_CRITICAL_SECTION section, BOOLEAN debug)
+{
+	PRTL_CRITICAL_SECTION_DEBUG record = debug ? new_section_record(section) : NULL;
+	section->DebugInfo = record ? record : (PRTL_CRITICAL_SECTION_DEBUG)(LONG_PTR)-1;
 	section->LockCount = -1;
 	section->RecursionCount = 0;
 	section->OwningThread = NULL;
@@ -89,13 +120,13 @@ static void init_section(PRTL_CRITICAL_SECTION section)
 
 VOID WINAPI RavenInitializeCriticalSection(PRTL_CRITICAL_SECTION section)
 {
-	init_section(section);
+	init_section(section, TRUE);
 }
 
 BOOL WINAPI RavenInitializeCriticalSectionAndSpinCount(PRTL_CRITICAL_SECTION section, ULONG spin)
 {
 	(void)spin;
-	init_section(section);
+	init_section(section, TRUE);
 	return TRUE;
 }
 
@@ -108,12 +139,16 @@ BOOL WINAPI RavenInitializeCriticalSectionEx(PRTL_CRITICAL_SECTION section, ULON
 		LAST_ERROR = ERROR_INVALID_PARAMETER;
 		return FALSE;
 	}
-	init_section(section);
+	init_section(section, !(flags & RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO));
 	return TRUE;
 }
 
 VOID WINAPI RavenDeleteCriticalSection(PRTL_CRITICAL_SECTION section)
 {
+	PRTL_CRITICAL_SECTION_DEBUG record = section->DebugInfo;
+	/* The heap gives back only what it holds; any other record is not this component's to free. */
+	if (record && record != (PRTL_CRITICAL_SECTION_DEBUG)(LONG_PTR)-1 && section_records)
+		RtlFreeHeap(section_records, 0, record);
 	section->DebugInfo = NULL;
 	section->LockCount = -1;
 	section->RecursionCount = 0;
@@ -147,6 +182,48 @@ VOID WINAPI RavenLeaveCriticalSection(PRTL_CRITICAL_SECTION section)
 		return;
 	section->OwningThread = NULL;
 	InterlockedExchange(&section->LockCount, -1);
+}
+
+/* ntdll's forms of the same, which programs that call ntdll directly (Zig's standard library) use; they answer an NTSTATUS. */
+NTSTATUS NTAPI RavenRtlEnterCriticalSection(PRTL_CRITICAL_SECTION section)
+{
+	RavenEnterCriticalSection(section);
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS NTAPI RavenRtlLeaveCriticalSection(PRTL_CRITICAL_SECTION section)
+{
+	RavenLeaveCriticalSection(section);
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS NTAPI RavenRtlInitializeCriticalSection(PRTL_CRITICAL_SECTION section)
+{
+	init_section(section, TRUE);
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS NTAPI RavenRtlInitializeCriticalSectionAndSpinCount(PRTL_CRITICAL_SECTION section, ULONG spin)
+{
+	(void)spin;
+	init_section(section, TRUE);
+	return STATUS_SUCCESS;
+}
+
+/* The flags are checked as kernel32's form checks them; a bad one is answered with a status instead of the last error. */
+NTSTATUS NTAPI RavenRtlInitializeCriticalSectionEx(PRTL_CRITICAL_SECTION section, ULONG spin, ULONG flags)
+{
+	(void)spin;
+	if ((flags & RTL_CRITICAL_SECTION_ALL_FLAG_BITS) & ~0x1f000000U)
+		return STATUS_INVALID_PARAMETER;
+	init_section(section, !(flags & RTL_CRITICAL_SECTION_FLAG_NO_DEBUG_INFO));
+	return STATUS_SUCCESS;
+}
+
+NTSTATUS NTAPI RavenRtlDeleteCriticalSection(PRTL_CRITICAL_SECTION section)
+{
+	RavenDeleteCriticalSection(section);
+	return STATUS_SUCCESS;
 }
 
 BOOL WINAPI RavenTryEnterCriticalSection(PRTL_CRITICAL_SECTION section)

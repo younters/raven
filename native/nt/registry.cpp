@@ -191,11 +191,12 @@ void NativeRegistry::register_runtime_classes()
 	// The Windows Runtime classes the runtime brings, in-process (activation type 0) and callable from any apartment (threading 0):
 	// installers ask the package manager whether a packaged version of what they install is present, and Office asks the UI settings
 	// for the theme's colours and the text scale while it starts, along with the network, the device's profile, the system's accounts
-	// and the application model.
+	// and the application model; programs ask the analytics information which Windows they run on.
 	static constexpr std::pair<const char16_t *, const char16_t *> runtime_classes[] = {
 		{u"Windows.Management.Deployment.PackageManager", u"raven-deployment.dll"},
 		{u"Windows.UI.ViewManagement.UISettings", u"raven-uisettings.dll"},
 		{u"Windows.System.Profile.RetailInfo", u"raven-twinapi.dll"}, {u"Windows.System.Profile.SharedModeSettings", u"raven-twinapi.dll"},
+		{u"Windows.System.Profile.AnalyticsInfo", u"raven-twinapi.dll"},
 		{u"Windows.Networking.Connectivity.NetworkInformation", u"raven-twinapi.dll"},
 		{u"Windows.Security.Authentication.OnlineId.OnlineIdSystemAuthenticator", u"raven-twinapi.dll"},
 		{u"Windows.Security.Authentication.OnlineId.OnlineIdServiceTicketRequest", u"raven-twinapi.dll"},
@@ -446,12 +447,14 @@ bool NativeRegistry::resolve(uint64_t parent, std::u16string_view path, std::u16
 		{u"hkey_current_user\\software\\classes", u"HKEY_CLASSES_ROOT"},
 		{u"hkey_users\\s-1-5-21-1000-1000-1000-1000_classes", u"HKEY_CLASSES_ROOT"},
 		{u"hkey_users\\s-1-5-21-1000-1000-1000-1000", u"HKEY_CURRENT_USER"}};
-	for (const auto &[alias, target] : aliases)
+	for (const auto &[spelling, target] : aliases) {
+		const auto alias = fold(spelling);
 		if (folded.starts_with(alias) && (folded.size() == alias.size() || folded[alias.size()] == u'\\')) {
 			folded = fold(std::u16string(target)) + folded.substr(alias.size());
 			display = std::u16string(target) + display.substr(alias.size());
 			break;
 		}
+	}
 	return true;
 }
 

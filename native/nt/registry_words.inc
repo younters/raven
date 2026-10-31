@@ -1617,6 +1617,7 @@
 {"SetThreadDpiHostingBehavior", 1},
 {"SetThreadErrorMode", 2},
 {"SetThreadExecutionState", 1},
+{"SetThreadPreferredUILanguages", 3},
 {"SetThreadInformation", 4},
 {"SetThreadLocale", 1},
 {"SetThreadPriority", 2},

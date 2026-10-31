@@ -990,8 +990,7 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		if (native) {
 			if (path.size() < 3 || path[1] != u':')
 				return uint32_t(50);
-			const auto volume = std::to_string(std::max(1, (path[0] & 0x1f) - 2));
-			path = u"\\Device\\HarddiskVolume" + std::u16string(volume.begin(), volume.end()) + path.substr(2);
+			path = NativePaths::device_path(path);
 		}
 		return path;
 	};
@@ -1402,9 +1401,7 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 				call.fail(487);
 				return;
 			}
-			// Drive C is the first volume, the drives after it follow in letter order.
-			const auto volume = std::to_string(std::max(1, (dos[0] & 0x1f) - 2));
-			const auto device = u"\\Device\\HarddiskVolume" + std::u16string(volume.begin(), volume.end()) + dos.substr(2);
+			const auto device = NativePaths::device_path(dos);
 			const size_t capacity = call.u32(3);
 			if (!capacity) {
 				call.fail(122);
@@ -1523,14 +1520,11 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 			put(12, 1, 4);
 			break;
 		case 1:
-			// ObjectNameInformation names open files in the NT device namespace. The sandbox broker uses this name to match a
-			// signed DLL's section against the file it opened; an empty name makes that policy impossible to build.
-			if (const auto file = objects.object_as<FileObject>(handle); file && file->dos_path.size() >= 3 && file->dos_path[1] == u':') {
-				const auto volume = std::to_string(std::max(1, (file->dos_path[0] & 0x1f) - 2));
-				counted(width == 4 ? 8 : 16, u"\\Device\\HarddiskVolume" + std::u16string(volume.begin(), volume.end()) + file->dos_path.substr(2));
-			} else {
+			// A file's name is its path on its device; other objects are not named here.
+			if (const auto file = pseudo ? nullptr : objects.object_as<FileObject>(handle))
+				counted(width == 4 ? 8 : 16, NativePaths::device_path(file->dos_path));
+			else
 				counted(width == 4 ? 8 : 16, u"");
-			}
 			break;
 		case 2:
 			counted(width == 4 ? 0x60 : 0x68, *type);

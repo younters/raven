@@ -1674,6 +1674,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"NtGetCurrentProcessorNumber", "NtGetCurrentProcessorNumberEx", "RtlGetCurrentProcessorNumber", "RtlGetCurrentProcessorNumberEx",
 		// The C runtime string functions ntdll exports.
 		"strlen", "strcmp", "strncmp",
+		// Cancelling one pending operation, which mio uses for its AFD polls.
+		"NtCancelIoFileEx",
 		// Opening files by their native names, which Rust's standard library and mio look up at run time.
 		"NtCreateFile", "NtOpenFile",
 		"RtlRunOnceExecuteOnce", "RtlSetLastWin32Error", "RtlCompareMemory", "RtlMoveMemory", "RtlFillMemory", "RtlZeroMemory",
@@ -1830,17 +1832,17 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				{"api-ms-win-core-winrt-l1-1-0.dll", "raven-shell.dll", "raven-shell."},
 				// The heap, critical sections and the free paths of SRW locks and condition variables run in the guest RTL.
 				{"kernel32.dll", "raven-rtl.dll", "raven-rtl."}, {"kernelbase.dll", "raven-rtl.dll", "raven-rtl."},
-				// The generic AVL tables of ntdll; its heap stays with the host, which calls the guest RTL itself.
+				// The generic AVL tables and critical sections of ntdll; its heap stays with the host, which calls the guest RTL itself.
 				{"ntdll.dll", "raven-rtl.dll", "raven-rtl."}};
 			for (const auto &overlay_rule : overlays) {
 				if (name != overlay_rule.library)
 					continue;
-				const bool tables_only = name == "ntdll.dll";
+				const bool nt_only = name == "ntdll.dll";
 				const auto overlay = modules.all().find(overlay_rule.component);
 				if (overlay == modules.all().end() || overlay->second->runtime_api)
 					continue;
 				for (auto &symbol : provider->exports)
-					if (!symbol.names.empty() && !host_device_export(name, symbol.names.at(0)) && (!tables_only || symbol.names.at(0).find("GenericTable") != std::string::npos) && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
+					if (!symbol.names.empty() && !host_device_export(name, symbol.names.at(0)) && (!nt_only || symbol.names.at(0).find("GenericTable") != std::string::npos || symbol.names.at(0).find("CriticalSection") != std::string::npos) && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
 							return candidate.forwarder.empty() && std::find(candidate.names.begin(), candidate.names.end(), symbol.names.at(0)) != candidate.names.end();
 						}))
 						symbol.forwarder = overlay_rule.prefix + symbol.names.at(0);
@@ -2861,8 +2863,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				origin = explicit_file->second;
 			} else {
 				const auto system_names = system_library_names();
-				// COM graphics components have no Win32 import-library export list, but are system libraries too.
-				const bool component = identity == "dwrite.dll" || identity == "d2d1.dll" || identity == "uianimation.dll"
+				// Guest components and their CRT have no Win32 import-library export list, but are system libraries too.
+				const bool component = identity == "dwrite.dll" || identity == "d2d1.dll" || identity == "uianimation.dll" ||
+					identity == "msvcrt.dll" || identity == "ucrtbase.dll" ||
+					std::find(std::begin(runtime_components), std::end(runtime_components), identity) != std::end(runtime_components)
 #ifdef __APPLE__
 					|| darwin_graphics_system_module(identity, true)
 #endif

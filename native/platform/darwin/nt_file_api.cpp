@@ -4,6 +4,7 @@
 #include "nt/kernel_context.h"
 #include "nt/objects.h"
 #include "nt/paths.h"
+#include "nt/text.h"
 
 #include <algorithm>
 #include <cstring>
@@ -202,6 +203,19 @@ void register_nt_file_api(raven::ApiRegistry &registry, raven::KernelContext &co
 			const auto parsed = object_attributes(call, object);
 			if (!out || !io || !parsed || disposition > 5) {
 				call.ret(parsed || !object ? status_invalid_parameter : status_object_name_invalid);
+				return;
+			}
+			// AFD is an NT device, rather than a path in the prefix's filesystem.
+			if (!parsed->root && parsed->name.size() >= 11 &&
+				raven::equal_fold(std::u16string_view(parsed->name).substr(0, 11), u"\\Device\\Afd") &&
+				(parsed->name.size() == 11 || parsed->name[11] == u'\\')) {
+				const auto made = objects.add_object(raven::make_afd_endpoint());
+				if (!made.status) {
+					call.store_pointer(out, made.value);
+					call.store_pointer(io, 0);
+					call.store_pointer(io + call.pointer_width(), 1);
+				}
+				call.ret(made.status);
 				return;
 			}
 			const auto name = dos_name(objects, parsed->root, parsed->name);

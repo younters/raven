@@ -1176,6 +1176,11 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("GetUserPreferredUILanguages", 4, preferred_languages);
 	registry.add("GetSystemPreferredUILanguages", 4, preferred_languages);
 	registry.add("GetProcessPreferredUILanguages", 4, preferred_languages);
+	// The list stays the one language the runtime speaks; a program asking for another finds that out from the getters.
+	registry.add("SetThreadPreferredUILanguages", 3, [](ApiCall &call) {
+		if (call[2]) call.store<uint32_t>(call[2], 1);
+		call.ret(1);
+	});
 	// Power: always on mains power, no battery, nothing to suspend.
 	registry.add("GetSystemPowerStatus", 1, [](ApiCall &call) {
 		if (!call[0]) {
@@ -1248,6 +1253,13 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		registry.add(name, 2, [](ApiCall &call) {
 			if (call[0])
 				call.store<uint32_t>(call[0], 0);
+			call.ret(15700);
+		});
+	// The same for any process, which is never packaged either: the length follows the process handle.
+	for (const char *name : {"GetPackageFullName", "GetPackageFamilyName", "GetApplicationUserModelId"})
+		registry.add(name, 3, [](ApiCall &call) {
+			if (call[1])
+				call.store<uint32_t>(call[1], 0);
 			call.ret(15700);
 		});
 	// No app package is installed: a family has no packages, and the counts say so.

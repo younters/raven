@@ -681,7 +681,8 @@ void NativeWindows::finish_paint(uint64_t handle)
 void NativeWindows::paint_frame(uint64_t handle)
 {
 	const auto *window=objects.window(handle);
-	if (!window || !window->parent || !((window->ex_style & 0x20200U) || (window->style & 0x800000U))) return;
+	const bool reserved=window && (window->outer.right-window->outer.left!=window->width || window->outer.bottom-window->outer.top!=window->height);
+	if (!window || !window->parent || !((window->ex_style & 0x20200U) || (window->style & 0x800000U) || reserved)) return;
 	const auto saved=framing; const bool saved_default=framed_by_default;
 	framing=handle; framed_by_default=false;
 	send(handle,0x85,1,0);
@@ -708,6 +709,7 @@ NativeWindows::PaintStart NativeWindows::start_paint(uint64_t handle)
 	if (!objects.window(handle)) throw std::runtime_error("background callback destroyed its painting window");
 	return {dc,rect,pending};
 }
+
 
 static uint64_t read(std::span<const uint8_t> bytes, size_t at, size_t width)
 {

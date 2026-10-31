@@ -12,21 +12,23 @@ int raven_entry(void)
 	DWORD *count=(DWORD *)(peb+0xe8), *capacity=(DWORD *)(peb+0xec);
 	HANDLE *list=*(HANDLE **)(peb+0xf0);
 	HANDLE process=GetProcessHeap();
-	if (!process || *count!=1 || *capacity!=512 || list[0]!=process) return 1;
+	const DWORD initial=*count;
+	/* The RTL may own internal heaps, including its critical-section debug records. */
+	if (!process || !initial || initial>=512 || *capacity!=512 || list[0]!=process) return 1;
 	CREATE_HEAP create=(CREATE_HEAP)GetProcAddress(GetModuleHandleW(L"raven-rtl.dll"),"RtlCreateHeap");
 	if (!create) return 2;
-	for (unsigned i=0;i<511;++i) {
+	for (unsigned i=0;i<512-initial;++i) {
 		heaps[i]=(i & 1) ? HeapCreate(0,4096,0) : create(2,NULL,65536,4096,NULL,NULL);
-		if (!heaps[i] || *count!=i+2 || list[i+1]!=heaps[i]) return 3;
+		if (!heaps[i] || *count!=initial+i+1 || list[initial+i]!=heaps[i]) return 3;
 	}
 	SetLastError(71);
 	if (HeapCreate(0,4096,0) || *count!=512 || GetLastError()!=ERROR_NOT_ENOUGH_MEMORY) return 4;
 	if (create(2,NULL,65536,4096,NULL,NULL) || *count!=512) return 5;
 	phase=1;
-	for (unsigned i=511;i>0;--i) {
-		if (!HeapDestroy(heaps[i-1]) || *count!=i || list[i]) return 6;
+	for (unsigned i=512-initial;i>0;--i) {
+		if (!HeapDestroy(heaps[i-1]) || *count!=initial+i-1 || list[initial+i-1]) return 6;
 	}
-	if (HeapDestroy(process) || *count!=1 || GetProcessHeap()!=process || list[0]!=process) return 7;
+	if (HeapDestroy(process) || *count!=initial || GetProcessHeap()!=process || list[0]!=process) return 7;
 	BYTE *bytes=HeapAlloc(process,HEAP_ZERO_MEMORY,97);
 	if (!bytes) return 8;
 	for (unsigned i=0;i<97;++i) if (bytes[i]) return 9;
