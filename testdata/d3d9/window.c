@@ -53,7 +53,7 @@ static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPAR
 		PostQuitMessage(0);
 		return 0;
 	}
-	return DefWindowProcA(window, message, wparam, lparam);
+	return DefWindowProcW(window, message, wparam, lparam);
 }
 
 static void pump(void)
@@ -97,14 +97,14 @@ static void read_back(IDirect3DDevice9 *device, IDirect3DSurface9 *staging, cons
 
 int raven_entry(void)
 {
-	WNDCLASSA window_class = {0};
+	WNDCLASSW window_class = {0};
 	window_class.lpfnWndProc = procedure;
 	window_class.hInstance = GetModuleHandleA(NULL);
-	window_class.lpszClassName = "raven_d3d9_window";
-	RegisterClassA(&window_class);
-	HWND window = CreateWindowExA(0, "raven_d3d9_window", "d3d9", WS_POPUP | WS_VISIBLE, 0, 0, SIZE, SIZE, NULL, NULL, window_class.hInstance, NULL);
+	window_class.lpszClassName = L"raven_d3d9_window";
+	if (!RegisterClassW(&window_class)) fail("RegisterClassW", GetLastError());
+	HWND window = CreateWindowExW(0, L"raven_d3d9_window", L"d3d9", WS_POPUP | WS_VISIBLE, 0, 0, SIZE, SIZE, NULL, NULL, window_class.hInstance, NULL);
 	if (!window)
-		fail("window", 0);
+		fail("window", GetLastError());
 	HMODULE library = LoadLibraryA("d3d9.dll");
 	if (!library)
 		fail("d3d9.dll", GetLastError());

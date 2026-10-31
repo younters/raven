@@ -1180,3 +1180,16 @@ if(RAVEN_MULLION_ROOT AND RAVEN_MINGW64)
         endforeach()
     endforeach()
 endif()
+# Backend-neutral D3D9 clear/triangle/present/readback workloads for private
+# mtld3d qualification. Do not require a DXVK installation or select a driver.
+foreach(width 32 64)
+    if(RAVEN_MINGW${width})
+        set(_mtld3d_fixture ${CMAKE_CURRENT_BINARY_DIR}/raven-mtld3d${width}.exe)
+        add_custom_command(OUTPUT ${_mtld3d_fixture}
+            COMMAND ${RAVEN_MINGW${width}} -O2 -nostdlib -fno-stack-protector -fno-builtin
+                -Wl,--entry,raven_entry,--no-insert-timestamp
+                -o ${_mtld3d_fixture} ${PROJECT_SOURCE_DIR}/testdata/d3d9/window.c -lkernel32 -luser32
+            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/d3d9/window.c VERBATIM)
+        add_custom_target(darwin_mtld3d${width}_fixture DEPENDS ${_mtld3d_fixture})
+    endif()
+endforeach()
