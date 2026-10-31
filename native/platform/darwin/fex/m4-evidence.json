@@ -1,10 +1,10 @@
 {
   "branch": "t3/fex-wow64-guest-window",
-  "implementation_head": "58b9886d2d3df921485b4b1ff1dc47e83dac11e3",
-  "module_root": "/tmp/raven-m4-modules",
+  "implementation_head": "09847fd95ef6db712235ded92ff8be2b02e8099e",
+  "module_root": "<PRIVATE_MODULE_ROOT>",
   "source_identity": {
     "head": "370c63057fc9fc826b58fe15d59930876df55b5f",
-    "patched_tree": "c81e90cb801b206dfdf1052ad2f370daa77658a5",
+    "patched_tree": "61ca7828720abc91a62047f7a659ea1fcd7b632c",
     "patches": [
       {
         "path": "native/platform/darwin/fex/patches/0001-deterministic-pe-timestamps.patch",
@@ -68,37 +68,34 @@
       },
       {
         "path": "native/platform/darwin/fex/patches/0016-wow64-host-boundary-validation.patch",
-        "sha256": "3a96568d9e9a7a279ace94f16023499be6a4b366ba9a5f95959252240db6874c"
+        "sha256": "8e3ae8ccaae4336cd5d045be4a465b280036e60f9474730c2b699bad22f6f326"
       }
     ],
     "toolchain_archive_sha256": "2cab02a2e964bd4aae981150a45985d07c657cfa8d244959eb9e2dcc5eedd7b1",
-    "build_id": "m4-private-qualified",
-    "build_command": "python3 scripts/build-fex-modules.py --raven-host --build-only --root /tmp/raven-m4-modules --build-id m4-private-qualified"
+    "build_id": "m4-review-boundary-fixed",
+    "build_command": "python3 scripts/build-fex-modules.py --raven-host --build-only --root <PRIVATE_MODULE_ROOT> --build-id m4-review-boundary-fixed",
+    "cdecl_reference": "Existing local Wine ntdll export declarations were inspected read-only to enumerate the CRT and varargs caller-cleanup names; compiler helpers with nonstandard stack conventions were excluded."
   },
   "module_sha256": {
-    "xtajit.dll": "1d2b91c34d9119c0c2c1315ad05caa19ddc743de95087d069da6da8c229f0b60",
-    "xtajit64.dll": "9f1dc47f38fb51df2ff41353410793aa5c69f988d56831037ce0f3db45db25aa"
+    "xtajit.dll": "900ac1bceed999ce3d9ee1786c34a85de090c06da2ed0f824bc31e077125d6f4",
+    "xtajit64.dll": "edd9d2ed91b028a23d7f8cf481eda22435c82c87bae4eed5e63b1abf680a8657"
   },
   "commands": {
-    "fex": "/tmp/raven-ctest-lock.sh m4-release-fex ctest --test-dir build-m4 -L fex --output-on-failure --output-junit /tmp/raven-m4-release-fex.xml",
-    "native": "/tmp/raven-ctest-lock.sh m4-shared-rosetta-ready ctest --test-dir build-m4 -R '^(pe_contracts|module_set_contracts|native_cpu_contracts|native_x86_contracts|native_kernel_(files|ansi|threads|seh)|native_kernel_file_persistence|native_exception_contract|native_dynamic_loader_contract)$' --output-on-failure --output-junit /tmp/raven-m4-native-final.xml"
+    "fex": "<CTEST_LOCK> m4-review-fex-fixed ctest --test-dir build-m4 -L fex --output-on-failure --output-junit <EVIDENCE_DIR>/raven-m4-review-fex.xml",
+    "native": "<CTEST_LOCK> m4-review-native ctest --test-dir build-m4 -R '^(pe_contracts|module_set_contracts|native_cpu_contracts|native_x86_contracts|native_exception_contract|native_kernel_(files|ansi|threads|threads_parallel|seh)|native_kernel_file_persistence|native_dynamic_loader_contract|native_kernel_threads_x32_(default|parallel)|native_x86_kernel_cli|native_x86_process|native_ntdll_cdecl_x32_native)$' --output-on-failure --output-junit <EVIDENCE_DIR>/raven-m4-review-native.xml",
+    "negative": "<CTEST_LOCK> m4-review-negative-fixed python3 <EVIDENCE_DIR>/raven-m4-run-negative.py"
   },
   "final_fex": {
     "metadata": {
-      "name": "(empty)",
-      "tests": "132",
+      "tests": "141",
       "failures": "0",
-      "disabled": "0",
-      "skipped": "0",
-      "hostname": "",
-      "time": "15",
-      "timestamp": "2026-10-30T18:57:55"
+      "skipped": "0"
     },
     "cases": [
       {
         "name": "native_entry_fex",
         "status": "passed",
-        "seconds": 0.0282266,
+        "seconds": 0.03,
         "labels": [
           "fex",
           "m2"
@@ -107,7 +104,7 @@
       {
         "name": "native_syscall_fex",
         "status": "passed",
-        "seconds": 0.0244392,
+        "seconds": 0.02,
         "labels": [
           "fex",
           "m2"
@@ -116,7 +113,7 @@
       {
         "name": "native_fault_fex",
         "status": "passed",
-        "seconds": 0.0256006,
+        "seconds": 0.02,
         "labels": [
           "fex",
           "m2"
@@ -125,7 +122,7 @@
       {
         "name": "native_breakpoint_fex",
         "status": "passed",
-        "seconds": 0.025249,
+        "seconds": 0.02,
         "labels": [
           "fex",
           "m2"
@@ -134,7 +131,7 @@
       {
         "name": "native_divide_fex",
         "status": "passed",
-        "seconds": 0.0242249,
+        "seconds": 0.02,
         "labels": [
           "fex",
           "m2"
@@ -143,7 +140,7 @@
       {
         "name": "native_ud2_fex",
         "status": "passed",
-        "seconds": 0.0246898,
+        "seconds": 0.02,
         "labels": [
           "fex",
           "m2"
@@ -152,7 +149,7 @@
       {
         "name": "native_timeout_fex",
         "status": "passed",
-        "seconds": 0.0475734,
+        "seconds": 0.05,
         "labels": [
           "fex",
           "m2"
@@ -161,7 +158,7 @@
       {
         "name": "native_selfmodify_fex",
         "status": "passed",
-        "seconds": 0.0233954,
+        "seconds": 0.02,
         "labels": [
           "fex",
           "m2"
@@ -170,7 +167,7 @@
       {
         "name": "native_lifetime_fex",
         "status": "passed",
-        "seconds": 0.0238457,
+        "seconds": 0.02,
         "labels": [
           "fex",
           "m2"
@@ -179,7 +176,7 @@
       {
         "name": "native_served-malformed_fex",
         "status": "passed",
-        "seconds": 0.0241358,
+        "seconds": 0.03,
         "labels": [
           "fex",
           "m2"
@@ -188,7 +185,7 @@
       {
         "name": "native_matrix-u8-zero_fex",
         "status": "passed",
-        "seconds": 0.0254515,
+        "seconds": 0.02,
         "labels": [
           "divide",
           "fex",
@@ -198,7 +195,7 @@
       {
         "name": "native_matrix-u8-overflow_fex",
         "status": "passed",
-        "seconds": 0.0243572,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -208,7 +205,7 @@
       {
         "name": "native_matrix-u8-valid_fex",
         "status": "passed",
-        "seconds": 0.0238879,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -218,7 +215,7 @@
       {
         "name": "native_matrix-u8-fold-zero_fex",
         "status": "passed",
-        "seconds": 0.0240733,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -228,7 +225,7 @@
       {
         "name": "native_matrix-u8-fold-valid_fex",
         "status": "passed",
-        "seconds": 0.0242021,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -238,7 +235,7 @@
       {
         "name": "native_matrix-u8-wide-valid_fex",
         "status": "passed",
-        "seconds": 0.0241204,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -248,7 +245,7 @@
       {
         "name": "native_matrix-u16-zero_fex",
         "status": "passed",
-        "seconds": 0.0248352,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -258,7 +255,7 @@
       {
         "name": "native_matrix-u16-overflow_fex",
         "status": "passed",
-        "seconds": 0.0241655,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -268,7 +265,7 @@
       {
         "name": "native_matrix-u16-valid_fex",
         "status": "passed",
-        "seconds": 0.0249745,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -278,7 +275,7 @@
       {
         "name": "native_matrix-u16-fold-zero_fex",
         "status": "passed",
-        "seconds": 0.025056,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -288,7 +285,7 @@
       {
         "name": "native_matrix-u16-fold-valid_fex",
         "status": "passed",
-        "seconds": 0.0244947,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -298,7 +295,7 @@
       {
         "name": "native_matrix-u16-wide-valid_fex",
         "status": "passed",
-        "seconds": 0.0253158,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -308,7 +305,7 @@
       {
         "name": "native_matrix-u32-zero_fex",
         "status": "passed",
-        "seconds": 0.0256156,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -318,7 +315,7 @@
       {
         "name": "native_matrix-u32-overflow_fex",
         "status": "passed",
-        "seconds": 0.0241765,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -328,7 +325,7 @@
       {
         "name": "native_matrix-u32-valid_fex",
         "status": "passed",
-        "seconds": 0.0244369,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -338,7 +335,7 @@
       {
         "name": "native_matrix-u32-fold-zero_fex",
         "status": "passed",
-        "seconds": 0.0244762,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -348,7 +345,7 @@
       {
         "name": "native_matrix-u32-fold-valid_fex",
         "status": "passed",
-        "seconds": 0.0248165,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -358,7 +355,7 @@
       {
         "name": "native_matrix-u32-wide-valid_fex",
         "status": "passed",
-        "seconds": 0.0247377,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -368,7 +365,7 @@
       {
         "name": "native_matrix-u64-zero_fex",
         "status": "passed",
-        "seconds": 0.0261161,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -378,7 +375,7 @@
       {
         "name": "native_matrix-u64-overflow_fex",
         "status": "passed",
-        "seconds": 0.0251558,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -388,7 +385,7 @@
       {
         "name": "native_matrix-u64-valid_fex",
         "status": "passed",
-        "seconds": 0.024765,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -398,7 +395,7 @@
       {
         "name": "native_matrix-u64-fold-zero_fex",
         "status": "passed",
-        "seconds": 0.024261,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -408,7 +405,7 @@
       {
         "name": "native_matrix-u64-fold-valid_fex",
         "status": "passed",
-        "seconds": 0.0246383,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -418,7 +415,7 @@
       {
         "name": "native_matrix-u64-wide-valid_fex",
         "status": "passed",
-        "seconds": 0.024144,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -428,7 +425,7 @@
       {
         "name": "native_matrix-s8-zero_fex",
         "status": "passed",
-        "seconds": 0.0273955,
+        "seconds": 0.02,
         "labels": [
           "divide",
           "fex",
@@ -438,7 +435,7 @@
       {
         "name": "native_matrix-s8-overflow_fex",
         "status": "passed",
-        "seconds": 0.0248146,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -448,7 +445,7 @@
       {
         "name": "native_matrix-s8-valid_fex",
         "status": "passed",
-        "seconds": 0.02474,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -458,7 +455,7 @@
       {
         "name": "native_matrix-s8-fold-zero_fex",
         "status": "passed",
-        "seconds": 0.0264404,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -468,7 +465,7 @@
       {
         "name": "native_matrix-s8-fold-valid_fex",
         "status": "passed",
-        "seconds": 0.0272013,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -478,7 +475,7 @@
       {
         "name": "native_matrix-s8-wide-valid_fex",
         "status": "passed",
-        "seconds": 0.0247843,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -488,7 +485,7 @@
       {
         "name": "native_matrix-s8-fold-overflow_fex",
         "status": "passed",
-        "seconds": 0.024863,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -498,7 +495,7 @@
       {
         "name": "native_matrix-s8-negative-limit_fex",
         "status": "passed",
-        "seconds": 0.0240449,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -508,7 +505,7 @@
       {
         "name": "native_matrix-s8-positive-limit_fex",
         "status": "passed",
-        "seconds": 0.0246138,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -518,7 +515,7 @@
       {
         "name": "native_matrix-s8-positive-overflow_fex",
         "status": "passed",
-        "seconds": 0.0242823,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -528,7 +525,7 @@
       {
         "name": "native_matrix-s16-zero_fex",
         "status": "passed",
-        "seconds": 0.0251542,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -538,7 +535,7 @@
       {
         "name": "native_matrix-s16-overflow_fex",
         "status": "passed",
-        "seconds": 0.0245995,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -548,7 +545,7 @@
       {
         "name": "native_matrix-s16-valid_fex",
         "status": "passed",
-        "seconds": 0.0245513,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -558,7 +555,7 @@
       {
         "name": "native_matrix-s16-fold-zero_fex",
         "status": "passed",
-        "seconds": 0.0244335,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -568,7 +565,7 @@
       {
         "name": "native_matrix-s16-fold-valid_fex",
         "status": "passed",
-        "seconds": 0.0245175,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -578,7 +575,7 @@
       {
         "name": "native_matrix-s16-wide-valid_fex",
         "status": "passed",
-        "seconds": 0.0252203,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -588,7 +585,7 @@
       {
         "name": "native_matrix-s16-fold-overflow_fex",
         "status": "passed",
-        "seconds": 0.024515,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -598,7 +595,7 @@
       {
         "name": "native_matrix-s16-negative-limit_fex",
         "status": "passed",
-        "seconds": 0.0245615,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -608,7 +605,7 @@
       {
         "name": "native_matrix-s16-positive-limit_fex",
         "status": "passed",
-        "seconds": 0.0240772,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -618,7 +615,7 @@
       {
         "name": "native_matrix-s16-positive-overflow_fex",
         "status": "passed",
-        "seconds": 0.0250947,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -628,7 +625,7 @@
       {
         "name": "native_matrix-s16-wide-overflow_fex",
         "status": "passed",
-        "seconds": 0.0252741,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -638,7 +635,7 @@
       {
         "name": "native_matrix-s32-zero_fex",
         "status": "passed",
-        "seconds": 0.0254765,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -648,7 +645,7 @@
       {
         "name": "native_matrix-s32-overflow_fex",
         "status": "passed",
-        "seconds": 0.0253989,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -658,7 +655,7 @@
       {
         "name": "native_matrix-s32-valid_fex",
         "status": "passed",
-        "seconds": 0.0249912,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -668,7 +665,7 @@
       {
         "name": "native_matrix-s32-fold-zero_fex",
         "status": "passed",
-        "seconds": 0.0255665,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -678,7 +675,7 @@
       {
         "name": "native_matrix-s32-fold-valid_fex",
         "status": "passed",
-        "seconds": 0.0271025,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -688,7 +685,7 @@
       {
         "name": "native_matrix-s32-wide-valid_fex",
         "status": "passed",
-        "seconds": 0.026821,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -698,7 +695,7 @@
       {
         "name": "native_matrix-s32-fold-overflow_fex",
         "status": "passed",
-        "seconds": 0.0261448,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -708,7 +705,7 @@
       {
         "name": "native_matrix-s32-negative-limit_fex",
         "status": "passed",
-        "seconds": 0.0259937,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -718,7 +715,7 @@
       {
         "name": "native_matrix-s32-positive-limit_fex",
         "status": "passed",
-        "seconds": 0.0258607,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -728,7 +725,7 @@
       {
         "name": "native_matrix-s32-positive-overflow_fex",
         "status": "passed",
-        "seconds": 0.0244763,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -738,7 +735,7 @@
       {
         "name": "native_matrix-s32-wide-overflow_fex",
         "status": "passed",
-        "seconds": 0.0245983,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -748,7 +745,7 @@
       {
         "name": "native_matrix-s64-zero_fex",
         "status": "passed",
-        "seconds": 0.0251342,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -758,7 +755,7 @@
       {
         "name": "native_matrix-s64-overflow_fex",
         "status": "passed",
-        "seconds": 0.0245747,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -768,7 +765,7 @@
       {
         "name": "native_matrix-s64-valid_fex",
         "status": "passed",
-        "seconds": 0.0246959,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -778,7 +775,7 @@
       {
         "name": "native_matrix-s64-fold-zero_fex",
         "status": "passed",
-        "seconds": 0.0241851,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -788,7 +785,7 @@
       {
         "name": "native_matrix-s64-fold-valid_fex",
         "status": "passed",
-        "seconds": 0.0239744,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -798,7 +795,7 @@
       {
         "name": "native_matrix-s64-wide-valid_fex",
         "status": "passed",
-        "seconds": 0.02415,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -808,7 +805,7 @@
       {
         "name": "native_matrix-s64-fold-overflow_fex",
         "status": "passed",
-        "seconds": 0.0242257,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -818,7 +815,7 @@
       {
         "name": "native_matrix-s64-negative-limit_fex",
         "status": "passed",
-        "seconds": 0.0240432,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -828,7 +825,7 @@
       {
         "name": "native_matrix-s64-positive-limit_fex",
         "status": "passed",
-        "seconds": 0.0237739,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -838,7 +835,7 @@
       {
         "name": "native_matrix-s64-positive-overflow_fex",
         "status": "passed",
-        "seconds": 0.0240773,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -848,7 +845,7 @@
       {
         "name": "native_matrix-s64-wide-overflow_fex",
         "status": "passed",
-        "seconds": 0.026137,
+        "seconds": 0.03,
         "labels": [
           "divide",
           "fex",
@@ -858,7 +855,7 @@
       {
         "name": "native_kernel-ansi_fex",
         "status": "passed",
-        "seconds": 0.28249,
+        "seconds": 0.25,
         "labels": [
           "fex",
           "m2",
@@ -868,7 +865,7 @@
       {
         "name": "native_kernel-file_fex",
         "status": "passed",
-        "seconds": 0.248556,
+        "seconds": 0.23,
         "labels": [
           "fex",
           "m2",
@@ -878,7 +875,7 @@
       {
         "name": "native_kernel-threads_fex",
         "status": "passed",
-        "seconds": 1.13008,
+        "seconds": 1.14,
         "labels": [
           "fex",
           "m2",
@@ -888,7 +885,7 @@
       {
         "name": "native_kernel-seh_fex",
         "status": "passed",
-        "seconds": 0.238988,
+        "seconds": 0.23,
         "labels": [
           "fex",
           "m2",
@@ -899,7 +896,7 @@
       {
         "name": "native_placement_fex",
         "status": "passed",
-        "seconds": 0.222461,
+        "seconds": 0.22,
         "labels": [
           "fex",
           "m2",
@@ -909,7 +906,7 @@
       {
         "name": "native_fixed_image_conflict_fex",
         "status": "passed",
-        "seconds": 0.0538812,
+        "seconds": 0.05,
         "labels": [
           "fex",
           "m2",
@@ -919,7 +916,7 @@
       {
         "name": "native_write_av_fex",
         "status": "passed",
-        "seconds": 0.226136,
+        "seconds": 0.22,
         "labels": [
           "fex",
           "m2",
@@ -929,7 +926,7 @@
       {
         "name": "fex_process_runner_contract",
         "status": "passed",
-        "seconds": 0.117985,
+        "seconds": 0.11,
         "labels": [
           "contract",
           "fex"
@@ -938,7 +935,7 @@
       {
         "name": "native_internal_brk_rejection_fex",
         "status": "passed",
-        "seconds": 0.0685126,
+        "seconds": 0.06,
         "labels": [
           "fault",
           "fex",
@@ -948,7 +945,7 @@
       {
         "name": "native_empty_module_argument_fex",
         "status": "passed",
-        "seconds": 0.219111,
+        "seconds": 0.22,
         "labels": [
           "contract",
           "fex"
@@ -957,7 +954,7 @@
       {
         "name": "native_kernel_file_persistence_fex",
         "status": "passed",
-        "seconds": 0.0552479,
+        "seconds": 0.05,
         "labels": [
           "fex",
           "m2",
@@ -967,7 +964,7 @@
       {
         "name": "native_review_breakpoint-seh_fex",
         "status": "passed",
-        "seconds": 0.230782,
+        "seconds": 0.22,
         "labels": [
           "fex",
           "m2",
@@ -977,7 +974,7 @@
       {
         "name": "native_review_read-av_fex",
         "status": "passed",
-        "seconds": 0.226878,
+        "seconds": 0.21,
         "labels": [
           "fex",
           "m2",
@@ -987,7 +984,7 @@
       {
         "name": "native_review_nested-seh_fex",
         "status": "passed",
-        "seconds": 0.230485,
+        "seconds": 0.22,
         "labels": [
           "fex",
           "m2",
@@ -997,7 +994,7 @@
       {
         "name": "native_review_unhandled_fex",
         "status": "passed",
-        "seconds": 0.225897,
+        "seconds": 0.22,
         "labels": [
           "fex",
           "m2",
@@ -1007,7 +1004,7 @@
       {
         "name": "native_review_subpage_fex",
         "status": "passed",
-        "seconds": 0.299938,
+        "seconds": 0.23,
         "labels": [
           "fex",
           "m2",
@@ -1017,7 +1014,7 @@
       {
         "name": "native_review_guard-unsupported_fex",
         "status": "passed",
-        "seconds": 0.225817,
+        "seconds": 0.23,
         "labels": [
           "fex",
           "m2",
@@ -1027,7 +1024,7 @@
       {
         "name": "native_review_divide-overflow_fex",
         "status": "passed",
-        "seconds": 0.222468,
+        "seconds": 0.23,
         "labels": [
           "fex",
           "m2",
@@ -1037,7 +1034,7 @@
       {
         "name": "native_parallel_contention_fex",
         "status": "passed",
-        "seconds": 0.203508,
+        "seconds": 0.2,
         "labels": [
           "fex",
           "m3",
@@ -1047,7 +1044,7 @@
       {
         "name": "native_parallel_context_fex",
         "status": "passed",
-        "seconds": 0.194801,
+        "seconds": 0.2,
         "labels": [
           "fex",
           "m3",
@@ -1057,7 +1054,7 @@
       {
         "name": "native_parallel_worker-seh_fex",
         "status": "passed",
-        "seconds": 0.195613,
+        "seconds": 0.2,
         "labels": [
           "fex",
           "m3",
@@ -1067,7 +1064,7 @@
       {
         "name": "native_parallel_apc_fex",
         "status": "passed",
-        "seconds": 0.21779,
+        "seconds": 0.23,
         "labels": [
           "fex",
           "m3",
@@ -1077,7 +1074,7 @@
       {
         "name": "native_parallel_lifecycle_fex",
         "status": "passed",
-        "seconds": 0.260258,
+        "seconds": 0.25,
         "labels": [
           "fex",
           "m3",
@@ -1087,7 +1084,7 @@
       {
         "name": "native_parallel_worker-unhandled_fex",
         "status": "passed",
-        "seconds": 0.190305,
+        "seconds": 0.2,
         "labels": [
           "fex",
           "m3",
@@ -1097,7 +1094,7 @@
       {
         "name": "native_parallel_negatives_fex",
         "status": "passed",
-        "seconds": 0.199577,
+        "seconds": 0.2,
         "labels": [
           "fex",
           "m3",
@@ -1107,7 +1104,7 @@
       {
         "name": "native_parallel_worker-av_fex",
         "status": "passed",
-        "seconds": 0.192952,
+        "seconds": 0.2,
         "labels": [
           "fex",
           "m3",
@@ -1117,7 +1114,7 @@
       {
         "name": "native_cooperative_context_fex",
         "status": "passed",
-        "seconds": 0.222307,
+        "seconds": 0.23,
         "labels": [
           "fex",
           "m3"
@@ -1126,7 +1123,7 @@
       {
         "name": "native_parallel_kernel_threads_fex",
         "status": "passed",
-        "seconds": 1.09185,
+        "seconds": 1.1,
         "labels": [
           "fex",
           "m3",
@@ -1136,7 +1133,7 @@
       {
         "name": "native_parallel_timeout_fex",
         "status": "passed",
-        "seconds": 0.0521786,
+        "seconds": 0.05,
         "labels": [
           "fex",
           "m3",
@@ -1146,7 +1143,7 @@
       {
         "name": "native_parallel_selfmodify_fex",
         "status": "passed",
-        "seconds": 0.0245484,
+        "seconds": 0.02,
         "labels": [
           "fex",
           "m3",
@@ -1156,7 +1153,7 @@
       {
         "name": "native_parallel_wait-unwind_fex",
         "status": "passed",
-        "seconds": 0.0243264,
+        "seconds": 0.03,
         "labels": [
           "fex",
           "m3",
@@ -1166,7 +1163,7 @@
       {
         "name": "fex_modhost_driver_contract",
         "status": "passed",
-        "seconds": 0.186637,
+        "seconds": 0.22,
         "labels": [
           "contract",
           "fex"
@@ -1175,7 +1172,7 @@
       {
         "name": "fex_modhost_substrate",
         "status": "passed",
-        "seconds": 0.0616767,
+        "seconds": 0.06,
         "labels": [
           "fex",
           "substrate"
@@ -1184,7 +1181,7 @@
       {
         "name": "fex_modhost_execution",
         "status": "passed",
-        "seconds": 0.426614,
+        "seconds": 0.43,
         "labels": [
           "execution",
           "fex"
@@ -1193,7 +1190,7 @@
       {
         "name": "fex_modhost_tier0_gap_expected_failure",
         "status": "passed",
-        "seconds": 0.0427625,
+        "seconds": 0.04,
         "labels": [
           "expected-failure",
           "fex"
@@ -1202,7 +1199,7 @@
       {
         "name": "native_guest_window_fex",
         "status": "passed",
-        "seconds": 0.00390208,
+        "seconds": 0.0,
         "labels": [
           "fex",
           "m4",
@@ -1212,7 +1209,7 @@
       {
         "name": "native_entry32_fex",
         "status": "passed",
-        "seconds": 0.0648003,
+        "seconds": 0.06,
         "labels": [
           "entry",
           "fex",
@@ -1222,7 +1219,7 @@
       {
         "name": "native_kernel_ansi32_fex",
         "status": "passed",
-        "seconds": 0.45251,
+        "seconds": 0.44,
         "labels": [
           "fex",
           "m4",
@@ -1232,7 +1229,7 @@
       {
         "name": "native_kernel_file32_fex",
         "status": "passed",
-        "seconds": 0.497231,
+        "seconds": 0.48,
         "labels": [
           "fex",
           "m4",
@@ -1242,7 +1239,7 @@
       {
         "name": "native_kernel_threads32_fex",
         "status": "passed",
-        "seconds": 1.64795,
+        "seconds": 1.67,
         "labels": [
           "fex",
           "m4",
@@ -1252,7 +1249,7 @@
       {
         "name": "native_wow64_fs_fex",
         "status": "passed",
-        "seconds": 0.0312488,
+        "seconds": 0.03,
         "labels": [
           "engine",
           "fex",
@@ -1262,7 +1259,7 @@
       {
         "name": "native_wow64_fault_fex",
         "status": "passed",
-        "seconds": 0.024263,
+        "seconds": 0.03,
         "labels": [
           "engine",
           "fex",
@@ -1272,7 +1269,7 @@
       {
         "name": "native_wow64_timeout_fex",
         "status": "passed",
-        "seconds": 0.0533987,
+        "seconds": 0.06,
         "labels": [
           "engine",
           "fex",
@@ -1282,7 +1279,7 @@
       {
         "name": "native_wow64_host-smc_fex",
         "status": "passed",
-        "seconds": 0.0250426,
+        "seconds": 0.02,
         "labels": [
           "engine",
           "fex",
@@ -1292,7 +1289,7 @@
       {
         "name": "native_wow64_guest-smc_fex",
         "status": "passed",
-        "seconds": 0.0242043,
+        "seconds": 0.02,
         "labels": [
           "engine",
           "fex",
@@ -1302,7 +1299,7 @@
       {
         "name": "native_wow64_stdcall_fex",
         "status": "passed",
-        "seconds": 0.0242206,
+        "seconds": 0.02,
         "labels": [
           "engine",
           "fex",
@@ -1312,7 +1309,7 @@
       {
         "name": "native_wow64_cdecl_fex",
         "status": "passed",
-        "seconds": 0.0249716,
+        "seconds": 0.02,
         "labels": [
           "engine",
           "fex",
@@ -1322,7 +1319,7 @@
       {
         "name": "native_kernel_seh32_fex",
         "status": "passed",
-        "seconds": 0.45895,
+        "seconds": 0.44,
         "labels": [
           "fex",
           "m4",
@@ -1333,7 +1330,7 @@
       {
         "name": "native_kernel_threads32_parallel_fex",
         "status": "passed",
-        "seconds": 1.5927,
+        "seconds": 1.61,
         "labels": [
           "fex",
           "m4",
@@ -1344,7 +1341,7 @@
       {
         "name": "native_wow64_fault_parallel_fex",
         "status": "passed",
-        "seconds": 0.0252603,
+        "seconds": 0.03,
         "labels": [
           "engine",
           "fex",
@@ -1355,7 +1352,7 @@
       {
         "name": "native_wow64_timeout_parallel_fex",
         "status": "passed",
-        "seconds": 0.05959,
+        "seconds": 0.05,
         "labels": [
           "engine",
           "fex",
@@ -1366,7 +1363,7 @@
       {
         "name": "native_wow64_host-smc_parallel_fex",
         "status": "passed",
-        "seconds": 0.0251178,
+        "seconds": 0.02,
         "labels": [
           "engine",
           "fex",
@@ -1377,7 +1374,7 @@
       {
         "name": "native_wow64_guest-smc_parallel_fex",
         "status": "passed",
-        "seconds": 0.0253343,
+        "seconds": 0.02,
         "labels": [
           "engine",
           "fex",
@@ -1388,7 +1385,7 @@
       {
         "name": "native_wow64_native_brk_rejection_fex",
         "status": "passed",
-        "seconds": 0.0623895,
+        "seconds": 0.06,
         "labels": [
           "fault",
           "fex",
@@ -1398,9 +1395,90 @@
       {
         "name": "native_nt_service_fex",
         "status": "passed",
-        "seconds": 0.0261466,
+        "seconds": 0.02,
         "labels": [
           "contract",
+          "fex",
+          "m4"
+        ]
+      },
+      {
+        "name": "native_wow64_alignment_fex",
+        "status": "passed",
+        "seconds": 0.02,
+        "labels": [
+          "fex",
+          "m4"
+        ]
+      },
+      {
+        "name": "native_wow64_range_fex",
+        "status": "passed",
+        "seconds": 0.02,
+        "labels": [
+          "fex",
+          "m4"
+        ]
+      },
+      {
+        "name": "native_wow64_range-laa_fex",
+        "status": "passed",
+        "seconds": 0.02,
+        "labels": [
+          "fex",
+          "m4"
+        ]
+      },
+      {
+        "name": "native_wow64_alignment_callback_fex",
+        "status": "passed",
+        "seconds": 0.02,
+        "labels": [
+          "fex",
+          "m4"
+        ]
+      },
+      {
+        "name": "native_ntdll_cdecl_x32_fex",
+        "status": "passed",
+        "seconds": 0.34,
+        "labels": [
+          "fex",
+          "m4"
+        ]
+      },
+      {
+        "name": "native_wow64_host_av_rejection_fex",
+        "status": "passed",
+        "seconds": 0.02,
+        "labels": [
+          "fex",
+          "m4"
+        ]
+      },
+      {
+        "name": "native_x64_host_av_rejection_fex",
+        "status": "passed",
+        "seconds": 0.02,
+        "labels": [
+          "fex",
+          "m4"
+        ]
+      },
+      {
+        "name": "native_wow64_range_process_0_fex",
+        "status": "passed",
+        "seconds": 0.43,
+        "labels": [
+          "fex",
+          "m4"
+        ]
+      },
+      {
+        "name": "native_wow64_range_process_1_fex",
+        "status": "passed",
+        "seconds": 0.43,
+        "labels": [
           "fex",
           "m4"
         ]
@@ -1427,113 +1505,147 @@
     "native_wow64_host-smc_parallel_fex",
     "native_wow64_guest-smc_parallel_fex",
     "native_wow64_native_brk_rejection_fex",
-    "native_nt_service_fex"
+    "native_nt_service_fex",
+    "native_wow64_alignment_fex",
+    "native_wow64_range_fex",
+    "native_wow64_range-laa_fex",
+    "native_wow64_alignment_callback_fex",
+    "native_ntdll_cdecl_x32_fex",
+    "native_wow64_host_av_rejection_fex",
+    "native_x64_host_av_rejection_fex",
+    "native_wow64_range_process_0_fex",
+    "native_wow64_range_process_1_fex"
   ],
   "shared_rosetta": {
     "metadata": {
       "name": "(empty)",
-      "tests": "11",
+      "tests": "17",
       "failures": "0",
       "disabled": "0",
       "skipped": "0",
       "hostname": "",
-      "time": "20",
-      "timestamp": "2026-10-30T18:49:59"
+      "time": "25",
+      "timestamp": "2026-10-30T19:25:51"
     },
     "cases": [
       {
         "name": "pe_contracts",
         "status": "passed",
-        "seconds": 0.0557927,
-        "labels": []
+        "seconds": 0.0623102
       },
       {
         "name": "module_set_contracts",
         "status": "passed",
-        "seconds": 0.0194596,
-        "labels": []
+        "seconds": 0.0235957
       },
       {
         "name": "native_cpu_contracts",
         "status": "passed",
-        "seconds": 1.1757,
-        "labels": []
+        "seconds": 1.05783
       },
       {
         "name": "native_x86_contracts",
         "status": "passed",
-        "seconds": 0.132669,
-        "labels": []
+        "seconds": 0.122827
       },
       {
         "name": "native_exception_contract",
         "status": "passed",
-        "seconds": 0.226033,
-        "labels": []
+        "seconds": 0.200424
       },
       {
         "name": "native_kernel_files",
         "status": "passed",
-        "seconds": 0.274118,
-        "labels": []
+        "seconds": 0.207707
       },
       {
         "name": "native_kernel_ansi",
         "status": "passed",
-        "seconds": 0.161222,
-        "labels": []
+        "seconds": 0.154445
       },
       {
         "name": "native_kernel_threads",
         "status": "passed",
-        "seconds": 1.07772,
-        "labels": []
+        "seconds": 1.0571
+      },
+      {
+        "name": "native_kernel_threads_parallel",
+        "status": "passed",
+        "seconds": 1.08265
       },
       {
         "name": "native_kernel_file_persistence",
         "status": "passed",
-        "seconds": 0.021841,
-        "labels": []
+        "seconds": 0.0218053
       },
       {
         "name": "native_kernel_seh",
         "status": "passed",
-        "seconds": 0.162303,
-        "labels": []
+        "seconds": 0.1552
+      },
+      {
+        "name": "native_kernel_threads_x32_default",
+        "status": "passed",
+        "seconds": 1.68733
+      },
+      {
+        "name": "native_kernel_threads_x32_parallel",
+        "status": "passed",
+        "seconds": 1.77916
+      },
+      {
+        "name": "native_x86_kernel_cli",
+        "status": "passed",
+        "seconds": 0.46198
+      },
+      {
+        "name": "native_x86_process",
+        "status": "passed",
+        "seconds": 0.419622
       },
       {
         "name": "native_dynamic_loader_contract",
         "status": "passed",
-        "seconds": 16.7684,
-        "labels": []
+        "seconds": 16.3285
+      },
+      {
+        "name": "native_ntdll_cdecl_x32_native",
+        "status": "passed",
+        "seconds": 0.409693
       }
     ]
   },
-  "native_run_note": "Native/Rosetta area passed before the final FEX-only failed-map cleanup and FS-selector fixes. No native/Rosetta dispatch path changed afterward.",
+  "native_run_note": "Shared/Rosetta x32 and x64 area: 17/17 after the shared caller-cleanup fix. Later edits affect only FEX fault repair/return-gate protection and the import-library machine option. The new ntdll memcpy fixture passed with both engines; the complete corrected FEX area then passed 141/141.",
   "artifact_sha256": {
-    "build-m4/native/raven": "25ec26479531b8c669bfac25fa13bc1b157edd738a0ef0688f8f108c1eeba705",
-    "build-m4/native/fex_process_test": "1e200a755e94108421a28b9ff97911dbea9aa389c1a1e80916726f016c4941b2",
-    "build-m4/native/fex-modhost/fex_wow64_process_test": "af3409847eb6a70cd66fab58e77f832fed9ce538b2d38b95435d23ec0205c825",
-    "build-m4/native/fex-modhost/fex_modhost_substrate": "ad510daf279e99582c93288dde8fac805eeccd03244541199a129f0525ab02a8",
+    "build-m4/native/raven": "027793b04b433f462864394df0f42d70653420642d1f3599734dfc9bcb95e16e",
+    "build-m4/native/fex_process_test": "bf547df507c5e2891d74977ad5d367b3e3e47a12251a3cf4eac77bb83499ca65",
+    "build-m4/native/fex-modhost/fex_wow64_process_test": "c36eac1420f7406c515d5ca0493ec634ef53ce8835cc710d8a584b62fa3b70d4",
+    "build-m4/native/fex-modhost/fex_modhost_substrate": "8f38691a934e28192bf6849c24e956514dbd1687001f6401e2ad69ed788b98d4",
     "build-m4/native/fex-entry32.exe": "eaa4196a0c8e0eaa3c4e62788e05e4c4796fca7c8525c0522aeca9d7e4502422",
     "build-m4/native/kernel-ansi-fex32.exe": "2c3ce30e448b6a0bf2220e8159c8b63a604f097af78c118b5084f1fb529a0de3",
     "build-m4/native/kernel-file-fex32.exe": "3c01f71bbfd0297f76e6169e8c789a6406ea2b1eb1cd9e4d588a7c11de7bb0f9",
     "build-m4/native/kernel-threads-fex32.exe": "a6a816bc561c3b46571ee1e1ebf48fb64692b7638d8ac7543eb4b41e2de18cdd",
-    "build-m4/native/kernel-seh-fex32.exe": "1b3695c5b182d31acb4726239e1fe0efed67e50fcb036257cb4713eee06b6d1c"
+    "build-m4/native/kernel-seh-fex32.exe": "1b3695c5b182d31acb4726239e1fe0efed67e50fcb036257cb4713eee06b6d1c",
+    "build-m4/native/fex-modhost/fex_wow64_crt_test": "18153712d1453343180810fe1455fb78c47494b198e8266bff4180e2da4755e8",
+    "build-m4/native/fex-modhost/fex_wow64_boundary_test": "aac9b7d3ba4c90443801796fa88db9770476bd5ecf60317b8cc572efda150eff",
+    "build-m4/native/fex-alignment32.exe": "cd2e9d44251c3df11778ac3ab73536aa1d8639d0aa275cfbde09f418f8b63733",
+    "build-m4/native/fex-crt32.exe": "0835058babb9152fea0237480c0ec41d29d80953f5bb46be86783d648784d132",
+    "build-m4/native/fex-range32-0.exe": "d59e17da24684b93e920369ce2194c4d943f1135a091151d09878be26e84428c",
+    "build-m4/native/fex-range32-1.exe": "6dd61633195e93b058949829772c599f8d32a3655b5e51b46db72c6d9303877b"
   },
   "source_sha256": {
-    "native/main.cpp": "6c6d287c0ac161bdf53246ce08b391b524dd7b61514f8e2585ec46551d4a6bee",
-    "native/platform/darwin/fex/fex_process.cpp": "9620fdc8578e7b48de2435b6952e8a73d1489d948a90035fa48ac45a34fe8fcc",
-    "native/platform/darwin/fex/fex_process.h": "5e937771e805dbcc76d4ac301cd3616d1f890d62afa7740c5864ec3e1e5abf56",
-    "native/platform/darwin/fex/fex_process_test.cpp": "3e535a6a2599843ed84c5eb6d87cd12a2c75000d604a6c8348846b5a831ce9b9",
+    "native/main.cpp": "2d5ef18eb0169ee9942f91aab28d72b1416b5a6240f977704f3246dcb4c8cf28",
+    "native/platform/darwin/fex/fex_process.cpp": "b44324150536b88200e727481d1ef4857732879dcebf711cd52ecb193ecab671",
+    "native/platform/darwin/fex/fex_process.h": "b31a31db897e17221cf37f086c5830c4bca21b20fc156b2d877d851410410421",
+    "native/platform/darwin/fex/fex_process_test.cpp": "65e8ccb269dca66ddd71ca00cf7018a9d8d18b1fc999e9a42cfc4b3abd48fb87",
     "native/platform/darwin/fex/fex_unsupported.cpp": "c7009c58efdd56cb3733e73463f7e0f0ae36dbbcb5fcfbda57d1204df803088c",
     "native/platform/darwin/fex/guest_window.h": "2867be4d9468fd0dd7025022d4e8b4be57728d4fa1dbbd89eee7e4ac165496ce",
     "native/platform/darwin/fex/guest_window_test.cpp": "e08d29e4fa8a668c4ed2fc424e7bc013a014019fcb409ef4ad2ec3ee59466ee7",
-    "native/platform/darwin/fex/m4.cmake": "28838ce27691e4c3b5f46bf99e6c5ea4db14c4db144d9b3a874b5cc7d8f2e180",
+    "native/platform/darwin/fex/m4.cmake": "80901f6488005c18c21dac435dc2d27e9158b8b84a873690e274d00ebe788d31",
     "native/platform/darwin/fex/modhost/CMakeLists.txt": "3ee01e890226a90500c465c3463862a3c7662c99f0644b2a2073a4e600319ec9",
     "native/platform/darwin/fex/modhost/context.S": "efbad768bb1f5e6ed848e6cc7bc4fa488f2eab783e57b00240436345a5789ac6",
-    "native/platform/darwin/fex/modhost/module_contract.h": "0fda9207d7d35eacdf5c48c0eea5c133641e8af57f3c093121faa196f597b770",
-    "native/platform/darwin/fex/modhost/native_host.cpp": "82732689a90773ee9f8b3d185d72584ae97c87eb98c7ac7a76b7d58f97f44e95",
+    "native/platform/darwin/fex/modhost/module_contract.h": "452a25d620493ae723c12660e09ac435523f81a09800893a25942d06800989cf",
+    "native/platform/darwin/fex/modhost/native_host.cpp": "dc669f334b3ff85ce62437ddb6742ef6444f6ae9005f63dea74b1585933035f2",
     "native/platform/darwin/fex/modhost/pe_preflight.cpp": "3432758d5c81f551178e7d02ff35bfea5c098bd0dfb707e9f75f8d51c4be0db0",
     "native/platform/darwin/fex/modhost/pe_view.h": "193eb32f35f02b1538b4eed574054b2cde9206e3eedcc39968e69942a19c8b0c",
     "native/platform/darwin/fex/modhost/raven_wow64_host.h": "bbbf7f8f5709a7e9fd66102dfd0c0b41fcd485270545dcbe9b99eac3e822400f",
@@ -1541,37 +1653,102 @@
     "native/platform/darwin/fex/patches/0013-raven-wow64-host.patch": "725144fa05016e97bcc1bc4ec7a88dd6c30053fe3b4a8bc9afc55c31acfdb41b",
     "native/platform/darwin/fex/patches/0014-raven-wow64-interrupt.patch": "147637376b17a90678113cb9ef420b8076aa750601dfb917047dc76f5a642161",
     "native/platform/darwin/fex/patches/0015-raven-wow64-doorbell.patch": "3160a1065f03848cef9c276c94a6f368d46e82315dcbd71254031df0fb191246",
-    "native/platform/darwin/fex/patches/0016-wow64-host-boundary-validation.patch": "3a96568d9e9a7a279ace94f16023499be6a4b366ba9a5f95959252240db6874c",
-    "native/platform/darwin/fex/wow64_process_test.cpp": "1dca0bd930acda194e86eb58d63b3df511aac29c89cc80c0d7ad4354873a6bb8",
+    "native/platform/darwin/fex/patches/0016-wow64-host-boundary-validation.patch": "8e3ae8ccaae4336cd5d045be4a465b280036e60f9474730c2b699bad22f6f326",
+    "native/platform/darwin/fex/wow64_process_test.cpp": "49a6c5a3b08b44219db10566e84df0264b6817b8cf97a36943f5b13d6ae16581",
     "native/platform/darwin/fex/wow64_seh_client.c": "ed0c6fe674d5c135f8f89195fb47218c5ddcf731195b0f1db51989d5ceccb186",
     "native/platform/darwin/native_process.cpp": "00b1c67b120401d1e650b65f41763345fe1a017012133239d328814e6d3650d2",
     "scripts/build-fex-modules.py": "fdb5f0b3049f3ef2336f7160afdb819704d7f7856f1d650e544e30db67f2f4f9",
-    "scripts/fex-modhost-pins.json": "3a2bab3bf65937e0eeee262975414031a4c413ea82d3f869f2e727d561c01a2b",
+    "scripts/fex-modhost-pins.json": "01747e6c17a10291c18008e61cf3b6c145edd1fdf86a72b347f8dbf451b2b692",
     "scripts/fex_modhost_contract.py": "11eb622e0299de359d89542c6a3446dc51b904921bb9cdcb8e3d5d7d18c9ce13",
-    "scripts/test-fex-rejection.py": "ddcfc71ad61695c8b13d33784f57b3ee683d31b7051c21baf6217f4faaa4e3e3",
-    "scripts/test-fex-wow64.py": "1f41e1973ae9947da794c5ac59d9be2e3fc977dcb7e5bbf95fd3760db3806410"
+    "scripts/test-fex-rejection.py": "961f955fc6d9781b58ff7ea329843d117f3c4eb07c037df45fd7c3bdb523eb4d",
+    "scripts/test-fex-wow64.py": "b0f07ed6730f77d764765bad5fba6c1d1ad47b24d6d565c743bd8bc856f1b7ca",
+    "native/nt/environment.cpp": "fff9035f61673796c87348dcf30e29ae1bb1c4ad4385493cec22952386d11bd4",
+    "native/nt/environment.h": "e9abaa0623c57b58aac009d8f7be3b60da1a2bff1dd057af3de89395f5ccb4bb",
+    "native/nt/memory.cpp": "74a566735f6a299f97dd7f52de556ed780e421a40f5b7733f1b5bcf0c774d241",
+    "native/nt/x86_process.cpp": "8689e50a9c6b2fc4357e37bb92f1ec677ead35c28e9bc4fbb45132b0fd6f3337",
+    "native/nt/x86_system_api.cpp": "a789a5c42248fa491903d7dae6bae35b527ddc549801a7c6f6140096517bd0f5",
+    "native/platform/darwin/fex/wow64_alignment.S": "e403164fc1c123194683d1af133f3ee71467230475c333f56545a29ca0fce824",
+    "native/platform/darwin/fex/wow64_boundary_test.cpp": "eed0670887717bc0100cf298fe815e9684696230e56e15d87683c46898fd16e9",
+    "native/platform/darwin/fex/wow64_crt.S": "8582ce63d7290e023d0d7fe794f6bc181a53d52ef839c6cb6394be9d6a0eb41e",
+    "native/platform/darwin/fex/wow64_crt_ntdll.def": "0777658430e974ebe36b4c78cf7f90bdba33e164df8f43b98626d69074cf41cf",
+    "native/platform/darwin/fex/wow64_crt_test.cpp": "ef7b0fb46f76b2748cf5dd8f3b4065c5d980c5a58dcbfaaaeb83d3d83486b572",
+    "native/platform/darwin/fex/wow64_range.c": "539f8e41f0ae37af46597badd20bed04d3d1579f60f3af6b887af0439ce607b6",
+    "scripts/test-fex-modhost-contract.py": "d16a7a4bc6f1b69e99ffc7649697c7bd85cea2b91bbdb936f592a5a987373733"
   },
   "logs": {
-    "/tmp/raven-m4-private-modules.log": {
+    "<EVIDENCE_DIR>/raven-m4-private-modules.log": {
       "sha256": "9d6f1ae34b94516fb26e34096fe667a93f20c10fc2b2324fa6bec3c0b2b55aac",
-      "tail": "/Source/Utils/FileUtils.cpp\",\n      \"sha256\": \"211f5e7c0268f3f04478fc19dd00dd4378789eea9238a827ea78cdf0cbe33c76\"\n    },\n    {\n      \"path\": \"FEXCore/include/FEXCore/Utils/FileUtils.h\",\n      \"sha256\": \"c8be748410e3634f4214506e35c703025d8f044072a049c5c89d2c10c5e011aa\"\n    },\n    {\n      \"path\": \"Source/Windows/Common/WinAPI/IO.cpp\",\n      \"sha256\": \"ae21ecad6cd63874bc9b468cdbb53a6116f2d810d17d7a5ed0a76656c528ee3a\"\n    }\n  ],\n  \"source_snapshot\": \"/private/tmp/raven-m4-modules/FEX-darwin\",\n  \"builtin_marker_sha256\": \"8f15265269b70d27579fb7525ec418fde87a7a1e8ac97e00c04c2238c0aaf5b9\"\n}\n+ xcrun clang++ -arch arm64 -std=c++17 -O2 -Wall -Wextra -Werror /Users/yount/.t3/worktrees/raven/t3-2ec43394/native/platform/darwin/fex/modhost/pe_preflight.cpp -o /tmp/raven-m4-modules/pe-preflight\n+ xcrun clang++ -arch arm64 -ffixed-x18 -ffp-contract=off -mmacosx-version-min=11.0 -std=c++17 -O2 -Wall -Wextra -Werror -Wl,-platform_version,macos,11.0,11.0 /Users/yount/.t3/worktrees/raven/t3-2ec43394/native/platform/darwin/fex/modhost/native_host.cpp /Users/yount/.t3/worktrees/raven/t3-2ec43394/native/platform/darwin/fex/modhost/abi.S /Users/yount/.t3/worktrees/raven/t3-2ec43394/native/platform/darwin/fex/modhost/context.S -o /tmp/raven-m4-modules/m1d-native-host\n+ /tmp/raven-m4-modules/m1d-native-host --self-test\nPASS: negative fault repair, dynamic checked imports/concurrency, shared sections, RX JIT, worker termination\nPASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)\nModule build/audit PASS. Run scripts/test-fex-modhost.py to require runtime execution.\n"
+      "tail": "/Source/Utils/FileUtils.cpp\",\n      \"sha256\": \"211f5e7c0268f3f04478fc19dd00dd4378789eea9238a827ea78cdf0cbe33c76\"\n    },\n    {\n      \"path\": \"FEXCore/include/FEXCore/Utils/FileUtils.h\",\n      \"sha256\": \"c8be748410e3634f4214506e35c703025d8f044072a049c5c89d2c10c5e011aa\"\n    },\n    {\n      \"path\": \"Source/Windows/Common/WinAPI/IO.cpp\",\n      \"sha256\": \"ae21ecad6cd63874bc9b468cdbb53a6116f2d810d17d7a5ed0a76656c528ee3a\"\n    }\n  ],\n  \"source_snapshot\": \"<PRIVATE_MODULE_ROOT>/FEX-darwin\",\n  \"builtin_marker_sha256\": \"8f15265269b70d27579fb7525ec418fde87a7a1e8ac97e00c04c2238c0aaf5b9\"\n}\n+ xcrun clang++ -arch arm64 -std=c++17 -O2 -Wall -Wextra -Werror <WORKTREE>/native/platform/darwin/fex/modhost/pe_preflight.cpp -o <PRIVATE_MODULE_ROOT>/pe-preflight\n+ xcrun clang++ -arch arm64 -ffixed-x18 -ffp-contract=off -mmacosx-version-min=11.0 -std=c++17 -O2 -Wall -Wextra -Werror -Wl,-platform_version,macos,11.0,11.0 <WORKTREE>/native/platform/darwin/fex/modhost/native_host.cpp <WORKTREE>/native/platform/darwin/fex/modhost/abi.S <WORKTREE>/native/platform/darwin/fex/modhost/context.S -o <PRIVATE_MODULE_ROOT>/m1d-native-host\n+ <PRIVATE_MODULE_ROOT>/m1d-native-host --self-test\nPASS: negative fault repair, dynamic checked imports/concurrency, shared sections, RX JIT, worker termination\nPASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)\nModule build/audit PASS. Run scripts/test-fex-modhost.py to require runtime execution.\n"
     },
-    "/tmp/raven-m4-shared-restore.log": {
+    "<EVIDENCE_DIR>/raven-m4-shared-restore.log": {
       "sha256": "70113470b57e103d1452715822afe332982e334dc3eb4cfd2629d8518d59a607",
-      "tail": "    {\n      \"path\": \"FEXCore/include/FEXCore/Utils/FileUtils.h\",\n      \"sha256\": \"c8be748410e3634f4214506e35c703025d8f044072a049c5c89d2c10c5e011aa\"\n    },\n    {\n      \"path\": \"Source/Windows/Common/WinAPI/IO.cpp\",\n      \"sha256\": \"ae21ecad6cd63874bc9b468cdbb53a6116f2d810d17d7a5ed0a76656c528ee3a\"\n    }\n  ],\n  \"source_snapshot\": \"/Users/yount/Documents/Projects/raven-components/fex-modules/FEX-darwin\",\n  \"builtin_marker_sha256\": \"8f15265269b70d27579fb7525ec418fde87a7a1e8ac97e00c04c2238c0aaf5b9\"\n}\n+ xcrun clang++ -arch arm64 -std=c++17 -O2 -Wall -Wextra -Werror /Users/yount/Documents/Projects/raven/native/platform/darwin/fex/modhost/pe_preflight.cpp -o /Users/yount/Documents/Projects/raven-components/fex-modules/pe-preflight\n+ xcrun clang++ -arch arm64 -ffixed-x18 -ffp-contract=off -mmacosx-version-min=11.0 -std=c++17 -O2 -Wall -Wextra -Werror -Wl,-platform_version,macos,11.0,11.0 /Users/yount/Documents/Projects/raven/native/platform/darwin/fex/modhost/native_host.cpp /Users/yount/Documents/Projects/raven/native/platform/darwin/fex/modhost/abi.S /Users/yount/Documents/Projects/raven/native/platform/darwin/fex/modhost/context.S -o /Users/yount/Documents/Projects/raven-components/fex-modules/m1d-native-host\n+ /Users/yount/Documents/Projects/raven-components/fex-modules/m1d-native-host --self-test\nPASS: negative fault repair, dynamic checked imports/concurrency, shared sections, RX JIT, worker termination\nPASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)\nModule build/audit PASS. Run scripts/test-fex-modhost.py to require runtime execution.\n"
+      "tail": "    {\n      \"path\": \"FEXCore/include/FEXCore/Utils/FileUtils.h\",\n      \"sha256\": \"c8be748410e3634f4214506e35c703025d8f044072a049c5c89d2c10c5e011aa\"\n    },\n    {\n      \"path\": \"Source/Windows/Common/WinAPI/IO.cpp\",\n      \"sha256\": \"ae21ecad6cd63874bc9b468cdbb53a6116f2d810d17d7a5ed0a76656c528ee3a\"\n    }\n  ],\n  \"source_snapshot\": \"<SHARED_MODULE_ROOT>/FEX-darwin\",\n  \"builtin_marker_sha256\": \"8f15265269b70d27579fb7525ec418fde87a7a1e8ac97e00c04c2238c0aaf5b9\"\n}\n+ xcrun clang++ -arch arm64 -std=c++17 -O2 -Wall -Wextra -Werror <MAIN_CHECKOUT>/native/platform/darwin/fex/modhost/pe_preflight.cpp -o <SHARED_MODULE_ROOT>/pe-preflight\n+ xcrun clang++ -arch arm64 -ffixed-x18 -ffp-contract=off -mmacosx-version-min=11.0 -std=c++17 -O2 -Wall -Wextra -Werror -Wl,-platform_version,macos,11.0,11.0 <MAIN_CHECKOUT>/native/platform/darwin/fex/modhost/native_host.cpp <MAIN_CHECKOUT>/native/platform/darwin/fex/modhost/abi.S <MAIN_CHECKOUT>/native/platform/darwin/fex/modhost/context.S -o <SHARED_MODULE_ROOT>/m1d-native-host\n+ <SHARED_MODULE_ROOT>/m1d-native-host --self-test\nPASS: negative fault repair, dynamic checked imports/concurrency, shared sections, RX JIT, worker termination\nPASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)\nModule build/audit PASS. Run scripts/test-fex-modhost.py to require runtime execution.\n"
     },
-    "/tmp/raven-m4-release-fex-ctest.log": {
+    "<EVIDENCE_DIR>/raven-m4-release-fex-ctest.log": {
       "sha256": "00d1b049bffeb1bc8f22635f1dd62f58fafc074db3f149642a23bb8002368e20",
       "tail": "  0.03 sec\n        Start 620: native_wow64_timeout_parallel_fex\n128/132 Test #620: native_wow64_timeout_parallel_fex .........   Passed    0.06 sec\n        Start 621: native_wow64_host-smc_parallel_fex\n129/132 Test #621: native_wow64_host-smc_parallel_fex ........   Passed    0.03 sec\n        Start 622: native_wow64_guest-smc_parallel_fex\n130/132 Test #622: native_wow64_guest-smc_parallel_fex .......   Passed    0.03 sec\n        Start 623: native_wow64_native_brk_rejection_fex\n131/132 Test #623: native_wow64_native_brk_rejection_fex .....   Passed    0.06 sec\n        Start 624: native_nt_service_fex\n132/132 Test #624: native_nt_service_fex .....................   Passed    0.03 sec\n\n100% tests passed out of 132\n\nLabel Time Summary:\ncontract            =   0.55 sec*proc (4 tests)\ndivide              =   1.67 sec*proc (67 tests)\nengine              =   0.34 sec*proc (11 tests)\nentry               =   0.06 sec*proc (1 test)\nexecution           =   0.43 sec*proc (1 test)\nexpected-failure    =   0.04 sec*proc (1 test)\nfault               =   0.13 sec*proc (2 tests)\nfex                 =  15.40 sec*proc (132 tests)\nm2                  =   6.13 sec*proc (93 tests)\nm3                  =   3.07 sec*proc (13 tests)\nm4                  =   5.15 sec*proc (20 tests)\nparallel            =   4.58 sec*proc (17 tests)\nplacement           =   0.28 sec*proc (3 tests)\nprocess             =   6.60 sec*proc (10 tests)\nreview              =   1.66 sec*proc (7 tests)\nseh                 =   0.92 sec*proc (3 tests)\nsubstrate           =   0.06 sec*proc (1 test)\n\nTotal Test time (real) =  15.44 sec\n"
     },
-    "/tmp/raven-m4-native-final-ctest.log": {
+    "<EVIDENCE_DIR>/raven-m4-native-final-ctest.log": {
       "sha256": "bf7bcd1993f727f73a8e3e5023ce8ba3a0b7069e2ae373463980f9ffa323e72b",
-      "tail": "Test project /Users/yount/.t3/worktrees/raven/t3-2ec43394/build-m4\n      Start   5: pe_contracts\n 1/11 Test   #5: pe_contracts .....................   Passed    0.06 sec\n      Start   6: module_set_contracts\n 2/11 Test   #6: module_set_contracts .............   Passed    0.02 sec\n      Start  12: native_cpu_contracts\n 3/11 Test  #12: native_cpu_contracts .............   Passed    1.18 sec\n      Start  16: native_x86_contracts\n 4/11 Test  #16: native_x86_contracts .............   Passed    0.13 sec\n      Start  27: native_exception_contract\n 5/11 Test  #27: native_exception_contract ........   Passed    0.23 sec\n      Start 246: native_kernel_files\n 6/11 Test #246: native_kernel_files ..............   Passed    0.27 sec\n      Start 247: native_kernel_ansi\n 7/11 Test #247: native_kernel_ansi ...............   Passed    0.16 sec\n      Start 248: native_kernel_threads\n 8/11 Test #248: native_kernel_threads ............   Passed    1.08 sec\n      Start 252: native_kernel_file_persistence\n 9/11 Test #252: native_kernel_file_persistence ...   Passed    0.02 sec\n      Start 253: native_kernel_seh\n10/11 Test #253: native_kernel_seh ................   Passed    0.16 sec\n      Start 340: native_dynamic_loader_contract\n11/11 Test #340: native_dynamic_loader_contract ...   Passed   16.77 sec\n\n100% tests passed out of 11\n\nTotal Test time (real) =  20.09 sec\n"
+      "tail": "Test project <WORKTREE>/build-m4\n      Start   5: pe_contracts\n 1/11 Test   #5: pe_contracts .....................   Passed    0.06 sec\n      Start   6: module_set_contracts\n 2/11 Test   #6: module_set_contracts .............   Passed    0.02 sec\n      Start  12: native_cpu_contracts\n 3/11 Test  #12: native_cpu_contracts .............   Passed    1.18 sec\n      Start  16: native_x86_contracts\n 4/11 Test  #16: native_x86_contracts .............   Passed    0.13 sec\n      Start  27: native_exception_contract\n 5/11 Test  #27: native_exception_contract ........   Passed    0.23 sec\n      Start 246: native_kernel_files\n 6/11 Test #246: native_kernel_files ..............   Passed    0.27 sec\n      Start 247: native_kernel_ansi\n 7/11 Test #247: native_kernel_ansi ...............   Passed    0.16 sec\n      Start 248: native_kernel_threads\n 8/11 Test #248: native_kernel_threads ............   Passed    1.08 sec\n      Start 252: native_kernel_file_persistence\n 9/11 Test #252: native_kernel_file_persistence ...   Passed    0.02 sec\n      Start 253: native_kernel_seh\n10/11 Test #253: native_kernel_seh ................   Passed    0.16 sec\n      Start 340: native_dynamic_loader_contract\n11/11 Test #340: native_dynamic_loader_contract ...   Passed   16.77 sec\n\n100% tests passed out of 11\n\nTotal Test time (real) =  20.09 sec\n"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-driver.log": {
+      "sha256": "6010b1f7d14a05174ec11199cf300c3e2310ac23984e428ab3f97b7520d26b52",
+      "tail": "+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin read-tree 370c63057fc9fc826b58fe15d59930876df55b5f\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0001-deterministic-pe-timestamps.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0002-raven-host-frontend.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0003-raven-host-build-option.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0004-raven-dispatch-resume.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0005-native-temporary-jit-guards.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0006-raven-precise-fault.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0007-raven-x87-context.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0008-raven-divide-and-synchronous-faults.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0009-raven-doorbell-stop.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0010-raven-shared-data-and-return-stack.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0011-raven-gate-callret-repair.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0012-raven-reconstruct-architectural-flags.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0013-raven-wow64-host.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0014-raven-wow64-interrupt.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0015-raven-wow64-doorbell.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0016-wow64-host-boundary-validation.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin read-tree 370c63057fc9fc826b58fe15d59930876df55b5f\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin add -A\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin submodule update --init --jobs 8 External/fmt External/range-v3 External/rpmalloc External/unordered_dense External/xxhash Source/Common/cpp-optparse\nBuild id=m4-review-fixed mode=cached\n+ xcrun clang++ -arch arm64 -std=c++17 -O2 -Wall -Wextra -Werror <WORKTREE>/native/platform/darwin/fex/modhost/pe_preflight.cpp -o <PRIVATE_MODULE_ROOT>/pe-preflight\n+ xcrun clang++ -arch arm64 -ffixed-x18 -ffp-contract=off -mmacosx-version-min=11.0 -std=c++17 -O2 -Wall -Wextra -Werror -Wl,-platform_version,macos,11.0,11.0 <WORKTREE>/native/platform/darwin/fex/modhost/native_host.cpp <WORKTREE>/native/platform/darwin/fex/modhost/abi.S <WORKTREE>/native/platform/darwin/fex/modhost/context.S -o <PRIVATE_MODULE_ROOT>/m1d-native-host\n+ <PRIVATE_MODULE_ROOT>/m1d-native-host --self-test\nPASS: negative fault repair, dynamic checked imports/concurrency, shared sections, RX JIT, worker termination\nPASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)\nModule build/audit PASS. Run scripts/test-fex-modhost.py to require runtime execution.\n"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-build-final.log": {
+      "sha256": "c5749aa800aa2ec90f48b77ef7289361976056b8a19ec6fec914b3cb142dff51",
+      "tail": ") than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[18](SkOpSpan.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[20](SkPathOpsCommon.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[21](SkPathOpsConic.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[22](SkPathOpsCubic.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[23](SkPathOpsCurve.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[24](SkPathOpsDebug.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[25](SkPathOpsLine.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[26](SkPathOpsOp.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[27](SkPathOpsQuad.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[28](SkPathOpsRect.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[29](SkPathOpsSimplify.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[30](SkPathOpsTSect.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[32](SkPathOpsTypes.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[33](SkPathOpsWinding.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[34](SkPathWriter.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[35](SkReduceOrder.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/freetype/lib/libfreetype.6.dylib' which was built for newer version 27.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/pixman/lib/libpixman-1.0.dylib' which was built for newer version 15.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxcb/lib/libxcb-xinput.0.dylib' which was built for newer version 15.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxcb/lib/libxcb-xfixes.0.dylib' which was built for newer version 15.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxkbcommon/lib/libxkbcommon-x11.0.dylib' which was built for newer version 27.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxkbcommon/lib/libxkbcommon.0.dylib' which was built for newer version 27.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxcb/lib/libxcb-xkb.1.dylib' which was built for newer version 15.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxcb/lib/libxcb.1.dylib' which was built for newer version 15.0\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_darwin_audio.a[2](output.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_darwin_audio.a[3](mixer.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_darwin_audio.a[4](input.mm.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\n"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-native-build.log": {
+      "sha256": "009ed1cc1a8a6128679b2f974b51cac84fcf49e17105e7d1d3c76c5723b724ab",
+      "tail": ") than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[18](SkOpSpan.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[20](SkPathOpsCommon.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[21](SkPathOpsConic.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[22](SkPathOpsCubic.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[23](SkPathOpsCurve.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[24](SkPathOpsDebug.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[25](SkPathOpsLine.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[26](SkPathOpsOp.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[27](SkPathOpsQuad.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[28](SkPathOpsRect.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[29](SkPathOpsSimplify.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[30](SkPathOpsTSect.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[32](SkPathOpsTypes.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[33](SkPathOpsWinding.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[34](SkPathWriter.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[35](SkReduceOrder.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/freetype/lib/libfreetype.6.dylib' which was built for newer version 27.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/pixman/lib/libpixman-1.0.dylib' which was built for newer version 15.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxcb/lib/libxcb-xinput.0.dylib' which was built for newer version 15.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxcb/lib/libxcb-xfixes.0.dylib' which was built for newer version 15.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxkbcommon/lib/libxkbcommon-x11.0.dylib' which was built for newer version 27.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxkbcommon/lib/libxkbcommon.0.dylib' which was built for newer version 27.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxcb/lib/libxcb-xkb.1.dylib' which was built for newer version 15.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxcb/lib/libxcb.1.dylib' which was built for newer version 15.0\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_darwin_audio.a[2](output.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_darwin_audio.a[3](mixer.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_darwin_audio.a[4](input.mm.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\n"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-crt-build.log": {
+      "sha256": "054ea5044d963238e3e18f002384559298103fce066dd41d43424b037d5373e3",
+      "tail": ") than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[18](SkOpSpan.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[20](SkPathOpsCommon.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[21](SkPathOpsConic.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[22](SkPathOpsCubic.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[23](SkPathOpsCurve.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[24](SkPathOpsDebug.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[25](SkPathOpsLine.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[26](SkPathOpsOp.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[27](SkPathOpsQuad.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[28](SkPathOpsRect.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[29](SkPathOpsSimplify.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[30](SkPathOpsTSect.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[32](SkPathOpsTypes.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[33](SkPathOpsWinding.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[34](SkPathWriter.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_text.a[35](SkReduceOrder.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/freetype/lib/libfreetype.6.dylib' which was built for newer version 27.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/pixman/lib/libpixman-1.0.dylib' which was built for newer version 15.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxcb/lib/libxcb-xinput.0.dylib' which was built for newer version 15.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxcb/lib/libxcb-xfixes.0.dylib' which was built for newer version 15.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxkbcommon/lib/libxkbcommon-x11.0.dylib' which was built for newer version 27.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxkbcommon/lib/libxkbcommon.0.dylib' which was built for newer version 27.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxcb/lib/libxcb-xkb.1.dylib' which was built for newer version 15.0\nld: warning: building for macOS-11.0, but linking with dylib '/opt/homebrew/opt/libxcb/lib/libxcb.1.dylib' which was built for newer version 15.0\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_darwin_audio.a[2](output.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_darwin_audio.a[3](mixer.cpp.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\nld: warning: object file (<WORKTREE>/build-m4/native/libraven_darwin_audio.a[4](input.mm.o)) was built for newer 'macOS' version (27.2) than being linked (11.0)\n"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-fex.log": {
+      "sha256": "9b733589d2bed05f036a77aae31ee3cb8240203a8adc2512f796fa64c5de37fb",
+      "tail": "ed    0.06 sec\n        Start 603: fex_modhost_execution\n111/141 Test #603: fex_modhost_execution .....................   Passed    0.43 sec\n        Start 604: fex_modhost_tier0_gap_expected_failure\n112/141 Test #604: fex_modhost_tier0_gap_expected_failure ....   Passed    0.04 sec\n        Start 605: native_guest_window_fex\n113/141 Test #605: native_guest_window_fex ...................   Passed    0.00 sec\n        Start 606: native_entry32_fex\n114/141 Test #606: native_entry32_fex ........................   Passed    0.06 sec\n        Start 607: native_kernel_ansi32_fex\n115/141 Test #607: native_kernel_ansi32_fex ..................   Passed    0.44 sec\n        Start 608: native_kernel_file32_fex\n116/141 Test #608: native_kernel_file32_fex ..................   Passed    0.48 sec\n        Start 609: native_kernel_threads32_fex\n117/141 Test #609: native_kernel_threads32_fex ...............   Passed    1.67 sec\n        Start 610: native_wow64_fs_fex\n118/141 Test #610: native_wow64_fs_fex .......................   Passed    0.03 sec\n        Start 611: native_wow64_fault_fex\n119/141 Test #611: native_wow64_fault_fex ....................   Passed    0.03 sec\n        Start 612: native_wow64_timeout_fex\n120/141 Test #612: native_wow64_timeout_fex ..................   Passed    0.06 sec\n        Start 613: native_wow64_host-smc_fex\n121/141 Test #613: native_wow64_host-smc_fex .................   Passed    0.02 sec\n        Start 614: native_wow64_guest-smc_fex\n122/141 Test #614: native_wow64_guest-smc_fex ................   Passed    0.02 sec\n        Start 615: native_wow64_stdcall_fex\n123/141 Test #615: native_wow64_stdcall_fex ..................   Passed    0.02 sec\n        Start 616: native_wow64_cdecl_fex\n124/141 Test #616: native_wow64_cdecl_fex ....................   Passed    0.02 sec\n        Start 617: native_kernel_seh32_fex\n125/141 Test #617: native_kernel_seh32_fex ...................   Passed    0.44 sec\n        Start 618: native_kernel_threads32_parallel_fex\n126/141 Test #618: native_kernel_threads32_parallel_fex ......   Passed    1.61 sec\n        Start 619: native_wow64_fault_parallel_fex\n127/141 Test #619: native_wow64_fault_parallel_fex ...........   Passed    0.03 sec\n        Start 620: native_wow64_timeout_parallel_fex\n128/141 Test #620: native_wow64_timeout_parallel_fex .........   Passed    0.05 sec\n        Start 621: native_wow64_host-smc_parallel_fex\n129/141 Test #621: native_wow64_host-smc_parallel_fex ........   Passed    0.02 sec\n        Start 622: native_wow64_guest-smc_parallel_fex\n130/141 Test #622: native_wow64_guest-smc_parallel_fex .......   Passed    0.02 sec\n        Start 623: native_wow64_native_brk_rejection_fex\n131/141 Test #623: native_wow64_native_brk_rejection_fex .....   Passed    0.06 sec\n        Start 624: native_nt_service_fex\n132/141 Test #624: native_nt_service_fex .....................   Passed    0.02 sec\n        Start 625: native_wow64_alignment_fex\n133/141 Test #625: native_wow64_alignment_fex ................   Passed    0.02 sec\n        Start 626: native_wow64_range_fex\n134/141 Test #626: native_wow64_range_fex ....................   Passed    0.02 sec\n        Start 627: native_wow64_range-laa_fex\n135/141 Test #627: native_wow64_range-laa_fex ................   Passed    0.02 sec\n        Start 628: native_wow64_alignment_callback_fex\n136/141 Test #628: native_wow64_alignment_callback_fex .......   Passed    0.02 sec\n        Start 630: native_ntdll_cdecl_x32_fex\n137/141 Test #630: native_ntdll_cdecl_x32_fex ................   Passed    0.34 sec\n        Start 631: native_wow64_host_av_rejection_fex\n138/141 Test #631: native_wow64_host_av_rejection_fex ........   Passed    0.02 sec\n        Start 632: native_x64_host_av_rejection_fex\n139/141 Test #632: native_x64_host_av_rejection_fex ..........   Passed    0.02 sec\n        Start 633: native_wow64_range_process_0_fex\n140/141 Test #633: native_wow64_range_process_0_fex ..........   Passed    0.43 sec\n        Start 634: native_wow64_range_process_1_fex\n141/141 Test #634: native_wow64_range_process_1_fex ..........   Passed    0.43 sec\n\n100% tests passed out of 141\n\nLabel Time Summary:\ncontract            =   0.57 sec*proc (4 tests)\ndivide              =   2.10 sec*proc (67 tests)\nengine              =   0.42 sec*proc (15 tests)\nentry               =   0.06 sec*proc (1 test)\nexecution           =   0.43 sec*proc (1 test)\nexpected-failure    =   0.04 sec*proc (1 test)\nfault               =   0.15 sec*proc (4 tests)\nfex                 =  17.03 sec*proc (141 tests)\nm2                  =   6.39 sec*proc (93 tests)\nm3                  =   3.12 sec*proc (13 tests)\nm4                  =   6.45 sec*proc (29 tests)\nparallel            =   4.62 sec*proc (17 tests)\nplacement           =   1.14 sec*proc (5 tests)\nprocess             =   7.75 sec*proc (13 tests)\nreview              =   1.57 sec*proc (7 tests)\nseh                 =   0.89 sec*proc (3 tests)\nsubstrate           =   0.06 sec*proc (1 test)\n\nTotal Test time (real) =  17.08 sec\n"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-native.log": {
+      "sha256": "c55584eb57ac461758ca6c8d92c4577c36c8f7bc8e6c628190f6f90f8d986399",
+      "tail": "Test project <WORKTREE>/build-m4\n      Start   5: pe_contracts\n 1/17 Test   #5: pe_contracts .........................   Passed    0.06 sec\n      Start   6: module_set_contracts\n 2/17 Test   #6: module_set_contracts .................   Passed    0.02 sec\n      Start  12: native_cpu_contracts\n 3/17 Test  #12: native_cpu_contracts .................   Passed    1.06 sec\n      Start  16: native_x86_contracts\n 4/17 Test  #16: native_x86_contracts .................   Passed    0.12 sec\n      Start  27: native_exception_contract\n 5/17 Test  #27: native_exception_contract ............   Passed    0.20 sec\n      Start 246: native_kernel_files\n 6/17 Test #246: native_kernel_files ..................   Passed    0.21 sec\n      Start 247: native_kernel_ansi\n 7/17 Test #247: native_kernel_ansi ...................   Passed    0.15 sec\n      Start 248: native_kernel_threads\n 8/17 Test #248: native_kernel_threads ................   Passed    1.06 sec\n      Start 249: native_kernel_threads_parallel\n 9/17 Test #249: native_kernel_threads_parallel .......   Passed    1.08 sec\n      Start 252: native_kernel_file_persistence\n10/17 Test #252: native_kernel_file_persistence .......   Passed    0.02 sec\n      Start 253: native_kernel_seh\n11/17 Test #253: native_kernel_seh ....................   Passed    0.16 sec\n      Start 269: native_kernel_threads_x32_default\n12/17 Test #269: native_kernel_threads_x32_default ....   Passed    1.69 sec\n      Start 270: native_kernel_threads_x32_parallel\n13/17 Test #270: native_kernel_threads_x32_parallel ...   Passed    1.78 sec\n      Start 311: native_x86_kernel_cli\n14/17 Test #311: native_x86_kernel_cli ................   Passed    0.46 sec\n      Start 319: native_x86_process\n15/17 Test #319: native_x86_process ...................   Passed    0.42 sec\n      Start 340: native_dynamic_loader_contract\n16/17 Test #340: native_dynamic_loader_contract .......   Passed   16.33 sec\n      Start 629: native_ntdll_cdecl_x32_native\n17/17 Test #629: native_ntdll_cdecl_x32_native ........   Passed    0.41 sec\n\n100% tests passed out of 17\n\nTotal Test time (real) =  25.26 sec\n"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-negative.log": {
+      "sha256": "336d4c4854ce541d9f091069da5dcd6bbf787ee261123fddf97e950af50d1195",
+      "tail": "{\"name\": \"old-stack\", \"command\": [\"<EVIDENCE_DIR>/raven-m4-negative/fex_wow64_process_test\", \"<WORKTREE>/build-m4/native/fex-alignment32.exe\", \"alignment\"], \"returncode\": 1, \"stdout\": \"machine=0xaa64 sections=7 image_size=4030464 DIR64_relocations=18932\\nauxiliary_iat_writes=0\\nresolved=128\\n\", \"stderr\": \"unaligned WoW64 call stack\\n\", \"expected_rejection\": true}\n{\"name\": \"old-cdecl-rosetta\", \"command\": [\"<EVIDENCE_DIR>/raven-m4-negative/fex_wow64_crt_test\", \"<WORKTREE>/build-m4/native/raven-bootstrap\", \"<WORKTREE>/build-m4/native/fex-crt32.exe\", \"native\"], \"returncode\": 1, \"stdout\": \"\", \"stderr\": \"ntdll memcpy corrupted the PE32 stack or result\\n\", \"expected_rejection\": true}\n{\"name\": \"old-cdecl-fex\", \"command\": [\"<EVIDENCE_DIR>/raven-m4-negative/fex_wow64_crt_test\", \"<WORKTREE>/build-m4/native/raven-bootstrap\", \"<WORKTREE>/build-m4/native/fex-crt32.exe\", \"fex\"], \"returncode\": 1, \"stdout\": \"machine=0xaa64 sections=7 image_size=4030464 DIR64_relocations=18932\\nauxiliary_iat_writes=0\\nresolved=128\\n\", \"stderr\": \"ntdll memcpy corrupted the PE32 stack or result\\n\", \"expected_rejection\": true}\n{\"name\": \"old-native-av\", \"command\": [\"<WORKTREE>/build-m4/native/fex-modhost/fex_wow64_boundary_test\", \"<PRIVATE_MODULE_ROOT>/FEX-darwin/build/local/m4-private-qualified/dlls/xtajit.dll\", \"wow64\"], \"returncode\": 2, \"stdout\": \"machine=0xaa64 sections=7 image_size=4030464 DIR64_relocations=18931\\nauxiliary_iat_writes=0\\nresolved=128\\n\", \"stderr\": \"non-JIT call/return-range host fault was repaired or changed context\\n\", \"expected_rejection\": true}\n"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-driver2.log": {
+      "sha256": "56888aa234528ed3d6c60f61fa7f95fdacee2d615aafb56ce291dce7c97e1946",
+      "tail": "+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin read-tree 370c63057fc9fc826b58fe15d59930876df55b5f\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0001-deterministic-pe-timestamps.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0002-raven-host-frontend.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0003-raven-host-build-option.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0004-raven-dispatch-resume.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0005-native-temporary-jit-guards.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0006-raven-precise-fault.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0007-raven-x87-context.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0008-raven-divide-and-synchronous-faults.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0009-raven-doorbell-stop.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0010-raven-shared-data-and-return-stack.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0011-raven-gate-callret-repair.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0012-raven-reconstruct-architectural-flags.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0013-raven-wow64-host.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0014-raven-wow64-interrupt.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0015-raven-wow64-doorbell.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin apply --cached <WORKTREE>/native/platform/darwin/fex/patches/0016-wow64-host-boundary-validation.patch\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin read-tree 370c63057fc9fc826b58fe15d59930876df55b5f\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin add -A\n+ git -C <PRIVATE_MODULE_ROOT>/FEX-darwin submodule update --init --jobs 8 External/fmt External/range-v3 External/rpmalloc External/unordered_dense External/xxhash Source/Common/cpp-optparse\nBuild id=m4-review-boundary-fixed mode=cached\n+ xcrun clang++ -arch arm64 -std=c++17 -O2 -Wall -Wextra -Werror <WORKTREE>/native/platform/darwin/fex/modhost/pe_preflight.cpp -o <PRIVATE_MODULE_ROOT>/pe-preflight\n+ xcrun clang++ -arch arm64 -ffixed-x18 -ffp-contract=off -mmacosx-version-min=11.0 -std=c++17 -O2 -Wall -Wextra -Werror -Wl,-platform_version,macos,11.0,11.0 <WORKTREE>/native/platform/darwin/fex/modhost/native_host.cpp <WORKTREE>/native/platform/darwin/fex/modhost/abi.S <WORKTREE>/native/platform/darwin/fex/modhost/context.S -o <PRIVATE_MODULE_ROOT>/m1d-native-host\n+ <PRIVATE_MODULE_ROOT>/m1d-native-host --self-test\nPASS: negative fault repair, dynamic checked imports/concurrency, shared sections, RX JIT, worker termination\nPASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)\nModule build/audit PASS. Run scripts/test-fex-modhost.py to require runtime execution.\n"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-modules2.log": {
+      "sha256": "285e60a49d96e5b136540e0381daf8d8bd92c2ce14e0dcc33477f893bc0a7768",
+      "tail": "dab14865be234fdeb9b28755ebd30eef16c4ffc8efd5b0\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/Core/JIT/BranchOps.cpp\",\n      \"sha256\": \"ea249520d0a865b1df806a7fcc84ebf90ee929724855d09a327512c1a0e8f421\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/Core/JIT/JITClass.h\",\n      \"sha256\": \"fc0203acec9f2bda46adf018191fb60f2ee797021be4f6ebacdcc35732cdbd41\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp\",\n      \"sha256\": \"36f99b73783426973ec1863fa165b41346f64057e12a6ecb8d010f31027252b3\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp\",\n      \"sha256\": \"86d74394347f01ffd585fc03ddf49368666f63521f7622566f6937a5f33558af\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/IR/IR.json\",\n      \"sha256\": \"e701c395ffc069956cb6b6ddb8bec74babbd9d89a3394ca090569d17a4c1951d\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/IR/IREmitter.h\",\n      \"sha256\": \"a9400ef8c3b235df769d0e81dc51182f0980ac2ee3b25b550d6158b7a9ede7c7\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp\",\n      \"sha256\": \"cb97d01dc6a0c9461bffd3036b25d7ee921c8ec02d7fe0783b213d893128f044\"\n    },\n    {\n      \"path\": \"Source/Windows/WOW64/Module.cpp\",\n      \"sha256\": \"934538745fda81d86b6ac3f6890d3b5c163d48423e933e2fd31f00cdf8d23660\"\n    },\n    {\n      \"path\": \"Source/Windows/Common/InvalidationTracker.h\",\n      \"sha256\": \"348f29201633fe6a6830debe6d381430613716cd54b2a804e026dca558fda5fb\"\n    },\n    {\n      \"path\": \"Source/Windows/Common/InvalidationTracker.cpp\",\n      \"sha256\": \"aeab988e544bcc0229a33f780708690e6104bd235091a1bbdc72a451b2756d55\"\n    },\n    {\n      \"path\": \"Source/Windows/Common/ImageTracker.h\",\n      \"sha256\": \"bd821aaaaceb5fd882791715f864dd98411e6a4c2e1626f64e8124828b28cf04\"\n    },\n    {\n      \"path\": \"Source/Windows/Common/ImageTracker.cpp\",\n      \"sha256\": \"c55ef6c559e757af4f72a68dbeebedffccab25bfc5e3b4b41d72e89b3169d4e5\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/Core/DiskCache.cpp\",\n      \"sha256\": \"f7b50d4ac885a2dfb02ecaf9f9388c3da746208bbe398e2015c6f6c1c67b752c\"\n    },\n    {\n      \"path\": \"Source/Windows/Common/CallRetStack.h\",\n      \"sha256\": \"ce99f5963c05a5cf4425a7cdac752e6bfcbd831de0dac88cafcb4fa2b3e93c8a\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/Core/CPUBackend.cpp\",\n      \"sha256\": \"da6f882d069c7b756a716d167ab454f529987fde7bcf4d9328895d48cbb67bc2\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/Core/Interpreter/Fallbacks/InterpreterFallbacks.cpp\",\n      \"sha256\": \"85ca4d8b4c73e1a2c6aa3185f85801a7e8b74950f8cdccad6214dea06448f51b\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/Core/Interpreter/Fallbacks/StringCompareFallbacks.cpp\",\n      \"sha256\": \"be07df65705ecf7ec88834664e0d209a389e5a077edcd76ef812004c5769c394\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/Core/Interpreter/Fallbacks/VectorFallbacks.h\",\n      \"sha256\": \"33dab171ae57e5ee665499c8764c94d4b66c42e0c356b03551267717a0905b5b\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/Core/JIT/VectorOps.cpp\",\n      \"sha256\": \"8281cbdfd459d44d315013a2ac18fd3939eb5b061463a7d39cf401dcbf4a9023\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/Core/OpcodeDispatcher.h\",\n      \"sha256\": \"13c590f9e3b9c5de4c2cd7b4b8e02def4a7aa353de35d885b723f80588703380\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp\",\n      \"sha256\": \"cf5ebb1f1418f3278f6abb6bf787dff10c6985ff5d6e54c455365b983ebf0b3f\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Interface/IR/IRDumper.cpp\",\n      \"sha256\": \"1abd1796a0f40a916235adc520f816bec36bdf4aa5cdd124a3acbc222565fb42\"\n    },\n    {\n      \"path\": \"FEXCore/include/FEXCore/IR/IR.h\",\n      \"sha256\": \"44c67a7c539256773153053098fb6a785b66dc283e78231f2367bc6d12c31271\"\n    },\n    {\n      \"path\": \"unittests/ASM/H0F3A/pcmpestri_ranges.asm\",\n      \"sha256\": \"b72d0dccbd45248127ac523f2f66f397dea59bfc0615ffbcc8cf5ee256a8cb90\"\n    },\n    {\n      \"path\": \"unittests/ASM/H0F3A/pcmpistri_ranges.asm\",\n      \"sha256\": \"a28989548fa9af49adc87bebe7be26552f30c43c873d3dbf7415a24cef138dcf\"\n    },\n    {\n      \"path\": \"FEXCore/include/FEXCore/Core/DiskCache.h\",\n      \"sha256\": \"873ba1cc817d0796b4a0319e43b11928f4baa210638002931c4e24fd51f0e302\"\n    },\n    {\n      \"path\": \"FEXCore/include/FEXCore/Core/HostFeatures.h\",\n      \"sha256\": \"0912528908cb5ba71998ce3f6161c12200153dd69aed42b5c444fee7eacf1286\"\n    },\n    {\n      \"path\": \"FEXCore/Source/Utils/FileUtils.cpp\",\n      \"sha256\": \"211f5e7c0268f3f04478fc19dd00dd4378789eea9238a827ea78cdf0cbe33c76\"\n    },\n    {\n      \"path\": \"FEXCore/include/FEXCore/Utils/FileUtils.h\",\n      \"sha256\": \"c8be748410e3634f4214506e35c703025d8f044072a049c5c89d2c10c5e011aa\"\n    },\n    {\n      \"path\": \"Source/Windows/Common/WinAPI/IO.cpp\",\n      \"sha256\": \"ae21ecad6cd63874bc9b468cdbb53a6116f2d810d17d7a5ed0a76656c528ee3a\"\n    }\n  ],\n  \"source_snapshot\": \"<PRIVATE_MODULE_ROOT>/FEX-darwin\",\n  \"builtin_marker_sha256\": \"8f15265269b70d27579fb7525ec418fde87a7a1e8ac97e00c04c2238c0aaf5b9\"\n}\n"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-fex-initial.log": {
+      "sha256": "e6e91e89df86cac68abfdda908862c573dd7e47469353b912e451859dc20330d",
+      "tail": "Failed    0.02 sec\nunhandled FEX native or unsupported fault\n\n        Start 620: native_wow64_timeout_parallel_fex\n128/141 Test #620: native_wow64_timeout_parallel_fex .........***Failed    0.02 sec\nunhandled FEX native or unsupported fault\n\n        Start 621: native_wow64_host-smc_parallel_fex\n129/141 Test #621: native_wow64_host-smc_parallel_fex ........***Failed    0.02 sec\nunhandled FEX native or unsupported fault\n\n        Start 622: native_wow64_guest-smc_parallel_fex\n130/141 Test #622: native_wow64_guest-smc_parallel_fex .......***Failed    0.02 sec\nunhandled FEX native or unsupported fault\n\n        Start 623: native_wow64_native_brk_rejection_fex\n131/141 Test #623: native_wow64_native_brk_rejection_fex .....   Passed    0.06 sec\n        Start 624: native_nt_service_fex\n132/141 Test #624: native_nt_service_fex .....................   Passed    0.02 sec\n        Start 625: native_wow64_alignment_fex\n133/141 Test #625: native_wow64_alignment_fex ................***Failed    0.02 sec\nunhandled FEX native or unsupported fault\n\n        Start 626: native_wow64_range_fex\n134/141 Test #626: native_wow64_range_fex ....................   Passed    0.02 sec\n        Start 627: native_wow64_range-laa_fex\n135/141 Test #627: native_wow64_range-laa_fex ................   Passed    0.02 sec\n        Start 628: native_wow64_alignment_callback_fex\n136/141 Test #628: native_wow64_alignment_callback_fex .......***Failed    0.02 sec\nunhandled FEX native or unsupported fault\n\n        Start 630: native_ntdll_cdecl_x32_fex\n137/141 Test #630: native_ntdll_cdecl_x32_fex ................***Failed    0.36 sec\nunhandled FEX native or unsupported fault\n\n        Start 631: native_wow64_host_av_rejection_fex\n138/141 Test #631: native_wow64_host_av_rejection_fex ........   Passed    0.02 sec\n        Start 632: native_x64_host_av_rejection_fex\n139/141 Test #632: native_x64_host_av_rejection_fex ..........   Passed    0.02 sec\n        Start 633: native_wow64_range_process_0_fex\n140/141 Test #633: native_wow64_range_process_0_fex ..........***Failed    0.43 sec\nunhandled FEX native or unsupported fault\nFAIL: expected checked PE32 return 0, host=138\n\n        Start 634: native_wow64_range_process_1_fex\n141/141 Test #634: native_wow64_range_process_1_fex ..........***Failed    0.43 sec\nunhandled FEX native or unsupported fault\nFAIL: expected checked PE32 return 0, host=138\n\n\n84% tests passed, 22 tests failed out of 141\n\nLabel Time Summary:\ncontract            =   0.54 sec*proc (4 tests)\ndivide              =   2.10 sec*proc (67 tests)\nengine              =   0.33 sec*proc (15 tests)\nentry               =   0.06 sec*proc (1 test)\nexecution           =   0.42 sec*proc (1 test)\nexpected-failure    =   0.04 sec*proc (1 test)\nfault               =   0.15 sec*proc (4 tests)\nfex                 =  14.53 sec*proc (141 tests)\nm2                  =   6.49 sec*proc (93 tests)\nm3                  =   3.06 sec*proc (13 tests)\nm4                  =   3.96 sec*proc (29 tests)\nparallel            =   3.35 sec*proc (17 tests)\nplacement           =   1.14 sec*proc (5 tests)\nprocess             =   5.44 sec*proc (13 tests)\nreview              =   1.55 sec*proc (7 tests)\nseh                 =   0.89 sec*proc (3 tests)\nsubstrate           =   0.05 sec*proc (1 test)\n\nTotal Test time (real) =  14.58 sec\n\nThe following tests FAILED:\n\t606 - native_entry32_fex (Failed)                       entry fex m4\n\t607 - native_kernel_ansi32_fex (Failed)                 fex m4 process\n\t608 - native_kernel_file32_fex (Failed)                 fex m4 process\n\t609 - native_kernel_threads32_fex (Failed)              fex m4 process\n\t610 - native_wow64_fs_fex (Failed)                      engine fex m4\n\t611 - native_wow64_fault_fex (Failed)                   engine fex m4\n\t612 - native_wow64_timeout_fex (Failed)                 engine fex m4\n\t613 - native_wow64_host-smc_fex (Failed)                engine fex m4\n\t614 - native_wow64_guest-smc_fex (Failed)               engine fex m4\n\t615 - native_wow64_stdcall_fex (Failed)                 engine fex m4\n\t616 - native_wow64_cdecl_fex (Failed)                   engine fex m4\n\t617 - native_kernel_seh32_fex (Failed)                  fex m4 process seh\n\t618 - native_kernel_threads32_parallel_fex (Failed)     fex m4 parallel process\n\t619 - native_wow64_fault_parallel_fex (Failed)          engine fex m4 parallel\n\t620 - native_wow64_timeout_parallel_fex (Failed)        engine fex m4 parallel\n\t621 - native_wow64_host-smc_parallel_fex (Failed)       engine fex m4 parallel\n\t622 - native_wow64_guest-smc_parallel_fex (Failed)      engine fex m4 parallel\n\t625 - native_wow64_alignment_fex (Failed)               engine fex m4\n\t628 - native_wow64_alignment_callback_fex (Failed)      engine fex m4\n\t630 - native_ntdll_cdecl_x32_fex (Failed)               fex m4 process\n\t633 - native_wow64_range_process_0_fex (Failed)         fex m4 placement process\n\t634 - native_wow64_range_process_1_fex (Failed)         fex m4 placement process\nErrors while running CTest\n"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-negative-initial.log": {
+      "sha256": "bfd981f9de808740536a49f338ca84510ce790b0909b838112aea6a8358a35b0",
+      "tail": "{\"name\": \"old-stack\", \"command\": [\"<EVIDENCE_DIR>/raven-m4-negative/fex_wow64_process_test\", \"<WORKTREE>/build-m4/native/fex-alignment32.exe\", \"alignment\"], \"returncode\": 138, \"stdout\": \"\", \"stderr\": \"unhandled FEX native or unsupported fault\\n\", \"expected_rejection\": false}\n{\"name\": \"old-cdecl-rosetta\", \"command\": [\"<EVIDENCE_DIR>/raven-m4-negative/fex_wow64_crt_test\", \"<WORKTREE>/build-m4/native/raven-bootstrap\", \"<WORKTREE>/build-m4/native/fex-crt32.exe\", \"native\"], \"returncode\": 1, \"stdout\": \"\", \"stderr\": \"ntdll memcpy corrupted the PE32 stack or result\\n\", \"expected_rejection\": true}\n{\"name\": \"old-cdecl-fex\", \"command\": [\"<EVIDENCE_DIR>/raven-m4-negative/fex_wow64_crt_test\", \"<WORKTREE>/build-m4/native/raven-bootstrap\", \"<WORKTREE>/build-m4/native/fex-crt32.exe\", \"fex\"], \"returncode\": 138, \"stdout\": \"\", \"stderr\": \"unhandled FEX native or unsupported fault\\n\", \"expected_rejection\": false}\n{\"name\": \"old-native-av\", \"command\": [\"<WORKTREE>/build-m4/native/fex-modhost/fex_wow64_boundary_test\", \"<PRIVATE_MODULE_ROOT>/FEX-darwin/build/local/m4-private-qualified/dlls/xtajit.dll\", \"wow64\"], \"returncode\": 2, \"stdout\": \"machine=0xaa64 sections=7 image_size=4030464 DIR64_relocations=18931\\nauxiliary_iat_writes=0\\nresolved=128\\n\", \"stderr\": \"non-JIT call/return-range host fault was repaired or changed context\\n\", \"expected_rejection\": false}\n"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-no-compiler.log": {
+      "sha256": "6ade9413a7ec7b00520b5c7384e48354e8d502a40afd4b1d85314cf4caa015c8"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-toolchain-build.log": {
+      "sha256": "f0e9c8f52628923768210fe23976a163ef2ea3264401febc4fd010ec2a59acc4"
+    },
+    "<EVIDENCE_DIR>/raven-m4-review-gate-build.log": {
+      "sha256": "1c3931bf325d875b036214af499e2fa8d0bacda91c5cdb39fa9dad2fc85f02f9"
     }
   },
   "earlier_runs": [
     {
-      "path": "/tmp/raven-m4-fex.xml",
+      "path": "<EVIDENCE_DIR>/raven-m4-fex.xml",
       "note": "Initial broad run: inherited unimplemented x64 enter_nt_service seam. Corrected in a40d813.",
       "metadata": {
         "name": "(empty)",
@@ -1612,7 +1789,7 @@
       ]
     },
     {
-      "path": "/tmp/raven-m4-final-fex.xml",
+      "path": "<EVIDENCE_DIR>/raven-m4-final-fex.xml",
       "note": "Strict WoW64 fault gate rejected FEX internal allocation faults. Corrected before the private final build.",
       "metadata": {
         "name": "(empty)",
@@ -1645,7 +1822,7 @@
       ]
     },
     {
-      "path": "/tmp/raven-m4-native.xml",
+      "path": "<EVIDENCE_DIR>/raven-m4-native.xml",
       "note": "Native fixtures had not yet been built. Built the named fixture targets; the following 11-test run passed.",
       "metadata": {
         "name": "(empty)",
@@ -1664,6 +1841,16 @@
         "native_kernel_file_persistence",
         "native_kernel_seh"
       ]
+    },
+    {
+      "name": "review-first-native-pc-gate",
+      "implementation_head": "0d0d6c8",
+      "tests": 141,
+      "passed": 119,
+      "failed": 22,
+      "skipped": 0,
+      "note": "The first module-PC gate allowed only JIT guard repair from native FEX compilation. WoW64 needs its validated lazy-commit/overcommit repair as well. Fixed in 6900ba4; these failures are not passing qualification results.",
+      "log": "<EVIDENCE_DIR>/raven-m4-review-fex-initial.log"
     }
   ],
   "earlier_bringup_failures": [
@@ -1673,7 +1860,7 @@
     "An early native substrate worker-termination self-test aborted. A freshly extracted baseline, subsequent CMake substrate tests and both fresh private/canonical build-driver self-tests passed."
   ],
   "shared_restoration": {
-    "command": "python3 /Users/yount/Documents/Projects/raven/scripts/build-fex-modules.py --raven-host --build-only --root /Users/yount/Documents/Projects/raven-components/fex-modules --build-id m4-restore-pre-m4",
+    "command": "python3 <MAIN_CHECKOUT>/scripts/build-fex-modules.py --raven-host --build-only --root <SHARED_MODULE_ROOT> --build-id m4-restore-pre-m4",
     "patch_count": 12,
     "patched_tree": "b2540fa87e24d4f008a902ac790559521eeaf56e",
     "m4_stash": "b5660d5aa2f40ff39ff792fed5f834b2346074c2",
@@ -1693,6 +1880,1533 @@
     "entitlement_or_system_changes": false,
     "push": false,
     "merge_into_macos": false,
-    "build_jobs": 8
+    "build_jobs": 8,
+    "shared_root_writes_during_review": false
+  },
+  "pre_review_qualification": {
+    "implementation_head": "58b9886d2d3df921485b4b1ff1dc47e83dac11e3",
+    "final_fex": {
+      "metadata": {
+        "name": "(empty)",
+        "tests": "132",
+        "failures": "0",
+        "disabled": "0",
+        "skipped": "0",
+        "hostname": "",
+        "time": "15",
+        "timestamp": "2026-10-30T18:57:55"
+      },
+      "cases": [
+        {
+          "name": "native_entry_fex",
+          "status": "passed",
+          "seconds": 0.0282266,
+          "labels": [
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_syscall_fex",
+          "status": "passed",
+          "seconds": 0.0244392,
+          "labels": [
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_fault_fex",
+          "status": "passed",
+          "seconds": 0.0256006,
+          "labels": [
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_breakpoint_fex",
+          "status": "passed",
+          "seconds": 0.025249,
+          "labels": [
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_divide_fex",
+          "status": "passed",
+          "seconds": 0.0242249,
+          "labels": [
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_ud2_fex",
+          "status": "passed",
+          "seconds": 0.0246898,
+          "labels": [
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_timeout_fex",
+          "status": "passed",
+          "seconds": 0.0475734,
+          "labels": [
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_selfmodify_fex",
+          "status": "passed",
+          "seconds": 0.0233954,
+          "labels": [
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_lifetime_fex",
+          "status": "passed",
+          "seconds": 0.0238457,
+          "labels": [
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_served-malformed_fex",
+          "status": "passed",
+          "seconds": 0.0241358,
+          "labels": [
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u8-zero_fex",
+          "status": "passed",
+          "seconds": 0.0254515,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u8-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0243572,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u8-valid_fex",
+          "status": "passed",
+          "seconds": 0.0238879,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u8-fold-zero_fex",
+          "status": "passed",
+          "seconds": 0.0240733,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u8-fold-valid_fex",
+          "status": "passed",
+          "seconds": 0.0242021,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u8-wide-valid_fex",
+          "status": "passed",
+          "seconds": 0.0241204,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u16-zero_fex",
+          "status": "passed",
+          "seconds": 0.0248352,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u16-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0241655,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u16-valid_fex",
+          "status": "passed",
+          "seconds": 0.0249745,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u16-fold-zero_fex",
+          "status": "passed",
+          "seconds": 0.025056,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u16-fold-valid_fex",
+          "status": "passed",
+          "seconds": 0.0244947,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u16-wide-valid_fex",
+          "status": "passed",
+          "seconds": 0.0253158,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u32-zero_fex",
+          "status": "passed",
+          "seconds": 0.0256156,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u32-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0241765,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u32-valid_fex",
+          "status": "passed",
+          "seconds": 0.0244369,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u32-fold-zero_fex",
+          "status": "passed",
+          "seconds": 0.0244762,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u32-fold-valid_fex",
+          "status": "passed",
+          "seconds": 0.0248165,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u32-wide-valid_fex",
+          "status": "passed",
+          "seconds": 0.0247377,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u64-zero_fex",
+          "status": "passed",
+          "seconds": 0.0261161,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u64-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0251558,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u64-valid_fex",
+          "status": "passed",
+          "seconds": 0.024765,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u64-fold-zero_fex",
+          "status": "passed",
+          "seconds": 0.024261,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u64-fold-valid_fex",
+          "status": "passed",
+          "seconds": 0.0246383,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-u64-wide-valid_fex",
+          "status": "passed",
+          "seconds": 0.024144,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s8-zero_fex",
+          "status": "passed",
+          "seconds": 0.0273955,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s8-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0248146,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s8-valid_fex",
+          "status": "passed",
+          "seconds": 0.02474,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s8-fold-zero_fex",
+          "status": "passed",
+          "seconds": 0.0264404,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s8-fold-valid_fex",
+          "status": "passed",
+          "seconds": 0.0272013,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s8-wide-valid_fex",
+          "status": "passed",
+          "seconds": 0.0247843,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s8-fold-overflow_fex",
+          "status": "passed",
+          "seconds": 0.024863,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s8-negative-limit_fex",
+          "status": "passed",
+          "seconds": 0.0240449,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s8-positive-limit_fex",
+          "status": "passed",
+          "seconds": 0.0246138,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s8-positive-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0242823,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s16-zero_fex",
+          "status": "passed",
+          "seconds": 0.0251542,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s16-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0245995,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s16-valid_fex",
+          "status": "passed",
+          "seconds": 0.0245513,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s16-fold-zero_fex",
+          "status": "passed",
+          "seconds": 0.0244335,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s16-fold-valid_fex",
+          "status": "passed",
+          "seconds": 0.0245175,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s16-wide-valid_fex",
+          "status": "passed",
+          "seconds": 0.0252203,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s16-fold-overflow_fex",
+          "status": "passed",
+          "seconds": 0.024515,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s16-negative-limit_fex",
+          "status": "passed",
+          "seconds": 0.0245615,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s16-positive-limit_fex",
+          "status": "passed",
+          "seconds": 0.0240772,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s16-positive-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0250947,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s16-wide-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0252741,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s32-zero_fex",
+          "status": "passed",
+          "seconds": 0.0254765,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s32-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0253989,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s32-valid_fex",
+          "status": "passed",
+          "seconds": 0.0249912,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s32-fold-zero_fex",
+          "status": "passed",
+          "seconds": 0.0255665,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s32-fold-valid_fex",
+          "status": "passed",
+          "seconds": 0.0271025,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s32-wide-valid_fex",
+          "status": "passed",
+          "seconds": 0.026821,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s32-fold-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0261448,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s32-negative-limit_fex",
+          "status": "passed",
+          "seconds": 0.0259937,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s32-positive-limit_fex",
+          "status": "passed",
+          "seconds": 0.0258607,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s32-positive-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0244763,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s32-wide-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0245983,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s64-zero_fex",
+          "status": "passed",
+          "seconds": 0.0251342,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s64-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0245747,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s64-valid_fex",
+          "status": "passed",
+          "seconds": 0.0246959,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s64-fold-zero_fex",
+          "status": "passed",
+          "seconds": 0.0241851,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s64-fold-valid_fex",
+          "status": "passed",
+          "seconds": 0.0239744,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s64-wide-valid_fex",
+          "status": "passed",
+          "seconds": 0.02415,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s64-fold-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0242257,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s64-negative-limit_fex",
+          "status": "passed",
+          "seconds": 0.0240432,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s64-positive-limit_fex",
+          "status": "passed",
+          "seconds": 0.0237739,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s64-positive-overflow_fex",
+          "status": "passed",
+          "seconds": 0.0240773,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_matrix-s64-wide-overflow_fex",
+          "status": "passed",
+          "seconds": 0.026137,
+          "labels": [
+            "divide",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_kernel-ansi_fex",
+          "status": "passed",
+          "seconds": 0.28249,
+          "labels": [
+            "fex",
+            "m2",
+            "process"
+          ]
+        },
+        {
+          "name": "native_kernel-file_fex",
+          "status": "passed",
+          "seconds": 0.248556,
+          "labels": [
+            "fex",
+            "m2",
+            "process"
+          ]
+        },
+        {
+          "name": "native_kernel-threads_fex",
+          "status": "passed",
+          "seconds": 1.13008,
+          "labels": [
+            "fex",
+            "m2",
+            "process"
+          ]
+        },
+        {
+          "name": "native_kernel-seh_fex",
+          "status": "passed",
+          "seconds": 0.238988,
+          "labels": [
+            "fex",
+            "m2",
+            "process",
+            "seh"
+          ]
+        },
+        {
+          "name": "native_placement_fex",
+          "status": "passed",
+          "seconds": 0.222461,
+          "labels": [
+            "fex",
+            "m2",
+            "placement"
+          ]
+        },
+        {
+          "name": "native_fixed_image_conflict_fex",
+          "status": "passed",
+          "seconds": 0.0538812,
+          "labels": [
+            "fex",
+            "m2",
+            "placement"
+          ]
+        },
+        {
+          "name": "native_write_av_fex",
+          "status": "passed",
+          "seconds": 0.226136,
+          "labels": [
+            "fex",
+            "m2",
+            "seh"
+          ]
+        },
+        {
+          "name": "fex_process_runner_contract",
+          "status": "passed",
+          "seconds": 0.117985,
+          "labels": [
+            "contract",
+            "fex"
+          ]
+        },
+        {
+          "name": "native_internal_brk_rejection_fex",
+          "status": "passed",
+          "seconds": 0.0685126,
+          "labels": [
+            "fault",
+            "fex",
+            "m2"
+          ]
+        },
+        {
+          "name": "native_empty_module_argument_fex",
+          "status": "passed",
+          "seconds": 0.219111,
+          "labels": [
+            "contract",
+            "fex"
+          ]
+        },
+        {
+          "name": "native_kernel_file_persistence_fex",
+          "status": "passed",
+          "seconds": 0.0552479,
+          "labels": [
+            "fex",
+            "m2",
+            "process"
+          ]
+        },
+        {
+          "name": "native_review_breakpoint-seh_fex",
+          "status": "passed",
+          "seconds": 0.230782,
+          "labels": [
+            "fex",
+            "m2",
+            "review"
+          ]
+        },
+        {
+          "name": "native_review_read-av_fex",
+          "status": "passed",
+          "seconds": 0.226878,
+          "labels": [
+            "fex",
+            "m2",
+            "review"
+          ]
+        },
+        {
+          "name": "native_review_nested-seh_fex",
+          "status": "passed",
+          "seconds": 0.230485,
+          "labels": [
+            "fex",
+            "m2",
+            "review"
+          ]
+        },
+        {
+          "name": "native_review_unhandled_fex",
+          "status": "passed",
+          "seconds": 0.225897,
+          "labels": [
+            "fex",
+            "m2",
+            "review"
+          ]
+        },
+        {
+          "name": "native_review_subpage_fex",
+          "status": "passed",
+          "seconds": 0.299938,
+          "labels": [
+            "fex",
+            "m2",
+            "review"
+          ]
+        },
+        {
+          "name": "native_review_guard-unsupported_fex",
+          "status": "passed",
+          "seconds": 0.225817,
+          "labels": [
+            "fex",
+            "m2",
+            "review"
+          ]
+        },
+        {
+          "name": "native_review_divide-overflow_fex",
+          "status": "passed",
+          "seconds": 0.222468,
+          "labels": [
+            "fex",
+            "m2",
+            "review"
+          ]
+        },
+        {
+          "name": "native_parallel_contention_fex",
+          "status": "passed",
+          "seconds": 0.203508,
+          "labels": [
+            "fex",
+            "m3",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_parallel_context_fex",
+          "status": "passed",
+          "seconds": 0.194801,
+          "labels": [
+            "fex",
+            "m3",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_parallel_worker-seh_fex",
+          "status": "passed",
+          "seconds": 0.195613,
+          "labels": [
+            "fex",
+            "m3",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_parallel_apc_fex",
+          "status": "passed",
+          "seconds": 0.21779,
+          "labels": [
+            "fex",
+            "m3",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_parallel_lifecycle_fex",
+          "status": "passed",
+          "seconds": 0.260258,
+          "labels": [
+            "fex",
+            "m3",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_parallel_worker-unhandled_fex",
+          "status": "passed",
+          "seconds": 0.190305,
+          "labels": [
+            "fex",
+            "m3",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_parallel_negatives_fex",
+          "status": "passed",
+          "seconds": 0.199577,
+          "labels": [
+            "fex",
+            "m3",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_parallel_worker-av_fex",
+          "status": "passed",
+          "seconds": 0.192952,
+          "labels": [
+            "fex",
+            "m3",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_cooperative_context_fex",
+          "status": "passed",
+          "seconds": 0.222307,
+          "labels": [
+            "fex",
+            "m3"
+          ]
+        },
+        {
+          "name": "native_parallel_kernel_threads_fex",
+          "status": "passed",
+          "seconds": 1.09185,
+          "labels": [
+            "fex",
+            "m3",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_parallel_timeout_fex",
+          "status": "passed",
+          "seconds": 0.0521786,
+          "labels": [
+            "fex",
+            "m3",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_parallel_selfmodify_fex",
+          "status": "passed",
+          "seconds": 0.0245484,
+          "labels": [
+            "fex",
+            "m3",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_parallel_wait-unwind_fex",
+          "status": "passed",
+          "seconds": 0.0243264,
+          "labels": [
+            "fex",
+            "m3",
+            "parallel"
+          ]
+        },
+        {
+          "name": "fex_modhost_driver_contract",
+          "status": "passed",
+          "seconds": 0.186637,
+          "labels": [
+            "contract",
+            "fex"
+          ]
+        },
+        {
+          "name": "fex_modhost_substrate",
+          "status": "passed",
+          "seconds": 0.0616767,
+          "labels": [
+            "fex",
+            "substrate"
+          ]
+        },
+        {
+          "name": "fex_modhost_execution",
+          "status": "passed",
+          "seconds": 0.426614,
+          "labels": [
+            "execution",
+            "fex"
+          ]
+        },
+        {
+          "name": "fex_modhost_tier0_gap_expected_failure",
+          "status": "passed",
+          "seconds": 0.0427625,
+          "labels": [
+            "expected-failure",
+            "fex"
+          ]
+        },
+        {
+          "name": "native_guest_window_fex",
+          "status": "passed",
+          "seconds": 0.00390208,
+          "labels": [
+            "fex",
+            "m4",
+            "placement"
+          ]
+        },
+        {
+          "name": "native_entry32_fex",
+          "status": "passed",
+          "seconds": 0.0648003,
+          "labels": [
+            "entry",
+            "fex",
+            "m4"
+          ]
+        },
+        {
+          "name": "native_kernel_ansi32_fex",
+          "status": "passed",
+          "seconds": 0.45251,
+          "labels": [
+            "fex",
+            "m4",
+            "process"
+          ]
+        },
+        {
+          "name": "native_kernel_file32_fex",
+          "status": "passed",
+          "seconds": 0.497231,
+          "labels": [
+            "fex",
+            "m4",
+            "process"
+          ]
+        },
+        {
+          "name": "native_kernel_threads32_fex",
+          "status": "passed",
+          "seconds": 1.64795,
+          "labels": [
+            "fex",
+            "m4",
+            "process"
+          ]
+        },
+        {
+          "name": "native_wow64_fs_fex",
+          "status": "passed",
+          "seconds": 0.0312488,
+          "labels": [
+            "engine",
+            "fex",
+            "m4"
+          ]
+        },
+        {
+          "name": "native_wow64_fault_fex",
+          "status": "passed",
+          "seconds": 0.024263,
+          "labels": [
+            "engine",
+            "fex",
+            "m4"
+          ]
+        },
+        {
+          "name": "native_wow64_timeout_fex",
+          "status": "passed",
+          "seconds": 0.0533987,
+          "labels": [
+            "engine",
+            "fex",
+            "m4"
+          ]
+        },
+        {
+          "name": "native_wow64_host-smc_fex",
+          "status": "passed",
+          "seconds": 0.0250426,
+          "labels": [
+            "engine",
+            "fex",
+            "m4"
+          ]
+        },
+        {
+          "name": "native_wow64_guest-smc_fex",
+          "status": "passed",
+          "seconds": 0.0242043,
+          "labels": [
+            "engine",
+            "fex",
+            "m4"
+          ]
+        },
+        {
+          "name": "native_wow64_stdcall_fex",
+          "status": "passed",
+          "seconds": 0.0242206,
+          "labels": [
+            "engine",
+            "fex",
+            "m4"
+          ]
+        },
+        {
+          "name": "native_wow64_cdecl_fex",
+          "status": "passed",
+          "seconds": 0.0249716,
+          "labels": [
+            "engine",
+            "fex",
+            "m4"
+          ]
+        },
+        {
+          "name": "native_kernel_seh32_fex",
+          "status": "passed",
+          "seconds": 0.45895,
+          "labels": [
+            "fex",
+            "m4",
+            "process",
+            "seh"
+          ]
+        },
+        {
+          "name": "native_kernel_threads32_parallel_fex",
+          "status": "passed",
+          "seconds": 1.5927,
+          "labels": [
+            "fex",
+            "m4",
+            "parallel",
+            "process"
+          ]
+        },
+        {
+          "name": "native_wow64_fault_parallel_fex",
+          "status": "passed",
+          "seconds": 0.0252603,
+          "labels": [
+            "engine",
+            "fex",
+            "m4",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_wow64_timeout_parallel_fex",
+          "status": "passed",
+          "seconds": 0.05959,
+          "labels": [
+            "engine",
+            "fex",
+            "m4",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_wow64_host-smc_parallel_fex",
+          "status": "passed",
+          "seconds": 0.0251178,
+          "labels": [
+            "engine",
+            "fex",
+            "m4",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_wow64_guest-smc_parallel_fex",
+          "status": "passed",
+          "seconds": 0.0253343,
+          "labels": [
+            "engine",
+            "fex",
+            "m4",
+            "parallel"
+          ]
+        },
+        {
+          "name": "native_wow64_native_brk_rejection_fex",
+          "status": "passed",
+          "seconds": 0.0623895,
+          "labels": [
+            "fault",
+            "fex",
+            "m4"
+          ]
+        },
+        {
+          "name": "native_nt_service_fex",
+          "status": "passed",
+          "seconds": 0.0261466,
+          "labels": [
+            "contract",
+            "fex",
+            "m4"
+          ]
+        }
+      ]
+    },
+    "shared_rosetta": {
+      "metadata": {
+        "name": "(empty)",
+        "tests": "11",
+        "failures": "0",
+        "disabled": "0",
+        "skipped": "0",
+        "hostname": "",
+        "time": "20",
+        "timestamp": "2026-10-30T18:49:59"
+      },
+      "cases": [
+        {
+          "name": "pe_contracts",
+          "status": "passed",
+          "seconds": 0.0557927,
+          "labels": []
+        },
+        {
+          "name": "module_set_contracts",
+          "status": "passed",
+          "seconds": 0.0194596,
+          "labels": []
+        },
+        {
+          "name": "native_cpu_contracts",
+          "status": "passed",
+          "seconds": 1.1757,
+          "labels": []
+        },
+        {
+          "name": "native_x86_contracts",
+          "status": "passed",
+          "seconds": 0.132669,
+          "labels": []
+        },
+        {
+          "name": "native_exception_contract",
+          "status": "passed",
+          "seconds": 0.226033,
+          "labels": []
+        },
+        {
+          "name": "native_kernel_files",
+          "status": "passed",
+          "seconds": 0.274118,
+          "labels": []
+        },
+        {
+          "name": "native_kernel_ansi",
+          "status": "passed",
+          "seconds": 0.161222,
+          "labels": []
+        },
+        {
+          "name": "native_kernel_threads",
+          "status": "passed",
+          "seconds": 1.07772,
+          "labels": []
+        },
+        {
+          "name": "native_kernel_file_persistence",
+          "status": "passed",
+          "seconds": 0.021841,
+          "labels": []
+        },
+        {
+          "name": "native_kernel_seh",
+          "status": "passed",
+          "seconds": 0.162303,
+          "labels": []
+        },
+        {
+          "name": "native_dynamic_loader_contract",
+          "status": "passed",
+          "seconds": 16.7684,
+          "labels": []
+        }
+      ]
+    },
+    "native_run_note": "Native/Rosetta area passed before the final FEX-only failed-map cleanup and FS-selector fixes. No native/Rosetta dispatch path changed afterward."
+  },
+  "module_contract": {
+    "version": 1,
+    "xtajit64_sha256": "edd9d2ed91b028a23d7f8cf481eda22435c82c87bae4eed5e63b1abf680a8657",
+    "raven_process_init_rva": 27120,
+    "xtajit_sha256": "900ac1bceed999ce3d9ee1786c34a85de090c06da2ed0f824bc31e077125d6f4",
+    "raven_wow64_process_init_rva": 30800,
+    "raven_wow64_process_init_instruction": 4162785278,
+    "shared_patch12_xtajit_sha256": "5c785d47c43d8f2d0a444e82114ca731499b8a9e2ac408679b212db46c76bd6b"
+  },
+  "review_findings": [
+    {
+      "finding": 1,
+      "status": "fixed",
+      "reason": "ESP = 12 mod 16 on direct and callback entry; SSE fixture checks zero, one, two and five arguments."
+    },
+    {
+      "finding": 2,
+      "status": "fixed",
+      "reason": "Explicit caller-cleanup export list in shared x86 provider metadata; candidate upstream commit f88c301."
+    },
+    {
+      "finding": 3,
+      "status": "fixed",
+      "reason": "Executable LAA bit selects exclusive user limit 0x7fff0000 or 0xffff0000 across relocation, allocation and GetSystemInfo."
+    },
+    {
+      "finding": 4,
+      "status": "fixed",
+      "reason": "WoW64 gate uses its original RWX map_memory notification, with no duplicate NotifyMemoryAlloc."
+    },
+    {
+      "finding": 5,
+      "status": "rejected",
+      "reason": "Pinned FEX InternalThreadState.h:91 declares CpuStateFrame* const CurrentFrame = &BaseFrameState; stable for the resident worker lifetime."
+    },
+    {
+      "finding": 6,
+      "status": "fixed",
+      "reason": "RAII restores callback stack_top on exception; existing cdecl/stdcall fixtures also test rejected 129-argument callbacks."
+    },
+    {
+      "finding": 7,
+      "status": "fixed",
+      "reason": "Both frontends gate native-PC AV before VM repair. WoW64 FEX executable-module PCs may use validated overcommit/guard repair; x64 native guard repair requires a module PC. Guest reconstruction requires JIT/dispatcher PC. Real call-ret guard rejects Mach-O PC."
+    }
+  ],
+  "negative_controls": [
+    {
+      "name": "old-stack",
+      "command": [
+        "<EVIDENCE_DIR>/raven-m4-negative/fex_wow64_process_test",
+        "<WORKTREE>/build-m4/native/fex-alignment32.exe",
+        "alignment"
+      ],
+      "returncode": 1,
+      "stdout": "machine=0xaa64 sections=7 image_size=4030464 DIR64_relocations=18932\nauxiliary_iat_writes=0\nresolved=128\n",
+      "stderr": "unaligned WoW64 call stack\n",
+      "expected_rejection": true
+    },
+    {
+      "name": "old-cdecl-rosetta",
+      "command": [
+        "<EVIDENCE_DIR>/raven-m4-negative/fex_wow64_crt_test",
+        "<WORKTREE>/build-m4/native/raven-bootstrap",
+        "<WORKTREE>/build-m4/native/fex-crt32.exe",
+        "native"
+      ],
+      "returncode": 1,
+      "stdout": "",
+      "stderr": "ntdll memcpy corrupted the PE32 stack or result\n",
+      "expected_rejection": true
+    },
+    {
+      "name": "old-cdecl-fex",
+      "command": [
+        "<EVIDENCE_DIR>/raven-m4-negative/fex_wow64_crt_test",
+        "<WORKTREE>/build-m4/native/raven-bootstrap",
+        "<WORKTREE>/build-m4/native/fex-crt32.exe",
+        "fex"
+      ],
+      "returncode": 1,
+      "stdout": "machine=0xaa64 sections=7 image_size=4030464 DIR64_relocations=18932\nauxiliary_iat_writes=0\nresolved=128\n",
+      "stderr": "ntdll memcpy corrupted the PE32 stack or result\n",
+      "expected_rejection": true
+    },
+    {
+      "name": "old-native-av",
+      "command": [
+        "<WORKTREE>/build-m4/native/fex-modhost/fex_wow64_boundary_test",
+        "<PRIVATE_MODULE_ROOT>/FEX-darwin/build/local/m4-private-qualified/dlls/xtajit.dll",
+        "wow64"
+      ],
+      "returncode": 2,
+      "stdout": "machine=0xaa64 sections=7 image_size=4030464 DIR64_relocations=18931\nauxiliary_iat_writes=0\nresolved=128\n",
+      "stderr": "non-JIT call/return-range host fault was repaired or changed context\n",
+      "expected_rejection": true
+    }
+  ],
+  "review_negative_control_recipe": "Compile private copies of fex_process.cpp and x86_process.cpp with only the original ESP formula and removal of the ntdll caller-cleanup override, replace those objects in a private copy of libraven_cpu.a, and relink the two regression hosts. Run alignment and ntdll memcpy under both engines with the current private modules. For native AV, run the new boundary host against the retained pre-review private xtajit.dll. Require the specific regression diagnostic as well as nonzero exit; unrelated native faults do not qualify.",
+  "qualification_provenance": {
+    "runtime_implementation_head": "27e9246f2c93f71284dfc58707f8291d546957e3",
+    "toolchain_only_followup_head": "09847fd95ef6db712235ded92ff8be2b02e8099e",
+    "toolchain_only_change": "Explicit -m i386 for dlltool; rebuilding left all four new qualified PE fixtures byte-for-byte unchanged.",
+    "unchanged_fixture_sha256": {
+      "fex-crt32.exe": "0835058babb9152fea0237480c0ec41d29d80953f5bb46be86783d648784d132",
+      "fex-alignment32.exe": "cd2e9d44251c3df11778ac3ab73536aa1d8639d0aa275cfbde09f418f8b63733",
+      "fex-range32-0.exe": "d59e17da24684b93e920369ce2194c4d943f1135a091151d09878be26e84428c",
+      "fex-range32-1.exe": "6dd61633195e93b058949829772c599f8d32a3655b5e51b46db72c6d9303877b"
+    },
+    "llvm_mingw_compile_check": "Compiled CRT import fixture and high-base LAA fixture with the pinned private llvm-mingw toolchain.",
+    "missing_compiler_message": "Verified by cmake -P with RAVEN_MINGW32 unset; emits the explicit M4 warning."
+  },
+  "negative_control_artifact_sha256": {
+    "<EVIDENCE_DIR>/raven-m4-negative/fex_process.cpp": "7675045e45d7adf1e13a0ae3f3f2a79462703f17bfd4d1b55895b2b48ce43c0f",
+    "<EVIDENCE_DIR>/raven-m4-negative/x86_process.cpp": "d12e262b9526e609141cd17de9ec4acd60e56d881ceec4fe62628501ced787e6",
+    "<EVIDENCE_DIR>/raven-m4-negative/fex_wow64_process_test": "48b30e3d38493b2c1684e85073c3822995c176de774af2822d67536704daddda",
+    "<EVIDENCE_DIR>/raven-m4-negative/fex_wow64_crt_test": "4607129da461953d688c7d3f6c650540f58592b7e25271bfff8ea2a25ceaeb4a"
   }
 }
