@@ -39,6 +39,7 @@ struct PEView {
 		return false;
 	}
 	uint32_t native_rva(uint32_t source) const {
+		if (bytes.get<uint16_t>(opt - 20) == 0xaa64) { bytes.check(source, 4); return source; }
 		if (ec_code(source))
 			return source;
 		auto m = metadata();

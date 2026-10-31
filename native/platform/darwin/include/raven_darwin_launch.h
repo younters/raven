@@ -9,9 +9,10 @@ namespace raven { bool fex_execution_selected(); }
 namespace raven_darwin {
 inline const char *child_execution_argument(bool is_64 = true)
 {
+	(void)is_64;
 #ifdef RAVEN_FEX_PROCESS
-	// Interim M5 policy: x86 children use Rosetta until M4 WoW64 lands.
-	if (is_64 && raven::fex_execution_selected()) return "--execution=fex";
+	// Both guest widths inherit FEX; raven redirects through its companion host.
+	if (raven::fex_execution_selected()) return "--execution=fex";
 #endif
 	return "--execution=native";
 }

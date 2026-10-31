@@ -1,11 +1,6 @@
 #include "fex_process.h"
 #include <stdexcept>
 namespace raven {
-void FexProcess::set_teb(uint64_t base)
-{
-	(void)base;
-	throw std::runtime_error("FEX set_teb is not implemented");
-}
 uint64_t FexProcess::load_unix_library(const std::string &path, uint32_t function_count)
 {
 	(void)path;

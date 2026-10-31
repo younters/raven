@@ -20,7 +20,7 @@ int main(int argc, char **argv)
 		const char *root = std::getenv("RAVEN_FEX_MODULE_ROOT");
 		if (!root || !*root || !std::filesystem::exists(std::string(root) + "/xtajit64.dll")) {
 			std::cerr << "SKIP: provision RAVEN_FEX_MODULE_ROOT/xtajit64.dll\n";
-			return 77;
+			return std::getenv("RAVEN_FEX_REQUIRED") ? 1 : 77;
 		}
 		std::ifstream input(argv[1], std::ios::binary);
 		std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});

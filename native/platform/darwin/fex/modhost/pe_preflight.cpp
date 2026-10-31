@@ -182,8 +182,10 @@ int main(int argc, char **argv) {
 		std::cout << "resolved=" << resolved << "\n";
 #ifdef RAVEN_HOST_LOADER
 		if (!count && execute) {
-			if (resolved != 127 || auxiliary_writes != 127)
+			if (machine == 0x8664 && (resolved != 127 || auxiliary_writes != 127))
 				throw std::runtime_error("expected 127 ordinary and auxiliary IAT writes");
+			if (machine == 0xaa64 && (resolved != 128 || auxiliary_writes != 0))
+				throw std::runtime_error("expected 128 native ARM64 imports without auxiliary IAT");
 			execute(image, opt);
 			if (retained) {
 				*retained = mapping;

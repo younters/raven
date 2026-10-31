@@ -512,6 +512,32 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	};
 	// The stdcall argument words of a function: the library's own decorated symbol first, then what Raven's tables say.
 	const auto words_of = [](const std::string &library, std::string_view name, uint32_t fallback) {
+		// ntdll's undecorated CRT exports use caller cleanup, even when the
+		// shared handler registry knows their argument count.
+		static constexpr std::string_view cdecl_exports[] = {
+			"DbgPrint", "DbgPrintEx", "EtwTraceMessage", "_CIcos", "_CIlog", "_CIpow", "_CIsin", "_CIsqrt", "__isascii",
+			"__iscsym", "__iscsymf", "__toascii", "_atoi64", "_errno", "_i64toa", "_i64toa_s", "_i64tow", "_i64tow_s",
+			"_itoa", "_itoa_s", "_itow", "_itow_s", "_lfind", "_ltoa", "_ltoa_s", "_ltow", "_ltow_s", "_makepath_s",
+			"_memccpy", "_memicmp", "_snprintf", "_snprintf_s", "_snwprintf", "_snwprintf_s", "_splitpath",
+			"_splitpath_s", "_strcmpi", "_stricmp", "_strlwr", "_strlwr_s", "_strnicmp", "_strupr", "_strupr_s",
+			"_swprintf", "_tolower", "_toupper", "_ui64toa", "_ui64toa_s", "_ui64tow", "_ui64tow_s", "_ultoa", "_ultoa_s",
+			"_ultow", "_ultow_s", "_vscprintf", "_vscwprintf", "_vsnprintf", "_vsnprintf_s", "_vsnwprintf",
+			"_vsnwprintf_s", "_vswprintf", "_wcsicmp", "_wcslwr", "_wcslwr_s", "_wcsnicmp", "_wcstoi64", "_wcstoui64",
+			"_wcsupr", "_wcsupr_s", "_wmakepath_s", "_wsplitpath_s", "_wtoi", "_wtoi64", "_wtol", "abs", "atan", "atan2",
+			"atoi", "atol", "bsearch", "bsearch_s", "ceil", "cos", "fabs", "floor", "isalnum", "isalpha", "iscntrl",
+			"isdigit", "isgraph", "islower", "isprint", "ispunct", "isspace", "isupper", "iswalnum", "iswalpha",
+			"iswascii", "iswctype", "iswdigit", "iswgraph", "iswlower", "iswprint", "iswspace", "iswxdigit", "isxdigit",
+			"labs", "log", "mbstowcs", "memchr", "memcmp", "memcpy", "memcpy_s", "memmove", "memmove_s", "memset", "pow",
+			"qsort", "qsort_s", "sin", "sprintf", "sprintf_s", "sqrt", "sscanf", "strcat", "strcat_s", "strchr", "strcmp",
+			"strcpy", "strcpy_s", "strcspn", "strlen", "strncat", "strncat_s", "strncmp", "strncpy", "strncpy_s",
+			"strnlen", "strpbrk", "strrchr", "strspn", "strstr", "strtok_s", "strtol", "strtoul", "swprintf",
+			"swprintf_s", "tan", "tolower", "toupper", "towlower", "towupper", "vDbgPrintEx", "vDbgPrintExWithPrefix",
+			"vsprintf", "vsprintf_s", "vswprintf_s", "wcscat", "wcscat_s", "wcschr", "wcscmp", "wcscpy", "wcscpy_s",
+			"wcscspn", "wcslen", "wcsncat", "wcsncat_s", "wcsncmp", "wcsncpy", "wcsncpy_s", "wcsnlen", "wcspbrk",
+			"wcsrchr", "wcsspn", "wcsstr", "wcstok", "wcstok_s", "wcstol", "wcstombs", "wcstoul"
+		};
+		if (library == "ntdll.dll" && std::find(std::begin(cdecl_exports), std::end(cdecl_exports), name) != std::end(cdecl_exports))
+			return uint32_t(0);
 		const auto authoritative = system_export_words(library, name);
 		if (authoritative != UINT32_MAX)
 			return authoritative;

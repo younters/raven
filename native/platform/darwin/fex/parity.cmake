@@ -55,8 +55,3 @@ if(RAVEN_FEX_MODHOST AND TARGET fex_parallel_fixtures)
     endforeach()
 endif()
 
-# Rosetta SetThreadContext is implemented by the pending upstream-merge branch.
-# Keep the strict regression until that implementation lands.
-if(TEST native_parity_context_native)
-    set_tests_properties(native_parity_context_native PROPERTIES WILL_FAIL TRUE)
-endif()
