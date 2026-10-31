@@ -63,7 +63,11 @@ for w in windows where (w[kCGWindowOwnerPID as String] as? Int) == pid && (w[kCG
                             if window:
                                 item['startup_ms'] = (time.perf_counter() - start) * 1000
                                 shot = a.output.parent / f'npp-startup-{int(parallel)}-{backend}-{index}.png'
-                                subprocess.run(['/usr/sbin/screencapture', '-x', '-l', window, str(shot)], check=True)
+                                capture = subprocess.run(['/usr/sbin/screencapture', '-x', '-l', window, str(shot)])
+                                if capture.returncode:
+                                    item.pop('startup_ms', None)
+                                    time.sleep(.05)
+                                    continue
                                 item['screenshot'] = str(shot)
                                 break
                             time.sleep(.05)

@@ -124,8 +124,19 @@ int raven_entry(void)
 	CHECK(SuspendThread(a) == 0);
 	static CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_ALL;
+#ifdef M5_PARITY
+	// Engines may support more context classes; both must round-trip a class
+	// they accept and reject unsupported classes without mutating the target.
+	if (GetThreadContext(a, &ctx)) {
+		CHECK(SetThreadContext(a, &ctx));
+	} else {
+		CHECK(GetLastError() == ERROR_NOT_SUPPORTED);
+		CHECK(!SetThreadContext(a, &ctx) && GetLastError() == ERROR_NOT_SUPPORTED);
+	}
+#else
 	CHECK(!GetThreadContext(a, &ctx) && GetLastError() == ERROR_NOT_SUPPORTED);
 	CHECK(!SetThreadContext(a, &ctx) && GetLastError() == ERROR_NOT_SUPPORTED);
+#endif
 	ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
 	CHECK(GetThreadContext(a, &ctx) && ctx.Rip && ctx.Rsp);
 	ctx.R12 = 0x123456789abcdef0ULL;
