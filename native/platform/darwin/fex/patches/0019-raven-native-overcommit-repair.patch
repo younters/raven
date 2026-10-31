@@ -1,0 +1,13 @@
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -681,6 +681,9 @@ extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, ARM64_NT_CONTEXT *Native) {
+   auto *Thread = Area.ThreadState();
+   if (!Thread) return STATUS_NOT_SUPPORTED;
+   if (!CTX->IsAddressInCodeBuffer(Thread, Native->Pc) && !IsDispatcherAddress(Native->Pc)) {
++    if (Record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && RavenIsModuleCode(Native->Pc) &&
++        OvercommitTracker && OvercommitTracker->HandleAccessViolation(Record->ExceptionInformation[1]))
++      return STATUS_SUCCESS;
+     if (Record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && RavenIsModuleCode(Native->Pc) &&
+         FEX::Windows::JITGuardPage::HandleJITGuardPage(Thread,
+           reinterpret_cast<void*>(Record->ExceptionInformation[1]), Native->X,

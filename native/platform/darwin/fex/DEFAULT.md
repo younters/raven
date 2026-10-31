@@ -154,3 +154,13 @@ editor-visibility check, not an application exit-success assertion.
 [review-validation.json](review-validation.json) records commands, counts,
 logs and capture evidence. The earlier broad-suite qualification above remains
 historical; this review did not rerun or claim a green entire suite.
+
+## Combined integration verification (2026-10-31)
+
+The final combined branch uses host ABI v2 and patches 0001–0019.
+[Final verification](INTEGRATION-FINAL.md) records the one full-suite run,
+every failure classification, matched-build rechecks, real fresh-prefix
+registration timings, and inspected Notepad++ editor captures for both engines.
+Set `RAVEN_PREFIX_SETUP=1` for ordinary fixtures; the four fresh-prefix
+registration tests and real application launches explicitly unset it.
+Earlier qualification and module identities above are historical.
