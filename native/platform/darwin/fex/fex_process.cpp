@@ -460,6 +460,25 @@ std::array<uint64_t, 4> FexProcess::api_float_arguments() const
 	for (size_t i = 0; i < 4; ++i) memcpy(&values[i], saved.xstate.data() + 160 + i * 16, 8);
 	return values;
 }
+void FexProcess::enter_nt_service(uint64_t instruction, uint32_t number)
+{
+	state->require_owner();
+	if (!state->active || state->thread.awaiting_api || last_stop.kind != NativeStop::syscall ||
+		last_stop.value != number || last_stop.rip != instruction || instruction < 2)
+		throw std::runtime_error("FEX has no matching pending NT service");
+	auto saved = context();
+	const auto executable = [&](uint64_t address) {
+		const auto page = state->pages.find(address & ~uint64_t(4095));
+		return page != state->pages.end() && (page->second & PROT_EXEC);
+	};
+	if (saved.registers.rip != instruction || !executable(instruction - 2) || !executable(instruction) ||
+		read_memory(instruction - 2, 3) != std::vector<uint8_t>{0x0f, 0x05, 0xc3})
+		throw std::runtime_error("FEX NT service boundary does not match captured syscall");
+	saved.registers.rcx = saved.registers.r10;
+	set_context(saved);
+	state->thread.awaiting_api = true;
+}
+
 void FexProcess::return_api(uint64_t value)
 {
 	if (state->thread.translated_words && callback_depth() == state->thread.translated_depth) { state->thread.translated_result = value; return; }
