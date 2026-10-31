@@ -640,7 +640,8 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			registers.r8 = get(0xb8); registers.r9 = get(0xc0); registers.r10 = get(0xc8); registers.r11 = get(0xd0);
 			registers.r12 = get(0xd8); registers.r13 = get(0xe0); registers.r14 = get(0xe8); registers.r15 = get(0xf0);
 		}
-		context.process.set_thread_registers(thread->snapshot, registers);
+		try { context.process.set_thread_registers(thread->snapshot, registers); }
+		catch (const std::runtime_error &) { call.fail(31); return; }
 		call.ret(1);
 	});
 	// A thread's description is a name the program gives it; it is kept per thread and handed back in memory the program frees with LocalFree.

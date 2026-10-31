@@ -63,7 +63,16 @@ int main(int argc, char **argv)
 			ui.owned_popup(4, 3, 0, 0, 40, 30, pixels);
 			check(ui.host_surface(4, 4, 0, 0, 40, 30, true)->surface == popup->surface,
 				"showing an owned popup replaced its Vulkan layer");
-			ui.remove(4);
+			const auto hosted_child = ui.host_surface(3, 31, 1, 2, 10, 12, true);
+            CAMetalLayer *child_layer = (__bridge CAMetalLayer *)hosted_child->surface;
+            NSView *child_view = nil;
+            for (NSWindow *window in NSApp.windows)
+                for (NSView *view in window.contentView.subviews)
+                    if (view.layer == child_layer) child_view = view;
+            check(child_view && child_view.superview, "hosted child was not attached");
+            ui.remove(31);
+            check(child_view.superview == nil, "destroyed child retained its layer in parent");
+            ui.remove(4);
 			ui.remove(3);
 		}
 	} catch (const std::exception &error) { std::fprintf(stderr, "%s\n", error.what()); return 1; }

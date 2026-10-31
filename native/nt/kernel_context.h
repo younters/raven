@@ -78,6 +78,7 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context);
 void register_version_api(ApiRegistry &registry, KernelContext &context);
 void register_shlwapi_api(ApiRegistry &registry, KernelContext &context);
 void register_file_api(ApiRegistry &registry, KernelContext &context);
+unsigned guest_processor_count(size_t width, bool topology = false);
 void register_system_api(ApiRegistry &registry, KernelContext &context);
 void register_sync_api(ApiRegistry &registry, KernelContext &context);
 void register_thread_api(ApiRegistry &registry, KernelContext &context);

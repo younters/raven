@@ -1220,7 +1220,7 @@ struct CocoaPresentation::State {
 	void forget(uint64_t handle, bool replacing = false)
 	{
 		for (auto &[window, pending] : hidden_host_surfaces)
-			if (pending.root == handle) [pending.view removeFromSuperview];
+			if (pending.root == handle || (!replacing && window == handle)) [pending.view removeFromSuperview];
 		if (!replacing)
 			std::erase_if(hidden_host_surfaces, [handle](const auto &entry) { return entry.first == handle || entry.second.root == handle; });
 		visibility_intent.erase(handle);

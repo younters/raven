@@ -600,8 +600,10 @@ int main(int argc, char **argv)
 					}();
 					// A .NET program reaches every system library through its runtime, which loads them as it needs them, and rundll32 and regsvr32 run a
 					// library they know nothing about: they get every component.
+					auto executable_name = std::filesystem::path(argv[first_file]).filename().string();
+					for (auto &c : executable_name) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
 					const bool managed = (entry->image.directories[14].address && entry->image.directories[14].size) ||
-						std::filesystem::path(argv[first_file]).filename() == "rundll32.exe" || std::filesystem::path(argv[first_file]).filename() == "regsvr32.exe";
+						executable_name == "rundll32.exe" || executable_name == "regsvr32.exe";
 					// Packed programs rebuild their imports through GetProcAddress: their file's import table does not name the libraries whose
 					// components they need. Put those components in place before the runtime providers and their forwarders are bound.
 					const bool resolves_imports = std::any_of(entry->imports.begin(), entry->imports.end(), [](const auto &symbol) {

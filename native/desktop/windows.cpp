@@ -1479,9 +1479,10 @@ bool NativeWindows::destroy(uint64_t handle)
 				relative(int64_t(window->outer.right)-parent->x),relative(int64_t(window->outer.bottom)-parent->y)},true)) throw uint32_t(8);
 		}
 	}
-	// A driver may still hold the surface of a window going away, which then only stops showing.
+	// Detach host backing even when a driver still holds its own reference to the surface.
 	if (hosted_windows.contains(handle) && presentation.host_surface) {
 		place_hosted(handle);
+		if (presentation.release_host_surface) presentation.release_host_surface(handle);
 		hosted_windows.erase(handle);
 	}
 	release_surface(handle);

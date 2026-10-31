@@ -21,6 +21,9 @@ UINT raven_entry(void)
 	if (!version || !psapi || !threads || !modules || !token) return 1;
 	if (!GetProcAddress(version, "GetFileVersionInfoSizeW") || !GetProcAddress(version, "GetFileVersionInfoW") ||
 		!GetProcAddress(version, "VerQueryValueW")) return 2;
+	BOOL (WINAPI *legacy_modules)(HANDLE, HMODULE *, DWORD, DWORD *) =
+        (void *)GetProcAddress(LoadLibraryA("psapi.dll"), "EnumProcessModules");
+    if (!legacy_modules || !legacy_modules(GetCurrentProcess(), images, sizeof(images), &required) || required < sizeof(HMODULE)) return 24;
 	if (!modules(GetCurrentProcess(), images, sizeof(images), &required) || required < sizeof(HMODULE)) return 3;
 	if (!token(GetCurrentProcess(), TOKEN_QUERY, &handle) || !CloseHandle(handle)) return 4;
 	HMODULE nt = GetModuleHandleA("ntdll.dll");
@@ -77,8 +80,8 @@ UINT raven_entry(void)
 	rules.StandardDate.wMonth = 11;
 	if (!year_zone || !year_zone(2026, &rules, &zone) || zone.Bias != 300 || zone.DaylightDate.wMonth != 3) return 19;
 	rules.DynamicDaylightTimeDisabled = TRUE;
-	if (!year_zone(2026, &rules, &zone) || zone.DaylightDate.wMonth || zone.StandardDate.wMonth || zone.DaylightBias) return 20;
-	if (!year_zone(2026, NULL, &zone) || year_zone(0, &rules, &zone) || GetLastError() != ERROR_INVALID_PARAMETER) return 21;
+	if (!year_zone(2026, &rules, &zone) || zone.DaylightDate.wMonth != 3 || zone.StandardDate.wMonth != 11 || zone.DaylightBias != -60) return 20;
+	if (!year_zone(2026, NULL, &zone) || !year_zone(0, &rules, &zone)) return 21;
 	DWORD local_zone = GetTimeZoneInformation(&zone);
 	if (local_zone == TIME_ZONE_ID_INVALID) return 22;
 	/* A daylight bias without transition dates tells the CRT that this zone never observes daylight saving. */

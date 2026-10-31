@@ -1611,17 +1611,20 @@ void NativeProcess::pause_thread(NativeThreadState &thread)
 
 void NativeProcess::set_thread_registers(NativeThreadState &thread, const user_regs_struct &registers)
 {
-	thread.context.registers = registers;
-	if (!parallel() || (thread.stopped && !thread.context_in_task)) return;
+	if (!parallel() || (thread.stopped && !thread.context_in_task)) {
+		thread.context.registers = registers;
+		return;
+	}
 	auto &child = *state->child;
 	const auto caller = child.selected;
 	try {
 		child.select(thread.task);
 		if (load(&child.thread().state) != RAVEN_THREAD_STOPPED)
-			throw std::runtime_error("cannot set registers of a running native thread");
+			child.pause_thread();
 		std::memcpy(&child.registers(), &registers, sizeof registers);
 	} catch (...) { child.select(caller); throw; }
 	child.select(caller);
+	thread.context.registers = registers;
 }
 
 void NativeProcess::enter_fault_dispatch()

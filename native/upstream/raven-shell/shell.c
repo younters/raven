@@ -637,7 +637,7 @@ static HRESULT make_taskbar_list(REFIID iid, void **out)
 /* COM options belong to the process, so separate GlobalOptions objects see the same values. Raven's in-process calls propagate
  * exceptions directly; COMGLB_EXCEPTION_DONOT_HANDLE is the policy programs use to keep their crash handlers in charge. */
 typedef struct { IGlobalOptions face; LONG refs; } GlobalOptions;
-static ULONG_PTR global_options[6];
+static ULONG_PTR global_options[COMGLB_UNMARSHALING_POLICY + 1];
 static SRWLOCK global_options_lock = SRWLOCK_INIT;
 static const CLSID global_options_class = {0x0000034b, 0, 0, {0xc0, 0, 0, 0, 0, 0, 0, 0x46}};
 

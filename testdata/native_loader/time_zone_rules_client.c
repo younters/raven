@@ -23,5 +23,17 @@ int raven_entry(void)
 		return 4;
 	if (!rule(&later.StandardDate, 11, 1) || !rule(&later.DaylightDate, 3, 2))
 		return 5;
+	DYNAMIC_TIME_ZONE_INFORMATION dynamic;
+	if (GetDynamicTimeZoneInformation(&dynamic) == TIME_ZONE_ID_INVALID) return 6;
+	if (!GetTimeZoneInformationForYear(0, &dynamic, &later) || later.Bias != 300) return 7;
+	if (!GetTimeZoneInformationForYear(2006, NULL, &later) || !rule(&later.DaylightDate, 4, 1) || !rule(&later.StandardDate, 10, 5)) return 8;
+	dynamic.DynamicDaylightTimeDisabled = TRUE;
+	if (!GetTimeZoneInformationForYear(2006, &dynamic, &later) || !rule(&later.DaylightDate, 3, 2)) return 9;
+	dynamic.TimeZoneKeyName[0] = 0;
+	dynamic.Bias = 123;
+	if (!GetTimeZoneInformationForYear(2030, &dynamic, &later) || later.Bias != 123 || !rule(&later.DaylightDate, 3, 2)) return 10;
+	for (volatile unsigned char *at = (volatile unsigned char *)&dynamic; at < (volatile unsigned char *)(&dynamic + 1); ++at) *at = 0;
+	dynamic.Bias = -330;
+	if (!GetTimeZoneInformationForYear(2030, &dynamic, &later) || later.Bias != -330 || later.DaylightDate.wMonth || later.StandardDate.wMonth) return 11;
 	return 0;
 }

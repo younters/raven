@@ -1,8 +1,6 @@
 #include "environment.h"
 #include "nls.h"
-#ifdef __APPLE__
-#include "platform/darwin/processor_count.h"
-#endif
+#include "kernel_context.h"
 
 #include <array>
 #include <atomic>
@@ -132,11 +130,7 @@ static void map_shared_user_data(NativeProcess &process)
 	field(process, base + 0x270, 0, 4);
 	field(process, base + 0x2d0, 0x100, 4);
 	field(process, base + 0x2e8, sysconf(_SC_PHYS_PAGES), 4);
-	#ifdef __APPLE__
-	field(process, base + 0x3c0, darwin::processor_count(process.mode() == NativeMode::x86), 4);
-#else
-	field(process, base + 0x3c0, std::max<long>(1, sysconf(_SC_NPROCESSORS_ONLN)), 4);
-#endif
+	field(process, base + 0x3c0, guest_processor_count(process.mode() == NativeMode::x86 ? 4 : 8, true), 4);
 	process.protect_memory(base, 4096, PROT_READ);
 	keep_clocks(page);
 }

@@ -48,6 +48,7 @@ std::vector<uint32_t> version_parts(std::string_view version)
 		}
 	}
 	parts.push_back(value);
+	while (parts.size() > 1 && !parts.back()) parts.pop_back();
 	return parts;
 }
 
@@ -231,17 +232,32 @@ std::optional<ActivationContexts::Assembly> ActivationContexts::resolve(const As
 {
 	std::error_code error;
 	// A private assembly (no public key token) lives with the program, as Windows looks for it: <name>.manifest in the program's
-	// folder, then <name>\<name>.manifest; its files are beside its manifest.
+	// folder, then <name>\<name>.manifest; its files are beside its manifest. DLLs carrying resource 1 precede each manifest.
+	// Language-specific subfolders and UI-language fallback are not yet modeled.
 	if (identity.token.empty() && !identity.name.empty() && !application.empty() &&
 		std::filesystem::path(identity.name).filename() == identity.name && identity.name != "." && identity.name != "..")
-		for (const auto &place : {application / (identity.name + ".manifest"), application / identity.name / (identity.name + ".manifest")}) {
+		for (const auto &place : {application / (identity.name + ".dll"), application / (identity.name + ".manifest"),
+			application / identity.name / (identity.name + ".dll"), application / identity.name / (identity.name + ".manifest")}) {
 			if (!std::filesystem::is_regular_file(place, error))
 				continue;
 			std::ifstream input(place, std::ios::binary);
 			const std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-			auto candidate = parse(bytes, false);
+			std::optional<Assembly> candidate;
+			if (place.extension() == ".dll") {
+				try {
+					const PEImage image(std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size()));
+					const auto directory = image.directories[2];
+					if (directory.address && directory.size)
+						for (const auto &resource : read_resources(directory, image.file_span(directory.address, directory.size), image.image_size))
+							if (resource.type == ResourceKey(uint32_t(24)) && resource.name == ResourceKey(uint32_t(1)) && resource.size < 1024 * 1024) {
+								const auto data = image.file_span(resource.data_address, resource.size);
+								candidate = parse(std::string_view(reinterpret_cast<const char *>(data.data()), data.size()), false);
+								break;
+							}
+				} catch (const std::runtime_error &) {}
+			} else candidate = parse(bytes, false);
 			if (!candidate || lowered(candidate->name) != lowered(identity.name) ||
-				(!identity.version.empty() && candidate->version != identity.version) ||
+				(!identity.version.empty() && version_parts(candidate->version) != version_parts(identity.version)) ||
 				(!candidate->architecture.empty() && candidate->architecture != "*" &&
 				 candidate->architecture != (identity.architecture.empty() || identity.architecture == "*" ? (wide_process ? "amd64" : "x86") : identity.architecture)))
 				continue;

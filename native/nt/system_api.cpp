@@ -152,7 +152,9 @@ void zone_transitions(std::span<uint8_t> bytes, int year, const ZoneInfo &januar
 	std::memcpy(cached.data() + 16, bytes.data() + 152, 16);
 }
 
-static unsigned guest_processor_count(size_t width, bool topology = false)
+} // namespace
+
+unsigned guest_processor_count(size_t width, bool topology)
 {
 #ifdef __APPLE__
 	(void)topology;
@@ -163,6 +165,8 @@ static unsigned guest_processor_count(size_t width, bool topology = false)
 	return std::max(1U, std::min(unsigned(width * 8), std::thread::hardware_concurrency()));
 #endif
 }
+
+namespace {
 
 std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_environment(const NativePaths &paths, bool wow64)
 {
@@ -547,24 +551,21 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	// A year's rules for the zone named, or for the current zone when none is. The host has one zone: a dynamic zone with another key
 	// name is not found.
 	registry.add("GetTimeZoneInformationForYear", 3, [zone_for_year, current_year](ApiCall &call) {
-		if (!uint16_t(call[0]) || !call[2]) {
+		if (!call[2]) {
 			call.fail(87);
 			return;
 		}
 		// An unnamed dynamic zone carries the caller's recurring rules rather than a host zone key.
 		if (call[1] && !call.load<uint16_t>(call[1] + 172)) {
 			auto bytes = call.read(call[1], 172);
-			if (call.load<uint8_t>(call[1] + 428)) {
-				std::fill(bytes.begin() + 68, bytes.begin() + 84, 0);
-				std::fill(bytes.begin() + 152, bytes.end(), 0);
-			}
 			call.write(call[2], bytes);
 			call.ret(1);
 			return;
 		}
 		const int year = uint16_t(call[0]) ? int(uint16_t(call[0])) : current_year();
 		std::vector<uint8_t> bytes;
-		zone_for_year(year, true, bytes);
+		// Disabling dynamic DST selects the zone's fixed rules, rather than clearing its transitions.
+		zone_for_year(call[1] && call.load<uint8_t>(call[1] + 428) ? current_year() : year, true, bytes);
 		if (call[1] && call.read(call[1] + 172, 256) != std::vector<uint8_t>(bytes.begin() + 172, bytes.begin() + 428)) {
 			call.fail(2);
 			return;

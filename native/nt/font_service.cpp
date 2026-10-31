@@ -113,20 +113,19 @@ std::vector<uint8_t> scan_fonts()
 	if (!freetype())
 		return cache;
 	std::error_code error;
-#ifdef __APPLE__
 	std::vector<std::filesystem::path> roots;
-	for (const auto &root : raven_darwin::font_roots()) roots.emplace_back(root);
-#else
-	std::vector<std::filesystem::path> roots;
-#endif
 	try {
 		const auto installed = NativePrefix::from_environment().root() / "drive_c" / "windows" / "Fonts";
 		if (std::filesystem::is_directory(installed, error))
 			roots.push_back(installed);
 	} catch (const std::exception &) {}
-#ifndef __APPLE__
+#ifdef __APPLE__
+	const auto platform_roots = raven_darwin::font_roots();
+	roots.insert(roots.begin(), platform_roots.begin(), platform_roots.end());
+#else
 	roots.insert(roots.end(), {"/usr/share/fonts", "/usr/local/share/fonts"});
 #endif
+
 	std::set<std::filesystem::path> seen;
 	for (const auto &root : roots) {
 		if (!std::filesystem::exists(root, error))
