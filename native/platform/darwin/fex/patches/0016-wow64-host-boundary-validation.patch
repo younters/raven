@@ -1,0 +1,38 @@
+diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -588,7 +588,11 @@
+   SignalDelegator = fextl::make_unique<FEX::DummyHandlers::DummySignalDelegator>();
+   SyscallHandler = fextl::make_unique<WowSyscallHandler>();
+   const auto NtDll = GetModuleHandleW(L"ntdll.dll");
++#ifdef RAVEN_HOST
+   const bool IsWine = true; // Tier 0 native allocator policy.
++#else
++  const bool IsWine = !!GetProcAddress(NtDll, "wine_get_version");
++#endif
+   OvercommitTracker.emplace(IsWine);
+ 
+   FEX::Windows::Allocator::SetupHooks(NtDll);
+@@ -1141,7 +1145,7 @@
+   if (WowHost || !Host || Host->size != sizeof(*Host) || Host->version != 1 || !Host->teb32) return STATUS_INVALID_PARAMETER;
+   const auto &H = Host->common;
+   if (H.size != sizeof(H) || H.version != 1 || H.flags || !H.guest32_base || (H.guest32_base & 0xffffffffULL) ||
+-      !H.cpu_area || !H.dispatch || !H.exception || !H.jit_write_protect || !H.allocate_native_jit || !H.log || !H.unix_call) return STATUS_INVALID_PARAMETER;
++      !H.shared_data || !H.memory_event || !H.cpu_area || !H.dispatch || !H.exception || !H.jit_write_protect || !H.allocate_native_jit || !H.log || !H.unix_call) return STATUS_INVALID_PARAMETER;
+   WowHost = Host;
+   RavenHost = &Host->common;
+   BTCpuProcessInit();
+@@ -1156,6 +1160,13 @@
+   Context::UnlockJITContext(TLS);
+ }
+ extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, CONTEXT *Native) {
++  const auto Thread = GetTLS().ThreadState();
++  if (!Thread) return STATUS_NOT_SUPPORTED;
++  if (Record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION && !IsAddressInJit(Native->Pc)) return STATUS_NOT_SUPPORTED;
++  const bool Doorbell = IsAddressInJit(Native->Pc) && *reinterpret_cast<const uint32_t*>(Native->Pc) == (0xd4200000u | (0xcafeu << 5)) &&
++                        Thread->CurrentFrame->SuspendDoorbell;
++  if (Record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION &&
++      !Thread->CurrentFrame->SynchronousFaultData.FaultToTopAndGeneratedException && !Doorbell) return STATUS_NOT_SUPPORTED;
+   EXCEPTION_POINTERS Pointers {Record, Native};
+   return BTCpuResetToConsistentStateImpl(&Pointers) ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED;
+ }

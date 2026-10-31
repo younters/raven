@@ -112,15 +112,28 @@ struct Extended {
 int32_t allocate_ex(void *p, void **b, size_t *s, uint32_t t, uint32_t prot, const Extended *extra,
 	uint32_t count) {
 	bool ec = false;
+	uint64_t minimum = 0;
 	if (count && !extra)
 		return invalid;
 	for (uint32_t i = 0; i < count; ++i) {
-		if (extra[i].type == 5 && !(extra[i].value & ~0x40ull))
+		if (extra[i].type == 1 && extra[i].value) {
+			const auto *requirements = reinterpret_cast<const uintptr_t *>(extra[i].value);
+			if (requirements[1] || requirements[2] || requirements[0] > 0x100000000ULL) return unsupported;
+			minimum = requirements[0];
+		} else if (extra[i].type == 5 && !(extra[i].value & ~0x40ull))
 			ec = extra[i].value & 0x40;
 		else
 			return unsupported;
 	}
-	return allocate_impl(p, b, s, t, prot, ec);
+	auto status = allocate_impl(p, b, s, t, prot, ec);
+	if (!status && uintptr_t(*b) < minimum) {
+		std::lock_guard<std::mutex> guard(mutex);
+		auto found = regions.find(uintptr_t(*b));
+		if (found != regions.end()) { munmap(*b, found->second.size); regions.erase(found); }
+		*b = nullptr;
+		return no_memory;
+	}
+	return status;
 }
 int32_t release(void *p, void **base, size_t *size, uint32_t type) {
 	if (p && intptr_t(p) != -1)

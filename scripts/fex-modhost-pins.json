@@ -14,6 +14,11 @@
     "0009-raven-doorbell-stop.patch": "ac41d37a32f07deba437002373f4628d1f12d65e3d3a7d48cf98c303b0c5449e",
     "0010-raven-shared-data-and-return-stack.patch": "f91729012073e54bac788909509080ea0395fd7819414fc9cfdda07a6ff668de",
     "0011-raven-gate-callret-repair.patch": "e279bfb28511db4c4fa35abfaccea508e184a1297230764d343e1d0565d0459a",
-    "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657"
-  }
+    "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657",
+    "0013-raven-wow64-host.patch": "725144fa05016e97bcc1bc4ec7a88dd6c30053fe3b4a8bc9afc55c31acfdb41b",
+    "0014-raven-wow64-interrupt.patch": "147637376b17a90678113cb9ef420b8076aa750601dfb917047dc76f5a642161",
+    "0015-raven-wow64-doorbell.patch": "3160a1065f03848cef9c276c94a6f368d46e82315dcbd71254031df0fb191246",
+    "0016-wow64-host-boundary-validation.patch": "3a96568d9e9a7a279ace94f16023499be6a4b366ba9a5f95959252240db6874c"
+  },
+  "xtajit_sha256": "1d2b91c34d9119c0c2c1315ad05caa19ddc743de95087d069da6da8c229f0b60"
 }

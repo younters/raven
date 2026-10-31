@@ -1,0 +1,78 @@
+diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -938,6 +938,17 @@
+   auto Thread = TLS.ThreadState();
+   FEXCORE_PROFILE_ACCUMULATION(Thread, AccumulatedSignalTime);
+ 
++#ifdef RAVEN_HOST
++  if (Thread && Exception->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
++      Exception->ExceptionInformation[1] == reinterpret_cast<uintptr_t>(&Thread->InterruptFaultPage)) {
++    auto *Packet = reinterpret_cast<WOW64_CONTEXT*>(RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->cpu_area), reinterpret_cast<uintptr_t>(NtCurrentTeb()), 0, 0));
++    *Packet = Context::ReconstructWowContext(TLS, Context);
++    Exception->ExceptionCode = STATUS_TIMEOUT; Exception->NumberParameters = 0;
++    Exception->ExceptionAddress = reinterpret_cast<void*>(Packet->Eip);
++    Context::UnlockJITContext(TLS);
++    return !RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->exception), reinterpret_cast<uintptr_t>(Exception), reinterpret_cast<uintptr_t>(Packet), reinterpret_cast<uintptr_t>(Context));
++  }
++#endif
+   if (Exception->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+     const auto FaultAddress = static_cast<uint64_t>(Exception->ExceptionInformation[1]);
+ 
+@@ -1134,6 +1145,7 @@
+   BTCpuProcessInit();
+   return STATUS_SUCCESS;
+ }
++extern "C" void *RavenWow64InterruptPage() { return &GetTLS().ThreadState()->InterruptFaultPage; }
+ extern "C" void RavenWow64Run() {
+   const auto TLS = GetTLS();
+   TLS.ControlWord().fetch_or(ControlBits::WOW_CPU_AREA_DIRTY, std::memory_order::relaxed);
+@@ -1145,4 +1157,9 @@
+   EXCEPTION_POINTERS Pointers {Record, Native};
+   return BTCpuResetToConsistentStateImpl(&Pointers) ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED;
+ }
+-#endif
++#else
++extern "C" NTSTATUS RavenWow64ProcessInit(const void *) { return STATUS_NOT_SUPPORTED; }
++extern "C" void RavenWow64Run() {}
++extern "C" void *RavenWow64InterruptPage() { return nullptr; }
++extern "C" NTSTATUS RavenHandleFault(void *, void *) { return STATUS_NOT_SUPPORTED; }
++#endif
+diff --git a/Source/Windows/WOW64/libwow64fex.def b/Source/Windows/WOW64/libwow64fex.def
+--- a/Source/Windows/WOW64/libwow64fex.def
++++ b/Source/Windows/WOW64/libwow64fex.def
+@@ -27,3 +27,4 @@
+   RavenWow64ProcessInit
+   RavenWow64Run
+   RavenHandleFault
++  RavenWow64InterruptPage
+diff --git a/Darwin/build.py b/Darwin/build.py
+--- a/Darwin/build.py
++++ b/Darwin/build.py
+@@ -34,7 +34,7 @@
+             "External/SoftFloat-3e/include/SoftFloat-3e/softfloat.h": "BSD-3-Clause (header notice)"}
+ 
+ 
+-def audit(data: bytes, report: str, definition: str, marker: bytes, arm64ec: bool) -> dict:
++def audit(data: bytes, report: str, definition: str, marker: bytes, arm64ec: bool, raven_host: bool = False) -> dict:
+     if data[:2] != b"MZ" or len(data) < 0x100:
+         raise RuntimeError("not a PE image")
+     pe = struct.unpack_from("<I", data, 0x3c)[0]
+@@ -56,7 +56,7 @@
+     if set(exports) != set(expected):
+         raise RuntimeError(f"export mismatch: expected {expected}, got {exports}")
+     imports = re.findall(r"Import \{\s*Name: ([^\n]+)", report)
+-    allowed = {"ntdll.dll"} if arm64ec else {"ntdll.dll", "wow64.dll"}
++    allowed = {"ntdll.dll"} if arm64ec or raven_host else {"ntdll.dll", "wow64.dll"}
+     if not imports or set(name.lower() for name in imports) != allowed:
+         raise RuntimeError(f"unexpected DLL dependencies: {imports}")
+     chpe = re.search(r"CHPEMetadataPointer: (0x[0-9A-Fa-f]+)", report)
+@@ -171,7 +171,7 @@
+             report = run([str(compiler / "bin/llvm-readobj"), "--file-headers", "--coff-load-config",
+                           "--coff-exports", "--coff-imports", str(destination)], variant + "-pe-audit")
+             definition = (source / "Source/Windows" / directory / ("lib" + target + ".def")).read_text()
+-            result["artifacts"][wine_name] = audit(destination.read_bytes(), report, definition, marker, variant == "arm64ec") | {"path": str(destination), "upstream_path": str(original)}
++            result["artifacts"][wine_name] = audit(destination.read_bytes(), report, definition, marker, variant == "arm64ec", args.raven_host) | {"path": str(destination), "upstream_path": str(original)}
+         result["status"] = "pass"
+     except (OSError, RuntimeError, ValueError, struct.error) as error:
+         result["status"] = "blocked"
