@@ -50,7 +50,7 @@ def main():
         shutil.copy2(sys.argv[6], run / "d3dcompiler_47.dll")
         shutil.copy2(workload, run / workload.name)
         workload = run / workload.name
-    command = [str(raven), "--run-process", "--execution=native", "--timeout-ms=90000"]
+    command = [str(raven), "--run-process", "--execution=" + os.environ.get("RAVEN_DXMT_TEST_ENGINE", "native"), "--timeout-ms=90000"]
     if kind in ("fullscreen", "present_rate", "pacing", "device10", "d3d9"):
         command.append("--desktop=macos")
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
