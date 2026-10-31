@@ -35,6 +35,7 @@ struct GuestThread {
 	std::optional<std::chrono::steady_clock::time_point> wake;
 	// Borrowed from the live waiting frame; readiness ends scheduler and desktop sleeps.
 	std::span<const pollfd> descriptors;
+	std::array<uint64_t, 6> debug_registers{};
 	uint32_t exit_code = 0x103;
 	int suspend_count = 0;
 	uint64_t start = 0, parameter = 0;

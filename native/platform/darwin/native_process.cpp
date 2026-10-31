@@ -1588,7 +1588,7 @@ void NativeProcess::stop_thread(const NativeThreadState &thread)
 void NativeProcess::pause_thread(NativeThreadState &thread)
 {
 	FEX_RETURN(pause_thread, thread);
-	if (!parallel() || thread.stopped)
+	if (!parallel() || (thread.stopped && !thread.context_in_task))
 		return;
 	auto &child = *state->child;
 	const pid_t caller = child.selected;
@@ -1599,6 +1599,8 @@ void NativeProcess::pause_thread(NativeThreadState &thread)
 		state->stopped = true;
 		drain_queued_calls(true);
 		thread.context = context();
+		thread.stopped = true;
+		thread.context_in_task = false;
 	} catch (...) {
 		child.select(caller);
 		state->stopped = stopped;
@@ -1606,6 +1608,23 @@ void NativeProcess::pause_thread(NativeThreadState &thread)
 	}
 	child.select(caller);
 	state->stopped = stopped;
+}
+
+void NativeProcess::resume_context_thread(NativeThreadState &thread)
+{
+	FEX_RETURN(resume_context_thread, thread);
+	if (!parallel()) return;
+	auto &child = *state->child;
+	const auto caller = child.selected;
+	child.select(thread.task);
+	if (child.thread().signal == RAVEN_STOP_INTERRUPT) {
+		std::memcpy(&child.registers(), &thread.context.registers, sizeof thread.context.registers);
+		std::memcpy(child.thread().xstate, thread.context.xstate.data(), thread.context.xstate.size());
+		child.resume(false);
+		thread.stopped = false;
+		thread.context_in_task = true;
+	}
+	child.select(caller);
 }
 
 void NativeProcess::set_thread_registers(NativeThreadState &thread, const user_regs_struct &registers)

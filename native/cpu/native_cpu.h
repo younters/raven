@@ -146,6 +146,9 @@ public:
 	void set_execution_wait(std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> wait);
 	void stop_thread(const NativeThreadState &thread);
 	void pause_thread(NativeThreadState &thread);
+#ifdef __APPLE__
+	void resume_context_thread(NativeThreadState &thread);
+#endif
 	// The general registers a thread that is not running continues with: a thread paused in its own task gets them there, a saved
 	// thread in its snapshot (SetThreadContext on a suspended thread).
 	void set_thread_registers(NativeThreadState &thread, const user_regs_struct &registers);

@@ -751,6 +751,13 @@ static void save_context(ucontext_t *context, struct raven_thread_channel *threa
 	r->gs_base = compat ? 0 : interrupted_gs_base(r->rip, index);
 	r->orig_rax = signal == SIGSYS ? s->__rax : (uint64_t)-1;
 	memcpy(thread->xstate, layout.legacy, 512);
+    // Rosetta exposes physical x87 slots in the Mach signal state. Windows'
+    // FXSAVE image numbers them logically, starting at TOP.
+    uint16_t x87_status;
+    memcpy(&x87_status, layout.legacy + 2, sizeof x87_status);
+    const unsigned x87_top = (x87_status >> 11) & 7;
+    for (unsigned i = 0; i < 8; ++i)
+        memcpy(thread->xstate + 32 + i * 16, layout.legacy + 32 + ((x87_top + i) & 7) * 16, 16);
 	memset(thread->xstate + RAVEN_XSTATE_HEADER, 0, 64);
 	uint64_t components = 3;
 	if (layout.ymm_upper) {
@@ -787,6 +794,11 @@ static void load_context(ucontext_t *context, const struct raven_thread_channel 
 	uint32_t mask;
 	memcpy(&mask, layout.legacy + 28, 4);
 	memcpy(layout.legacy, thread->xstate, 512);
+    uint16_t x87_status;
+    memcpy(&x87_status, thread->xstate + 2, sizeof x87_status);
+    const unsigned x87_top = (x87_status >> 11) & 7;
+    for (unsigned i = 0; i < 8; ++i)
+        memcpy(layout.legacy + 32 + ((x87_top + i) & 7) * 16, thread->xstate + 32 + i * 16, 16);
 	memcpy(layout.legacy + 28, &mask, 4);
 	uint64_t components;
 	memcpy(&components, thread->xstate + RAVEN_XSTATE_HEADER, sizeof components);

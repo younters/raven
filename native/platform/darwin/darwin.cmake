@@ -42,7 +42,7 @@ add_test(NAME native_darwin_idle_wait_queue COMMAND darwin_idle_wait_queue_test)
 # drives through shared memory. Same NativeProcess interface, different implementation file.
 if(TARGET raven_cpu)
     if(RAVEN_FEX_MODHOST)
-        target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/fex/fex_process.cpp ${RAVEN_DARWIN_DIR}/fex/fex_unsupported.cpp ${RAVEN_DARWIN_DIR}/fex/thread_api.cpp
+        target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/fex/fex_process.cpp ${RAVEN_DARWIN_DIR}/fex/fex_unsupported.cpp
             ${RAVEN_DARWIN_DIR}/fex/modhost/abi.S ${RAVEN_DARWIN_DIR}/fex/modhost/context.S)
         set_source_files_properties(${RAVEN_DARWIN_DIR}/fex/fex_process.cpp PROPERTIES
             COMPILE_OPTIONS "-ffixed-x18;-ffp-contract=off;-UNDEBUG;-Wno-unused-function")

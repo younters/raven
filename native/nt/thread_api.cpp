@@ -1,7 +1,4 @@
 #include "child_process.h"
-#ifdef RAVEN_FEX_PROCESS
-#include "platform/darwin/fex/thread_api.h"
-#endif
 #include "kernel_context.h"
 #include "mutex.h"
 #include "semaphore.h"
@@ -581,78 +578,115 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			--thread->suspend_count;
 		call.ret(uint32_t(previous));
 	});
-	// The registers of a thread as a CONTEXT (x64): the control and integer groups, from where the thread stopped.
-	registry.add("GetThreadContext", 2, [thread_from, &threads](ApiCall &call) {
-		if (call.pointer_width() == 4 || !call[1]) {
-			call.fail(call[1] ? 50 : 87);
-			return;
-		}
-		const auto thread = thread_from(call[0]);
-		if (!thread) {
-			call.fail(6);
-			return;
-		}
-#ifdef RAVEN_FEX_PROCESS
-		if (!validate_fex_thread_context(call, *thread, threads.current_id())) return;
+	// All entry points share the same stopped guest packet and register-group codec.
+	auto thread_context = [thread_from, &threads](ApiCall &call, bool set, bool wow, bool nt) {
+		const auto fail = [&](uint32_t error) { if (nt) call.ret(error == 6 ? 0xc0000008u : 0xc000000du); else call.fail(error); };
+		if (!call[1]) { fail(87); return; }
+		auto thread = thread_from(call[0]);
+		if (!thread || thread->state == GuestThread::State::done) { fail(6); return; }
+		const bool x86 = wow || call.pointer_width() == 4;
+		if (x86 != (call.process.mode() == NativeMode::x86)) { fail(87); return; }
+		const auto flags = call.load<uint32_t>(call[1] + (x86 ? 0 : 0x30));
+		if (!(flags & (x86 ? 0x10000 : 0x100000))) { fail(87); return; }
+		const bool self = thread->id == threads.current_id();
+#ifdef __APPLE__
+		const bool resume = !self && !thread->snapshot.stopped && !thread->suspend_count;
+		struct ResumeContext {
+			NativeProcess &process;
+			NativeThreadState &snapshot;
+			bool active;
+			~ResumeContext() { if (active) process.resume_context_thread(snapshot); }
+		} resume_context{call.process, thread->snapshot, false};
 #endif
-		const auto &registers = thread->id == threads.current_id() ? call.process.context().registers : thread->snapshot.context.registers;
-		const uint32_t flags = call.load<uint32_t>(call[1] + 0x30);
-		const auto put = [&](size_t at, uint64_t value) { call.store<uint64_t>(call[1] + at, value); };
-		if (flags & 0x1) {
-			call.store<uint16_t>(call[1] + 0x38, uint16_t(registers.cs));
-			call.store<uint16_t>(call[1] + 0x42, uint16_t(registers.ss));
-			call.store<uint32_t>(call[1] + 0x44, uint32_t(registers.eflags));
-			put(0x98, registers.rsp);
-			put(0xa0, registers.rbp);
-			put(0xf8, registers.rip);
-		}
-		if (flags & 0x2) {
-			put(0x78, registers.rax); put(0x80, registers.rcx); put(0x88, registers.rdx); put(0x90, registers.rbx);
-			put(0xa8, registers.rsi); put(0xb0, registers.rdi);
-			put(0xb8, registers.r8); put(0xc0, registers.r9); put(0xc8, registers.r10); put(0xd0, registers.r11);
-			put(0xd8, registers.r12); put(0xe0, registers.r13); put(0xe8, registers.r14); put(0xf0, registers.r15);
-		}
-		call.ret(1);
-	});
-	// The registers of a suspended thread from a CONTEXT (x64): the control and integer groups, which it continues with when resumed. A
-	// thread that is not suspended, the caller among them, keeps its registers: Windows leaves the outcome of that undefined.
-#ifdef RAVEN_FEX_PROCESS
-	if (!register_fex_thread_context(registry, threads, thread_from))
+		if (!self) call.process.pause_thread(thread->snapshot);
+#ifdef __APPLE__
+		resume_context.active = resume;
 #endif
-	registry.add("SetThreadContext", 2, [thread_from, &threads, &context](ApiCall &call) {
-		if (call.pointer_width() == 4 || !call[1]) {
-			call.fail(call[1] ? 50 : 87);
-			return;
+		auto packet = self ? call.process.context() : thread->snapshot.context;
+		auto &r = packet.registers;
+		const auto word = [&](size_t offset, auto &value, size_t width) {
+			if (set) {
+				value = width == 8 ? call.load<uint64_t>(call[1]+offset) : width == 4 ? call.load<uint32_t>(call[1]+offset) : call.load<uint16_t>(call[1]+offset);
+			} else if (width == 8) call.store<uint64_t>(call[1]+offset, value);
+			else if (width == 4) call.store<uint32_t>(call[1]+offset, value);
+			else call.store<uint16_t>(call[1]+offset, value);
+		};
+		if (flags & 1) {
+			word(x86 ? 0xb4 : 0xa0, r.rbp, x86 ? 4 : 8);
+			word(x86 ? 0xb8 : 0xf8, r.rip, x86 ? 4 : 8);
+			word(x86 ? 0xc4 : 0x98, r.rsp, x86 ? 4 : 8);
+			word(x86 ? 0xbc : 0x38, r.cs, x86 ? 4 : 2);
+			word(x86 ? 0xc8 : 0x42, r.ss, x86 ? 4 : 2);
+			word(x86 ? 0xc0 : 0x44, r.eflags, 4);
+			if (set) r.eflags = (r.eflags & 0x3f7fd7u) | 2;
 		}
-		const auto thread = thread_from(call[0]);
-		if (!thread) {
-			call.fail(6);
-			return;
+		if (flags & 2) {
+			unsigned long long *regs[]{&r.rax,&r.rcx,&r.rdx,&r.rbx,&r.rsi,&r.rdi,&r.r8,&r.r9,&r.r10,&r.r11,&r.r12,&r.r13,&r.r14,&r.r15};
+			const size_t offsets64[]{0x78,0x80,0x88,0x90,0xa8,0xb0,0xb8,0xc0,0xc8,0xd0,0xd8,0xe0,0xe8,0xf0};
+			const size_t offsets32[]{0xb0,0xac,0xa8,0xa4,0xa0,0x9c};
+			for (size_t i=0;i<(x86 ? 6u : 14u);++i) word(x86 ? offsets32[i] : offsets64[i], *regs[i], x86 ? 4 : 8);
 		}
-		if (thread->id == threads.current_id() || !thread->suspend_count) {
-			call.fail(5);
-			return;
+		if (flags & 4) {
+			word(x86 ? 0x98 : 0x3a, r.ds, x86 ? 4 : 2);
+			word(x86 ? 0x94 : 0x3c, r.es, x86 ? 4 : 2);
+			word(x86 ? 0x90 : 0x3e, r.fs, x86 ? 4 : 2);
+			word(x86 ? 0x8c : 0x40, r.gs, x86 ? 4 : 2);
 		}
-		auto registers = thread->snapshot.context.registers;
-		const uint32_t flags = call.load<uint32_t>(call[1] + 0x30);
-		const auto get = [&](size_t at) { return call.load<uint64_t>(call[1] + at); };
-		if (flags & 0x1) {
-			// The flags a program may change: the status flags, direction and trap; the rest stay as the processor needs them.
-			registers.eflags = (registers.eflags & ~uint64_t(0xdd5)) | (call.load<uint32_t>(call[1] + 0x44) & 0xdd5);
-			registers.rsp = get(0x98);
-			registers.rbp = get(0xa0);
-			registers.rip = get(0xf8);
+		if (flags & 0x10) for (size_t i=0;i<6;++i)
+			word((x86 ? 4 : 0x48)+i*(x86 ? 4 : 8), thread->debug_registers[i], x86 ? 4 : 8);
+		if ((!x86 && (flags & 8)) || (x86 && (flags & 0x20))) {
+			const auto address = call[1] + (x86 ? 0xcc : 0x100);
+			if (packet.xstate.size() < 512) throw std::runtime_error("missing guest floating-point state");
+			if (set) {
+				auto bytes = call.read(address, 512);
+				std::copy(bytes.begin(), bytes.end(), packet.xstate.begin());
+			} else call.write(address, std::span<const uint8_t>(packet.xstate.data(),512));
+			if (!x86) {
+				uint32_t mxcsr; std::memcpy(&mxcsr, packet.xstate.data()+24,4);
+				word(0x34,mxcsr,4); std::memcpy(packet.xstate.data()+24,&mxcsr,4);
+			}
 		}
-		if (flags & 0x2) {
-			registers.rax = get(0x78); registers.rcx = get(0x80); registers.rdx = get(0x88); registers.rbx = get(0x90);
-			registers.rsi = get(0xa8); registers.rdi = get(0xb0);
-			registers.r8 = get(0xb8); registers.r9 = get(0xc0); registers.r10 = get(0xc8); registers.r11 = get(0xd0);
-			registers.r12 = get(0xd8); registers.r13 = get(0xe0); registers.r14 = get(0xe8); registers.r15 = get(0xf0);
+		if (x86 && (flags & 8)) {
+			if (packet.xstate.size() < 512) throw std::runtime_error("missing guest x87 state");
+			auto &fp = packet.xstate;
+			const auto legacy = [&](size_t at, size_t fx, size_t size) {
+				uint32_t value=0; std::memcpy(&value,fp.data()+fx,size);
+				word(0x1c+at,value,4); if (set) std::memcpy(fp.data()+fx,&value,size);
+			};
+			legacy(0,0,2); legacy(4,2,2); legacy(12,8,4); legacy(20,16,4); legacy(24,20,2);
+			uint16_t selector, opcode;
+			std::memcpy(&selector,fp.data()+12,2); std::memcpy(&opcode,fp.data()+6,2);
+			uint32_t error_selector=selector|(uint32_t(opcode)<<16);
+			word(0x2c,error_selector,4);
+			if (set) { selector=error_selector; opcode=error_selector>>16; std::memcpy(fp.data()+12,&selector,2); std::memcpy(fp.data()+6,&opcode,2); }
+			uint32_t tags=0;
+			uint16_t status; std::memcpy(&status,fp.data()+2,2);
+			for (unsigned physical=0; physical<8; ++physical) {
+				const unsigned logical=(physical+8-((status>>11)&7))&7;
+				const auto *st=fp.data()+32+logical*16;
+				uint64_t fraction; uint16_t exponent;
+				std::memcpy(&fraction,st,8); std::memcpy(&exponent,st+8,2); exponent &= 0x7fff;
+				unsigned tag=!(fp[4]&(1<<physical)) ? 3 : !exponent && !fraction ? 1 : exponent==0x7fff || !exponent || !(fraction>>63) ? 2 : 0;
+				tags |= tag<<(physical*2);
+			}
+			word(0x24,tags,4);
+			if (set) { fp[4]=0; for (unsigned i=0;i<8;++i) if (((tags>>(i*2))&3)!=3) fp[4]|=1<<i; }
+			for (unsigned i=0;i<8;++i) {
+				if (set) { auto bytes=call.read(call[1]+0x38+i*10,10); std::copy(bytes.begin(),bytes.end(),fp.begin()+32+i*16); }
+				else call.write(call[1]+0x38+i*10,std::span<const uint8_t>(fp.data()+32+i*16,10));
+			}
+			if (!set) call.store<uint32_t>(call[1]+0x88,0xffff0000u|status);
 		}
-		try { context.process.set_thread_registers(thread->snapshot, registers); }
-		catch (const std::runtime_error &) { call.fail(31); return; }
-		call.ret(1);
-	});
+		if (set) {
+			if (self) call.process.set_context(packet);
+			else { thread->snapshot.context = std::move(packet); thread->snapshot.context_in_task = false; }
+		}
+		call.ret(nt ? 0 : 1);
+	};
+	for (auto name : {"GetThreadContext", "SetThreadContext", "Wow64GetThreadContext", "Wow64SetThreadContext", "NtGetContextThread", "NtSetContextThread"}) {
+		const std::string api(name);
+		registry.add(name, 2, [thread_context, api](ApiCall &call) { thread_context(call, api.find("Set") != std::string::npos, api.starts_with("Wow64"), api.starts_with("Nt")); });
+	}
 	// A thread's description is a name the program gives it; it is kept per thread and handed back in memory the program frees with LocalFree.
 	auto descriptions = std::make_shared<std::map<uint32_t, std::u16string>>();
 	registry.add("SetThreadDescription", 2, [thread_from, descriptions](ApiCall &call) {
