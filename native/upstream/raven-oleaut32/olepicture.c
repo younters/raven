@@ -465,7 +465,8 @@ static const IPictureVtbl picture_vtbl = {
 };
 
 /* Decoding: the simple formats directly, everything else through the imaging component. */
-static SIZE_T dib_color_bytes(const BITMAPINFOHEADER *header);
+static ULONGLONG dib_color_bytes(const BITMAPINFOHEADER *header);
+static BOOL dib_pixels_fit(const BITMAPINFOHEADER *header, ULONGLONG available);
 
 /* Keeps the file's own depth: pictures hand out the section itself, not a converted copy. */
 static HBITMAP dib_section_from(const BITMAPINFO *info, const BYTE *bits)
@@ -482,14 +483,25 @@ static HBITMAP dib_section_from(const BITMAPINFO *info, const BYTE *bits)
 	return bitmap;
 }
 
-static SIZE_T dib_color_bytes(const BITMAPINFOHEADER *header)
+static ULONGLONG dib_color_bytes(const BITMAPINFOHEADER *header)
 {
 	DWORD colors = header->biClrUsed;
 	if (header->biSize < sizeof(BITMAPINFOHEADER))
 		return 0;
 	if (!colors && header->biBitCount <= 8)
 		colors = 1u << header->biBitCount;
-	return colors * sizeof(RGBQUAD) + (header->biCompression == BI_BITFIELDS ? 12 : 0);
+	return (ULONGLONG)colors * sizeof(RGBQUAD) + (header->biCompression == BI_BITFIELDS ? 12 : 0);
+}
+
+/* The rows the header describes must lie within the bytes that follow it. */
+static BOOL dib_pixels_fit(const BITMAPINFOHEADER *header, ULONGLONG available)
+{
+	ULONGLONG height, line;
+	if (header->biSize < sizeof(BITMAPINFOHEADER) || header->biWidth <= 0 || !header->biHeight || !header->biBitCount || header->biBitCount > 32)
+		return FALSE;
+	height = header->biHeight < 0 ? -(LONGLONG)header->biHeight : header->biHeight;
+	line = (((ULONGLONG)header->biWidth * header->biBitCount + 31) / 32) * 4;
+	return height <= available / line;
 }
 
 static HRESULT load_bmp(struct picture *picture, const BYTE *data, ULONG size)
@@ -499,15 +511,10 @@ static HRESULT load_bmp(struct picture *picture, const BYTE *data, ULONG size)
 	if (size < sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) || file->bfOffBits > size)
 		return E_FAIL;
 	info = (const BITMAPINFO *)(data + sizeof(BITMAPFILEHEADER));
-	/* Validate the original pixel span before retaining it in a DIB section. */
-	if (info->bmiHeader.biSize < sizeof(BITMAPINFOHEADER) || info->bmiHeader.biWidth <= 0 || !info->bmiHeader.biHeight)
+	/* Validate the palette and the original pixel span before retaining them in a DIB section. */
+	if (!dib_pixels_fit(&info->bmiHeader, size - file->bfOffBits)
+		|| sizeof(BITMAPFILEHEADER) + (ULONGLONG)info->bmiHeader.biSize + dib_color_bytes(&info->bmiHeader) > size)
 		return E_FAIL;
-	{
-		ULONGLONG height = info->bmiHeader.biHeight < 0 ? -(LONGLONG)info->bmiHeader.biHeight : info->bmiHeader.biHeight;
-		ULONGLONG bytes = (((ULONGLONG)info->bmiHeader.biWidth * info->bmiHeader.biBitCount + 31) / 32) * 4 * height;
-		if (bytes > size - file->bfOffBits)
-			return E_FAIL;
-	}
 	picture->desc.bmp.hbitmap = dib_section_from(info, data + file->bfOffBits);
 	if (!picture->desc.bmp.hbitmap)
 		return E_FAIL;
@@ -521,11 +528,11 @@ static HRESULT load_bmp(struct picture *picture, const BYTE *data, ULONG size)
 static HRESULT load_dib(struct picture *picture, const BYTE *data, ULONG size)
 {
 	const BITMAPINFO *info = (const BITMAPINFO *)data;
-	SIZE_T offset;
+	ULONGLONG offset;
 	if (size < sizeof(BITMAPINFOHEADER))
 		return E_FAIL;
 	offset = info->bmiHeader.biSize + dib_color_bytes(&info->bmiHeader);
-	if (offset > size)
+	if (offset > size || !dib_pixels_fit(&info->bmiHeader, size - offset))
 		return E_FAIL;
 	picture->desc.bmp.hbitmap = dib_section_from(info, data + offset);
 	if (!picture->desc.bmp.hbitmap)

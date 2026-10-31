@@ -1511,7 +1511,7 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 	if (message==0x200 || message==0x201 || message==0x202 || message==0x204 || message==0x207 || message==0x208) return 0;
 	// A child that does not take WM_CONTEXTMENU passes it to its parent, where programs usually build their menus.
 	if (message==0x7b) {
-		if ((window->style&0x40000000U) && window->parent && objects.window(window->parent)) return send(window->parent,0x7b,args[2],args[3]);
+		if ((window->style&0x40000000U) && window->parent && objects.window(window->parent)) send(window->parent,0x7b,args[2],args[3]);
 		return 0;
 	}
 	if (message==0x205) {

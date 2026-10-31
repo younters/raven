@@ -576,6 +576,16 @@ if(TARGET raven_cpu AND RAVEN_MINGW64)
     set_tests_properties(native_darwin_theme_api PROPERTIES TIMEOUT 20
         PASS_REGULAR_EXPRESSION "Native entry returned 0 " LABELS "rosetta"
         ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-theme-api-prefix")
+    set(OLE_PICTURE_BOUNDS_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/darwin-ole-picture-bounds.exe)
+    add_custom_command(OUTPUT ${OLE_PICTURE_BOUNDS_FIXTURE}
+        COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector -Wl,--entry,raven_entry
+            -o ${OLE_PICTURE_BOUNDS_FIXTURE} ${RAVEN_DARWIN_DIR}/tests/ole_picture_bounds.c -loleaut32 -lole32 -luuid -lkernel32
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/ole_picture_bounds.c VERBATIM)
+    add_custom_target(darwin_ole_picture_bounds_fixture ALL DEPENDS ${OLE_PICTURE_BOUNDS_FIXTURE})
+    add_test(NAME native_darwin_ole_picture_bounds COMMAND raven --run-process --execution=native ${OLE_PICTURE_BOUNDS_FIXTURE})
+    set_tests_properties(native_darwin_ole_picture_bounds PROPERTIES TIMEOUT 30
+        PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+        ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-ole-picture-prefix;RAVEN_PREFIX_SETUP=1")
     set(CURSOR_DPI_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-aware.exe)
     set(CURSOR_UNAWARE_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-unaware.exe)
     set(CURSOR_PM_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-per-monitor.exe)
