@@ -822,6 +822,21 @@ void NativeProcess::install_seccomp()
 {
 }
 
+// Mach/Rosetta numbers x87 slots physically; Windows FXSAVE numbers them
+// logically from TOP. Keep the guest-agent transport unchanged and normalize
+// only at the NativeContext boundary.
+static void copy_x87_slots(uint8_t *destination, const uint8_t *source, bool to_windows)
+{
+	uint16_t status;
+	std::memcpy(&status, source + 2, sizeof status);
+	const unsigned top = (status >> 11) & 7;
+	for (unsigned i = 0; i < 8; ++i) {
+		const unsigned physical = (top + i) & 7;
+		std::memcpy(destination + 32 + (to_windows ? i : physical) * 16,
+			source + 32 + (to_windows ? physical : i) * 16, 16);
+	}
+}
+
 NativeContext NativeProcess::context() const
 {
 	FEX_RETURN(context);
@@ -829,6 +844,7 @@ NativeContext NativeProcess::context() const
 	NativeContext result{};
 	std::memcpy(&result.registers, &state->registers(), sizeof result.registers);
 	result.xstate.assign(state->child->thread().xstate, state->child->thread().xstate + RAVEN_XSTATE_SIZE);
+	copy_x87_slots(result.xstate.data(), state->child->thread().xstate, true);
 	return result;
 }
 
@@ -841,6 +857,7 @@ void NativeProcess::set_context(const NativeContext &context)
 		if (context.xstate.size() < 512 || context.xstate.size() > RAVEN_XSTATE_SIZE)
 			throw std::runtime_error("cannot restore native XSTATE");
 		std::memcpy(state->child->thread().xstate, context.xstate.data(), context.xstate.size());
+		copy_x87_slots(state->child->thread().xstate, context.xstate.data(), false);
 	}
 	std::memcpy(&state->registers(), &context.registers, sizeof context.registers);
 	state->thread_teb = context.registers.gs_base;
@@ -1620,6 +1637,7 @@ void NativeProcess::resume_context_thread(NativeThreadState &thread)
 	if (child.thread().signal == RAVEN_STOP_INTERRUPT) {
 		std::memcpy(&child.registers(), &thread.context.registers, sizeof thread.context.registers);
 		std::memcpy(child.thread().xstate, thread.context.xstate.data(), thread.context.xstate.size());
+		copy_x87_slots(child.thread().xstate, thread.context.xstate.data(), false);
 		child.resume(false);
 		thread.stopped = false;
 		thread.context_in_task = true;
