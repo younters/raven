@@ -497,6 +497,9 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(6);
 			return;
 		}
+#ifdef RAVEN_FEX_PROCESS
+		if (!validate_fex_thread_context(call, *thread, threads.current_id())) return;
+#endif
 		const auto &registers = thread->id == threads.current_id() ? call.process.context().registers : thread->snapshot.context.registers;
 		const uint32_t flags = call.load<uint32_t>(call[1] + 0x30);
 		const auto put = [&](size_t at, uint64_t value) { call.store<uint64_t>(call[1] + at, value); };
@@ -851,6 +854,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(6);
 			return;
 		}
+		if (thread->state == GuestThread::State::done) { call.fail(31); return; }
 		thread->apcs.push_back({call[0], call[2]});
 		call.ret(1);
 	});

@@ -298,8 +298,13 @@ NativeResult FexProcess::resume()
 		}
 		worker->wake.notify_all();
 		auto ready = [worker] { return worker->stopped.load(std::memory_order_acquire); };
-		if (state->execution_wait) state->execution_wait(ready, deadline);
-		else {
+		struct PauseOnExit {
+			FexWorker *worker;
+			~PauseOnExit() { worker->pause(); }
+		} pause_on_exit{worker};
+		if (state->execution_wait) {
+			state->execution_wait(ready, deadline);
+		} else {
 			std::unique_lock lock(worker->mutex);
 			worker->wake.wait_until(lock, deadline, ready);
 		}
@@ -617,7 +622,12 @@ void FexProcess::return_api(uint64_t value)
 	set_context(saved);
 	state->thread.awaiting_api = false;
 }
-void FexProcess::end_call() { if (state->parallel) state->workers.at(state->selected)->pause(); state->active = state->thread.active_call = state->thread.awaiting_api = false; state->thread.callbacks.clear(); }
+void FexProcess::end_call()
+{
+	if (state->parallel) state->workers.at(state->selected)->pause();
+	state->active = state->thread.active_call = state->thread.awaiting_api = false;
+	state->thread.callbacks.clear();
+}
 void FexProcess::abandon_call() { end_call(); }
 void FexProcess::enter_fault_dispatch() { state->thread.awaiting_api = true; }
 void FexProcess::redirect(const NativeContext &saved, size_t depth)
@@ -645,8 +655,11 @@ NativeThreadState FexProcess::save_thread(bool snapshot) const
 	auto saved = state->thread;
 	saved.stopped = stopped();
 	saved.context_in_task = state->parallel && !snapshot;
-	if (saved.stopped) saved.context = context();
-	else saved.context.registers.gs_base = state->teb;
+	if (saved.stopped) {
+		saved.context = context();
+	} else {
+		saved.context.registers.gs_base = state->teb;
+	}
 	saved.active_call = state->active;
 	return saved;
 }
@@ -668,8 +681,15 @@ NativeThreadState FexProcess::new_thread(uint64_t stack_top, uint64_t teb)
 	return thread;
 }
 int FexProcess::execution_descriptor() const { return state->execution; }
-void FexProcess::drain_execution() { uint64_t value; while (state->execution >= 0 && ::read(state->execution, &value, sizeof(value)) > 0) {} }
-void FexProcess::set_execution_wait(std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> wait) { state->execution_wait = std::move(wait); }
+void FexProcess::drain_execution()
+{
+	uint64_t value;
+	while (state->execution >= 0 && ::read(state->execution, &value, sizeof(value)) > 0) {}
+}
+void FexProcess::set_execution_wait(std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> wait)
+{
+	state->execution_wait = std::move(wait);
+}
 void FexProcess::set_unix_pump(std::function<void()> pump) { state->unix_pump = std::move(pump); }
 void FexProcess::drain_unix_events(const std::function<void(uint64_t)> &) {}
 uint64_t FexProcess::serving_teb() const { return 0; }
@@ -719,13 +739,18 @@ void FexProcess::set_served_calls(uint64_t *, std::vector<uint64_t> stubs, size_
 	for (auto *pointer : pointers) memset(pointer, 0, 8);
 	// The parallel provider replaces the null check with a GS load. FEX serves
 	// APIs on the controller, so bypass that protocol at its canonical API trap.
+	// The parameter is the trap offset (112), not the provider stride (128).
+	// rel32 is relative to stub+5: 5+107=112; 109 is only the yield trap.
 	const std::array<uint8_t, 12> fallback{0xe9, 107, 0, 0, 0, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90};
 	for (auto stub : local_stubs) {
+		bool found = false;
 		for (auto *image : state->images)
 			if (stub >= image->base() && stub - image->base() + fallback.size() <= image->data().size()) {
 				memcpy(image->data().data() + stub - image->base(), fallback.data(), fallback.size());
+				found = true;
 				break;
 			}
+		if (!found) throw std::runtime_error("FEX served stub is outside provider storage");
 	}
 }
 }
@@ -807,7 +832,14 @@ void FexProcess::stop_thread(const NativeThreadState &thread)
 	if (state->parallel && thread.task && thread.task != state->selected) {
 		auto found = state->workers.find(thread.task);
 		if (found != state->workers.end()) {
-			found->second->shutdown();
+			try {
+				found->second->shutdown();
+			} catch (const std::exception &error) {
+				// The worker has joined; finishing a coroutine must not throw.
+				std::cerr << "FEX stop_thread: " << error.what() << "\n";
+			} catch (...) {
+				std::cerr << "FEX stop_thread: unknown teardown failure\n";
+			}
 			state->workers.erase(found);
 		}
 	}

@@ -969,7 +969,7 @@ endif()
 if(RAVEN_FEX_MODHOST AND TARGET fex_review_fixtures)
     set(m3_case 0)
     set(m3_outputs)
-    foreach(contract contention context worker-seh apc lifecycle worker-unhandled)
+    foreach(contract contention context worker-seh apc lifecycle worker-unhandled negatives worker-av)
         math(EXPR m3_case "${m3_case} + 1")
         set(fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-parallel-${contract}.exe)
         add_custom_command(OUTPUT ${fixture}
@@ -983,12 +983,25 @@ if(RAVEN_FEX_MODHOST AND TARGET fex_review_fixtures)
         set(m3_status)
         if(contract STREQUAL "worker-unhandled")
             list(APPEND m3_status --unhandled-status 0xe0424242)
+        elseif(contract STREQUAL "worker-av")
+            list(APPEND m3_status --unhandled-status 0xc0000005)
         endif()
         add_test(NAME native_parallel_${contract}_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
             --raven $<TARGET_FILE:raven> --fixture ${fixture} --modules "${RAVEN_FEX_MODULE_ROOT}" ${m3_status})
         set_tests_properties(native_parallel_${contract}_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;m3;parallel"
             ENVIRONMENT "RAVEN_PARALLEL=1;RAVEN_SLICE_MS=0")
     endforeach()
+    add_test(NAME native_cooperative_context_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+        --raven $<TARGET_FILE:raven> --fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-parallel-context.exe --modules "${RAVEN_FEX_MODULE_ROOT}")
+    set_tests_properties(native_cooperative_context_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;m3"
+        ENVIRONMENT "RAVEN_SLICE_MS=1" ENVIRONMENT_MODIFICATION "RAVEN_PARALLEL=unset:")
+    foreach(mode cooperative parallel)
+        add_test(NAME native_m3_negatives_${mode} COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+            --raven $<TARGET_FILE:raven> --backend native --fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-parallel-negatives.exe)
+        set_tests_properties(native_m3_negatives_${mode} PROPERTIES TIMEOUT 30 LABELS "m3;threads")
+    endforeach()
+    set_tests_properties(native_m3_negatives_cooperative PROPERTIES ENVIRONMENT_MODIFICATION "RAVEN_PARALLEL=unset:")
+    set_tests_properties(native_m3_negatives_parallel PROPERTIES ENVIRONMENT "RAVEN_PARALLEL=1")
     add_custom_target(fex_parallel_fixtures DEPENDS ${m3_outputs})
     add_test(NAME native_parallel_kernel_threads_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
         --raven $<TARGET_FILE:raven> --fixture ${CMAKE_CURRENT_BINARY_DIR}/kernel-threads-fex.exe --modules "${RAVEN_FEX_MODULE_ROOT}")
@@ -996,7 +1009,7 @@ if(RAVEN_FEX_MODHOST AND TARGET fex_review_fixtures)
         ENVIRONMENT "RAVEN_PARALLEL=1;RAVEN_SLICE_MS=0")
 endif()
 if(RAVEN_FEX_MODHOST AND TARGET fex_process_test)
-    foreach(contract timeout selfmodify)
+    foreach(contract timeout selfmodify wait-unwind)
         add_test(NAME native_parallel_${contract}_fex COMMAND fex_process_test ${FEX_ENTRY_FIXTURE} ${contract})
         set_tests_properties(native_parallel_${contract}_fex PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77
             LABELS "fex;m3;parallel" ENVIRONMENT "RAVEN_PARALLEL=1;RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")

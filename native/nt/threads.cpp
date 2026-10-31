@@ -597,7 +597,7 @@ void NativeThreads::resume(GuestThread &thread)
 
 uint32_t NativeThreads::suspend(GuestThread &thread)
 {
-	if (thread.state == GuestThread::State::done)
+	if (thread.state == GuestThread::State::done || thread.suspend_count >= 127)
 		return UINT32_MAX;
 	if (&thread != running)
 		process.pause_thread(thread.snapshot);

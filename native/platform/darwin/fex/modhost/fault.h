@@ -20,6 +20,7 @@ struct alignas(16) NativeContext {
 };
 static_assert(sizeof(NativeContext) == 0x390 && offsetof(NativeContext, v) == 0x110);
 void *entry = nullptr;
+// Fault dispatch must use the guest TEB of this host worker, including callbacks.
 thread_local void *execution_teb = nullptr;
 
 extern "C" void raven_signal_entry(int, siginfo_t *, void *);

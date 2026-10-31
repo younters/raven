@@ -2,10 +2,20 @@
 #include "thread_api.h"
 #include "fex_process.h"
 namespace raven {
+bool validate_fex_thread_context(ApiCall &call, const GuestThread &thread, uint32_t current)
+{
+	if (!fex_execution_selected()) return true;
+	if (thread.state == GuestThread::State::done) { call.fail(6); return false; }
+	if (thread.id != current && !thread.suspend_count) { call.fail(87); return false; }
+	const auto flags = call.load<uint32_t>(call[1] + 0x30);
+	if (!(flags & 0x100000) || (flags & ~0x100003u)) { call.fail(50); return false; }
+	return true;
+}
 void register_fex_thread_context(ApiRegistry &registry, NativeThreads &threads,
 	std::function<std::shared_ptr<GuestThread>(uint64_t)> thread_from)
 {
 	if (!fex_execution_selected()) return;
+	// The process owns NativeThreads for the entire lifetime of API dispatch.
 	registry.add("SetThreadContext", 2, [thread_from, &threads](ApiCall &call) {
 		if (call.pointer_width() != 8 || !call[1]) { call.fail(87); return; }
 		auto thread = thread_from(call[0]);
@@ -30,8 +40,12 @@ void register_fex_thread_context(ApiRegistry &registry, NativeThreads &threads,
 			const size_t offsets[]{0x78, 0x80, 0x88, 0x90, 0xa8, 0xb0, 0xb8, 0xc0, 0xc8, 0xd0, 0xd8, 0xe0, 0xe8, 0xf0};
 			for (size_t i = 0; i < 14; ++i) *registers[i] = call.load<uint64_t>(call[1] + offsets[i]);
 		}
-		if (self) call.process.set_context(context);
-		else { thread->snapshot.context = std::move(context); thread->snapshot.context_in_task = false; }
+		if (self) {
+			call.process.set_context(context);
+		} else {
+			thread->snapshot.context = std::move(context);
+			thread->snapshot.context_in_task = false;
+		}
 		call.ret(1);
 	});
 }
