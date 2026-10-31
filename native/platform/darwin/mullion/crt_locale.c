@@ -17,5 +17,23 @@ void entry(void)
     if (!alpha('A', NULL) || alpha('1', NULL) || collate("a", "b", NULL) >= 0) ExitProcess(5);
     char **(*command_line)(void) = (void *)GetProcAddress(crt, "__p__acmdln");
     if (!command_line || !*command_line() || lstrcmpA(*command_line(), GetCommandLineA())) ExitProcess(6);
+    int *(*crt_errno)(void) = (void *)GetProcAddress(crt, "_errno");
+    void *(*aligned)(size_t, size_t) = (void *)GetProcAddress(crt, "_aligned_malloc");
+    void *(*offset)(size_t, size_t, size_t) = (void *)GetProcAddress(crt, "_aligned_offset_malloc");
+    void *(*resize)(void *, size_t, size_t) = (void *)GetProcAddress(crt, "_aligned_realloc");
+    void (*release)(void *) = (void *)GetProcAddress(crt, "_aligned_free");
+    if (!crt_errno || !aligned || !offset || !resize || !release) ExitProcess(7);
+    char guard[3] = {'x', 'x', 'x'};
+    if (convert(&n, guard + 1, 1, 0xe9, NULL) || n != 1 || (unsigned char)guard[1] != 0xe9 || guard[0] != 'x' || guard[2] != 'x') ExitProcess(8);
+    if (convert(&n, guard + 1, 1, 0xd800, NULL) != 42 || *crt_errno() != 42 || guard[2] != 'x') ExitProcess(9);
+    if (aligned((size_t)-8, 64) || *crt_errno() != 12) ExitProcess(10);
+    if (offset((size_t)-8, 64, 1) || *crt_errno() != 12) ExitProcess(11);
+    char *block = offset(32, 64, 3);
+    if (!block || ((ULONG_PTR)block + 3) % 64) ExitProcess(12);
+    for (int i = 0; i < 32; ++i) block[i] = (char)i;
+    block = resize(block, 128, 64);
+    if (!block || (ULONG_PTR)block % 64) ExitProcess(13);
+    for (int i = 0; i < 32; ++i) if (block[i] != i) ExitProcess(14);
+    release(block);
     ExitProcess(0);
 }

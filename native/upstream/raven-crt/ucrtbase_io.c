@@ -527,13 +527,21 @@ CRT void *_aligned_malloc(size_t size, size_t alignment)
 {
 	char *raw;
 	uintptr_t aligned;
-	if (!alignment || (alignment & (alignment - 1)))
+	if (!alignment || (alignment & (alignment - 1))) {
+		set_errno(22);
 		return NULL;
+	}
 	if (alignment < sizeof(void *))
 		alignment = sizeof(void *);
-	raw = HeapAlloc(GetProcessHeap(), 0, size + alignment + sizeof(void *));
-	if (!raw)
+	if (alignment > ((size_t)-1) - sizeof(void *) || size > ((size_t)-1) - alignment - sizeof(void *)) {
+		set_errno(12);
 		return NULL;
+	}
+	raw = HeapAlloc(GetProcessHeap(), 0, size + alignment + sizeof(void *));
+	if (!raw) {
+		set_errno(12);
+		return NULL;
+	}
 	aligned = ((uintptr_t)raw + sizeof(void *) + alignment - 1) & ~(uintptr_t)(alignment - 1);
 	((void **)aligned)[-1] = raw;
 	return (void *)aligned;
@@ -556,6 +564,11 @@ CRT void *_aligned_offset_malloc(size_t size, size_t alignment, size_t offset)
 	}
 	if (alignment < sizeof(void *))
 		alignment = sizeof(void *);
+	if (alignment > ((size_t)-1) - 2 * sizeof(void *) || size > ((size_t)-1) - alignment - 2 * sizeof(void *)) {
+		set_errno(12);
+		return NULL;
+	}
+	offset &= alignment - 1;
 	raw = HeapAlloc(GetProcessHeap(), 0, size + alignment + 2 * sizeof(void *));
 	if (!raw) {
 		set_errno(12);
@@ -1477,8 +1490,11 @@ CRT int wcrtomb_s(size_t *written, char *out, size_t capacity, wchar_t c, void *
     if (written) *written = (size_t)-1;
     if (!out) { if (written) *written = 1; return 0; }
     if (!capacity) { set_errno(34); return 34; }
-    size_t result = wcrtomb(out, c, state);
-    if (result == (size_t)-1) { *out = 0; return 42; }
+    char converted[16];
+    size_t result = wcrtomb(converted, c, state);
+    if (result == (size_t)-1) { *out = 0; set_errno(42); return 42; }
+    if (result > capacity) { *out = 0; set_errno(34); return 34; }
+    memcpy(out, converted, result);
     if (written) *written = result;
     return 0;
 }

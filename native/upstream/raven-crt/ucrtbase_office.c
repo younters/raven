@@ -1016,7 +1016,7 @@ CRT void *_aligned_realloc(void *block, size_t size, size_t alignment)
 		_aligned_free(block);
 		return NULL;
 	}
-	char *raw = ((char **)block)[-1];
+	char *raw = ((char **)((uintptr_t)block & ~(uintptr_t)(sizeof(void *) - 1)))[-1];
 	const size_t old = HeapSize(GetProcessHeap(), 0, raw) - (size_t)((char *)block - raw);
 	void *moved = _aligned_malloc(size, alignment);
 	if (!moved)
