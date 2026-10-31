@@ -1,14 +1,17 @@
 diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+index 4c5c38f..a0283e6 100644
 --- a/Source/Windows/ARM64EC/Module.cpp
 +++ b/Source/Windows/ARM64EC/Module.cpp
-@@ -665,5 +665,10 @@ extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, ARM64_NT_CONTEXT *Native) {
-   auto *Thread = Area.ThreadState();
-   if (!Thread) return STATUS_NOT_SUPPORTED;
-+  // Darwin raises SIGBUS for unaligned acquire/release TSO accesses. Repair
-+  // through the same decoder as the Windows exception frontend before AV/SEH.
+@@ -685,8 +685,12 @@ extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, ARM64_NT_CONTEXT
+           reinterpret_cast<__uint128_t*>(Native->V), &Native->Pc)) return STATUS_SUCCESS;
+     return STATUS_NOT_SUPPORTED;
+   }
++  // Repair guest JIT TSO faults only after the native boundary gate above.
 +  if (Record->ExceptionCode == EXCEPTION_DATATYPE_MISALIGNMENT &&
 +      Exception::HandleUnalignedAccess(Area, *Native, CTX->IsAddressInCodeBuffer(Thread, Native->Pc))) return STATUS_SUCCESS;
    if (Record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
      const auto Address = Record->ExceptionInformation[1];
 +    if (OvercommitTracker && OvercommitTracker->HandleAccessViolation(Address)) return STATUS_SUCCESS;
      if (UserSharedDataBacking && Record->ExceptionInformation[0] == 0 &&
+         Address - FEX::Windows::UserSharedData::GuestBase < FEX::Windows::UserSharedData::PageSize &&
+         CTX->IsAddressInCodeBuffer(Thread, Native->Pc) &&

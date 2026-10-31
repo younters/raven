@@ -19,7 +19,7 @@
     "0014-raven-wow64-interrupt.patch": "147637376b17a90678113cb9ef420b8076aa750601dfb917047dc76f5a642161",
     "0015-raven-wow64-doorbell.patch": "3160a1065f03848cef9c276c94a6f368d46e82315dcbd71254031df0fb191246",
     "0016-wow64-host-boundary-validation.patch": "8e3ae8ccaae4336cd5d045be4a465b280036e60f9474730c2b699bad22f6f326",
-    "0017-raven-unaligned-tso.patch": "58626f13198f13301b743896c59fa3bbc23b6ff3aba37ae72654d33b8c6a2dac"
+    "0017-raven-unaligned-tso.patch": "082bdfea773ee87344a90d2c7e4bf7fddc233037236bac4b2afd6c45df0751d4"
   },
   "xtajit_sha256": "900ac1bceed999ce3d9ee1786c34a85de090c06da2ed0f824bc31e077125d6f4",
   "raven_wow64_process_init_rva": 30800,

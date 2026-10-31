@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 #pragma once
-// Qualified patch series: 0001-0012 plus 0017-raven-unaligned-tso.
+// Qualified patch series: 0001-0017 (M4 boundary gating followed by M5 fault repair).
 namespace RavenContract {
 constexpr uint32_t process_init_rva = 0x69f0;
 constexpr uint32_t process_init_instruction = 0xb40001c0;
