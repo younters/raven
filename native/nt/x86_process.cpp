@@ -142,7 +142,7 @@ constexpr std::string_view shared_allowed[] = {
 	"QueryFullProcessImageNameW", "QueryFullProcessImageNameA",
 	"NtQueryInformationProcess", "NtReadVirtualMemory", "NtWriteVirtualMemory", "ReadProcessMemory", "WriteProcessMemory", "OpenProcess",
 	"NtSetInformationThread", "NtOpenThreadToken", "NtOpenThreadTokenEx", "NtOpenThread", "NtOpenProcess", "NtOpenProcessToken", "NtOpenProcessTokenEx", "NtQueryInformationThread", "OpenThread", "GetThreadId",
-	"VirtualAllocEx", "VirtualFreeEx", "VirtualProtectEx", "VirtualQueryEx",
+	"VirtualAlloc2FromApp", "VirtualAllocEx", "VirtualFreeEx", "VirtualProtectEx", "VirtualQueryEx",
 	"SetDllDirectoryW", "SetDllDirectoryA", "SetConsoleTitleW", "SetConsoleTitleA", "OpenSCManagerW", "OpenSCManagerA", "OpenServiceW", "OpenServiceA", "CreateServiceW", "CreateServiceA",
 	"CloseServiceHandle", "DeleteService", "ChangeServiceConfigW", "ChangeServiceConfig2W", "ChangeServiceConfig2A", "QueryServiceConfigW", "QueryServiceConfigA", "GetServiceDisplayNameW", "GetServiceDisplayNameA",
 	"QueryServiceObjectSecurity", "SetServiceObjectSecurity", "RegQueryInfoKeyA", "RegQueryInfoKeyW", "LookupPrivilegeValueA", "QueryServiceStatus", "QueryServiceStatusEx", "StartServiceW", "ControlService",
@@ -612,7 +612,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		"MessageBoxW", "MoveWindow", "PtInRect", "ReleaseCapture", "SetCapture", "SetDlgItemInt", "SetDlgItemTextW", "SetMenu",
 		"SetRect", "SetTimer", "TranslateAcceleratorW", "WinHelpW", "wsprintfW", "wsprintfA", "CreateWindowExA", "DispatchMessageA",
 		"GetMessageA", "PeekMessageA", "RegisterClassA", "RegisterClassExA", "UnregisterClassA", "LoadCursorA", "LoadIconA", "GetAsyncKeyState",
-		"SetCursor", "GetCursorPos", "SetCursorPos", "DefWindowProcA", "SendMessageA", "PostMessageA", "SetWindowTextA",
+		"SetCursor", "GetCursorInfo", "GetCursorPos", "SetCursorPos", "DefWindowProcA", "SendMessageA", "PostMessageA", "SetWindowTextA",
 		"ExitWindowsEx", "MessageBoxA", "SetWindowPos", "CheckDlgButton", "MessageBoxIndirectW", "TrackPopupMenu", "DrawTextW",
 		"CreateDialogParamW", "SendMessageTimeoutW"};
 	std::vector<std::string_view> gdi_pending{"CreateBrushIndirect", "GetDeviceCaps", "SetDIBitsToDevice", "SetLayout", "SetPixel", "SetROP2",
@@ -951,7 +951,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	desktop.register_image_api(shared_api);
 	NativeX86Compat compat(process, environment, windows);
 	// Shared handlers whose arguments are 32-bit words and whose structures carry no pointers.
-	std::set<std::string_view> shared_names{"MoveWindow", "LoadCursorA", "LoadIconA", "GetAsyncKeyState", "SetCursor", "GetCursorPos", "SetCursorPos",
+	std::set<std::string_view> shared_names{"MoveWindow", "LoadCursorA", "LoadIconA", "GetAsyncKeyState", "SetCursor", "GetCursorInfo", "GetCursorPos", "SetCursorPos",
 		"DefWindowProcA", "SendMessageA", "PostMessageA", "SetWindowTextA", "CreateFontA", "ExtTextOutA", "GetDIBits", "GetTextExtentPoint32A",
 		"GetTextMetricsA", "SetDIBits", "MessageBoxA", "SetWindowPos", "SelectPalette", "PatBlt", "_lopen", "_lcreat", "_lread", "_lwrite", "_llseek", "lstrcpyA", "lstrlenA", "GetWindowsDirectoryA",
 		"GlobalUnlock", "GlobalFree", "GlobalAlloc", "SetErrorMode", "GlobalLock", "GetOEMCP", "GetCPInfo", "WideCharToMultiByte", "DeleteFileA",
@@ -1206,7 +1206,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			// component: the call goes on there with the same arguments, so handlers that resume elsewhere, as a C++ catch does, never return
 			// to the runtime. The vectored handler lists live there too, and fibers, which the thread switches by itself.
 			static const std::map<std::string_view, std::string_view> in_runtime{{"RaiseException", "raven_raise_exception"},
-				{"RtlUnwind", "raven_unwind"}, {"AddVectoredExceptionHandler", "raven_add_vectored_exception"},
+				{"RtlUnwind", "raven_unwind"}, {"RtlAddVectoredExceptionHandler", "raven_add_vectored_exception"},
+				{"RtlAddVectoredContinueHandler", "raven_add_vectored_continue"}, {"RtlRemoveVectoredExceptionHandler", "raven_remove_vectored"},
+				{"RtlRemoveVectoredContinueHandler", "raven_remove_vectored"}, {"AddVectoredExceptionHandler", "raven_add_vectored_exception"},
 				{"AddVectoredContinueHandler", "raven_add_vectored_continue"}, {"RemoveVectoredExceptionHandler", "raven_remove_vectored"},
 				{"RemoveVectoredContinueHandler", "raven_remove_vectored"}, {"CreateFiber", "raven_create_fiber"},
 				{"CreateFiberEx", "raven_create_fiber_ex"}, {"ConvertThreadToFiber", "raven_convert_thread_to_fiber"},

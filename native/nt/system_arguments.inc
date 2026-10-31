@@ -711,7 +711,7 @@ static constexpr std::pair<std::string_view, uint8_t> kernel32_words[]{
 	{"UnregisterApplicationRecoveryCallback",0},{"UnregisterApplicationRestart",0},{"UnregisterBadMemoryNotification",1},{"UnregisterConsoleIME",0},{"UnregisterWait",1},{"UnregisterWaitEx",2},
 	{"UnregisterWaitUntilOOBECompleted",1},{"UpdateCalendarDayOfWeek",1},{"UpdateProcThreadAttribute",7},{"UpdateResourceA",6},{"UpdateResourceW",6},{"VDMConsoleOperation",2},
 	{"VDMOperationStarted",1},{"VerLanguageNameA",3},{"VerLanguageNameW",3},{"VerSetConditionMask",4},{"VerifyConsoleIoHandle",1},{"VerifyScripts",5},
-	{"VerifyVersionInfoA",4},{"VerifyVersionInfoW",4},{"VirtualAlloc",4},{"VirtualAllocEx",5},{"VirtualAllocExNuma",6},{"VirtualBufferExceptionHandler",3},
+	{"VerifyVersionInfoA",4},{"VerifyVersionInfoW",4},{"VirtualAlloc",4},{"VirtualAlloc2FromApp",7},{"VirtualAllocEx",5},{"VirtualAllocExNuma",6},{"VirtualBufferExceptionHandler",3},
 	{"VirtualFree",3},{"VirtualFreeEx",4},{"VirtualLock",2},{"VirtualProtect",4},{"VirtualProtectEx",5},{"VirtualQuery",3},
 	{"VirtualQueryEx",4},{"VirtualUnlock",2},{"WTSGetActiveConsoleSessionId",0},{"WaitCommEvent",3},{"WaitForDebugEvent",2},{"WaitForDebugEventEx",2},
 	{"WaitForMultipleObjects",4},{"WaitForMultipleObjectsEx",5},{"WaitForSingleObject",2},{"WaitForSingleObjectEx",3},{"WaitForThreadpoolIoCallbacks",2},{"WaitForThreadpoolTimerCallbacks",2},
