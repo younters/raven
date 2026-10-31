@@ -49,4 +49,8 @@ elif kind == 'clear':
     assert (drive / 'clear.raw').read_bytes() == bytes((51, 102, 153, 255)) * 4096
 elif kind in ('draw', 'window12'):
     subprocess.run([sys.executable, str(Path(__file__).resolve().parents[4] / 'scripts/check-d3d11-triangle.py'), str(drive / ('draw.raw' if kind == 'draw' else 'window12_last.raw'))], check=True)
+if kind == 'window12':
+    assert (drive / 'window12_resized.txt').read_text() == 'OK'
+    subprocess.run([sys.executable, str(Path(__file__).resolve().parents[4] / 'scripts/check-d3d11-triangle.py'),
+                    str(drive / 'window12_resized.raw'), '320', '200', '26', '76', '26'], check=True)
 print(f'{engine}/{kind}: {text}')
