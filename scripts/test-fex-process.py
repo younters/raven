@@ -21,6 +21,7 @@ parser.add_argument('--expect-placement-conflict', action='store_true')
 parser.add_argument('--prefix', type=Path, help='Retain a shared fixture prefix instead of creating a temporary one')
 parser.add_argument('--check-persistence', action='store_true')
 parser.add_argument('--unhandled-status', type=lambda value: int(value, 0))
+parser.add_argument('--disable-pool', action='store_true')
 parser.add_argument('--fixed-base', type=lambda value: int(value, 0))
 args = parser.parse_args()
 if args.fixed_base is not None:
@@ -51,6 +52,8 @@ with contextlib.ExitStack() as stack:
     env = dict(os.environ, RAVEN_PREFIX=str(prefix))
     if root is not None:
         env['RAVEN_FEX_MODULE_ROOT'] = str(root)
+    if args.disable_pool:
+        env['RAVEN_FEX_DISABLE_IMAGE_POOL'] = '1'
     command = [str(args.raven), '--run-process', '--execution=' + args.backend,
                 '--timeout-ms=' + str(args.timeout_ms)]
     descriptors = ()
@@ -67,6 +70,11 @@ with contextlib.ExitStack() as stack:
         sys.exit(1)
     print(result.stdout, end='')
     print(result.stderr, end='', file=sys.stderr)
+    if args.disable_pool:
+        if result.returncode and 'FEX early image reservation failed at 140000000' in result.stderr:
+            print('PASS: disabled pool rejected main image reservation')
+            sys.exit(0)
+        sys.exit('FAIL: disabled pool did not reject main image reservation')
     if args.expect_placement_conflict:
         if result.returncode and 'PE preferred base is unavailable and image has no relocation table' in result.stderr:
             print('PASS: unavailable fixed image rejected without replacing existing mappings')
@@ -85,6 +93,8 @@ with contextlib.ExitStack() as stack:
             sys.exit(1)
         print(f'PASS: unhandled NT status {status:#x} preserved in process exit channel')
         sys.exit(0)
+    if args.fixed_base == 0x140000000 and 'FEX main image claimed inside image_pool' not in result.stderr:
+        sys.exit('FAIL: main image was not claimed inside image_pool')
     if args.fixed_base is not None and 'FEX placement pressure applied' not in result.stderr:
         sys.exit('FAIL: host pressure was not applied')
     if result.returncode or 'Native entry returned 0 ' not in result.stdout:

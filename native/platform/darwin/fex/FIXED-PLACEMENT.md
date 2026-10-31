@@ -124,3 +124,24 @@ repeat XML files are `/tmp/placement-dxmt-qualified/run-01.xml` through
 `run-20.xml`. Full logs/XML use `/tmp/placement-baseline-full.*` and
 `/tmp/placement-full.*`; FEX-wide results use `/tmp/placement-all-fex.*`;
 pressure results use `/tmp/placement-pressure-qualified.*`.
+
+## Review hardening
+
+Startup now checks the actual slid segment covers `0x140000000`, and an early
+reservation failure is fatal with the address in the diagnostic. The pressure
+hook is compiled only with `RAVEN_FEX_PLACEMENT_TEST_HOOKS=ON` (default OFF).
+The x64 harness requires the companion's successful in-pool claim diagnostic.
+The test-only `RAVEN_FEX_DISABLE_IMAGE_POOL=1` bypasses registration: the same
+x64 fixture must fail early because the Mach-O reservation remains occupied.
+The 32-bit test is named `native_fixed_default32_window_pressure_fex`; it tests
+the relocated guest window, not the image pool. Both fixtures now free and reuse
+four simultaneous 1 MiB slices across four rounds, checking every page is zero.
+
+Context debug registers currently provide sanitized read-back only. Neither
+engine arms guest hardware breakpoints. DR7 reserved/global-detect bits are
+removed; privileged I/O, nonzero execution lengths, and 8-byte x86 breakpoint
+encodings are rejected. This is a compatibility limitation, not breakpoint implementation.
+FPCR writes from patch 0023 execute on the worker: x64 BeginSimulation calls
+SyncThreadContext -> LoadStateFromECContext; RavenWow64Run marks the CPU area
+dirty and LockJITContext calls LoadStateFromWowContext before ExecuteThread.
+No additional FEX module patch is necessary for this path.

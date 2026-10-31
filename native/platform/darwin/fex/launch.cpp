@@ -25,7 +25,15 @@ static void reserve_main_image(int argc, char **argv)
 #ifdef RAVEN_FEX_COMPANION_HOST
 	// Keep the Mach-O segment reserved: dyld still describes it as part of the
 	// host image. Reusing its unused pages for host dylibs/JIT confuses ownership.
-	fex_register_image_reservation(reinterpret_cast<uint64_t>(raven_pe_reserve), 0x100000000ULL);
+	const auto pool = reinterpret_cast<uint64_t>(raven_pe_reserve);
+    if (pool > 0x140000000ULL || 0x140000000ULL - pool >= 0x100000000ULL) {
+        std::fprintf(stderr, "raven: FEX image pool does not cover 0x140000000\n");
+        std::exit(1);
+    }
+#ifdef RAVEN_FEX_PLACEMENT_TEST_HOOKS
+    if (!std::getenv("RAVEN_FEX_DISABLE_IMAGE_POOL"))
+#endif
+        fex_register_image_reservation(pool, 0x100000000ULL);
 #endif
 	if (argc < 4 || std::strcmp(argv[2], "--execution=fex")) return;
 	int index = 3;
@@ -45,7 +53,14 @@ static void reserve_main_image(int argc, char **argv)
 	std::memcpy(&base, pe + 48, sizeof(base));
 	std::memcpy(&size, pe + 80, sizeof(size));
 	if (base < 0x100000000ULL || base % 65536 || !size || base > UINT64_MAX - size - 16383) return;
-	(void)fex_reserve_image_address(base, size);
+	if (!fex_reserve_image_address(base, size)) {
+        std::fprintf(stderr, "raven: FEX early image reservation failed at %llx\n", (unsigned long long)base);
+        std::exit(1);
+    }
+#ifdef RAVEN_FEX_PLACEMENT_TEST_HOOKS
+    if (base >= pool && base - pool < 0x100000000ULL && size <= 0x100000000ULL - (base - pool))
+        std::fprintf(stderr, "FEX main image claimed inside image_pool\n");
+#endif
 }
 
 void launch_fex_host(int argc, char **argv)
@@ -83,6 +98,7 @@ void launch_fex_host(int argc, char **argv)
 	reserve_main_image(argc, argv);
 	// Test-only startup pressure, deliberately after reservation and before the
 	// normal loader. Keep the allocations and library alive through image mapping.
+#ifdef RAVEN_FEX_PLACEMENT_TEST_HOOKS
 	if (const char *library = std::getenv("RAVEN_FEX_PLACEMENT_PRESSURE")) {
 		for (size_t n = 0; n < 64; ++n) {
 			auto *p = static_cast<volatile char *>(std::malloc(1024 * 1024));
@@ -95,6 +111,7 @@ void launch_fex_host(int argc, char **argv)
 		}
 		std::fprintf(stderr, "FEX placement pressure applied\n");
 	}
+#endif
 	// A legitimate companion consumes the marker so its children may select FEX again.
 	::unsetenv("RAVEN_FEX_REEXEC");
 	(void)argc;

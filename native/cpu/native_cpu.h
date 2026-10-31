@@ -63,6 +63,8 @@ struct NativeThreadState {
 	uint64_t served_stack = 0;
 	bool context_in_task = false;
 	bool serving_queued = false;
+	// Result of the most recent context pause; other stops belong to the scheduler.
+	bool context_pause_interrupt = false;
 };
 
 // Images must outlive this stopped/resumable x86-64 Linux process.

@@ -53,7 +53,10 @@ void release_guest_range(uint64_t address, size_t size)
 {
 	if (image_pool.contains(address, size)) {
 		if (mmap(reinterpret_cast<void *>(address), size, PROT_NONE,
-			MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0) == MAP_FAILED) std::abort();
+			MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0) == MAP_FAILED) {
+            std::cerr << "FEX failed to restore guest reservation at " << std::hex << address << std::dec << "\n";
+            return; // Retain the claim so a failed release cannot be reused.
+        }
 		image_pool.claims.erase(address);
 	} else munmap(reinterpret_cast<void *>(address), size);
 }
@@ -905,6 +908,7 @@ void FexProcess::map_image(LoadedImage &image)
 		throw std::runtime_error("FEX guest image address conflict at " + std::to_string(address));
 	auto *p = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, image.descriptor(), 0);
 	if (p == MAP_FAILED) {
+		state->image_reservations.erase(address);
 		if (state->window)
 			(void)mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_NONE,
 				MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -1343,13 +1347,24 @@ void FexProcess::resume_context_thread(NativeThreadState &thread)
 {
 	if (!state->parallel) return;
 	auto &worker = *state->workers.at(thread.task);
-	if (worker.result.kind != NativeStop::timeout) return;
 	const auto caller = save_thread(true);
-	load_thread(thread);
-	set_context(thread.context);
+	try {
+		load_thread(thread);
+		set_context(thread.context);
+	} catch (...) {
+		load_thread(caller);
+		throw;
+	}
 	load_thread(caller);
+    // A racing syscall/exception remains queued for scheduler dispatch, but its
+    // authoritative packet must include the edit before the snapshot is discarded.
+    thread.stopped = false;
+    thread.context_in_task = true;
+    if (!thread.context_pause_interrupt) return;
 	{
 		std::lock_guard lock(worker.mutex);
+		if (wow64_module) __atomic_store_n(worker.interrupt, 0u, __ATOMIC_RELEASE);
+		else __atomic_store_n(worker.environment->cpu.doorbell, 0u, __ATOMIC_RELEASE);
 		worker.stopped.store(false, std::memory_order_release);
 		worker.requested = true;
 	}
@@ -1365,7 +1380,9 @@ void FexProcess::pause_thread(NativeThreadState &thread)
 	state->selected = thread.task;
 	state->teb = wow64_module ? thread.context.registers.fs_base : thread.context.registers.gs_base;
 	try {
-		state->workers.at(thread.task)->pause();
+		auto &worker = *state->workers.at(thread.task);
+		worker.pause();
+		thread.context_pause_interrupt = worker.result.kind == NativeStop::timeout;
 		thread.context = context();
 	} catch (...) {
 		state->selected = selected;

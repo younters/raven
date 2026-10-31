@@ -595,7 +595,8 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			NativeProcess &process;
 			NativeThreadState &snapshot;
 			bool active;
-			~ResumeContext() { if (active) process.resume_context_thread(snapshot); }
+			~ResumeContext() { if (active) { try { process.resume_context_thread(snapshot); } catch (...) {} } }
+            void finish() { if (active) { active=false; process.resume_context_thread(snapshot); } }
 		} resume_context{call.process, thread->snapshot, false};
 #endif
 		if (!self) call.process.pause_thread(thread->snapshot);
@@ -604,6 +605,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 #endif
 		auto packet = self ? call.process.context() : thread->snapshot.context;
 		auto &r = packet.registers;
+		const auto original = r;
 		const auto word = [&](size_t offset, auto &value, size_t width) {
 			if (set) {
 				value = width == 8 ? call.load<uint64_t>(call[1]+offset) : width == 4 ? call.load<uint32_t>(call[1]+offset) : call.load<uint16_t>(call[1]+offset);
@@ -618,7 +620,12 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			word(x86 ? 0xbc : 0x38, r.cs, x86 ? 4 : 2);
 			word(x86 ? 0xc8 : 0x42, r.ss, x86 ? 4 : 2);
 			word(x86 ? 0xc0 : 0x44, r.eflags, 4);
-			if (set) r.eflags = (r.eflags & 0x3f7fd7u) | 2;
+			if (set) {
+                // User arithmetic flags, TF, DF, OF, RF, AC and ID are writable.
+                constexpr uint32_t writable = 0x250dd5u;
+                r.eflags = ((original.eflags & ~writable) | (r.eflags & writable) | 2) & ~0x1a7000u;
+                r.cs = original.cs; r.ss = original.ss;
+            }
 		}
 		if (flags & 2) {
 			unsigned long long *regs[]{&r.rax,&r.rcx,&r.rdx,&r.rbx,&r.rsi,&r.rdi,&r.r8,&r.r9,&r.r10,&r.r11,&r.r12,&r.r13,&r.r14,&r.r15};
@@ -631,9 +638,24 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			word(x86 ? 0x94 : 0x3c, r.es, x86 ? 4 : 2);
 			word(x86 ? 0x90 : 0x3e, r.fs, x86 ? 4 : 2);
 			word(x86 ? 0x8c : 0x40, r.gs, x86 ? 4 : 2);
+            // Selectors describe runtime-owned descriptors, including the x86 TEB.
+            if (set) { r.ds=original.ds; r.es=original.es; r.fs=original.fs; r.gs=original.gs; }
 		}
-		if (flags & 0x10) for (size_t i=0;i<6;++i)
-			word((x86 ? 4 : 0x48)+i*(x86 ? 4 : 8), thread->debug_registers[i], x86 ? 4 : 8);
+		if (flags & 0x10) {
+            auto debug = thread->debug_registers;
+            for (size_t i=0;i<6;++i)
+                word((x86 ? 4 : 0x48)+i*(x86 ? 4 : 8), debug[i], x86 ? 4 : 8);
+            // Register read-back only: neither engine currently arms breakpoints.
+            // Discard reserved bits and the privileged global-detect bit.
+            if (set) {
+                for (unsigned i=0; i<4; ++i) {
+                    const unsigned type=(debug[5]>>(16+i*4))&3, length=(debug[5]>>(18+i*4))&3;
+                    if (type==2 || (!type && length) || (x86 && length==2)) { fail(87); return; }
+                }
+                debug[5] = (debug[5] & 0xffff0355u) | 0x400;
+                thread->debug_registers = debug;
+            }
+        }
 		if ((!x86 && (flags & 8)) || (x86 && (flags & 0x20))) {
 			const auto address = call[1] + (x86 ? 0xcc : 0x100);
 			if (packet.xstate.size() < 512) throw std::runtime_error("missing guest floating-point state");
@@ -675,17 +697,25 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 				if (set) { auto bytes=call.read(call[1]+0x38+i*10,10); std::copy(bytes.begin(),bytes.end(),fp.begin()+32+i*16); }
 				else call.write(call[1]+0x38+i*10,std::span<const uint8_t>(fp.data()+32+i*16,10));
 			}
-			if (!set) call.store<uint32_t>(call[1]+0x88,0xffff0000u|status);
+			if (!set) call.store<uint32_t>(call[1]+0x88,0);
 		}
 		if (set) {
 			if (self) call.process.set_context(packet);
 			else { thread->snapshot.context = std::move(packet); thread->snapshot.context_in_task = false; }
 		}
-		call.ret(nt ? 0 : 1);
+#ifdef __APPLE__
+        resume_context.finish();
+#endif
+        call.ret(nt ? 0 : 1);
 	};
 	for (auto name : {"GetThreadContext", "SetThreadContext", "Wow64GetThreadContext", "Wow64SetThreadContext", "NtGetContextThread", "NtSetContextThread"}) {
 		const std::string api(name);
-		registry.add(name, 2, [thread_context, api](ApiCall &call) { thread_context(call, api.find("Set") != std::string::npos, api.starts_with("Wow64"), api.starts_with("Nt")); });
+		registry.add(name, 2, [thread_context, api](ApiCall &call) {
+            try { thread_context(call, api.find("Set") != std::string::npos, api.starts_with("Wow64"), api.starts_with("Nt")); }
+            catch (const std::runtime_error &) {
+                if (api.starts_with("Nt")) call.ret(0xc000000du); else call.fail(87);
+            }
+        });
 	}
 	// A thread's description is a name the program gives it; it is kept per thread and handed back in memory the program frees with LocalFree.
 	auto descriptions = std::make_shared<std::map<uint32_t, std::u16string>>();
