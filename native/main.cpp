@@ -308,7 +308,7 @@ int main(int argc, char **argv)
 		if (bind_imports || run_modules || run_process) {
 			raven::ModuleSet modules;
 #ifdef RAVEN_FEX_PROCESS
-			if (use_fex) modules.set_address_space(raven::fex_address_available, 0x10000000000ULL);
+			if (use_fex) modules.set_address_space(raven::fex_image_address_available, 0x10000000000ULL);
 #endif
 			raven::PEModule *entry = nullptr;
 			for (int i = (run_modules || run_process) ? first_file : 2; i < last_file; ++i) {

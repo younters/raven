@@ -96,6 +96,14 @@ int main(int argc, char **argv)
 			loaded.data()[image.entry] = 0x0f; loaded.data()[image.entry + 1] = 0x0b;
 		} else if (mode == "internal") {
 			// Tested in an isolated child: a host BRK must never become a guest exception.
+		} else if (mode == "unaligned") {
+			const uint8_t code[]{0xb8, 42, 0, 0, 0, 0x48, 0x89, 0x44, 0x24, 0xf4,
+				0x48, 0x8b, 0x44, 0x24, 0xf4, 0xc3};
+			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
+		} else if (mode == "nt-service") {
+			// mov r10,rcx; mov eax,1234h; syscall; ret
+			const uint8_t code[]{0x49, 0x89, 0xca, 0xb8, 0x34, 0x12, 0, 0, 0x0f, 0x05, 0xc3};
+			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
 		} else if (mode == "syscall") {
 			const uint8_t code[]{0xb8, 0x34, 0x12, 0, 0, 0x0f, 0x05, 0x48, 0x83, 0xc0, 5, 0xc3};
 			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
@@ -158,6 +166,18 @@ int main(int argc, char **argv)
 		}
 		if (mode == "internal") asm volatile("brk #0");
 		auto result = process.call(loaded.base() + image.entry, {}, std::chrono::milliseconds(mode == "timeout" ? 20 : 5000));
+		if (mode == "nt-service") {
+			check(result.stop == raven::NativeStop::syscall && result.value == 0x1234, "NT syscall number lost");
+			bool rejected = false;
+			try { process.enter_nt_service(result.instruction, 0x1235); }
+			catch (const std::runtime_error &) { rejected = true; }
+			check(rejected, "NT service accepted wrong captured number");
+			process.enter_nt_service(result.instruction, 0x1234);
+			check(process.context().registers.orig_rax == uint64_t(-1), "NT service still marked syscall");
+			check(process.api_arguments(1)[0] == process.context().registers.r10, "NT argument not restored");
+			process.return_api(42);
+			result = process.resume();
+		}
 		if (mode == "selfmodify") {
 			check(result.stop == raven::NativeStop::returned && result.value == 1, "first code result mismatch");
 			const auto address = loaded.base() + image.entry;

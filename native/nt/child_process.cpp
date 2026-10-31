@@ -143,7 +143,13 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 	}
 	self[length] = 0;
 	// What the parent was started with, such as the window system and the time budget, applies to its children.
-	std::vector<std::string> arguments{self, "--run-process", "--execution=native"};
+	std::vector<std::string> arguments{self, "--run-process",
+#ifdef __APPLE__
+		raven_darwin::child_execution_argument()
+#else
+		"--execution=native"
+#endif
+	};
 	if (const char *options = std::getenv("RAVEN_CHILD_OPTIONS")) {
 		std::istringstream words(options);
 		for (std::string word; words >> word;)
