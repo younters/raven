@@ -5,18 +5,20 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from fex_modhost_contract import verify_patch_pins, verify_module_pin
+from fex_modhost_contract import verify_patch_pins, verify_module_pin, verify_wow64_module_pin
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--host', required=True)
 p.add_argument('--fixture', required=True)
 p.add_argument('--modules')
+p.add_argument('--wow64', action='store_true')
 a = p.parse_args()
 value = a.modules or os.environ.get('RAVEN_FEX_MODULE_ROOT')
 root = Path(value) if value else None
-if root is None or not (root / 'xtajit64.dll').is_file():
+module = 'xtajit.dll' if a.wow64 else 'xtajit64.dll'
+if root is None or not (root / module).is_file():
     print('SKIP: provision RAVEN_FEX_MODULE_ROOT/xtajit64.dll')
     sys.exit(77)
-verify_module_pin(root / 'xtajit64.dll', verify_patch_pins())
+(verify_wow64_module_pin if a.wow64 else verify_module_pin)(root / module, verify_patch_pins())
 r = subprocess.run([a.host, a.fixture, 'internal'], env=dict(os.environ, RAVEN_FEX_MODULE_ROOT=str(root)),
                    capture_output=True, text=True, timeout=10)
 print(r.stdout, end='')

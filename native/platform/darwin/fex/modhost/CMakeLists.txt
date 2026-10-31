@@ -47,3 +47,10 @@ add_test(NAME fex_modhost_tier0_gap_expected_failure COMMAND ${Python3_EXECUTABL
 	"${RAVEN_MODHOST_REPO}/scripts/test-fex-modhost.py" --tier0-gap
 	--host $<TARGET_FILE:fex_modhost_substrate> --abi $<TARGET_FILE:fex_modhost_abi>)
 set_tests_properties(fex_modhost_tier0_gap_expected_failure PROPERTIES TIMEOUT 30 WILL_FAIL TRUE LABELS "fex;expected-failure")
+
+# M4 probes are kept here to avoid touching the shared Darwin option gating.
+add_executable(fex_guest_window_test ../guest_window_test.cpp)
+target_compile_features(fex_guest_window_test PRIVATE cxx_std_17)
+add_test(NAME native_guest_window_fex COMMAND fex_guest_window_test)
+set_tests_properties(native_guest_window_fex PROPERTIES TIMEOUT 15 LABELS "fex;m4;placement")
+include(${CMAKE_CURRENT_LIST_DIR}/../m4.cmake)
