@@ -34,6 +34,8 @@
 #ifdef __APPLE__
 #include "platform/darwin/audio/api.h"
 #include "platform/darwin/dxmt/kernel_thunks.h"
+#include "platform/darwin/dxmt/presentation.h"
+#include "platform/darwin/unix_calls.h"
 #endif
 #include "x86_thread_api.h"
 
@@ -142,7 +144,7 @@ constexpr std::string_view shared_allowed[] = {
 	"QueryFullProcessImageNameW", "QueryFullProcessImageNameA",
 	"NtQueryInformationProcess", "NtReadVirtualMemory", "NtWriteVirtualMemory", "ReadProcessMemory", "WriteProcessMemory", "OpenProcess",
 	"NtSetInformationThread", "NtOpenThreadToken", "NtOpenThreadTokenEx", "NtOpenThread", "NtOpenProcess", "NtOpenProcessToken", "NtOpenProcessTokenEx", "NtQueryInformationThread", "OpenThread", "GetThreadId",
-	"VirtualAllocEx", "VirtualFreeEx", "VirtualProtectEx", "VirtualQueryEx",
+	"VirtualAlloc2FromApp", "VirtualAllocEx", "VirtualFreeEx", "VirtualProtectEx", "VirtualQueryEx",
 	"SetDllDirectoryW", "SetDllDirectoryA", "SetConsoleTitleW", "SetConsoleTitleA", "OpenSCManagerW", "OpenSCManagerA", "OpenServiceW", "OpenServiceA", "CreateServiceW", "CreateServiceA",
 	"CloseServiceHandle", "DeleteService", "ChangeServiceConfigW", "ChangeServiceConfig2W", "ChangeServiceConfig2A", "QueryServiceConfigW", "QueryServiceConfigA", "GetServiceDisplayNameW", "GetServiceDisplayNameA",
 	"QueryServiceObjectSecurity", "SetServiceObjectSecurity", "RegQueryInfoKeyA", "RegQueryInfoKeyW", "LookupPrivilegeValueA", "QueryServiceStatus", "QueryServiceStatusEx", "StartServiceW", "ControlService",
@@ -500,6 +502,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		if (library == "ntdll.dll")
 			for (const auto name : {"memcpy", "memmove", "memset", "memcmp", "strlen", "wcslen", "strncpy", "_vsnprintf"})
 				merged.push_back(name);
+#ifdef __APPLE__
+		if (library == "ntdll.dll") merged.push_back("__wine_unix_call_dispatcher");
+#endif
 		// A library loaded later, such as an installer plug-in, imports names the initial graph never named: every public name binds.
 		const auto published = system_export_names(library);
 		merged.insert(merged.end(), published.begin(), published.end());
@@ -612,7 +617,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		"MessageBoxW", "MoveWindow", "PtInRect", "ReleaseCapture", "SetCapture", "SetDlgItemInt", "SetDlgItemTextW", "SetMenu",
 		"SetRect", "SetTimer", "TranslateAcceleratorW", "WinHelpW", "wsprintfW", "wsprintfA", "CreateWindowExA", "DispatchMessageA",
 		"GetMessageA", "PeekMessageA", "RegisterClassA", "RegisterClassExA", "UnregisterClassA", "LoadCursorA", "LoadIconA", "GetAsyncKeyState",
-		"SetCursor", "GetCursorPos", "SetCursorPos", "DefWindowProcA", "SendMessageA", "PostMessageA", "SetWindowTextA",
+		"SetCursor", "GetCursorInfo", "GetCursorPos", "SetCursorPos", "DefWindowProcA", "SendMessageA", "PostMessageA", "SetWindowTextA",
 		"ExitWindowsEx", "MessageBoxA", "SetWindowPos", "CheckDlgButton", "MessageBoxIndirectW", "TrackPopupMenu", "DrawTextW",
 		"CreateDialogParamW", "SendMessageTimeoutW"};
 	std::vector<std::string_view> gdi_pending{"CreateBrushIndirect", "GetDeviceCaps", "SetDIBitsToDevice", "SetLayout", "SetPixel", "SetROP2",
@@ -799,7 +804,12 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	for (const auto library : system_library_names())
 		served.insert(std::string(library));
 	for (const auto &library : served) {
-		add_library(library.c_str(), {}, {}, [](std::string_view name) { return registry_words(name) != UINT32_MAX ? registry_words(name) : uint32_t(0); },
+		std::span<const std::string_view> data;
+#ifdef __APPLE__
+		static constexpr std::string_view unix_data[] = {"__wine_unix_call_dispatcher"};
+		if (library == "ntdll.dll") data = unix_data;
+#endif
+		add_library(library.c_str(), {}, data, [](std::string_view name) { return registry_words(name) != UINT32_MAX ? registry_words(name) : uint32_t(0); },
 			system_export_ordinals(library));
 	}
 	alias_api_sets(modules);
@@ -809,6 +819,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		images.push_back(&module->loaded);
 	const auto deadline = std::chrono::steady_clock::now() + timeout;
 	NativeProcess process(images, bootstrap, timeout, NativeMode::x86, entry.image.stack_reserve);
+#ifdef __APPLE__
+	DarwinUnixCalls darwin_unix_calls(process, modules);
+#endif
 	for (const auto &[address, api] : traps)
 		process.add_api_trap(address, api.second);
 	NativeEnvironment environment(process, entry.loaded.base(), uint32_t(::getpid()), 1);
@@ -951,7 +964,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	desktop.register_image_api(shared_api);
 	NativeX86Compat compat(process, environment, windows);
 	// Shared handlers whose arguments are 32-bit words and whose structures carry no pointers.
-	std::set<std::string_view> shared_names{"MoveWindow", "LoadCursorA", "LoadIconA", "GetAsyncKeyState", "SetCursor", "GetCursorPos", "SetCursorPos",
+	std::set<std::string_view> shared_names{"MoveWindow", "LoadCursorA", "LoadIconA", "GetAsyncKeyState", "SetCursor", "GetCursorInfo", "GetCursorPos", "SetCursorPos",
 		"DefWindowProcA", "SendMessageA", "PostMessageA", "SetWindowTextA", "CreateFontA", "ExtTextOutA", "GetDIBits", "GetTextExtentPoint32A",
 		"GetTextMetricsA", "SetDIBits", "MessageBoxA", "SetWindowPos", "SelectPalette", "PatBlt", "_lopen", "_lcreat", "_lread", "_lwrite", "_llseek", "lstrcpyA", "lstrlenA", "GetWindowsDirectoryA",
 		"GlobalUnlock", "GlobalFree", "GlobalAlloc", "SetErrorMode", "GlobalLock", "GetOEMCP", "GetCPInfo", "WideCharToMultiByte", "DeleteFileA",
@@ -972,6 +985,15 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	VulkanThunk32 vulkan32(process, vulkan);
 #endif
 	windows.set_presentation(std::move(presentation));
+#ifdef __APPLE__
+	DarwinDXMTPresentation dxmt_presentation(process, windows);
+	const auto unix_events = [&] {
+		process.drain_unix_events([&](uint64_t event) { kernel_objects.set_event(event, true); });
+		dxmt_presentation.poll();
+	};
+	guest_threads.add_service(unix_events);
+	guest_threads.add_pump(unix_events);
+#endif
 	desktop.set_updated([&](uint64_t window) { windows.drawing(window); });
 	struct ProcessExit { uint32_t code; uint64_t instruction; };
 	// CoGetMalloc hands out one allocator object, whose methods are the task allocator's handlers.
@@ -1206,7 +1228,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			// component: the call goes on there with the same arguments, so handlers that resume elsewhere, as a C++ catch does, never return
 			// to the runtime. The vectored handler lists live there too, and fibers, which the thread switches by itself.
 			static const std::map<std::string_view, std::string_view> in_runtime{{"RaiseException", "raven_raise_exception"},
-				{"RtlUnwind", "raven_unwind"}, {"AddVectoredExceptionHandler", "raven_add_vectored_exception"},
+				{"RtlUnwind", "raven_unwind"}, {"RtlAddVectoredExceptionHandler", "raven_add_vectored_exception"},
+				{"RtlAddVectoredContinueHandler", "raven_add_vectored_continue"}, {"RtlRemoveVectoredExceptionHandler", "raven_remove_vectored"},
+				{"RtlRemoveVectoredContinueHandler", "raven_remove_vectored"}, {"AddVectoredExceptionHandler", "raven_add_vectored_exception"},
 				{"AddVectoredContinueHandler", "raven_add_vectored_continue"}, {"RemoveVectoredExceptionHandler", "raven_remove_vectored"},
 				{"RemoveVectoredContinueHandler", "raven_remove_vectored"}, {"CreateFiber", "raven_create_fiber"},
 				{"CreateFiberEx", "raven_create_fiber_ex"}, {"ConvertThreadToFiber", "raven_convert_thread_to_fiber"},
@@ -1305,7 +1329,11 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				process.abandon_call();
 				throw ProcessExit{code, result.instruction};
 			}
-			if (!environment.dispatch(api) && !thread_api.dispatch(api) && !system_api.dispatch(api) && !compat.dispatch(api) && !direct3d9.dispatch(api) &&
+			if (
+#ifdef __APPLE__
+				!darwin_unix_calls.dispatch(api) &&
+#endif
+				!environment.dispatch(api) && !thread_api.dispatch(api) && !system_api.dispatch(api) && !compat.dispatch(api) && !direct3d9.dispatch(api) &&
 #ifndef __APPLE__
                 !directsound.dispatch(api) &&
 #endif

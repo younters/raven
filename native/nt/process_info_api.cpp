@@ -457,6 +457,39 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 			call.store<uint32_t>(call[4], answer->flags);
 		call.ret(allocate ? answer->size : 1);
 	};
+	registry.add("VirtualAlloc2FromApp", 7, [&context, is_self](ApiCall &call) {
+		if (call[0] && !is_self(call[0])) { call.fail(50); return; }
+		if (call.u32(4) & (0x10 | 0x20 | 0x40 | 0x80)) { call.fail(87); return; }
+		uint64_t alignment = 65536;
+		if (call.u32(6)) {
+			if (call.u32(6) != 1 || !call[5] || call.load<uint64_t>(call[5]) != 1) { call.fail(50); return; }
+			const auto requirements = call.load_pointer(call[5] + 8);
+			const auto width = call.pointer_width();
+			if (!requirements) { call.fail(87); return; }
+			// This initial implementation supports the unconstrained aligned reservation.
+			if (call.load_pointer(requirements) || call.load_pointer(requirements + width)) {
+				call.fail(50); return;
+			}
+			alignment = call.load_pointer(requirements + 2 * width);
+			if (!alignment) alignment = 65536;
+			if (alignment < 65536 || (alignment & (alignment - 1))) { call.fail(87); return; }
+		}
+		if (call[1] || alignment == 65536 || !(call.u32(3) & 0x2000)) {
+			if (call[1] && (call[1] & (alignment - 1))) { call.fail(87); return; }
+			const auto result = context.memory.allocate(call[1], call[2], call.u32(3), call.u32(4));
+			if (result.status) call.fail(87); else call.ret(result.address);
+			return;
+		}
+		if (!call[2] || call[2] > UINT64_MAX - alignment) { call.fail(87); return; }
+		// Find an available aligned interval without retaining invisible padding.
+		const auto probe = context.memory.allocate(0, call[2] + alignment, 0x2000, 4);
+		if (probe.status) { call.fail(8); return; }
+		const auto address = (probe.address + alignment - 1) & ~(alignment - 1);
+		const auto released = context.memory.free(probe.address, 0, 0x8000);
+		if (released.status) { call.fail(8); return; }
+		const auto result = context.memory.allocate(address, call[2], call.u32(3), call.u32(4));
+		if (result.status) call.fail(8); else call.ret(result.address);
+	});
 	registry.add("VirtualAllocEx", 5, [memory_operation](ApiCall &call) { memory_operation(call, "process:allocate"); });
 	registry.add("VirtualFreeEx", 4, [memory_operation](ApiCall &call) { memory_operation(call, "process:free"); });
 	registry.add("VirtualProtectEx", 5, [memory_operation](ApiCall &call) { memory_operation(call, "process:protect"); });

@@ -39,7 +39,7 @@ target_link_libraries(fex_wow64_process_test PRIVATE raven_cpu)
 # x18 holds the execution TEB; the macOS 11 legacy SDK permits its use.
 target_link_options(fex_wow64_process_test PRIVATE -Wl,-platform_version,macos,11.0,11.0)
 add_dependencies(fex_wow64_process_test fex_m4_fixtures)
-foreach(contract fs fault timeout host-smc guest-smc stdcall cdecl)
+foreach(contract unaligned fs fault timeout host-smc guest-smc stdcall cdecl)
 	add_test(NAME native_wow64_${contract}_fex COMMAND fex_wow64_process_test ${M4_ENTRY} ${contract})
 	set_tests_properties(native_wow64_${contract}_fex PROPERTIES TIMEOUT 15 LABELS "fex;m4;engine"
 		ENVIRONMENT "RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")

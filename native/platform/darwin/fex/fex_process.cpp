@@ -1,5 +1,5 @@
-#include "../mullion/backend.h"
 // SPDX-License-Identifier: MIT
+#include "../mullion/backend.h"
 #include "fex_process.h"
 #include "guest_window.h"
 #include "fex-module-config.h"
@@ -37,10 +37,12 @@ struct StopPacket {
 };
 thread_local StopPacket last_stop{};
 // Libraries and their callback state live until process exit, including GPU callbacks.
-struct UnixLibrary { void *image; int32_t (**table)(void *); uint32_t count; };
+struct UnixLibrary { std::string path; void *image; int32_t (**table)(void *); uint32_t count; };
 std::vector<UnixLibrary> unix_libraries;
+std::function<std::vector<uint8_t>(uint64_t, size_t)> unix_read_memory;
 int (*read_native_buffer)(uint64_t, void *, size_t) = nullptr;
 raven_control *const unix_control = new raven_control{};
+thread_local uint32_t *wow64_unix_doorbell = nullptr;
 constexpr uint32_t unix_service = 0x7ffffffd;
 constexpr uint32_t completion = 0x7ffffffe;
 uint64_t packet_word(void *packet, size_t offset)
@@ -51,20 +53,38 @@ uint64_t packet_word(void *packet, size_t offset)
 }
 uint64_t process_dispatch(uint64_t number, void *packet)
 {
-	if (!wow64_module && number == unix_service) {
-		const auto handle = packet_word(packet, 0xc8); // R10, preserved RCX
-		const auto ordinal = uint32_t(packet_word(packet, 0x88)); // EDX
-		const auto args = packet_word(packet, 0xb8); // R8
+	if (number == unix_service) {
+		uint64_t handle = packet_word(packet, 0xc8); // R10, preserved RCX
+		uint32_t ordinal = uint32_t(packet_word(packet, 0x88)); // EDX
+		uint64_t args = packet_word(packet, 0xb8); // R8
+		if (wow64_module) {
+			uint32_t esp;
+			memcpy(&esp, static_cast<uint8_t *>(packet) + 0xc4, 4);
+			if (esp > UINT32_MAX - 20) return 0xc000000du;
+			std::vector<uint8_t> words;
+			try { words = unix_read_memory(uint64_t(esp) + 4, 16); }
+			catch (const std::runtime_error &) { return 0xc0000005u; }
+			memcpy(&handle, words.data(), 8);
+			memcpy(&ordinal, words.data() + 8, 4);
+			uint32_t guest_args;
+			memcpy(&guest_args, words.data() + 12, 4);
+			if (!guest_args) return 0xc000000du;
+			try { unix_read_memory(guest_args, 8); } // Validate the header before entering native code.
+			catch (const std::runtime_error &) { return 0xc0000005u; }
+			args = wow64_guest_base + guest_args;
+		}
 		uint64_t status = 0xc0000008u;
 		if (handle && handle <= unix_libraries.size()) {
 			const auto &library = unix_libraries[handle - 1];
+			if (getenv("RAVEN_TRACE_UNIX")) fprintf(stderr, "unix enter %u\n", ordinal);
 			status = ordinal < library.count ? uint32_t(library.table[ordinal](reinterpret_cast<void *>(args))) : 0xc000000du;
+			if (getenv("RAVEN_TRACE_UNIX")) fprintf(stderr, "unix leave %u status=%llx\n", ordinal, (unsigned long long)status);
 		}
 		// BeginSimulation clears the suspend doorbell on reentry. A hot unix
 		// polling loop must not discard a scheduler interrupt on every call.
-		if (__atomic_load_n(RavenNT::active_thread->cpu.doorbell, __ATOMIC_ACQUIRE)) {
-			memcpy(static_cast<uint8_t *>(packet) + 0x78, &status, sizeof(status));
-			last_stop = {raven::NativeStop::timeout, 0, packet_word(packet, 0xf8), {}};
+		if (__atomic_load_n(wow64_module ? wow64_unix_doorbell : RavenNT::active_thread->cpu.doorbell, __ATOMIC_ACQUIRE)) {
+			memcpy(static_cast<uint8_t *>(packet) + (wow64_module ? 0xb0 : 0x78), &status, wow64_module ? 4 : 8);
+			last_stop = {raven::NativeStop::timeout, 0, wow64_module ? uint32_t(packet_word(packet, 0xb8)) : packet_word(packet, 0xf8), {}};
 			siglongjmp(stop_frame, 1);
 		}
 		return status;
@@ -143,6 +163,7 @@ struct FexWorker {
 					// FEX InternalThreadState::CurrentFrame is const and points to BaseFrameState.
 					interrupt = reinterpret_cast<uint32_t *>(raven_ec_call(mapped_image->export_address("RavenWow64Doorbell"), args, environment->teb.data()));
 					if (!interrupt) throw std::runtime_error("FEX WoW64 needs a suspend doorbell; rebuild the module");
+					wow64_unix_doorbell = interrupt;
 				}
 				std::unique_lock lock(mutex);
 				ready = true;
@@ -236,7 +257,25 @@ struct FexProcess::State {
 	}
 	struct Region { size_t size; bool image; };
 	std::map<uint64_t, Region> regions;
+	// Reserved pages have implicit PROT_NONE; store only explicit page overrides.
 	std::map<uint64_t, int> pages;
+	bool mapped_range(uint64_t address, uint64_t size) const {
+		if (!size || address > UINT64_MAX - size) return false;
+		const uint64_t end = address + size;
+		while (address < end) {
+			auto region = regions.upper_bound(address);
+			if (region != regions.begin()) {
+				--region;
+				if (address - region->first < region->second.size) {
+					address = std::min(end, region->first + region->second.size);
+					continue;
+				}
+			}
+			if (!pages.contains(address & ~uint64_t(4095))) return false;
+			address = std::min(end, (address & ~uint64_t(4095)) + 4096);
+		}
+		return true;
+	}
 	std::map<uint64_t, uint32_t> traps;
 	std::map<uint64_t, size_t> image_reservations;
 	std::vector<LoadedImage *> images;
@@ -280,6 +319,7 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 		throw std::runtime_error("FEX module already claimed; a second FexProcess in this host is unsupported");
 	state->mode = mode;
 	wow64_module = mode == NativeMode::x86;
+	unix_read_memory = [this](uint64_t address, size_t size) { return read_memory(address, size); };
 	if (wow64_module) {
 		// The executable, not its DLLs, selects the WoW64 user range.
 		for (auto *image : images) {
@@ -324,6 +364,9 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 	if (wow64_module) {
 		const uint8_t gate32[]{0x89, 0xc2, 0xb8, 0xfe, 0xff, 0xff, 0x7f, 0xcd, 0x2e, 0x0f, 0x0b};
 		memcpy(state->gate, gate32, sizeof(gate32));
+		// Wine PE32 stdcall dispatcher: uint64 handle, uint32 ordinal, uint32 args.
+		const uint8_t unix_gate32[]{0xb8,0xfd,0xff,0xff,0x7f,0xcd,0x2e,0xc2,0x10,0x00};
+		memcpy(static_cast<uint8_t *>(state->gate) + 64, unix_gate32, sizeof(unix_gate32));
 	} else {
 		memcpy(state->gate, gate, sizeof(gate));
 		// Win64 unix dispatcher: mov r10,rcx; mov eax,unix_service; syscall; ret.
@@ -450,6 +493,7 @@ NativeResult FexProcess::resume()
 			uint64_t query[8]{};
 			state->interrupt = reinterpret_cast<uint32_t *>(raven_ec_call(mapped_image->export_address("RavenWow64Doorbell"), query, state->environment()->teb.data()));
 			if (!state->interrupt) throw std::runtime_error("FEX WoW64 needs a suspend doorbell; rebuild the module");
+			wow64_unix_doorbell = state->interrupt;
 		}
 		std::jthread timer([&](std::stop_token stop) {
 			std::unique_lock lock(timer_mutex);
@@ -730,7 +774,8 @@ uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 	state->regions.emplace(address, State::Region{n, false});
 	uint64_t args[8]{state->host(address, n), n, 0x3000, guest_protection(protection), 0, 0};
 	notify_memory("NotifyMemoryAlloc", args, 4);
-	for (size_t at = 0; at < n; at += 4096) state->pages[address + at] = PROT_READ | PROT_WRITE;
+	if (protection != PROT_NONE)
+		for (size_t at = 0; at < n; at += 4096) state->pages[address + at] = PROT_READ | PROT_WRITE;
 	protect_memory(address, n, protection);
 	return address;
 }
@@ -738,10 +783,15 @@ void FexProcess::protect_memory(uint64_t address, size_t size, int protection)
 {
 	if (!size || address % 4096 || size % 4096 || address > UINT64_MAX - size)
 		throw std::runtime_error("FEX invalid protection range");
-	for (uint64_t at = address; at < address + size; at += 4096)
-		if (!state->pages.contains(at)) throw std::runtime_error("FEX protection range is unmapped");
+	if (!state->mapped_range(address, size)) throw std::runtime_error("FEX protection range is unmapped");
 	uint64_t args[8]{state->host(address, size), size, guest_protection(protection)};
 	notify_memory("NotifyMemoryProtect", args, 3, [&] {
+		if (protection == PROT_NONE && !(address % 16384) && !(size % 16384)) {
+			if (mprotect(reinterpret_cast<void *>(state->host(address, size)), size, PROT_NONE))
+				throw std::runtime_error("FEX host protection failed");
+			state->pages.erase(state->pages.lower_bound(address), state->pages.lower_bound(address + size));
+			return;
+		}
 		for (uint64_t at = address; at < address + size; at += 4096) state->pages[at] = protection;
 		if (!state->window && address == 0x7ffe0000 && size == 4096) return;
 		// Tier 0: union the four logical protections of each real 16K page. Guest
@@ -763,7 +813,7 @@ bool FexProcess::has_protection(uint64_t address, size_t size, int protection) c
 	if (!size || address > UINT64_MAX - size) return false;
 	for (auto at = address & ~uint64_t(4095); at < address + size; at += 4096) {
 		auto found = state->pages.find(at);
-		if (found == state->pages.end() || found->second != protection) return false;
+		if (found == state->pages.end() ? protection != PROT_NONE || !state->mapped_range(at, 4096) : found->second != protection) return false;
 	}
 	return true;
 }
@@ -779,7 +829,7 @@ void FexProcess::unmap_memory(uint64_t address)
 			if (p == MAP_FAILED) throw std::runtime_error("WoW64 cannot restore reservation");
 		} else if (munmap(reinterpret_cast<void *>(address), n)) throw std::runtime_error("FEX unmap failed");
 	});
-	for (auto at = address; at < address + n; at += 4096) state->pages.erase(at);
+	state->pages.erase(state->pages.lower_bound(address), state->pages.lower_bound(address + n));
 	state->regions.erase(found);
 }
 void FexProcess::unmap_image(uint64_t address)
@@ -820,17 +870,49 @@ bool FexProcess::active() const { return state->active; }
 bool FexProcess::stopped() const { return !state->parallel || state->workers.at(state->selected)->stopped.load(std::memory_order_acquire); }
 bool FexProcess::parallel() const { return state->parallel; }
 uint64_t FexProcess::return_gate() const { return state->guest(state->gate); }
-uint64_t FexProcess::unix_call_gate() const { return wow64_module ? 0 : state->guest(state->gate) + 64; }
+uint64_t FexProcess::unix_call_gate() const { return state->guest(state->gate) + 64; }
 raven_control *FexProcess::darwin_control() const { return unix_control; }
 uint32_t FexProcess::copy_unix_port(uint32_t port) const
 {
 	return mach_port_mod_refs(mach_task_self(), port, MACH_PORT_RIGHT_SEND, 1) == KERN_SUCCESS ? port : 0;
 }
-uint64_t FexProcess::load_unix_library(const std::string &, uint32_t count)
+uint64_t FexProcess::load_unix_library(const std::string &path, uint32_t count)
 {
 	state->require_owner();
-	if (wow64_module || (count == 0 || count > 4096)) throw std::runtime_error("unsupported FEX unix table");
-	if (!unix_libraries.empty()) return 1;
+	const bool mtld3d = std::filesystem::path(path).filename() == "mtld3d.so";
+	if (wow64_module && !mtld3d) throw std::runtime_error("FEX WoW64 translator is only defined for mtld3d");
+	if ((!mtld3d && std::filesystem::path(path).filename() != "winemetal.so") ||
+	    (mtld3d ? count != 22 : mullion_selected() ? count == 0 || count > 4096 : count != 132 && count != 146))
+		throw std::runtime_error("unsupported FEX unix library/table pair");
+	for (size_t i = 0; i < unix_libraries.size(); ++i)
+		if (unix_libraries[i].path == path) {
+			if (unix_libraries[i].count != count) throw std::runtime_error("FEX cached unix table count mismatch");
+			return i + 1;
+		}
+	if (mtld3d) {
+		// No DXMT ordinal wrappers: mtld3d owns a distinct 22-entry ABI.
+		const char *root = getenv("RAVEN_MTLD3D_ARM64_ROOT");
+		if (!root || !*root) throw std::runtime_error("set RAVEN_MTLD3D_ARM64_ROOT to the private arm64 overlay");
+		uint32_t overlay_count = 0;
+		std::ifstream metadata(std::string(root) + "/unix-call-count");
+		if (!(metadata >> overlay_count) || overlay_count != count)
+			throw std::runtime_error("FEX mtld3d PE/unix table count mismatch");
+		void *adapter = dlopen((std::string(root) + "/raven-mtld3d.dylib").c_str(), RTLD_NOW | RTLD_GLOBAL);
+		if (!adapter) throw std::runtime_error(dlerror());
+		auto init = reinterpret_cast<void (*)(raven_control *)>(dlsym(adapter, "raven_mtld3d_init"));
+		auto version = reinterpret_cast<uint32_t (*)()>(dlsym(adapter, "raven_mtld3d_protocol_version"));
+		if (!init || !version || version() != RAVEN_GUEST_VERSION) throw std::runtime_error("mtld3d adapter protocol mismatch");
+		init(unix_control);
+		void *image = dlopen((std::string(root) + "/mtld3d.so").c_str(), RTLD_NOW | RTLD_LOCAL);
+		if (!image) throw std::runtime_error(dlerror());
+		auto table = reinterpret_cast<int32_t (**)(void *)>(dlsym(image, wow64_module ? "__wine_unix_call_wow64_funcs" : "__wine_unix_call_funcs"));
+		if (!table) { dlclose(image); throw std::runtime_error("FEX mtld3d table missing"); }
+		auto set_base = reinterpret_cast<void (*)(uint64_t)>(dlsym(image, "raven_mtld3d_set_guest_base"));
+		if (!set_base) throw std::runtime_error("mtld3d address translator missing");
+		set_base(wow64_module ? wow64_guest_base : 0);
+		unix_libraries.push_back({path, image, table, count});
+		return unix_libraries.size();
+	}
 	const std::string selected_root = mullion_selected() ? (mullion_root() / "unix-arm64").string() : "";
 	const char *root = mullion_selected() ? selected_root.c_str() : getenv("RAVEN_DXMT_ARM64_ROOT");
 	if (!root || !*root) root = RAVEN_DXMT_DEFAULT_ARM64_ROOT;
@@ -853,7 +935,7 @@ uint64_t FexProcess::load_unix_library(const std::string &, uint32_t count)
 	init(unix_control);
 	table = wrap(table, count);
 	if (!table) throw std::runtime_error("FEX DXMT table wrapping failed");
-	unix_libraries.push_back({image, reinterpret_cast<int32_t (**)(void *)>(table), count});
+	unix_libraries.push_back({path, image, reinterpret_cast<int32_t (**)(void *)>(table), count});
 	return unix_libraries.size();
 }
 void FexProcess::add_api_trap(uint64_t address, uint32_t callee_cleanup)

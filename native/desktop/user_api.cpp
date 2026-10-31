@@ -187,6 +187,16 @@ void NativeWindows::register_api(ApiRegistry &registry)
 		}
 		call.ret(std::max<size_t>(1, objects.count()));
 	});
+	registry.add("GetCursorInfo", 1, [this](ApiCall &call) {
+		const size_t width = call.pointer_width(), size = width == 4 ? 20 : 24;
+		if (!call[0] || call.load<uint32_t>(call[0]) != size) { call.fail(87); return; }
+		call.process.validate_write_memory(call[0], size);
+		call.store<uint32_t>(call[0] + 4, cursor_count >= 0 && current_cursor ? 1 : 0);
+		call.store_pointer(call[0] + 8, current_cursor);
+		call.store<int32_t>(call[0] + 8 + width, cursor_x);
+		call.store<int32_t>(call[0] + 12 + width, cursor_y);
+		call.ret(1);
+	});
 	registry.add("GetCursorPos", 1, [this](ApiCall &call) {
 		call.store<int32_t>(call[0], cursor_x);
 		call.store<int32_t>(call[0] + 4, cursor_y);

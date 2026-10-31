@@ -68,7 +68,7 @@ if(TARGET raven_cpu)
                 DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_cpu/entry.c VERBATIM)
             add_custom_target(fex_entry_fixture DEPENDS ${FEX_ENTRY_FIXTURE})
             add_dependencies(fex_process_test fex_entry_fixture)
-            foreach(contract entry syscall nt-service fault breakpoint divide ud2 timeout selfmodify lifetime served-malformed)
+            foreach(contract entry syscall nt-service fault breakpoint divide ud2 timeout selfmodify lifetime served-malformed sparse-reservation)
                 add_test(NAME native_${contract}_fex COMMAND fex_process_test ${FEX_ENTRY_FIXTURE} ${contract})
                 set_tests_properties(native_${contract}_fex PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77
                     LABELS "fex;m2" ENVIRONMENT "RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")
@@ -1180,3 +1180,31 @@ if(RAVEN_MULLION_ROOT AND RAVEN_MINGW64)
         endforeach()
     endforeach()
 endif()
+# Backend-neutral D3D9 clear/triangle/present/readback workloads for private
+# mtld3d qualification. Do not require a DXVK installation or select a driver.
+foreach(width 32 64)
+    if(RAVEN_MINGW${width})
+        set(_mtld3d_fixture ${CMAKE_CURRENT_BINARY_DIR}/raven-mtld3d${width}.exe)
+        add_custom_command(OUTPUT ${_mtld3d_fixture}
+            COMMAND ${RAVEN_MINGW${width}} -O2 -nostdlib -fno-stack-protector -fno-builtin
+                -Wl,--entry,raven_entry,--no-insert-timestamp
+                -o ${_mtld3d_fixture} ${PROJECT_SOURCE_DIR}/testdata/d3d9/window.c -lkernel32 -luser32
+            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/d3d9/window.c VERBATIM)
+        add_custom_target(darwin_mtld3d${width}_fixture DEPENDS ${_mtld3d_fixture})
+        if(RAVEN_FEX_MODHOST)
+            add_test(NAME darwin_mtld3d${width}_fex COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/mtld3d/run_fixture.py
+                --raven $<TARGET_FILE:raven> --fixture ${_mtld3d_fixture} --width ${width} --modules "${RAVEN_FEX_MODULE_ROOT}")
+            set_tests_properties(darwin_mtld3d${width}_fex PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 RESOURCE_LOCK raven_compositor)
+            set(_runtime_fixture ${CMAKE_CURRENT_BINARY_DIR}/raven-mtld3d-runtime${width}.exe)
+            add_custom_command(OUTPUT ${_runtime_fixture}
+                COMMAND ${RAVEN_MINGW${width}} -O2 -nostdlib -fno-stack-protector -fno-builtin
+                    -Wl,--entry,raven_entry,--no-insert-timestamp -o ${_runtime_fixture}
+                    ${PROJECT_SOURCE_DIR}/testdata/d3d9/runtime.c -lkernel32 -luser32
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/d3d9/runtime.c VERBATIM)
+            add_custom_target(darwin_mtld3d_runtime${width}_fixture DEPENDS ${_runtime_fixture})
+            add_test(NAME darwin_mtld3d_runtime${width}_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+                --raven $<TARGET_FILE:raven> --fixture ${_runtime_fixture} --modules "${RAVEN_FEX_MODULE_ROOT}")
+            set_tests_properties(darwin_mtld3d_runtime${width}_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+        endif()
+    endif()
+endforeach()

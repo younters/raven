@@ -14,7 +14,7 @@ speed ratio because DXVK cannot create a device on either tested ICD.
 | Windows API | Recommended long-term route | Current decision / gate |
 |---|---|---|
 | D3D1–7 / DirectDraw | WineD3D Vulkan, after qualifying its PE dependencies and old fixed-function behavior | Future experiment; no verified backend in Raven on macOS |
-| D3D8/9 | Upstream DXVK PE → Raven Vulkan bridge → KosmicKrisp → Metal, once its mandatory features work | Blocked: pinned DXVK rejects KosmicKrisp; WineD3D Vulkan is a separate possible experiment, not an implemented fallback |
+| D3D8/9 | D3D9: opt-in mtld3d PE → FEX → arm64 Metal; retain Vulkan candidates for broader convergence | D3D9 x64 and WoW64 clear/triangle/present/readback qualified below; D3D8 remains unqualified. Pinned DXVK still rejects KosmicKrisp |
 | D3D10/10.1/11 | DXMT PE + guest x86_64 unixlib → Metal | Keep default; existing IOSurface transport works. Tessellation remains broken. Qualify DXVK per program after driver gates pass |
 | D3D12 | vkd3d-proton PE + compatible DXGI → host Vulkan bridge → KosmicKrisp; reassess DXMT D3D12 when released | Experimental candidates only; no working D3D12 backend established here |
 | Desktop OpenGL / WGL | Mesa Zink, preferably PE WGL/Gallium → Raven Vulkan bridge → arm64 KosmicKrisp | Target, not an available GL 4.6 implementation on this driver: geometry/XFB and other requirements must pass first |
@@ -380,3 +380,30 @@ Qualification and reproduction are recorded in
 runs under each engine, with existing intermittent non-relocatable-image address
 collisions recorded separately. Steam reaches CEF and initializes ANGLE/D3D11;
 a login UI is not yet verified. The x64 native transport remains unchanged.
+
+## mtld3d D3D9 under FEX (2026-10-31)
+
+**Both x64 and WoW64 x86 now render D3D9 through native arm64 mtld3d.** The
+clear/triangle fixture presents 60 frames to a Cocoa window. First/last GPU
+readbacks each check 63,042 pixels, including 20,402 triangle samples, with
+zero mismatches in either width. Unlocked-screen captures show the triangle.
+Microsoft's MIT-licensed PE32 Vertices tutorial also renders a colored triangle.
+
+The opt-in port uses application-local v0.15.1 PE DLLs and
+`RAVEN_MTLD3D_ARM64_ROOT`. It reuses FEX's unix dispatcher and DXMT's IOSurface
+pool/host presentation path. mtld3d attachment is adapted explicitly because
+its real Cocoa-view assumptions are incompatible with DXMT's macdrv wrappers.
+PE32 stack arguments and nested/retained guest-memory fields are translated
+through the WoW64 address window; fixed u64 wire structs and native handles
+retain their widths. FEX patch 0027 enables existing unaligned-TSO repair for
+WoW64 startup. DXMT and merged Mullion selection remain supported.
+
+This establishes SDR window rendering, not full game compatibility. HDR,
+software cursor overlays, Wine display/occlusion tracking and precise vsync
+remain unqualified/unimplemented by this adapter. Private artifacts stay under
+`/tmp/raven-mtld3d`; no backend defaults changed. Stock x86_64 mtld3d also passes
+offscreen readback under Rosetta, but its window attachment fails without a
+macdrv table; Rosetta's graphics transport remains unchanged.
+
+See [mtld3d/RESULTS.md](mtld3d/RESULTS.md) for the design, reproduction, complete
+regression results, artifact hashes and evidence paths.
