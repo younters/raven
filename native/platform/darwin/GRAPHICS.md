@@ -380,3 +380,14 @@ Qualification and reproduction are recorded in
 runs under each engine, with existing intermittent non-relocatable-image address
 collisions recorded separately. Steam reaches CEF and initializes ANGLE/D3D11;
 a login UI is not yet verified. The x64 native transport remains unchanged.
+
+## mtld3d FEX bring-up (2026-10-31, incomplete)
+
+The private arm64 mtld3d v0.15.1 unix build succeeds and queries the M4 Pro.
+Opt-in x64 unix-library discovery and PE32/PE64 D3D9 fixture build targets are
+available; **rendering is not qualified**. DXMT's existing macdrv table returns
+presentation wrappers, whereas mtld3d requires real Cocoa views. FEX's shared
+process alone does not resolve that ABI mismatch. WoW64 also needs translation
+of biased guest addresses inside retained encoder packets, despite upstream's
+fixed-width wire structs and existing wow64 table. No backend default changes.
+See [mtld3d/RESULTS.md](mtld3d/RESULTS.md) for design, remaining work and evidence.
