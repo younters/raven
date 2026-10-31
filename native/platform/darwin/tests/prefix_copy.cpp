@@ -26,6 +26,11 @@ int main() {
     assert(fs::file_size(copy)==17);
     fs::permissions(file,fs::perms::owner_write,fs::perm_options::add);
     std::ofstream(file)<<"third";
+    fs::permissions(file,fs::perms::none);
+    bool copy_failed=false;
+    try { prefix.place_runtime_components(source); } catch (const std::exception &) { copy_failed=true; }
+    assert(copy_failed && fs::file_size(copy)==17);
+    fs::permissions(file,fs::perms::owner_read|fs::perms::owner_write);
     fs::remove(copy); fs::create_directory(copy);
     bool failed=false;
     try { prefix.place_runtime_components(source); } catch (const std::exception &) { failed=true; }
