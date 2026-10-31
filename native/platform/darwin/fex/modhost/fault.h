@@ -20,6 +20,7 @@ struct alignas(16) NativeContext {
 };
 static_assert(sizeof(NativeContext) == 0x390 && offsetof(NativeContext, v) == 0x110);
 void *entry = nullptr;
+void *execution_teb = nullptr;
 
 extern "C" void raven_signal_entry(int, siginfo_t *, void *);
 extern "C" void raven_fault_handler(int signal, siginfo_t *info, void *opaque) {
@@ -40,14 +41,14 @@ extern "C" void raven_fault_handler(int signal, siginfo_t *info, void *opaque) {
 	native.fpcr = ns.__fpcr;
 	native.fpsr = ns.__fpsr;
 	Record record{};
-	record.code = 0xc0000005;
+	record.code = signal == SIGTRAP ? 0x80000003 : signal == SIGILL ? 0xc000001d : 0xc0000005;
 	record.address = reinterpret_cast<void *>(native.pc);
-	record.count = 2;
+	record.count = (signal == SIGSEGV || signal == SIGBUS) ? 2 : 0;
 	record.information[0] = (uc->uc_mcontext->__es.__esr >> 6) & 1;
 	record.information[1] = uintptr_t(info->si_addr);
 	if (entry && RavenNT::active_thread) {
 		uint64_t args[8]{uintptr_t(&record), uintptr_t(&native)};
-		auto status = uint32_t(raven_ec_call(entry, args, RavenNT::active_thread->teb.data()));
+		auto status = uint32_t(raven_ec_call(entry, args, execution_teb ? execution_teb : RavenNT::active_thread->teb.data()));
 		if (!status) {
 			for (unsigned i = 0; i < 29; ++i)
 				ss.__x[i] = native.x[i];
@@ -62,13 +63,14 @@ extern "C" void raven_fault_handler(int signal, siginfo_t *info, void *opaque) {
 			return;
 		}
 	}
-	const char error[] = "unhandled standalone FEX memory fault\n";
+	const char error[] = "unhandled FEX native or unsupported fault\n";
 	write(2, error, sizeof(error) - 1);
 	_exit(128 + signal);
 }
 struct Scope {
 	AlternateSignalStack alternate;
-	struct sigaction previous_segv{}, previous_bus{};
+	static constexpr int signals[]{SIGSEGV, SIGBUS, SIGTRAP, SIGILL};
+	struct sigaction previous[4]{};
 	explicit Scope(void *fault_entry) {
 		entry = fault_entry;
 		if (!entry)
@@ -77,13 +79,16 @@ struct Scope {
 		action.sa_sigaction = raven_signal_entry;
 		action.sa_flags = SA_SIGINFO | SA_ONSTACK;
 		sigemptyset(&action.sa_mask);
-		if (sigaction(SIGSEGV, &action, &previous_segv) ||
-			sigaction(SIGBUS, &action, &previous_bus))
-			throw std::runtime_error("sigaction failed");
+		for (size_t i = 0; i < 4; ++i) {
+			if (sigaction(signals[i], &action, &previous[i])) {
+				while (i) { --i; sigaction(signals[i], &previous[i], nullptr); }
+				entry = nullptr;
+				throw std::runtime_error("sigaction failed");
+			}
+		}
 	}
 	~Scope() {
-		sigaction(SIGSEGV, &previous_segv, nullptr);
-		sigaction(SIGBUS, &previous_bus, nullptr);
+		for (size_t i = 0; i < 4; ++i) sigaction(signals[i], &previous[i], nullptr);
 		entry = nullptr;
 	}
 };

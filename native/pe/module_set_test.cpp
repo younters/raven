@@ -194,6 +194,26 @@ int main()
 					read(displaced_first.loaded.data(), 0x1520, width) == fallback + 0x1000,
 					"fixed-base module did not displace an unbound relocatable module");
 			}
+			// Export-only code is still an executable image, not a resource/data view.
+			auto fixed_exports = target;
+			put(fixed_exports, 0xa8, 0); // No DllMain, imports, TLS or relocations.
+			put(fixed_exports, 0x220, target_base + 0x1000, width);
+			{
+				raven::ModuleSet conflict;
+				conflict.add("occupant", target);
+				rejected([&] { conflict.add("export-only", fixed_exports); });
+				check(conflict.all().size() == 1, "fixed export conflict published an image");
+			}
+			{
+				raven::ModuleSet conflict;
+				auto available = [&](uint64_t base, uint64_t) { return base != target_base; };
+				rejected([&] { conflict.add("export-only", fixed_exports, available); });
+				check(conflict.all().empty(), "process-memory conflict published a fixed image");
+				rejected([&] { conflict.add("explicit-rebase", fixed_exports, target_base + 65536); });
+				auto &data = conflict.add_data("data-only", fixed_exports, available);
+				check(data.loaded.base() != target_base && read(data.loaded.data(), 0x1020, width) == target_base + 0x1000,
+					"explicit data view was rejected or had code fixups applied");
+			}
 			rejected([&] { modules.resolve({"facade", "function", 0, false, 0}); });
 			rejected([&] { modules.resolve({"facade", "", 8, true, 0}); });
 			rejected([&] { modules.add("facade.dll", facade, facade_base); });

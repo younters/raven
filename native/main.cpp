@@ -2,6 +2,9 @@
 #include "raven_darwin_launch.h"
 #include "platform/darwin/fd_budget.h"
 #endif
+#ifdef RAVEN_FEX_PROCESS
+#include "platform/darwin/fex/fex_process.h"
+#endif
 #include "pe/pe.h"
 #include "pe/resources.h"
 #include "pe/loaded_image.h"
@@ -88,8 +91,8 @@ static void leave_exit_code(uint32_t code)
 
 static int native_result(const raven::NativeResult &result,bool process_exit=false,bool inherited_stdio=false)
 {
-	if (result.stop==raven::NativeStop::exited) {
-		const auto code=uint32_t(result.value);
+	if (result.stop==raven::NativeStop::exited || (process_exit && result.exception_code)) {
+		const auto code=result.exception_code ? result.exception_code : uint32_t(result.value);
 		leave_exit_code(code);
 		if (!inherited_stdio) std::cout << "Native process exited with status " << code << '\n';
 		return !code ? 0 : (code & 0xff) ? int(code & 0xff) : 1;
@@ -280,22 +283,33 @@ int main(int argc, char **argv)
 			if (std::string_view(argv[i])=="--") { last_file=i;break; }
 	const bool inspect = mode == "--inspect" || mode == "--inspect-imports" || mode == "--inspect-exports" ||
 		mode == "--inspect-delay-imports" || mode == "--inspect-resources";
-	const bool valid = (inspect && argc == 3) || (map_image && (argc == 3 || argc == 4)) ||
+	const bool fex_entry = run_entry && argc == 4 && std::string(argv[2]) == "--execution=fex";
+	const bool valid = fex_entry || (inspect && argc == 3) || (map_image && (argc == 3 || argc == 4)) ||
 		(run_entry && argc == 4 && std::string(argv[2]) == "--execution=native") || (bind_imports && argc >= 3) ||
-		((run_modules || run_process) && last_file > first_file && std::string(argv[2]) == "--execution=native");
+		((run_modules || run_process) && last_file > first_file &&
+			(std::string(argv[2]) == "--execution=native" || std::string(argv[2]) == "--execution=fex"));
 	if (!valid) {
 		std::cerr << "Usage: raven --inspect|--inspect-imports|--inspect-exports|--inspect-delay-imports|--inspect-resources program.exe\n"
 			<< "       raven --map-image|--dump-image program.exe [base-address]\n"
 			<< "       raven --bind-imports program.exe dependency.dll ...\n"
-			<< "       raven --run-entry --execution=native fixture.exe\n"
+			<< "       raven --run-entry --execution=native|fex fixture.exe (fex requires RAVEN_FEX_MODHOST)\n"
 			<< "       raven --run-modules --execution=native fixture.exe dependency.dll ...\n"
 			<< "       raven --run-process --execution=native [--timeout-ms=N] [--desktop=wayland|--desktop=x11|--desktop=macos] [--stdio=inherit] program.exe [dependency.dll ...] [-- guest-argument ...]\n"
 			<< "Complete Windows process initialization is not implemented yet.\n";
 		return 2;
 	}
 	try {
+		const bool use_fex = argc > 2 && std::string_view(argv[2]) == "--execution=fex";
+#ifdef RAVEN_FEX_PROCESS
+		raven::select_fex_execution(use_fex);
+#else
+		if (use_fex) throw std::runtime_error("FEX requires a RAVEN_FEX_MODHOST build");
+#endif
 		if (bind_imports || run_modules || run_process) {
 			raven::ModuleSet modules;
+#ifdef RAVEN_FEX_PROCESS
+			if (use_fex) modules.set_address_space(raven::fex_address_available, 0x10000000000ULL);
+#endif
 			raven::PEModule *entry = nullptr;
 			for (int i = (run_modules || run_process) ? first_file : 2; i < last_file; ++i) {
 				auto bytes = read_file(argv[i]);
@@ -760,8 +774,16 @@ int main(int argc, char **argv)
 		const auto imports = image.imports();
 		if (run_entry) {
 #ifdef RAVEN_NATIVE_CPU
-			raven::LoadedImage loaded(image, image.image_base);
+			raven::LoadedImage loaded(image, fex_entry && image.directories[5].size ? 0x10000000000ULL : image.image_base);
 			const auto bootstrap = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "raven-bootstrap";
+#ifdef RAVEN_FEX_PROCESS
+			if (fex_entry) {
+				const char *root = std::getenv("RAVEN_FEX_MODULE_ROOT");
+				return native_result(raven::run_fex_entry(image, loaded, root ? root : ""));
+			}
+#else
+			if (fex_entry) throw std::runtime_error("FEX requires a RAVEN_FEX_MODHOST build");
+#endif
 			return native_result(raven::run_native_entry(image, loaded, bootstrap.string(), std::chrono::seconds(5)));
 #else
 			throw std::runtime_error("native execution requires an x86-64 Linux host");

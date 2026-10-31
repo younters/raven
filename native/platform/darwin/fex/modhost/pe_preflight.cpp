@@ -46,7 +46,7 @@ struct Mapping {
 using ImportResolver = void *(*)(const char *, const char *);
 using MapObserver = void (*)(Bytes, size_t);
 int map_module(int argc, char **argv, ImportResolver resolve, MapObserver observer = nullptr,
-	MapObserver execute = nullptr) {
+	MapObserver execute = nullptr, Mapping *retained = nullptr) {
 #else
 int main(int argc, char **argv) {
 #endif
@@ -185,6 +185,10 @@ int main(int argc, char **argv) {
 			if (resolved != 127 || auxiliary_writes != 127)
 				throw std::runtime_error("expected 127 ordinary and auxiliary IAT writes");
 			execute(image, opt);
+			if (retained) {
+				*retained = mapping;
+				mapping.base = MAP_FAILED;
+			}
 			return 0;
 		}
 #endif

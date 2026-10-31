@@ -55,6 +55,7 @@ PEModule::PEModule(std::string name, ModuleBytes bytes, uint64_t base, bool relo
 
 PEModule &ModuleSet::add(std::string name, ModuleBytes bytes, std::function<bool(uint64_t, uint64_t)> available)
 {
+	if (!available) available = address_available;
 	const PEImage image(bytes);
 	const uint64_t limit = image.is_64 ? 0x800000000000ULL : 0x100000000ULL;
 	uint64_t base = image.image_base;
@@ -76,8 +77,7 @@ PEModule &ModuleSet::add(std::string name, ModuleBytes bytes, std::function<bool
 	const auto has_relocs = [](const PEImage &candidate) {
 		return !(candidate.characteristics & 1) && candidate.directories[5].address && candidate.directories[5].size;
 	};
-	const bool needs_relocs = image.entry || image.directories[1].address || image.directories[9].address || image.directories[13].address;
-	if (!adding_data && !available && !bound_any && !has_relocs(image) && needs_relocs && overlap_for(base, image.image_size)) {
+	if (!adding_data && !available && !bound_any && !has_relocs(image) && overlap_for(base, image.image_size)) {
 		std::vector<PEModule *> blockers;
 		bool all_movable = true;
 		for (const auto &[key, previous] : modules) {
@@ -111,7 +111,9 @@ PEModule &ModuleSet::add(std::string name, ModuleBytes bytes, std::function<bool
 		}
 	}
 	if (overlap_for(base, image.image_size)) {
-		base = image.is_64 ? 0x180000000ULL : 0x10000000ULL;
+		if (!adding_data && !has_relocs(image))
+			throw std::runtime_error("PE preferred base conflicts with host mappings and image has no relocation table");
+		base = image.is_64 ? relocation_base64 : 0x10000000ULL;
 		for (;;) {
 			if (base >= limit || image.image_size > limit - base)
 				throw std::runtime_error("no guest address available for PE module");
