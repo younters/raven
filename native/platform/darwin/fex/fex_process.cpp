@@ -236,7 +236,25 @@ struct FexProcess::State {
 	}
 	struct Region { size_t size; bool image; };
 	std::map<uint64_t, Region> regions;
+	// Reserved pages have implicit PROT_NONE; store only explicit page overrides.
 	std::map<uint64_t, int> pages;
+	bool mapped_range(uint64_t address, uint64_t size) const {
+		if (!size || address > UINT64_MAX - size) return false;
+		const uint64_t end = address + size;
+		while (address < end) {
+			auto region = regions.upper_bound(address);
+			if (region != regions.begin()) {
+				--region;
+				if (address - region->first < region->second.size) {
+					address = std::min(end, region->first + region->second.size);
+					continue;
+				}
+			}
+			if (!pages.contains(address & ~uint64_t(4095))) return false;
+			address = std::min(end, (address & ~uint64_t(4095)) + 4096);
+		}
+		return true;
+	}
 	std::map<uint64_t, uint32_t> traps;
 	std::map<uint64_t, size_t> image_reservations;
 	std::vector<LoadedImage *> images;
@@ -730,7 +748,8 @@ uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 	state->regions.emplace(address, State::Region{n, false});
 	uint64_t args[8]{state->host(address, n), n, 0x3000, guest_protection(protection), 0, 0};
 	notify_memory("NotifyMemoryAlloc", args, 4);
-	for (size_t at = 0; at < n; at += 4096) state->pages[address + at] = PROT_READ | PROT_WRITE;
+	if (protection != PROT_NONE)
+		for (size_t at = 0; at < n; at += 4096) state->pages[address + at] = PROT_READ | PROT_WRITE;
 	protect_memory(address, n, protection);
 	return address;
 }
@@ -738,10 +757,15 @@ void FexProcess::protect_memory(uint64_t address, size_t size, int protection)
 {
 	if (!size || address % 4096 || size % 4096 || address > UINT64_MAX - size)
 		throw std::runtime_error("FEX invalid protection range");
-	for (uint64_t at = address; at < address + size; at += 4096)
-		if (!state->pages.contains(at)) throw std::runtime_error("FEX protection range is unmapped");
+	if (!state->mapped_range(address, size)) throw std::runtime_error("FEX protection range is unmapped");
 	uint64_t args[8]{state->host(address, size), size, guest_protection(protection)};
 	notify_memory("NotifyMemoryProtect", args, 3, [&] {
+		if (protection == PROT_NONE && !(address % 16384) && !(size % 16384)) {
+			if (mprotect(reinterpret_cast<void *>(state->host(address, size)), size, PROT_NONE))
+				throw std::runtime_error("FEX host protection failed");
+			state->pages.erase(state->pages.lower_bound(address), state->pages.lower_bound(address + size));
+			return;
+		}
 		for (uint64_t at = address; at < address + size; at += 4096) state->pages[at] = protection;
 		if (!state->window && address == 0x7ffe0000 && size == 4096) return;
 		// Tier 0: union the four logical protections of each real 16K page. Guest
@@ -763,7 +787,7 @@ bool FexProcess::has_protection(uint64_t address, size_t size, int protection) c
 	if (!size || address > UINT64_MAX - size) return false;
 	for (auto at = address & ~uint64_t(4095); at < address + size; at += 4096) {
 		auto found = state->pages.find(at);
-		if (found == state->pages.end() || found->second != protection) return false;
+		if (found == state->pages.end() ? protection != PROT_NONE || !state->mapped_range(at, 4096) : found->second != protection) return false;
 	}
 	return true;
 }
@@ -779,7 +803,7 @@ void FexProcess::unmap_memory(uint64_t address)
 			if (p == MAP_FAILED) throw std::runtime_error("WoW64 cannot restore reservation");
 		} else if (munmap(reinterpret_cast<void *>(address), n)) throw std::runtime_error("FEX unmap failed");
 	});
-	for (auto at = address; at < address + n; at += 4096) state->pages.erase(at);
+	state->pages.erase(state->pages.lower_bound(address), state->pages.lower_bound(address + n));
 	state->regions.erase(found);
 }
 void FexProcess::unmap_image(uint64_t address)

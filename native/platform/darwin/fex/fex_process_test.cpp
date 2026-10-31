@@ -119,7 +119,7 @@ int main(int argc, char **argv)
 		} else if (mode == "breakpoint") {
 			loaded.data()[image.entry] = 0xcc;
 			loaded.data()[image.entry + 1] = 0xc3;
-		} else check(mode == "entry" || mode == "lifetime" || mode == "served-malformed" || mode == "teb-switch", "unknown mode");
+		} else check(mode == "sparse-reservation" || mode == "entry" || mode == "lifetime" || mode == "served-malformed" || mode == "teb-switch", "unknown mode");
 		raven::LoadedImage *images[]{&loaded};
 		if (mode == "lifetime") {
 			auto second_rejected = [&] {
@@ -141,6 +141,26 @@ int main(int argc, char **argv)
 			return 0;
 		}
 		raven::FexProcess process(images, root);
+        if (mode == "sparse-reservation") {
+            // snmalloc reserves 256 GiB. Reservation metadata must scale with
+            // committed pages, and subpage decommit must preserve neighbours.
+            const uint64_t size = 256ULL << 30;
+            const auto base = process.map_memory(size, PROT_NONE, 0);
+            check(process.has_protection(base, 4096, PROT_NONE), "reservation start");
+            check(process.has_protection(base + size - 4096, 4096, PROT_NONE), "reservation end");
+            const auto middle = base + size / 2;
+            process.protect_memory(middle, 16384, PROT_READ | PROT_WRITE);
+            const uint8_t value[] = {17, 42};
+            process.write_memory(middle + 4096, value);
+            process.protect_memory(middle, 4096, PROT_NONE);
+            check(process.has_protection(middle, 4096, PROT_NONE), "subpage decommit");
+            check(process.read_memory(middle + 4096, 2) == std::vector<uint8_t>({17, 42}), "decommit damaged neighbour");
+            process.protect_memory(middle, 16384, PROT_NONE);
+            process.unmap_memory(base);
+            check(!process.has_protection(base, 4096, PROT_NONE), "unmapped reservation remained mapped");
+            std::cout << "PASS: sparse 256 GiB reservation, commit/decommit and release\n";
+            return 0;
+        }
 		if (mode == "teb-switch") {
 			const auto code = process.map_memory(16384, PROT_READ | PROT_WRITE | PROT_EXEC, 0);
 			const uint8_t load[] = {0x65, 0x48, 0x8b, 0x04, 0x25, 0x30, 0, 0, 0, 0xc3};
