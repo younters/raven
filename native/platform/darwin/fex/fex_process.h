@@ -29,7 +29,7 @@ public:
 	bool has_protection(uint64_t address, size_t size, int protection) const;
 	void protect_image(uint64_t address, size_t size, int protection);
 	void unmap_memory(uint64_t address);
-	uint64_t map_shared(int descriptor, size_t size, uint64_t offset);
+	uint64_t map_shared(int descriptor, size_t size, uint64_t offset, uint64_t requested = 0);
 	uint64_t map_descriptor(int descriptor, size_t size, uint64_t offset);
 	bool memory_available(uint64_t address, size_t size) const;
 	void discard_memory(uint64_t address, size_t size);

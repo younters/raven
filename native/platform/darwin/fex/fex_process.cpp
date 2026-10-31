@@ -618,10 +618,19 @@ uint64_t FexProcess::end_translated_call()
 }
 
 namespace raven {
-uint64_t FexProcess::map_shared(int descriptor, size_t size, uint64_t offset)
+uint64_t FexProcess::map_shared(int descriptor, size_t size, uint64_t offset, uint64_t requested)
 {
 	if (offset % 16384) throw std::runtime_error("FEX shared mapping offset must be host-page aligned");
-	const auto address = map_memory(size, PROT_READ | PROT_WRITE, 0);
+	// FEX translates KUSER_SHARED_DATA through this dedicated host page. Share
+	// the same descriptor as the clock writer, preserving the guest read-only policy.
+	if (requested == 0x7ffe0000 && size == 4096) {
+		void *mapped = mmap(user_shared_data.data(), user_shared_data.size(), PROT_READ | PROT_WRITE,
+			MAP_FIXED | MAP_SHARED, descriptor, off_t(offset));
+		if (mapped == MAP_FAILED) throw std::runtime_error("FEX shared user data mapping failed");
+		state->pages[requested] = PROT_READ | PROT_WRITE;
+		return requested;
+	}
+	const auto address = map_memory(size, PROT_READ | PROT_WRITE, requested);
 	const auto n = state->regions.at(address).size;
 	void *mapped = mmap(reinterpret_cast<void *>(address), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, descriptor, off_t(offset));
 	if (mapped == MAP_FAILED) { unmap_memory(address); throw std::runtime_error("FEX shared descriptor mapping failed"); }

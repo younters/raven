@@ -199,7 +199,7 @@ void inspect_image(Bytes image, size_t opt) {
 }
 extern "C" void raven_check_ec_call();
 extern "C" void raven_checked_import();
-std::array<uint8_t, 16384> user_shared_data{};
+alignas(16384) std::array<uint8_t, 16384> user_shared_data{};
 NativeJit callback_jit;
 sigjmp_buf guest_return;
 sigjmp_buf *active_return = &guest_return;

@@ -1090,7 +1090,7 @@ uint64_t NativeProcess::map_memory(size_t size, int protection, uint64_t address
 
 uint64_t NativeProcess::map_shared(int descriptor, size_t size, uint64_t offset, uint64_t requested)
 {
-	FEX_RETURN(map_shared, descriptor, size, offset);
+	FEX_RETURN(map_shared, descriptor, size, offset, requested);
 	if (const auto surface = darwin::pixel_surface(descriptor); surface && !offset) {
 		if (size > IOSurfaceGetAllocSize(surface)) throw std::runtime_error("invalid IOSurface mapping size");
 		auto view = std::make_unique<State::SharedView>();
