@@ -186,6 +186,7 @@ struct FexProcess::State {
 	std::map<uint64_t, Region> regions;
 	std::map<uint64_t, int> pages;
 	std::set<uint64_t> traps;
+	std::map<uint64_t, size_t> image_reservations;
 	std::vector<LoadedImage *> images;
 	NativeThreadState thread;
 	NativeContext initial;
@@ -209,6 +210,7 @@ struct FexProcess::State {
 		// Mapping is a simple scope owner; the vector entries are released here.
 		if (stack != MAP_FAILED) munmap(stack, stack_size);
 		if (gate != MAP_FAILED) munmap(gate, 16384);
+		for (auto [base, size] : image_reservations) munmap(reinterpret_cast<void *>(base), size);
 		for (auto [base, region] : regions) munmap(reinterpret_cast<void *>(base), region.size);
 	}
 	void require_owner() const
@@ -225,6 +227,15 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 		throw std::runtime_error("FEX module already claimed; a second FexProcess in this host is unsupported");
 	if (root.empty())
 		throw std::runtime_error("FEX requires RAVEN_FEX_MODULE_ROOT");
+	// Reserve initial preferred/fallback bases before FEX/dyld initialization
+	// can claim them. map_image replaces only these owned reservations.
+	for (auto *image : images) {
+		const auto n = (image->data().size() + 16383) & ~size_t(16383);
+		mach_vm_address_t base = image->base();
+		if (mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS)
+			throw std::runtime_error("FEX guest image reservation conflict at " + std::to_string(image->base()));
+		state->image_reservations.emplace(base, n);
+	}
 	module_claimed = true;
 	std::string path = root + "/xtajit64.dll";
 	char program[] = "raven-fex";
@@ -593,9 +604,11 @@ void FexProcess::map_image(LoadedImage &image)
 	const auto address = image.base();
 	const auto n = (image.data().size() + 16383) & ~size_t(16383);
 	mach_vm_address_t base = address;
-	if (mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS)
+	if (!state->image_reservations.contains(address) &&
+		mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS)
 		throw std::runtime_error("FEX guest image address conflict at " + std::to_string(address));
 	auto *p = mmap(reinterpret_cast<void *>(address), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, image.descriptor(), 0);
+	state->image_reservations.erase(address);
 	if (p == MAP_FAILED) { munmap(reinterpret_cast<void *>(address), n); throw std::runtime_error("FEX shared image mapping failed"); }
 	state->regions.emplace(address, State::Region{n, true});
 	state->images.push_back(&image);
