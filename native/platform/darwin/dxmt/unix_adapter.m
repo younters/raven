@@ -175,8 +175,8 @@ int raven_dxmt_read_memory(uint64_t address, void *destination, size_t size)
 
 void *raven_unixlib_wrap_table(void *original, uint32_t count)
 {
-	// Both pinned tables share the first 132 entries; the source pin appends 14.
-	if (count != 132 && count != 146)
+	// Provisioned pins preserve these wrapper ordinals (Mullion has 197 entries).
+	if (count != 132 && count != 146 && count != 197)
 		return NULL;
 	void **table = malloc(count * sizeof(*table));
 	if (!table)
@@ -190,8 +190,12 @@ void *raven_unixlib_wrap_table(void *original, uint32_t count)
 #if defined(__aarch64__)
 	original_retain = table[0]; original_release = table[1]; original_buffer = table[18];
 	table[0] = retain_buffer; table[1] = release_buffer; table[18] = new_buffer;
-	if (count == 146) { original_heap_buffer = table[141]; table[141] = new_heap_buffer; }
+	if (count >= 146) { original_heap_buffer = table[141]; table[141] = new_heap_buffer; }
 #endif
 	raven_dxmt_wrap_presentation(table);
+	if (count == 197) {
+		extern void raven_mullion_wrap_presentation(void **);
+		raven_mullion_wrap_presentation(table);
+	}
 	return table;
 }

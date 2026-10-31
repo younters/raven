@@ -1,4 +1,5 @@
 #include "unix_calls.h"
+#include "mullion/backend.h"
 #include <fstream>
 #include <algorithm>
 #include <cstdlib>
@@ -11,6 +12,7 @@ namespace raven {
 namespace {
 std::filesystem::path dxmt_root()
 {
+	if (mullion_selected()) return mullion_root();
 	if (const char *root = std::getenv("RAVEN_DXMT_ROOT"))
 		return root;
 #ifdef RAVEN_DXMT_ROOT
@@ -24,6 +26,7 @@ std::filesystem::path dxmt_root()
 bool darwin_graphics_system_module(std::string_view name, bool x64)
 {
     if (!x64 || dxmt_root().empty()) return false;
+    if (mullion_selected() && (name == "d3d12.dll" || name == "d3d12core.dll")) return true;
     if (name == "d3d11.dll" || name == "dxgi.dll" || name == "d3d10core.dll" || name == "winemetal.dll" || name == "d3d10.dll" ||
         name == "d3d10_1.dll")
         return true;
@@ -97,10 +100,12 @@ bool DarwinUnixCalls::dispatch(std::string_view name)
 					// The provisioner validates the pinned table layout. Release overlays
                     // predate the count file and have 132 entries; the source pin has 146.
                     uint32_t count = 132;
+                    if (mullion_selected() && !std::filesystem::is_regular_file(root / "unix64/unix-call-count"))
+                        throw std::runtime_error("Mullion unix-call-count metadata missing");
                     const auto count_path = root / "unix64" / "unix-call-count";
                     if (std::filesystem::exists(count_path)) {
                         std::ifstream input(count_path);
-                        if (!(input >> count) || (count != 132 && count != 146))
+                        if (!(input >> count) || (count == 0 || count > 4096))
                             throw std::runtime_error("unsupported DXMT unix table size");
                     }
 					const auto path = root / "unix64" / "winemetal.so";
