@@ -12,14 +12,16 @@ target) builds this companion and the registered FEX test fixtures. It shares
 Raven's static runtime libraries and CLI/Cocoa sources; it is an arm64 process
 hosting the existing xtajit64 module, not a new guest agent or an x86 launch.
 Explicit FEX selection execs the companion before Cocoa startup, preserving PID,
-arguments, descriptors and environment. A compile definition prevents re-exec.
+arguments, descriptors and environment. A companion compile definition prevents
+re-exec; an environment marker detects a companion symlinked to modern Raven
+and reports a loop. The real companion consumes that marker before children run.
 There is no change to default/cooperative versus optional parallel scheduling.
 
 Module search order is a nonempty `RAVEN_FEX_MODULE_ROOT` environment override,
 the compiled configured `RAVEN_FEX_MODULE_ROOT`, then `fex-modules` beside the
 resolved executable and `../raven-components/fex-modules`. Configure discovers
 modules in a sibling `raven-components/fex-modules` directory when available.
-An invalid explicit override fails instead of silently loading another module.
+An empty environment override is ignored. An invalid explicit override fails instead of silently loading another module.
 Absent modules produce a provisioning/search-path error at runtime. Only the
 x64 `xtajit64.dll` is required here; WoW64 remains unsupported.
 
@@ -81,12 +83,13 @@ kernel ANSI/file/thread/SEH fixtures pass. DXMT identity/self-share, x86 pipe,
 wait-guards, memory-small and orphan checks pass serially. Four x87 tests pass
 after explicitly building their pre-existing optional fixture target.
 
-This is **not a green full-suite qualification**. Remaining failures:
-`native_layout_failure_component` returns 10; `native_cmd` times out;
-`native_cmd_x32` returns 11 on recheck; `native_parallel_lifecycle_x64` faults at
-`parallel-lifecycle64.exe+1025`. That exact lifecycle fault also reproduces with
-the reference OFF executable against the same fixture and script. No baseline
-claim is made for the other three failures. Initial parallel-run failures and
+This is **not a green full-suite qualification**. The macOS baseline has three
+pre-existing failures that are outside this change:
+`native_layout_failure_component`, `native_cmd_x32`, and
+`native_parallel_lifecycle_x64`. The lifecycle fault also reproduced with the
+reference OFF executable against the same fixture and script. The earlier
+`native_cmd` timeout requires a serial recheck against this build; it passes on
+current `macos` (`build-macos`). Initial parallel-run failures and
 all recheck counts remain in [default-build-evidence.json](default-build-evidence.json).
 Raw build/test logs are `/tmp/raven-default-fex-*.log`.
 
@@ -105,3 +108,23 @@ guest image address conflict at **0x140000000**. It creates no editor window.
 Logs, commands and screen captures are under `/tmp/raven-default-fex-apps/`.
 The companion design leaves FEX's inherited real-app/Unix-library/16K-page
 limitations in place; enabling it at build time does not change the default engine.
+
+## Review corrections and merge boundary
+
+All three accepted FEX execution modes (`--run-process`, `--run-entry`, and
+`--run-modules`) redirect before CLI initialization. Resolution and launch
+failures report diagnostics without filesystem exceptions before main's handler.
+Executable-relative module candidates are skipped if canonicalization fails.
+The companion copies C/C++/Objective-C/Objective-C++ language standards and their
+required/extension settings, including Objective-C++20 for Cocoa sources.
+The default is ON only when Apple and CMAKE_SYSTEM_PROCESSOR is arm64/aarch64.
+
+Both guest-child spawning and native prefix registration choose sibling modern
+`raven` when the parent executable is `raven-fex-host`. This is deliberately only
+executable-path selection: M5's `t3/fex-engine-parity` work owns child execution
+option inheritance. Once that change is merged, inherited `--execution=fex`
+passes through modern Raven to the companion; native children retain the modern
+SDK. No inheritance policy was changed here. The separate NT-service commit is
+also minimal and must be reconciled with M5's independent enter_nt_service work.
+The path contract and launch integration contract cover sibling selection,
+all three FEX modes, native isolation, a missing companion, and symlink-loop failure.

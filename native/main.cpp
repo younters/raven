@@ -14,6 +14,7 @@
 #include "nt/providers.h"
 #include "nt/paths.h"
 #include "nt/launch.h"
+#include "nt/runtime_executable.h"
 #include "nt/actctx.h"
 #include "nt/elevation.h"
 #include "nt/restart.h"
@@ -401,7 +402,7 @@ int main(int argc, char **argv)
 										// Setup is quiet: only a failure says anything, on standard error.
 										if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
 											::dup2(quiet, 1);
-										const std::string self = std::filesystem::read_symlink("/proc/self/exe").string(), path = program.string();
+										const std::string self = raven::child_runtime_executable(std::filesystem::read_symlink("/proc/self/exe")).string(), path = program.string();
 										::execl(self.c_str(), self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
 											server, static_cast<char *>(nullptr));
 										::_exit(127);
