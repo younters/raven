@@ -1,4 +1,7 @@
 #include "child_process.h"
+#ifdef RAVEN_FEX_PROCESS
+#include "platform/darwin/fex/thread_api.h"
+#endif
 #include "kernel_context.h"
 #include "mutex.h"
 #include "semaphore.h"
@@ -494,6 +497,9 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(6);
 			return;
 		}
+#ifdef RAVEN_FEX_PROCESS
+		if (!validate_fex_thread_context(call, *thread, threads.current_id())) return;
+#endif
 		const auto &registers = thread->id == threads.current_id() ? call.process.context().registers : thread->snapshot.context.registers;
 		const uint32_t flags = call.load<uint32_t>(call[1] + 0x30);
 		const auto put = [&](size_t at, uint64_t value) { call.store<uint64_t>(call[1] + at, value); };
@@ -513,6 +519,9 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(1);
 	});
+#ifdef RAVEN_FEX_PROCESS
+	register_fex_thread_context(registry, threads, thread_from);
+#endif
 	// A thread's description is a name the program gives it; it is kept per thread and handed back in memory the program frees with LocalFree.
 	auto descriptions = std::make_shared<std::map<uint32_t, std::u16string>>();
 	registry.add("SetThreadDescription", 2, [thread_from, descriptions](ApiCall &call) {
@@ -845,6 +854,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(6);
 			return;
 		}
+		if (thread->state == GuestThread::State::done) { call.fail(31); return; }
 		thread->apcs.push_back({call[0], call[2]});
 		call.ret(1);
 	});
