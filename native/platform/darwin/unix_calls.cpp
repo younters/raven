@@ -89,8 +89,11 @@ bool DarwinUnixCalls::dispatch(std::string_view name)
 	else if (args[4] < 8)
 		status = 0xc0000004U;
 	else {
-		const auto found = modules.all().find("winemetal.dll");
-		const auto root = dxmt_root();
+		auto found = modules.all().find("mtld3d.dll");
+		const bool mtld3d = found != modules.all().end() && found->second->loaded.base() == args[1];
+		if (!mtld3d) found = modules.all().find("winemetal.dll");
+		const char *mtld_root = std::getenv("RAVEN_MTLD3D_ARM64_ROOT");
+		const auto root = mtld3d ? std::filesystem::path(mtld_root ? mtld_root : "") : dxmt_root();
 		if (found != modules.all().end() && found->second->loaded.base() == args[1] && !root.empty()) {
 			try {
 				process.validate_write_memory(args[3], 8);
@@ -99,16 +102,16 @@ bool DarwinUnixCalls::dispatch(std::string_view name)
 				if (handle == handles.end()) {
 					// The provisioner validates the pinned table layout. Release overlays
                     // predate the count file and have 132 entries; the source pin has 146.
-                    uint32_t count = 132;
-                    if (mullion_selected() && !std::filesystem::is_regular_file(root / "unix64/unix-call-count"))
+                    uint32_t count = mtld3d ? 22 : 132;
+                    if (!mtld3d && mullion_selected() && !std::filesystem::is_regular_file(root / "unix64/unix-call-count"))
                         throw std::runtime_error("Mullion unix-call-count metadata missing");
-                    const auto count_path = root / "unix64" / "unix-call-count";
+                    const auto count_path = mtld3d ? root / "unix-call-count" : root / "unix64" / "unix-call-count";
                     if (std::filesystem::exists(count_path)) {
                         std::ifstream input(count_path);
-                        if (!(input >> count) || (count == 0 || count > 4096))
+                        if (!(input >> count) || (mtld3d ? count != 22 : mullion_selected() ? count == 0 || count > 4096 : count != 132 && count != 146))
                             throw std::runtime_error("unsupported DXMT unix table size");
                     }
-					const auto path = root / "unix64" / "winemetal.so";
+					const auto path = mtld3d ? root / "mtld3d.so" : root / "unix64" / "winemetal.so";
 					handle = handles.emplace(args[1], process.load_unix_library(path.string(), count)).first;
 				}
 				process.write_memory(args[3], {reinterpret_cast<const uint8_t *>(&handle->second), 8});
@@ -118,7 +121,7 @@ bool DarwinUnixCalls::dispatch(std::string_view name)
 				}
 				status = 0;
 			} catch (const std::runtime_error &error) {
-				std::cerr << "raven: DXMT unixlib discovery: " << error.what() << '\n';
+				std::cerr << "raven: graphics unixlib discovery: " << error.what() << '\n';
 				status = 0xc0000001U;
 			}
 		}

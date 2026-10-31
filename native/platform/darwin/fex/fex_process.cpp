@@ -1,4 +1,4 @@
-#include "../mullion/backend.h"
+#include <filesystem>
 // SPDX-License-Identifier: MIT
 #include "fex_process.h"
 #include "guest_window.h"
@@ -37,7 +37,7 @@ struct StopPacket {
 };
 thread_local StopPacket last_stop{};
 // Libraries and their callback state live until process exit, including GPU callbacks.
-struct UnixLibrary { void *image; int32_t (**table)(void *); uint32_t count; };
+struct UnixLibrary { std::string path; void *image; int32_t (**table)(void *); uint32_t count; };
 std::vector<UnixLibrary> unix_libraries;
 int (*read_native_buffer)(uint64_t, void *, size_t) = nullptr;
 raven_control *const unix_control = new raven_control{};
@@ -826,11 +826,34 @@ uint32_t FexProcess::copy_unix_port(uint32_t port) const
 {
 	return mach_port_mod_refs(mach_task_self(), port, MACH_PORT_RIGHT_SEND, 1) == KERN_SUCCESS ? port : 0;
 }
-uint64_t FexProcess::load_unix_library(const std::string &, uint32_t count)
+uint64_t FexProcess::load_unix_library(const std::string &path, uint32_t count)
 {
 	state->require_owner();
-	if (wow64_module || (count == 0 || count > 4096)) throw std::runtime_error("unsupported FEX unix table");
-	if (!unix_libraries.empty()) return 1;
+	if (wow64_module) throw std::runtime_error("FEX WoW64 unix calls require guest-address translation");
+	const bool mtld3d = std::filesystem::path(path).filename() == "mtld3d.so";
+	if ((!mtld3d && std::filesystem::path(path).filename() != "winemetal.so") ||
+	    (mtld3d ? count != 22 : mullion_selected() ? count == 0 || count > 4096 : count != 132 && count != 146))
+		throw std::runtime_error("unsupported FEX unix library/table pair");
+	for (size_t i = 0; i < unix_libraries.size(); ++i)
+		if (unix_libraries[i].path == path) {
+			if (unix_libraries[i].count != count) throw std::runtime_error("FEX cached unix table count mismatch");
+			return i + 1;
+		}
+	if (mtld3d) {
+		// No DXMT ordinal wrappers: mtld3d owns a distinct 22-entry ABI.
+		const char *root = getenv("RAVEN_MTLD3D_ARM64_ROOT");
+		if (!root || !*root) throw std::runtime_error("set RAVEN_MTLD3D_ARM64_ROOT to the private arm64 overlay");
+		uint32_t overlay_count = 0;
+		std::ifstream metadata(std::string(root) + "/unix-call-count");
+		if (!(metadata >> overlay_count) || overlay_count != count)
+			throw std::runtime_error("FEX mtld3d PE/unix table count mismatch");
+		void *image = dlopen((std::string(root) + "/mtld3d.so").c_str(), RTLD_NOW | RTLD_LOCAL);
+		if (!image) throw std::runtime_error(dlerror());
+		auto table = reinterpret_cast<int32_t (**)(void *)>(dlsym(image, "__wine_unix_call_funcs"));
+		if (!table) { dlclose(image); throw std::runtime_error("FEX mtld3d table missing"); }
+		unix_libraries.push_back({path, image, table, count});
+		return unix_libraries.size();
+	}
 	const std::string selected_root = mullion_selected() ? (mullion_root() / "unix-arm64").string() : "";
 	const char *root = mullion_selected() ? selected_root.c_str() : getenv("RAVEN_DXMT_ARM64_ROOT");
 	if (!root || !*root) root = RAVEN_DXMT_DEFAULT_ARM64_ROOT;
@@ -853,7 +876,7 @@ uint64_t FexProcess::load_unix_library(const std::string &, uint32_t count)
 	init(unix_control);
 	table = wrap(table, count);
 	if (!table) throw std::runtime_error("FEX DXMT table wrapping failed");
-	unix_libraries.push_back({image, reinterpret_cast<int32_t (**)(void *)>(table), count});
+	unix_libraries.push_back({path, image, reinterpret_cast<int32_t (**)(void *)>(table), count});
 	return unix_libraries.size();
 }
 void FexProcess::add_api_trap(uint64_t address, uint32_t callee_cleanup)
