@@ -21,7 +21,17 @@ parser.add_argument('--expect-placement-conflict', action='store_true')
 parser.add_argument('--prefix', type=Path, help='Retain a shared fixture prefix instead of creating a temporary one')
 parser.add_argument('--check-persistence', action='store_true')
 parser.add_argument('--unhandled-status', type=lambda value: int(value, 0))
+parser.add_argument('--fixed-base', type=lambda value: int(value, 0))
 args = parser.parse_args()
+if args.fixed_base is not None:
+    data = args.fixture.read_bytes()
+    pe = struct.unpack_from('<I', data, 60)[0]
+    optional = pe + 24
+    is64 = struct.unpack_from('<H', data, optional)[0] == 0x20b
+    base = struct.unpack_from('<Q' if is64 else '<I', data, optional + (24 if is64 else 28))[0]
+    reloc = struct.unpack_from('<II', data, optional + (112 if is64 else 96) + 5 * 8)
+    assert base == args.fixed_base and reloc == (0, 0), (hex(base), reloc)
+
 module_value = args.modules or os.environ.get('RAVEN_FEX_MODULE_ROOT')
 root = Path(module_value) if module_value else None
 if args.backend == 'fex':
@@ -75,6 +85,8 @@ with contextlib.ExitStack() as stack:
             sys.exit(1)
         print(f'PASS: unhandled NT status {status:#x} preserved in process exit channel')
         sys.exit(0)
+    if args.fixed_base is not None and 'FEX placement pressure applied' not in result.stderr:
+        sys.exit('FAIL: host pressure was not applied')
     if result.returncode or 'Native entry returned 0 ' not in result.stdout:
         print(f'FAIL: expected verified zero entry return, host exit={result.returncode}', file=sys.stderr)
         sys.exit(1)
