@@ -277,7 +277,7 @@ NativeResult FexProcess::call(uint64_t address, std::span<const uint64_t> argume
 	}
 	state->active = true;
 	state->thread.active_call = true;
-	state->thread.awaiting_api = false;
+	state->thread.awaiting_api = state->thread.awaiting_syscall = false;
 	return resume(state->budget);
 }
 NativeResult FexProcess::resume()
@@ -334,6 +334,8 @@ NativeResult FexProcess::resume()
 	}
 	if (std::getenv("RAVEN_FEX_TRACE"))
 		std::cerr << "FEX stop rip=" << std::hex << last_stop.rip << " address=" << last_stop.exception.information[1] << std::dec << "\n";
+	state->thread.awaiting_syscall = last_stop.kind == NativeStop::syscall;
+	if (state->thread.awaiting_syscall) state->thread.context.registers.orig_rax = last_stop.value;
 	if (last_stop.kind == NativeStop::returned)
 		state->active = false;
 	NativeResult result{last_stop.kind, last_stop.value, last_stop.rip,
@@ -380,6 +382,7 @@ NativeContext FexProcess::context() const
 	if (!stopped()) throw std::runtime_error("FEX context requires a stopped worker");
 	NativeContext result{};
 	auto &r = result.registers;
+	r.orig_rax = state->thread.awaiting_syscall ? state->thread.context.registers.orig_rax : uint64_t(-1);
 	auto *p = state->environment()->context.data();
 	unsigned long long *registers[]{&r.rax, &r.rcx, &r.rdx, &r.rbx, &r.rsp, &r.rbp, &r.rsi, &r.rdi,
 		&r.r8, &r.r9, &r.r10, &r.r11, &r.r12, &r.r13, &r.r14, &r.r15, &r.rip};
@@ -857,5 +860,23 @@ void FexProcess::pause_thread(NativeThreadState &thread)
 	thread.context_in_task = false;
 	state->selected = selected;
 	state->teb = teb;
+}
+}
+
+namespace raven {
+void FexProcess::enter_nt_service(uint64_t instruction, uint32_t number)
+{
+	state->require_owner();
+	if (mode() != NativeMode::x64 || !state->active || state->thread.awaiting_api || !state->thread.awaiting_syscall)
+		throw std::runtime_error("FEX process is not at a pending x64 syscall service");
+	auto saved = context();
+	if (saved.registers.rip != instruction || saved.registers.orig_rax != number || instruction < 2 ||
+		read_memory(instruction - 2, 2) != std::vector<uint8_t>{0x0f, 0x05} ||
+		read_memory(instruction, 1) != std::vector<uint8_t>{0xc3})
+		throw std::runtime_error("FEX NT service boundary does not match the captured syscall");
+	saved.registers.rcx = saved.registers.r10;
+	set_context(saved);
+	state->thread.awaiting_syscall = false;
+	state->thread.awaiting_api = true;
 }
 }
