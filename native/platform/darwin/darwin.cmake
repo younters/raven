@@ -113,14 +113,14 @@ if(TARGET raven_cpu)
         set(RAVEN_DARWIN_PARALLEL_BENCHMARK ${CMAKE_CURRENT_BINARY_DIR}/darwin-parallel-benchmark.exe)
         add_custom_command(OUTPUT ${RAVEN_DARWIN_PARALLEL_BENCHMARK}
             COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector
-                -Wl,--entry,raven_entry,--image-base,0x199a00000
+                -Wl,--entry,raven_entry,--image-base,0x10000000000,--no-insert-timestamp
                 -o ${RAVEN_DARWIN_PARALLEL_BENCHMARK} ${RAVEN_DARWIN_DIR}/parallel_benchmark.c -lkernel32
             DEPENDS ${RAVEN_DARWIN_DIR}/parallel_benchmark.c VERBATIM)
         add_custom_target(darwin_parallel_benchmark ALL DEPENDS ${RAVEN_DARWIN_PARALLEL_BENCHMARK})
         set(RAVEN_DARWIN_HANDOFF_BENCHMARK ${CMAKE_CURRENT_BINARY_DIR}/darwin-handoff-benchmark.exe)
         add_custom_command(OUTPUT ${RAVEN_DARWIN_HANDOFF_BENCHMARK}
             COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector
-                -Wl,--entry,raven_entry,--image-base,0x199a00000
+                -Wl,--entry,raven_entry,--image-base,0x10000000000,--no-insert-timestamp
                 -o ${RAVEN_DARWIN_HANDOFF_BENCHMARK} ${RAVEN_DARWIN_DIR}/handoff_benchmark.c -lkernel32
             DEPENDS ${RAVEN_DARWIN_DIR}/handoff_benchmark.c VERBATIM)
         add_custom_target(darwin_handoff_benchmark ALL DEPENDS ${RAVEN_DARWIN_HANDOFF_BENCHMARK})
