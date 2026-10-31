@@ -277,7 +277,8 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 		memcpy(state->gate, gate32, sizeof(gate32));
 	} else memcpy(state->gate, gate, sizeof(gate));
 	uint64_t args[8]{uintptr_t(state->gate), 16384, 0x3000, 0x40, 1, 0};
-	if (!wow64_module) notify_memory("NotifyMemoryAlloc", args, 4);
+	if (wow64_module) protect_memory(state->guest(state->gate), 16384, PROT_READ | PROT_EXEC);
+	else notify_memory("NotifyMemoryAlloc", args, 4);
 	state->stack_top = state->guest(state->stack) + state->stack_size;
 	state->thread.stack_top = state->stack_top;
 	for (uint64_t at = state->guest(state->stack); at < state->stack_top; at += 4096) state->pages[at] = PROT_READ | PROT_WRITE;
