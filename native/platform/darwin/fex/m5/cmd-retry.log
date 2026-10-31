@@ -1,0 +1,14 @@
+Test project ${BUILD}
+    Start 257: native_cmd
+1/1 Test #257: native_cmd .......................***Failed  Required regular expression not found. Regex=[Native entry returned 0 
+] 63.93 sec
+raven: native entry timed out at 0x0
+
+
+0% tests passed, 1 tests failed out of 1
+
+Total Test time (real) =  63.94 sec
+
+The following tests FAILED:
+	257 - native_cmd (Failed)
+Errors while running CTest

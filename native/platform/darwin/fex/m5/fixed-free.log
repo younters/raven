@@ -1,0 +1,12 @@
+Test project ${BUILD}
+    Start 566: native_fixed_image_preferred_fex
+1/1 Test #566: native_fixed_image_preferred_fex ...   Passed    1.65 sec
+
+100% tests passed out of 1
+
+Label Time Summary:
+fex          =   1.65 sec*proc (1 test)
+m2           =   1.65 sec*proc (1 test)
+placement    =   1.65 sec*proc (1 test)
+
+Total Test time (real) =   1.66 sec

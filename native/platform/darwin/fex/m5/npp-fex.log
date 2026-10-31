@@ -1,0 +1,62 @@
+sandbox_extension_issue_file_to_process failed for ${BUILD}/native: 1 (Operation not permitted)
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+raven: created window class=Scintilla child=1
+raven: created window class=Scintilla child=1
+raven: created window class=Scintilla child=1
+raven: created window class=6.0.2600.2982!msctls_updown32 child=1
+raven: created window class=6.0.2600.2982!SysTabControl32 child=1
+raven: created window class=6.0.2600.2982!tooltips_class32 child=0
+raven: created window class=6.0.2600.2982!msctls_updown32 child=1
+raven: created window class=6.0.2600.2982!SysTabControl32 child=1
+raven: created window class=6.0.2600.2982!tooltips_class32 child=0
+raven: created window class=Scintilla child=1
+raven: created window class=wespliter child=1
+raven: created window class=splitterContainer child=1
+raven: created window class=6.0.2600.2982!msctls_statusbar32 child=1
+raven: created window class=dockingManager child=1
+raven: created window class=#32770 child=0
+raven: created window class=6.0.2600.2982!Button child=1
+raven: created window class=6.0.2600.2982!Static child=1
+raven: created window class=6.0.2600.2982!SysTabControl32 child=1
+raven: created window class=wedockspliter child=1
+raven: created window class=#32770 child=0
+raven: created window class=6.0.2600.2982!Button child=1
+raven: created window class=6.0.2600.2982!Static child=1
+raven: created window class=6.0.2600.2982!SysTabControl32 child=1
+raven: created window class=wedockspliter child=1
+raven: created window class=#32770 child=0
+raven: created window class=6.0.2600.2982!Button child=1
+raven: created window class=6.0.2600.2982!Static child=1
+raven: created window class=6.0.2600.2982!SysTabControl32 child=1
+raven: created window class=nsdockspliter child=1
+raven: created window class=#32770 child=0
+raven: created window class=6.0.2600.2982!Button child=1
+raven: created window class=6.0.2600.2982!Static child=1
+raven: created window class=6.0.2600.2982!SysTabControl32 child=1
+raven: created window class=nsdockspliter child=1
+raven: created window class=6.0.2600.2982!ToolbarWindow32 child=1
+raven: created window class=6.0.2600.2982!tooltips_class32 child=0
+raven: created window class=6.0.2600.2982!ReBarWindow32 child=1
+raven: created window class=6.0.2600.2982!ReBarWindow32 child=1
+raven: created window class=#32770 child=1
+raven: created window class=6.0.2600.2982!Button child=1
+raven: created window class=6.0.2600.2982!Static child=1
+raven: created window class=6.0.2600.2982!Edit child=1
+raven: created window class=6.0.2600.2982!Button child=1
+raven: created window class=6.0.2600.2982!Button child=1
+raven: created window class=6.0.2600.2982!Button child=1
+raven: created window class=6.0.2600.2982!Button child=1
+raven: created window class=6.0.2600.2982!Static child=1
+raven: created window class=Notepad++ child=0
+raven: created window class=6.0.2600.2982!ToolbarWindow32 child=1
+raven: created window class=6.0.2600.2982!tooltips_class32 child=0

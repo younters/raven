@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="4"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="22"
+	timestamp="2026-10-30T19:26:20"
+	>
+	<testcase name="darwin_x87sidecar_correctness" classname="darwin_x87sidecar_correctness" time="3.01222" status="run">
+		<properties/>
+		<system-out>bit-identical checksum 415e848000000000; stock=0.428823s hooked=0.017404s speedup=24.64x
+</system-out>
+	</testcase>
+	<testcase name="darwin_x87sidecar_fallback" classname="darwin_x87sidecar_fallback" time="11.0754" status="run">
+		<properties/>
+		<system-out>unsupported, rolled-back hook and missing sidecar all preserve PE32 execution
+</system-out>
+	</testcase>
+	<testcase name="darwin_x87sidecar_x64" classname="darwin_x87sidecar_x64" time="2.92453" status="run">
+		<properties/>
+		<system-out>PE64 bypasses sidecar and preserves the checksum
+</system-out>
+	</testcase>
+	<testcase name="darwin_x87sidecar_child" classname="darwin_x87sidecar_child" time="5.48622" status="run">
+		<properties/>
+		<system-out>bit-identical checksum 415e848000000000; stock=0.425312s hooked=0.017074s speedup=24.91x
+</system-out>
+	</testcase>
+</testsuite>

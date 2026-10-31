@@ -1,0 +1,40 @@
+{
+  "fex": {
+    "counts": {
+      "passed": 118,
+      "failed": 0,
+      "skipped": 0
+    },
+    "remaining_failures": []
+  },
+  "rosetta": {
+    "counts": {
+      "passed": 121,
+      "failed": 4,
+      "skipped": 3
+    },
+    "remaining_failures": [
+      "native_cmd",
+      "darwin_dxmt_pacing",
+      "darwin_dxmt_features",
+      "native_darwin_runtime"
+    ],
+    "skipped": [
+      "native_darwin_capture_authorized",
+      "native_darwin_installer_widl",
+      "native_darwin_fd_budget_low_hard"
+    ]
+  },
+  "parity": {
+    "ctest_counts": {
+      "passed": 28,
+      "failed": 0,
+      "skipped": 0
+    },
+    "successful_pairs": 13,
+    "pairs": 14,
+    "expected_failures": [
+      "native_parity_context_native"
+    ]
+  }
+}

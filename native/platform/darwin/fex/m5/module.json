@@ -1,66 +1,958 @@
 {
-  "machine": "0x8664",
-  "chpe_metadata_pointer": "0x180390880",
-  "chpe_code_map": [
-    [
-      "0x4000 - 0x21E71C",
-      "ARM64EC"
-    ],
-    [
-      "0x21F000 - 0x220130",
-      "X64"
-    ]
-  ],
-  "exports": [
-    "BTCpu64FlushInstructionCache",
-    "BTCpu64IsProcessorFeaturePresent",
-    "BTCpu64NotifyMemoryDirty",
-    "BTCpu64NotifyReadFile",
-    "BeginSimulation",
-    "DispatchJump",
-    "ExitToX64",
-    "FlushInstructionCacheHeavy",
-    "NotifyMapViewOfSection",
-    "NotifyMemoryAlloc",
-    "NotifyMemoryFree",
-    "NotifyMemoryProtect",
-    "NotifyUnmapViewOfSection",
-    "ProcessInit",
-    "ProcessTerm",
-    "RavenHandleFault",
-    "RavenProcessInit",
-    "ResetToConsistentState",
-    "RetToEntryThunk",
-    "ThreadInit",
-    "ThreadTerm",
-    "UpdateProcessorInformation"
-  ],
-  "imports": [
-    "ntdll.dll"
-  ],
-  "wine_builtin_marker": true,
-  "sha256": "409b62e806e007265f50f848e8ec810b8a5a68a192a44d37de6b75b1f0dca445",
-  "size": 5517824,
-  "source_tree": "e564b86ae8d4c3900ea391b9d49e5f66c5430e1b",
-  "source_matches_patch_series": true,
-  "pins": {
-    "version": 1,
-    "xtajit64_sha256": "409b62e806e007265f50f848e8ec810b8a5a68a192a44d37de6b75b1f0dca445",
-    "raven_process_init_rva": 27468,
-    "patches": {
-      "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
-      "0002-raven-host-frontend.patch": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da",
-      "0003-raven-host-build-option.patch": "b10f70cb16189b544afc3337b2e7c9e8b5bfad2b7f6963aec2b3767a78225d14",
-      "0004-raven-dispatch-resume.patch": "512b17d8f4fb5eb122bafdd1089c5112d7d8961bdcbde79fa19febfac226b7fc",
-      "0005-native-temporary-jit-guards.patch": "d71afcb2dd831501a9681b4621ab7fd18639ae2498bb8cadf38aaa6446801d6c",
-      "0006-raven-precise-fault.patch": "ce560ecbf0ec7658b25f806f83fae55dac8b0e287b99ee0e76d24e1f16aedcea",
-      "0007-raven-x87-context.patch": "bb3f981b875ce568911ab811971693ecbe4f319880085e6b7f80b555ad423633",
-      "0008-raven-divide-and-synchronous-faults.patch": "1aa6f41b73c1a5ca082411a552fa4cf30334a2b41b5197e9e8c8e24fc87c853c",
-      "0009-raven-doorbell-stop.patch": "ac41d37a32f07deba437002373f4628d1f12d65e3d3a7d48cf98c303b0c5449e",
-      "0010-raven-shared-data-and-return-stack.patch": "f91729012073e54bac788909509080ea0395fd7819414fc9cfdda07a6ff668de",
-      "0011-raven-gate-callret-repair.patch": "e279bfb28511db4c4fa35abfaccea508e184a1297230764d343e1d0565d0459a",
-      "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657",
-      "0013-raven-unaligned-tso.patch": "58626f13198f13301b743896c59fa3bbc23b6ff3aba37ae72654d33b8c6a2dac"
+  "schema": 1,
+  "status": "pass",
+  "commands": [
+    {
+      "argv": [
+        "/usr/sbin/sysctl",
+        "-n",
+        "sysctl.proc_translated"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/host-translated.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/usr/bin/sw_vers"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/host-version.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/usr/bin/file",
+        "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/clang-22"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/host-clang.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/clang",
+        "--version"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/version-clang.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/usr/bin/file",
+        "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/llvm-readobj"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/host-llvm-readobj.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/llvm-readobj",
+        "--version"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/version-llvm-readobj.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/usr/bin/file",
+        "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/llvm-ar"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/host-llvm-ar.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/llvm-ar",
+        "--version"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/version-llvm-ar.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/usr/bin/file",
+        "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/lld"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/host-ld.lld.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/ld.lld",
+        "--version"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/version-ld.lld.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "cmake",
+        "--version"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/version-cmake.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/source-head.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "status",
+        "--porcelain",
+        "--untracked-files=all"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/source-status.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "ls-tree",
+        "HEAD",
+        "External/fmt"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-pin-0.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "${FEX_SOURCE}/External/fmt",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-head-0.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "status",
+        "--porcelain"
+      ],
+      "cwd": "${FEX_SOURCE}/External/fmt",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-clean-0.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "ls-tree",
+        "HEAD",
+        "External/range-v3"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-pin-1.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "${FEX_SOURCE}/External/range-v3",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-head-1.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "status",
+        "--porcelain"
+      ],
+      "cwd": "${FEX_SOURCE}/External/range-v3",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-clean-1.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "ls-tree",
+        "HEAD",
+        "External/rpmalloc"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-pin-2.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "${FEX_SOURCE}/External/rpmalloc",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-head-2.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "status",
+        "--porcelain"
+      ],
+      "cwd": "${FEX_SOURCE}/External/rpmalloc",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-clean-2.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "ls-tree",
+        "HEAD",
+        "External/unordered_dense"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-pin-3.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "${FEX_SOURCE}/External/unordered_dense",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-head-3.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "status",
+        "--porcelain"
+      ],
+      "cwd": "${FEX_SOURCE}/External/unordered_dense",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-clean-3.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "ls-tree",
+        "HEAD",
+        "External/xxhash"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-pin-4.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "${FEX_SOURCE}/External/xxhash",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-head-4.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "status",
+        "--porcelain"
+      ],
+      "cwd": "${FEX_SOURCE}/External/xxhash",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-clean-4.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "ls-tree",
+        "HEAD",
+        "Source/Common/cpp-optparse"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-pin-5.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "${FEX_SOURCE}/Source/Common/cpp-optparse",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-head-5.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "git",
+        "status",
+        "--porcelain"
+      ],
+      "cwd": "${FEX_SOURCE}/Source/Common/cpp-optparse",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/submodule-clean-5.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/arm64ec-w64-mingw32-clang++",
+        "--version"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/arm64ec-compiler.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "cmake",
+        "-S",
+        "${FEX_SOURCE}",
+        "-B",
+        "${FEX_SOURCE}/build/local/m5-review/arm64ec",
+        "-G",
+        "Unix Makefiles",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+        "-DCMAKE_TOOLCHAIN_FILE=${FEX_SOURCE}/Data/CMake/toolchain_mingw.cmake",
+        "-DRAVEN_HOST=ON",
+        "-DMINGW_TRIPLE=arm64ec-w64-mingw32",
+        "-DENABLE_LTO=False",
+        "-DBUILD_TESTING=False",
+        "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--section-alignment=16384,--no-insert-timestamp",
+        "-DENABLE_JEMALLOC_GLIBC_ALLOC=False",
+        "-DTUNE_CPU=none",
+        "-DENABLE_CCACHE=False",
+        "-DENABLE_GUEST_WINDOW=False",
+        "-DPython_EXECUTABLE=/opt/homebrew/opt/python@3.15/bin/python3.15"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/arm64ec-configure.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "cmake",
+        "--build",
+        "${FEX_SOURCE}/build/local/m5-review/arm64ec",
+        "--target",
+        "arm64ecfex",
+        "--parallel",
+        "8"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/arm64ec-build.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/llvm-readobj",
+        "--file-headers",
+        "--coff-load-config",
+        "--coff-exports",
+        "--coff-imports",
+        "${FEX_SOURCE}/build/local/m5-review/dlls/xtajit64.dll"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/arm64ec-pe-audit.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/aarch64-w64-mingw32-clang++",
+        "--version"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/wow64-compiler.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "cmake",
+        "-S",
+        "${FEX_SOURCE}",
+        "-B",
+        "${FEX_SOURCE}/build/local/m5-review/wow64",
+        "-G",
+        "Unix Makefiles",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+        "-DCMAKE_TOOLCHAIN_FILE=${FEX_SOURCE}/Data/CMake/toolchain_mingw.cmake",
+        "-DRAVEN_HOST=ON",
+        "-DMINGW_TRIPLE=aarch64-w64-mingw32",
+        "-DENABLE_LTO=False",
+        "-DBUILD_TESTING=False",
+        "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,--section-alignment=16384,--no-insert-timestamp",
+        "-DENABLE_JEMALLOC_GLIBC_ALLOC=False",
+        "-DTUNE_CPU=none",
+        "-DENABLE_CCACHE=False",
+        "-DENABLE_GUEST_WINDOW=True",
+        "-DPython_EXECUTABLE=/opt/homebrew/opt/python@3.15/bin/python3.15"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/wow64-configure.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "cmake",
+        "--build",
+        "${FEX_SOURCE}/build/local/m5-review/wow64",
+        "--target",
+        "wow64fex",
+        "--parallel",
+        "8"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/wow64-build.log",
+      "returncode": 0
+    },
+    {
+      "argv": [
+        "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/llvm-readobj",
+        "--file-headers",
+        "--coff-load-config",
+        "--coff-exports",
+        "--coff-imports",
+        "${FEX_SOURCE}/build/local/m5-review/dlls/xtajit.dll"
+      ],
+      "cwd": "${FEX_SOURCE}",
+      "log": "${FEX_SOURCE}/build/local/m5-review/logs/wow64-pe-audit.log",
+      "returncode": 0
     }
-  }
+  ],
+  "artifacts": {
+    "xtajit64.dll": {
+      "machine": "0x8664",
+      "chpe_metadata_pointer": "0x180390880",
+      "chpe_code_map": [
+        [
+          "0x4000 - 0x21E71C",
+          "ARM64EC"
+        ],
+        [
+          "0x21F000 - 0x220130",
+          "X64"
+        ]
+      ],
+      "exports": [
+        "BTCpu64FlushInstructionCache",
+        "BTCpu64IsProcessorFeaturePresent",
+        "BTCpu64NotifyMemoryDirty",
+        "BTCpu64NotifyReadFile",
+        "BeginSimulation",
+        "DispatchJump",
+        "ExitToX64",
+        "FlushInstructionCacheHeavy",
+        "NotifyMapViewOfSection",
+        "NotifyMemoryAlloc",
+        "NotifyMemoryFree",
+        "NotifyMemoryProtect",
+        "NotifyUnmapViewOfSection",
+        "ProcessInit",
+        "ProcessTerm",
+        "RavenHandleFault",
+        "RavenProcessInit",
+        "ResetToConsistentState",
+        "RetToEntryThunk",
+        "ThreadInit",
+        "ThreadTerm",
+        "UpdateProcessorInformation"
+      ],
+      "imports": [
+        "ntdll.dll"
+      ],
+      "wine_builtin_marker": true,
+      "sha256": "409b62e806e007265f50f848e8ec810b8a5a68a192a44d37de6b75b1f0dca445",
+      "size": 5517824,
+      "path": "${FEX_SOURCE}/build/local/m5-review/dlls/xtajit64.dll",
+      "upstream_path": "${FEX_SOURCE}/build/local/m5-review/arm64ec/Bin/libarm64ecfex.dll"
+    },
+    "xtajit.dll": {
+      "machine": "0xaa64",
+      "chpe_metadata_pointer": "0x0",
+      "chpe_code_map": [],
+      "exports": [
+        "BTCpuFlushInstructionCache2",
+        "BTCpuFlushInstructionCacheHeavy",
+        "BTCpuGetBopCode",
+        "BTCpuGetContext",
+        "BTCpuIsProcessorFeaturePresent",
+        "BTCpuNotifyMapViewOfSection",
+        "BTCpuNotifyMemoryAlloc",
+        "BTCpuNotifyMemoryDirty",
+        "BTCpuNotifyMemoryFree",
+        "BTCpuNotifyMemoryProtect",
+        "BTCpuNotifyProcessExecuteFlagsChange",
+        "BTCpuNotifyReadFile",
+        "BTCpuNotifyUnmapViewOfSection",
+        "BTCpuProcessInit",
+        "BTCpuProcessTerm",
+        "BTCpuResetToConsistentState",
+        "BTCpuSetContext",
+        "BTCpuSimulate",
+        "BTCpuSuspendLocalThread",
+        "BTCpuThreadInit",
+        "BTCpuThreadTerm",
+        "BTCpuUpdateProcessorInformation",
+        "__wine_get_unix_opcode"
+      ],
+      "imports": [
+        "wow64.dll",
+        "ntdll.dll"
+      ],
+      "wine_builtin_marker": true,
+      "sha256": "5c785d47c43d8f2d0a444e82114ca731499b8a9e2ac408679b212db46c76bd6b",
+      "size": 4963840,
+      "path": "${FEX_SOURCE}/build/local/m5-review/dlls/xtajit.dll",
+      "upstream_path": "${FEX_SOURCE}/build/local/m5-review/wow64/Bin/libwow64fex.dll"
+    }
+  },
+  "source_commit": "9fbdc00bd6401aff3b32d79e78ff98b8a13e4dcf",
+  "source_tag": "FEX-2609.1",
+  "repository": "https://github.com/FEX-Emu/FEX.git",
+  "recipe": "https://wiki.fex-emu.com/index.php/Development:ARM64EC",
+  "installed": false,
+  "guest_execution": "not_run",
+  "source_patches": [
+    {
+      "path": "Darwin/patches/fex-darwin-user-shared-data.patch",
+      "sha256": "76e449c57bb2e9f001c9444a185278bfffd4f53b30d987ad58a6537ede727101"
+    },
+    {
+      "path": "Darwin/patches/fex-darwin-jit-write-scope.patch",
+      "sha256": "7d28d09e635b9890264832c329f61fc13d01c3db894febce2c9838828dca9c0b"
+    },
+    {
+      "path": "Darwin/patches/fex-darwin-native-jit-allocation.patch",
+      "sha256": "6856841828b1793ceffa5ec01904eb5e99ff1aed5575bba354299e396855cbd1"
+    },
+    {
+      "path": "Darwin/patches/fex-darwin-guest-window.patch",
+      "sha256": "2c057b24a649a79151844f2e2c2d85a8b819ceff6968ac955f0e4cf0c51ddd64"
+    },
+    {
+      "path": "Darwin/patches/fex-darwin-guest-window-front.patch",
+      "sha256": "1056d7ce2ed8557af286e37175186846473dd80cde4fb16945f169879ff0eb00"
+    },
+    {
+      "path": "Darwin/patches/fex-darwin-callret-guard.patch",
+      "sha256": "368ab30e4d2dfcddde21a5c437541b073e1bcdeb2316409da49a9569095804b7"
+    },
+    {
+      "path": "Darwin/patches/fex-upstream-thread-termination.patch",
+      "sha256": "cbc864131d2c29cbf198a251f430e0542bacef8d7d438db0c39de23eaf5192fe"
+    },
+    {
+      "path": "Darwin/patches/fex-upstream-pcmpxstrx.patch",
+      "sha256": "0e237deb3047acf57927fd16b17973c65614d8c2f3d0aca8f1ce4beb0b71b95c"
+    },
+    {
+      "path": "Darwin/patches/fex-upstream-disk-cache.patch",
+      "sha256": "15f6eb2e43e641b0e5b5ac55558723ec935f518161e27b3917fee99b7e6be57d"
+    }
+  ],
+  "host": {
+    "system": "Darwin",
+    "machine": "arm64",
+    "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+    "python": "3.15.1 (main, Oct 21 2026, 05:55:12) [Clang 21.0.0 (clang-2100.3.34.2)]",
+    "proc_translated": "0",
+    "clang": "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/clang-22: Mach-O universal binary with 2 architectures: [x86_64:Mach-O 64-bit executable x86_64] [arm64:Mach-O 64-bit executable arm64]\n/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/clang-22 (for architecture x86_64):\tMach-O 64-bit executable x86_64\n/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/clang-22 (for architecture arm64):\tMach-O 64-bit executable arm64",
+    "llvm-readobj": "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/llvm-readobj: Mach-O universal binary with 2 architectures: [x86_64:Mach-O 64-bit executable x86_64] [arm64]\n/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/llvm-readobj (for architecture x86_64):\tMach-O 64-bit executable x86_64\n/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/llvm-readobj (for architecture arm64):\tMach-O 64-bit executable arm64",
+    "llvm-ar": "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/llvm-ar: Mach-O universal binary with 2 architectures: [x86_64:Mach-O 64-bit executable x86_64] [arm64:Mach-O 64-bit executable arm64]\n/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/llvm-ar (for architecture x86_64):\tMach-O 64-bit executable x86_64\n/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/llvm-ar (for architecture arm64):\tMach-O 64-bit executable arm64",
+    "ld.lld": "/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/lld: Mach-O universal binary with 2 architectures: [x86_64:Mach-O 64-bit executable x86_64] [arm64]\n/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/lld (for architecture x86_64):\tMach-O 64-bit executable x86_64\n/private${MODULES}/llvm-mingw-20260616-ucrt-macos-universal/bin/lld (for architecture arm64):\tMach-O 64-bit executable arm64"
+  },
+  "source_head": "370c63057fc9fc826b58fe15d59930876df55b5f",
+  "source_status": " M CMakeLists.txt\n M Darwin/build.py\n M FEXCore/Source/Interface/Core/Core.cpp\n M FEXCore/Source/Interface/Core/JIT/JIT.cpp\n M FEXCore/Source/Interface/Core/JIT/MiscOps.cpp\n M FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp\n M FEXCore/Source/Interface/IR/IR.json\n M FEXCore/include/FEXCore/Utils/ThreadPoolAllocator.h\n M Source/Windows/ARM64EC/Module.cpp\n M Source/Windows/ARM64EC/libarm64ecfex.def\n M Source/Windows/CMakeLists.txt\n M Source/Windows/Common/Allocator.cpp\n M Source/Windows/Common/Exception.h\n M Source/Windows/Common/FEXUnixLib.cpp\n M Source/Windows/Common/JITGuardPage.h\n M Source/Windows/Common/Logging.cpp\n?? Source/Windows/Common/RavenHost.h\n",
+  "submodules": [
+    {
+      "path": "External/fmt",
+      "commit": "c07e2aa4b130b4fd359a1c6455a5201b17af01fa"
+    },
+    {
+      "path": "External/range-v3",
+      "commit": "ca1388fb9da8e69314dda222dc7b139ca84e092f"
+    },
+    {
+      "path": "External/rpmalloc",
+      "commit": "09142d726429416bfa7b459151515fe3ab7622dd"
+    },
+    {
+      "path": "External/unordered_dense",
+      "commit": "3234af2c03549bc85656bfd3a86993bf1cd8aef1"
+    },
+    {
+      "path": "External/xxhash",
+      "commit": "e626a72bc2321cd320e953a0ccf1584cad60f363"
+    },
+    {
+      "path": "Source/Common/cpp-optparse",
+      "commit": "9f94388a339fcbb0bc95c17768eb786c85988f6e"
+    }
+  ],
+  "licenses": [
+    {
+      "path": "LICENSE",
+      "license": "MIT",
+      "sha256": "127431a3aff9286c46f8fe7dc4670880cb9242ba12aae8c4f9a99e0712aff278"
+    },
+    {
+      "path": "LICENSE.upstream",
+      "license": "MIT (upstream FEX)",
+      "sha256": "f34a779f56b36d22b20e1b990d23e583a6a7ca071331925fa46156441c77a1ee"
+    },
+    {
+      "path": "External/fmt/LICENSE",
+      "license": "MIT",
+      "sha256": "a65fcc5a1095fc33cc37e4fff69366e49d7e92f613558a2b95ed1b70e33758b4"
+    },
+    {
+      "path": "External/range-v3/LICENSE.txt",
+      "license": "BSL-1.0 and bundled notices",
+      "sha256": "2b74ee37dd1a90b2b385534b7dbc171938409bda468673a123ff25302c9c5739"
+    },
+    {
+      "path": "External/rpmalloc/LICENSE",
+      "license": "permissive no-attribution grant",
+      "sha256": "9fdc653aacc736bef0cd12854f4a8d94f703ec5603fb5dca1be945b7f679918c"
+    },
+    {
+      "path": "External/unordered_dense/LICENSE",
+      "license": "MIT",
+      "sha256": "4f5a62734899ec0ba85d3e8264a7ed1fcb4bcb8f0b4359c0afd627b6314ae599"
+    },
+    {
+      "path": "External/xxhash/LICENSE",
+      "license": "BSD-2-Clause",
+      "sha256": "6ffedbc0f7878612d2b23589f1ff2ab15633e1df7963a5d9fc750ec5500c7e7a"
+    },
+    {
+      "path": "Source/Common/cpp-optparse/LICENSE",
+      "license": "MIT",
+      "sha256": "d638447635afa6837615553bcebbba60bc80a0e62ed9b158b4ed969e8bb72421"
+    },
+    {
+      "path": "External/cephes/LICENSE",
+      "license": "BSD permission",
+      "sha256": "edf1440b625e6d434a986cdb535c702001afab8959d94ce6275441a58cfd0ebb"
+    },
+    {
+      "path": "External/tiny-json/LICENSE",
+      "license": "MIT",
+      "sha256": "83c6abf07e7123427303b5f12cd995122c372a5cb96815ec130a18628396fb7c"
+    },
+    {
+      "path": "External/SoftFloat-3e/include/SoftFloat-3e/softfloat.h",
+      "license": "BSD-3-Clause (header notice)",
+      "sha256": "907a309d402530a9647cfe8292228250539d4cafb6f2c1cbb9eaa6e7bd9d639c"
+    }
+  ],
+  "source_checkout": "${FEX_SOURCE}",
+  "provenance_sha256": "b7c07348e412590b6f48421f8d133498d356bd694228ce9487fb279f03ca72db",
+  "source_files": [
+    {
+      "path": "FEXCore/Source/Interface/Core/OpcodeDispatcher/X87.cpp",
+      "sha256": "410e3bd773c070587f6b716721874c9ebd5a3e3a64958f2db90914d3f2c869a7"
+    },
+    {
+      "path": "Source/Windows/ARM64EC/Module.cpp",
+      "sha256": "816e42495b57404ff52194e874b7ef51b69a44f5b468379ca5057f556946f04c"
+    },
+    {
+      "path": "Source/Windows/ARM64EC/UserSharedData.h",
+      "sha256": "87ebc81ae6f0ad6e8e9b87e2f6f208cb8b003fcbf3428cd479b9768abd824e60"
+    },
+    {
+      "path": "FEXCore/include/FEXCore/Utils/AllocatorHooks.h",
+      "sha256": "0ebe6bc07cf449497e26a87a08078e4ca45c3bd1cf906ce2792fce34a79ff3ff"
+    },
+    {
+      "path": "FEXCore/include/FEXCore/Utils/JitWriteScope.h",
+      "sha256": "025d844bbe31da774a9cd940835d6f9cb419a7598aebd62931f607099cea22df"
+    },
+    {
+      "path": "FEXCore/Source/Utils/Allocator.cpp",
+      "sha256": "007598709b4a24fa46e04c2e4c3d2b7edbe60a27d4f4413cb8baf90d335b34d6"
+    },
+    {
+      "path": "Source/Windows/Common/Allocator.cpp",
+      "sha256": "91f872b737b714992e92eca7148e22943f3e48f33957720a0bf4aef25543de09"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/Dispatcher/Dispatcher.cpp",
+      "sha256": "127753f10a84f39f6fde1635d8f3fc5daf19a4c20be38184ca2883bb2e6384ba"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/JIT/JIT.cpp",
+      "sha256": "fce8d9bf9b660e7a0d00cab226ea41378a830e59987ec4769c171b704370a497"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/CodeCache.cpp",
+      "sha256": "ed64407e7375b4617f68b13edb9061d5a8fa9a2349bfc3a48e5cfd56403be652"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/SharedCodeBufferManager.h",
+      "sha256": "1f18d128d0dcd669cc13f85dbca4953755d53895b2a76f074ce34f4fbe07d6d7"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/SharedCodeBufferManager.cpp",
+      "sha256": "22ed5a2618828ce687b79e1791397344adc337392300c9068f02ff61c4ad341b"
+    },
+    {
+      "path": "FEXCore/Source/Utils/ArchHelpers/Arm64.cpp",
+      "sha256": "065e071b4aa5800860df0dbacdc33e399797db97dc20b5e919a2a68bb07f7535"
+    },
+    {
+      "path": "CMakeLists.txt",
+      "sha256": "8d1b0d14be4ec20c943d7050c7b665634a00db4c9415c99ba18f471609c246a2"
+    },
+    {
+      "path": "FEXCore/Scripts/config_generator.py",
+      "sha256": "040d7adb463e8b7a9bf6a7c6fe9cf5db5fbd4e121993ca445c583d9ffcfe94a3"
+    },
+    {
+      "path": "FEXCore/Scripts/json_ir_generator.py",
+      "sha256": "a08fade4359bb57f17704821534284efcf54326bf110aeefb002f089cdf41be8"
+    },
+    {
+      "path": "FEXCore/Source/CMakeLists.txt",
+      "sha256": "d2c8dffabad27161f95ebcd61888ef32c704594c5626f53ecaaf9504e7bb0ff9"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Config/Config.json.in",
+      "sha256": "d4f1aaf6fdce4accc3f36643596c751c806f1b2c63329a3c63a512876243f563"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Context/Context.h",
+      "sha256": "42dbab5b18340f4c1d788a07e2ecb718c59fb30654b8c385bcf7cd0af388bf34"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.cpp",
+      "sha256": "adffa703074cd21d0ca4daf0da9024704c234e870b613824bbd1e2ef9eec80df"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/ArchHelpers/Arm64Emitter.h",
+      "sha256": "badd3f7881f3f96a773b0ed99e5775d19289d84bf6d62618360c2846107b6e7d"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/Core.cpp",
+      "sha256": "92d3b5e2751bbb6c36a825da71e85a56aa5d776a140b003bd0c95a4fc44af8c2"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/Frontend.cpp",
+      "sha256": "b2b9bb69ba496033b822ba3753851323a70ad53f990afb971ec0a0937002ca06"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/JIT/AtomicOps.cpp",
+      "sha256": "6bf7473378970e7da8dab14865be234fdeb9b28755ebd30eef16c4ffc8efd5b0"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/JIT/BranchOps.cpp",
+      "sha256": "ea249520d0a865b1df806a7fcc84ebf90ee929724855d09a327512c1a0e8f421"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/JIT/JITClass.h",
+      "sha256": "fc0203acec9f2bda46adf018191fb60f2ee797021be4f6ebacdcc35732cdbd41"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/JIT/MemoryOps.cpp",
+      "sha256": "36f99b73783426973ec1863fa165b41346f64057e12a6ecb8d010f31027252b3"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp",
+      "sha256": "86d74394347f01ffd585fc03ddf49368666f63521f7622566f6937a5f33558af"
+    },
+    {
+      "path": "FEXCore/Source/Interface/IR/IR.json",
+      "sha256": "e701c395ffc069956cb6b6ddb8bec74babbd9d89a3394ca090569d17a4c1951d"
+    },
+    {
+      "path": "FEXCore/Source/Interface/IR/IREmitter.h",
+      "sha256": "a9400ef8c3b235df769d0e81dc51182f0980ac2ee3b25b550d6158b7a9ede7c7"
+    },
+    {
+      "path": "FEXCore/Source/Interface/IR/Passes/x87StackOptimizationPass.cpp",
+      "sha256": "cb97d01dc6a0c9461bffd3036b25d7ee921c8ec02d7fe0783b213d893128f044"
+    },
+    {
+      "path": "Source/Windows/WOW64/Module.cpp",
+      "sha256": "e979ef0caa8a06743b9768ac03f6942408a8ab56665aef6bd3b4c1b88566f245"
+    },
+    {
+      "path": "Source/Windows/Common/InvalidationTracker.h",
+      "sha256": "348f29201633fe6a6830debe6d381430613716cd54b2a804e026dca558fda5fb"
+    },
+    {
+      "path": "Source/Windows/Common/InvalidationTracker.cpp",
+      "sha256": "aeab988e544bcc0229a33f780708690e6104bd235091a1bbdc72a451b2756d55"
+    },
+    {
+      "path": "Source/Windows/Common/ImageTracker.h",
+      "sha256": "bd821aaaaceb5fd882791715f864dd98411e6a4c2e1626f64e8124828b28cf04"
+    },
+    {
+      "path": "Source/Windows/Common/ImageTracker.cpp",
+      "sha256": "c55ef6c559e757af4f72a68dbeebedffccab25bfc5e3b4b41d72e89b3169d4e5"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/DiskCache.cpp",
+      "sha256": "f7b50d4ac885a2dfb02ecaf9f9388c3da746208bbe398e2015c6f6c1c67b752c"
+    },
+    {
+      "path": "Source/Windows/Common/CallRetStack.h",
+      "sha256": "ce99f5963c05a5cf4425a7cdac752e6bfcbd831de0dac88cafcb4fa2b3e93c8a"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/CPUBackend.cpp",
+      "sha256": "da6f882d069c7b756a716d167ab454f529987fde7bcf4d9328895d48cbb67bc2"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/Interpreter/Fallbacks/InterpreterFallbacks.cpp",
+      "sha256": "85ca4d8b4c73e1a2c6aa3185f85801a7e8b74950f8cdccad6214dea06448f51b"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/Interpreter/Fallbacks/StringCompareFallbacks.cpp",
+      "sha256": "be07df65705ecf7ec88834664e0d209a389e5a077edcd76ef812004c5769c394"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/Interpreter/Fallbacks/VectorFallbacks.h",
+      "sha256": "33dab171ae57e5ee665499c8764c94d4b66c42e0c356b03551267717a0905b5b"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/JIT/VectorOps.cpp",
+      "sha256": "8281cbdfd459d44d315013a2ac18fd3939eb5b061463a7d39cf401dcbf4a9023"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/OpcodeDispatcher.h",
+      "sha256": "13c590f9e3b9c5de4c2cd7b4b8e02def4a7aa353de35d885b723f80588703380"
+    },
+    {
+      "path": "FEXCore/Source/Interface/Core/OpcodeDispatcher/Vector.cpp",
+      "sha256": "cf5ebb1f1418f3278f6abb6bf787dff10c6985ff5d6e54c455365b983ebf0b3f"
+    },
+    {
+      "path": "FEXCore/Source/Interface/IR/IRDumper.cpp",
+      "sha256": "1abd1796a0f40a916235adc520f816bec36bdf4aa5cdd124a3acbc222565fb42"
+    },
+    {
+      "path": "FEXCore/include/FEXCore/IR/IR.h",
+      "sha256": "44c67a7c539256773153053098fb6a785b66dc283e78231f2367bc6d12c31271"
+    },
+    {
+      "path": "unittests/ASM/H0F3A/pcmpestri_ranges.asm",
+      "sha256": "b72d0dccbd45248127ac523f2f66f397dea59bfc0615ffbcc8cf5ee256a8cb90"
+    },
+    {
+      "path": "unittests/ASM/H0F3A/pcmpistri_ranges.asm",
+      "sha256": "a28989548fa9af49adc87bebe7be26552f30c43c873d3dbf7415a24cef138dcf"
+    },
+    {
+      "path": "FEXCore/include/FEXCore/Core/DiskCache.h",
+      "sha256": "873ba1cc817d0796b4a0319e43b11928f4baa210638002931c4e24fd51f0e302"
+    },
+    {
+      "path": "FEXCore/include/FEXCore/Core/HostFeatures.h",
+      "sha256": "0912528908cb5ba71998ce3f6161c12200153dd69aed42b5c444fee7eacf1286"
+    },
+    {
+      "path": "FEXCore/Source/Utils/FileUtils.cpp",
+      "sha256": "211f5e7c0268f3f04478fc19dd00dd4378789eea9238a827ea78cdf0cbe33c76"
+    },
+    {
+      "path": "FEXCore/include/FEXCore/Utils/FileUtils.h",
+      "sha256": "c8be748410e3634f4214506e35c703025d8f044072a049c5c89d2c10c5e011aa"
+    },
+    {
+      "path": "Source/Windows/Common/WinAPI/IO.cpp",
+      "sha256": "ae21ecad6cd63874bc9b468cdbb53a6116f2d810d17d7a5ed0a76656c528ee3a"
+    }
+  ],
+  "source_snapshot": "${FEX_SOURCE}",
+  "builtin_marker_sha256": "8f15265269b70d27579fb7525ec418fde87a7a1e8ac97e00c04c2238c0aaf5b9",
+  "patch_composition": {
+    "m4_head": "9b0ca6df16542f53a24eab3b65fda4160af2f1cb",
+    "m5": {
+      "pass": true,
+      "patches": {
+        "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
+        "0002-raven-host-frontend.patch": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da",
+        "0003-raven-host-build-option.patch": "b10f70cb16189b544afc3337b2e7c9e8b5bfad2b7f6963aec2b3767a78225d14",
+        "0004-raven-dispatch-resume.patch": "512b17d8f4fb5eb122bafdd1089c5112d7d8961bdcbde79fa19febfac226b7fc",
+        "0005-native-temporary-jit-guards.patch": "d71afcb2dd831501a9681b4621ab7fd18639ae2498bb8cadf38aaa6446801d6c",
+        "0006-raven-precise-fault.patch": "ce560ecbf0ec7658b25f806f83fae55dac8b0e287b99ee0e76d24e1f16aedcea",
+        "0007-raven-x87-context.patch": "bb3f981b875ce568911ab811971693ecbe4f319880085e6b7f80b555ad423633",
+        "0008-raven-divide-and-synchronous-faults.patch": "1aa6f41b73c1a5ca082411a552fa4cf30334a2b41b5197e9e8c8e24fc87c853c",
+        "0009-raven-doorbell-stop.patch": "ac41d37a32f07deba437002373f4628d1f12d65e3d3a7d48cf98c303b0c5449e",
+        "0010-raven-shared-data-and-return-stack.patch": "f91729012073e54bac788909509080ea0395fd7819414fc9cfdda07a6ff668de",
+        "0011-raven-gate-callret-repair.patch": "e279bfb28511db4c4fa35abfaccea508e184a1297230764d343e1d0565d0459a",
+        "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657",
+        "0017-raven-unaligned-tso.patch": "58626f13198f13301b743896c59fa3bbc23b6ff3aba37ae72654d33b8c6a2dac"
+      },
+      "errors": []
+    },
+    "m4_committed": {
+      "pass": true,
+      "patches": {
+        "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
+        "0002-raven-host-frontend.patch": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da",
+        "0003-raven-host-build-option.patch": "b10f70cb16189b544afc3337b2e7c9e8b5bfad2b7f6963aec2b3767a78225d14",
+        "0004-raven-dispatch-resume.patch": "512b17d8f4fb5eb122bafdd1089c5112d7d8961bdcbde79fa19febfac226b7fc",
+        "0005-native-temporary-jit-guards.patch": "d71afcb2dd831501a9681b4621ab7fd18639ae2498bb8cadf38aaa6446801d6c",
+        "0006-raven-precise-fault.patch": "ce560ecbf0ec7658b25f806f83fae55dac8b0e287b99ee0e76d24e1f16aedcea",
+        "0007-raven-x87-context.patch": "bb3f981b875ce568911ab811971693ecbe4f319880085e6b7f80b555ad423633",
+        "0008-raven-divide-and-synchronous-faults.patch": "1aa6f41b73c1a5ca082411a552fa4cf30334a2b41b5197e9e8c8e24fc87c853c",
+        "0009-raven-doorbell-stop.patch": "ac41d37a32f07deba437002373f4628d1f12d65e3d3a7d48cf98c303b0c5449e",
+        "0010-raven-shared-data-and-return-stack.patch": "f91729012073e54bac788909509080ea0395fd7819414fc9cfdda07a6ff668de",
+        "0011-raven-gate-callret-repair.patch": "e279bfb28511db4c4fa35abfaccea508e184a1297230764d343e1d0565d0459a",
+        "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657",
+        "0013-raven-wow64-host.patch": "725144fa05016e97bcc1bc4ec7a88dd6c30053fe3b4a8bc9afc55c31acfdb41b",
+        "0014-raven-wow64-interrupt.patch": "147637376b17a90678113cb9ef420b8076aa750601dfb917047dc76f5a642161",
+        "0015-raven-wow64-doorbell.patch": "3160a1065f03848cef9c276c94a6f368d46e82315dcbd71254031df0fb191246",
+        "0016-wow64-host-boundary-validation.patch": "3a96568d9e9a7a279ace94f16023499be6a4b366ba9a5f95959252240db6874c",
+        "0017-raven-unaligned-tso.patch": "58626f13198f13301b743896c59fa3bbc23b6ff3aba37ae72654d33b8c6a2dac"
+      },
+      "errors": []
+    },
+    "m4_working_tree": {
+      "pass": false,
+      "patches": {
+        "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
+        "0002-raven-host-frontend.patch": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da",
+        "0003-raven-host-build-option.patch": "b10f70cb16189b544afc3337b2e7c9e8b5bfad2b7f6963aec2b3767a78225d14",
+        "0004-raven-dispatch-resume.patch": "512b17d8f4fb5eb122bafdd1089c5112d7d8961bdcbde79fa19febfac226b7fc",
+        "0005-native-temporary-jit-guards.patch": "d71afcb2dd831501a9681b4621ab7fd18639ae2498bb8cadf38aaa6446801d6c",
+        "0006-raven-precise-fault.patch": "ce560ecbf0ec7658b25f806f83fae55dac8b0e287b99ee0e76d24e1f16aedcea",
+        "0007-raven-x87-context.patch": "bb3f981b875ce568911ab811971693ecbe4f319880085e6b7f80b555ad423633",
+        "0008-raven-divide-and-synchronous-faults.patch": "1aa6f41b73c1a5ca082411a552fa4cf30334a2b41b5197e9e8c8e24fc87c853c",
+        "0009-raven-doorbell-stop.patch": "ac41d37a32f07deba437002373f4628d1f12d65e3d3a7d48cf98c303b0c5449e",
+        "0010-raven-shared-data-and-return-stack.patch": "f91729012073e54bac788909509080ea0395fd7819414fc9cfdda07a6ff668de",
+        "0011-raven-gate-callret-repair.patch": "e279bfb28511db4c4fa35abfaccea508e184a1297230764d343e1d0565d0459a",
+        "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657",
+        "0013-raven-wow64-host.patch": "725144fa05016e97bcc1bc4ec7a88dd6c30053fe3b4a8bc9afc55c31acfdb41b",
+        "0014-raven-wow64-interrupt.patch": "147637376b17a90678113cb9ef420b8076aa750601dfb917047dc76f5a642161",
+        "0015-raven-wow64-doorbell.patch": "3160a1065f03848cef9c276c94a6f368d46e82315dcbd71254031df0fb191246",
+        "0016-wow64-host-boundary-validation.patch": "35862f93f4434291209a32980790983d7512831e53529e5a7077b47bd7fd2146",
+        "0017-raven-unaligned-tso.patch": "58626f13198f13301b743896c59fa3bbc23b6ff3aba37ae72654d33b8c6a2dac"
+      },
+      "errors": [
+        "error: patch failed: Source/Windows/ARM64EC/Module.cpp:665\nerror: Source/Windows/ARM64EC/Module.cpp: patch does not apply\n"
+      ]
+    }
+  },
+  "source_patch_tree_exact": true
 }

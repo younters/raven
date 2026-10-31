@@ -1,1009 +1,1936 @@
 {
-  "scope": "M5 implementation checkpoint; full application parity remains incomplete",
-  "head_at_collection": "6dcb67eae636cf4c041959957d303f74d4702740",
-  "benchmarks": {
-    "off": {
-      "timestamp": "2026-10-31T00:38:33.332028+00:00",
-      "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
-      "machine": "arm64",
-      "parallel": "off",
-      "scope": "whole process wall time; isolated fresh prefix per launch; samples alternate backend order",
-      "source_head": "c9c4355462221441d024a0729eb46d069c27a08d",
-      "raven_sha256": "5e8c74e6134bdf3372b3a2f8efec3069a90b7349eeb41dcf4f1b1cbbb71f13a7",
-      "module_sha256": "409b62e806e007265f50f848e8ec810b8a5a68a192a44d37de6b75b1f0dca445",
-      "benchmark_script_sha256": "9f5e1456d794d90366086268f2356ad456d68b4486529713cbaafcd4c2e91b46",
-      "source_diff_sha256": "d6ac20efbb255888f0631cd03d8de11a872c412c2f5a7bda4afc3ec82091bd2d",
-      "fixtures": {
-        "kernel-ansi": {
-          "fixture": "/tmp/raven-m5-build/native/kernel-ansi-fex.exe",
-          "sha256": "21cea95b2faec1a2d2db57e90ea15fbabb96e4d94b245d0ffc0cc29523517702",
-          "native": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-ansi-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 225.504083
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-ansi-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 250.632541
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-ansi-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 238.559083
-            }
-          ],
-          "fex": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-ansi-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 195.870875
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-ansi-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 201.005375
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-ansi-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 248.528834
-            }
-          ],
-          "median_ms": {
-            "native": 238.559083,
-            "fex": 201.005375
+  "parallel_off": {
+    "timestamp": "2026-10-31T01:08:51.958722+00:00",
+    "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "parallel": "off",
+    "scope": "whole process wall time; isolated fresh prefix per launch; one warmup per backend excluded; balanced ABBA order",
+    "source_head": "c5132ba236d44d848b3b53a61319a0c68c8dac42",
+    "raven_sha256": "b499ad7a75dfd55bac4d43ec332aa63420ac84650d945b98830a095d33d8e2b0",
+    "module_sha256": "409b62e806e007265f50f848e8ec810b8a5a68a192a44d37de6b75b1f0dca445",
+    "benchmark_script_sha256": "d78dbe144ce42eed4d702937a60963cd009b7a65be24a12f71e842a7051f5f45",
+    "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "fixtures": {
+      "kernel-ansi": {
+        "fixture": "${BUILD}/native/kernel-ansi-fex.exe",
+        "sha256": "21cea95b2faec1a2d2db57e90ea15fbabb96e4d94b245d0ffc0cc29523517702",
+        "native": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3727.060875
           },
-          "fex_over_native": 0.8425811018061299
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3628.383417
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3527.454667
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3908.587542
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3991.084084
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3672.656666
+          }
+        ],
+        "fex": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1716.237917
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1700.120917
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1729.272208
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1832.638375
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1618.648125
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1743.33525
+          }
+        ],
+        "median_ms": {
+          "native": 3699.8587705,
+          "fex": 1722.7550625
         },
-        "kernel-file": {
-          "fixture": "/tmp/raven-m5-build/native/kernel-file-fex.exe",
-          "sha256": "910841108c0f714a7c60afb02dd7e8e222e3b6c5c6f69c84364d183563550f40",
+        "range_ms": {
           "native": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-file-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 289.410583
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-file-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 275.183125
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-file-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 343.083459
-            }
+            3527.454667,
+            3991.084084
           ],
           "fex": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-file-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 272.683292
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-file-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 255.273458
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-file-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 399.635708
-            }
-          ],
-          "median_ms": {
-            "native": 289.410583,
-            "fex": 272.683292
-          },
-          "fex_over_native": 0.9422022138008685
-        },
-        "kernel-threads": {
-          "fixture": "/tmp/raven-m5-build/native/kernel-threads-fex.exe",
-          "sha256": "a0c7d042a88286e0113cdb78f258c7bc12310766ec16d6a23bc0cf3292d0d347",
-          "native": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-threads-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1346.090916
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-threads-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1383.232541
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-threads-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1437.626916
-            }
-          ],
-          "fex": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-threads-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1416.749125
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-threads-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1463.366042
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-threads-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1415.051083
-            }
-          ],
-          "median_ms": {
-            "native": 1383.232541,
-            "fex": 1416.749125
-          },
-          "fex_over_native": 1.0242306213933987
-        },
-        "kernel-seh": {
-          "fixture": "/tmp/raven-m5-build/native/kernel-seh-fex.exe",
-          "sha256": "976bb5245904396ee764380def100d903e3a40fac6a3870ea8ec5eee2c763ec4",
-          "native": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-seh-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 468.385292
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-seh-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 322.43925
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-seh-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 402.219208
-            }
-          ],
-          "fex": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-seh-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1304.781125
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-seh-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 491.23375
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-seh-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 375.189875
-            }
-          ],
-          "median_ms": {
-            "native": 402.219208,
-            "fex": 491.23375
-          },
-          "fex_over_native": 1.221308530844703
-        },
-        "compute": {
-          "fixture": "/tmp/raven-m5-build/native/m5-compute.exe",
-          "sha256": "7968cb8b96f1d7ea9086f31bc5385dc5625d74596a5d9bd3cca406fa94fff4d9",
-          "native": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/m5-compute.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 3367.444208
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/m5-compute.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1938.63125
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/m5-compute.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 2075.274709
-            }
-          ],
-          "fex": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/m5-compute.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 3170.520292
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/m5-compute.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 2806.857459
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/m5-compute.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 3127.372042
-            }
-          ],
-          "median_ms": {
-            "native": 2075.274709,
-            "fex": 3127.372042
-          },
-          "fex_over_native": 1.5069677418788416
+            1618.648125,
+            1832.638375
+          ]
         }
-      }
-    },
-    "on": {
-      "timestamp": "2026-10-31T00:39:05.596857+00:00",
-      "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
-      "machine": "arm64",
-      "parallel": "on",
-      "scope": "whole process wall time; isolated fresh prefix per launch; samples alternate backend order",
-      "source_head": "4b46c16196ed026b4c527384b51cc11498d3e7f0",
-      "raven_sha256": "5e8c74e6134bdf3372b3a2f8efec3069a90b7349eeb41dcf4f1b1cbbb71f13a7",
-      "module_sha256": "409b62e806e007265f50f848e8ec810b8a5a68a192a44d37de6b75b1f0dca445",
-      "benchmark_script_sha256": "9f5e1456d794d90366086268f2356ad456d68b4486529713cbaafcd4c2e91b46",
-      "source_diff_sha256": "bd8266761d736fbd210ed43b13076686379d7eb32f80a5b689c92fb916449fb3",
-      "fixtures": {
-        "kernel-ansi": {
-          "fixture": "/tmp/raven-m5-build/native/kernel-ansi-fex.exe",
-          "sha256": "21cea95b2faec1a2d2db57e90ea15fbabb96e4d94b245d0ffc0cc29523517702",
-          "native": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-ansi-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 184.997958
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-ansi-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 227.01725
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-ansi-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 207.093417
-            }
-          ],
-          "fex": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-ansi-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 216.501792
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-ansi-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 186.980708
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-ansi-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 177.169541
-            }
-          ],
-          "median_ms": {
-            "native": 207.093417,
-            "fex": 186.980708
+      },
+      "kernel-file": {
+        "fixture": "${BUILD}/native/kernel-file-fex.exe",
+        "sha256": "910841108c0f714a7c60afb02dd7e8e222e3b6c5c6f69c84364d183563550f40",
+        "native": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3719.844625
           },
-          "fex_over_native": 0.9028809834162909
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3859.14675
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3971.929291
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3831.984542
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3957.065625
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3749.902542
+          }
+        ],
+        "fex": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1764.781834
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1766.605958
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2043.482709
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1878.543708
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1828.243875
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1888.776208
+          }
+        ],
+        "median_ms": {
+          "native": 3845.565646,
+          "fex": 1853.3937915
         },
-        "kernel-file": {
-          "fixture": "/tmp/raven-m5-build/native/kernel-file-fex.exe",
-          "sha256": "910841108c0f714a7c60afb02dd7e8e222e3b6c5c6f69c84364d183563550f40",
+        "range_ms": {
           "native": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-file-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 249.630084
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-file-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 257.88225
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-file-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 273.019417
-            }
+            3719.844625,
+            3971.929291
           ],
           "fex": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-file-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 256.789667
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-file-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 277.84425
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-file-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 321.324542
-            }
-          ],
-          "median_ms": {
-            "native": 257.88225,
-            "fex": 277.84425
+            1764.781834,
+            2043.482709
+          ]
+        }
+      },
+      "kernel-threads": {
+        "fixture": "${BUILD}/native/kernel-threads-fex.exe",
+        "sha256": "a0c7d042a88286e0113cdb78f258c7bc12310766ec16d6a23bc0cf3292d0d347",
+        "native": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 5994.768041
           },
-          "fex_over_native": 1.0774074214103528
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 5373.653791
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 5320.033542
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4984.94725
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4897.710417
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 5155.46825
+          }
+        ],
+        "fex": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 3271.661667
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2810.051
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 3052.846292
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2859.982375
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2644.478917
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2701.864
+          }
+        ],
+        "median_ms": {
+          "native": 5237.750896,
+          "fex": 2835.0166875
         },
-        "kernel-threads": {
-          "fixture": "/tmp/raven-m5-build/native/kernel-threads-fex.exe",
-          "sha256": "a0c7d042a88286e0113cdb78f258c7bc12310766ec16d6a23bc0cf3292d0d347",
+        "range_ms": {
           "native": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-threads-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1340.786958
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-threads-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1185.087667
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-threads-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1190.709875
-            }
+            4897.710417,
+            5994.768041
           ],
           "fex": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-threads-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1120.378625
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-threads-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1062.613625
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-threads-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 1093.296708
-            }
-          ],
-          "median_ms": {
-            "native": 1190.709875,
-            "fex": 1093.296708
+            2644.478917,
+            3271.661667
+          ]
+        }
+      },
+      "kernel-seh": {
+        "fixture": "${BUILD}/native/kernel-seh-fex.exe",
+        "sha256": "976bb5245904396ee764380def100d903e3a40fac6a3870ea8ec5eee2c763ec4",
+        "native": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 5394.144417
           },
-          "fex_over_native": 0.9181889988104786
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 12220.299333
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4742.603375
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 6507.466209
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 5968.851042
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4329.773
+          }
+        ],
+        "fex": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2600.480041
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2912.484917
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2195.572125
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2117.983875
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2524.347042
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1870.3105
+          }
+        ],
+        "median_ms": {
+          "native": 5681.497729500001,
+          "fex": 2359.9595835
         },
-        "kernel-seh": {
-          "fixture": "/tmp/raven-m5-build/native/kernel-seh-fex.exe",
-          "sha256": "976bb5245904396ee764380def100d903e3a40fac6a3870ea8ec5eee2c763ec4",
+        "range_ms": {
           "native": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-seh-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 169.863167
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-seh-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 184.311125
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-seh-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 166.265
-            }
+            4329.773,
+            12220.299333
           ],
           "fex": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-seh-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 156.684292
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-seh-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 159.741583
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/kernel-seh-fex.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 155.70625
-            }
-          ],
-          "median_ms": {
-            "native": 169.863167,
-            "fex": 156.684292
+            1870.3105,
+            2912.484917
+          ]
+        }
+      },
+      "compute": {
+        "fixture": "${BUILD}/native/darwin-parallel-benchmark.exe",
+        "sha256": "7968cb8b96f1d7ea9086f31bc5385dc5625d74596a5d9bd3cca406fa94fff4d9",
+        "native": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 5701.310916
           },
-          "fex_over_native": 0.9224147575206814
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 6066.084334
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 7429.27775
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 6928.2555
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 7215.81525
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 6138.057542
+          }
+        ],
+        "fex": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 4378.754791
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 4921.194541
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 4497.513666
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 5695.357833
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 5810.238333
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 4689.184584
+          }
+        ],
+        "median_ms": {
+          "native": 6533.156521,
+          "fex": 4805.1895625
         },
-        "compute": {
-          "fixture": "/tmp/raven-m5-build/native/m5-compute.exe",
-          "sha256": "7968cb8b96f1d7ea9086f31bc5385dc5625d74596a5d9bd3cca406fa94fff4d9",
+        "range_ms": {
           "native": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/m5-compute.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 625.218917
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/m5-compute.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 601.0735
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=native",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/m5-compute.exe"
-              ],
-              "returncode": 0,
-              "stdout": "Native entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 614.264334
-            }
+            5701.310916,
+            7429.27775
           ],
           "fex": [
-            {
-              "index": 0,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/m5-compute.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 999.846125
-            },
-            {
-              "index": 1,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/m5-compute.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 975.918709
-            },
-            {
-              "index": 2,
-              "command": [
-                "/tmp/raven-m5-build/native/raven",
-                "--run-process",
-                "--execution=fex",
-                "--timeout-ms=15000",
-                "/tmp/raven-m5-build/native/m5-compute.exe"
-              ],
-              "returncode": 0,
-              "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
-              "stderr": "",
-              "wall_ms": 905.336625
-            }
-          ],
-          "median_ms": {
-            "native": 614.264334,
-            "fex": 975.918709
-          },
-          "fex_over_native": 1.5887601720988087
+            4378.754791,
+            5810.238333
+          ]
         }
       }
     }
   },
-  "notepadpp_startup": {
-    "scope": "process launch to first CGWindow title containing Notepad++; includes 50ms polling and probe overhead",
-    "raven_sha256": "5e8c74e6134bdf3372b3a2f8efec3069a90b7349eeb41dcf4f1b1cbbb71f13a7",
+  "parallel_on": {
+    "timestamp": "2026-10-31T01:28:18.143604+00:00",
+    "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "parallel": "on",
+    "scope": "whole process wall time; isolated fresh prefix per launch; one warmup per backend excluded; balanced ABBA order",
+    "source_head": "36caa900a90a39484b5d0c88bc299f835f6f96c1",
+    "raven_sha256": "b499ad7a75dfd55bac4d43ec332aa63420ac84650d945b98830a095d33d8e2b0",
+    "module_sha256": "409b62e806e007265f50f848e8ec810b8a5a68a192a44d37de6b75b1f0dca445",
+    "benchmark_script_sha256": "d78dbe144ce42eed4d702937a60963cd009b7a65be24a12f71e842a7051f5f45",
+    "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "fixtures": {
+      "kernel-ansi": {
+        "fixture": "${BUILD}/native/kernel-ansi-fex.exe",
+        "sha256": "21cea95b2faec1a2d2db57e90ea15fbabb96e4d94b245d0ffc0cc29523517702",
+        "native": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3782.402375
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3782.178875
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3749.591209
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3765.436833
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3700.321625
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3709.439875
+          }
+        ],
+        "fex": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1445.677208
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1353.565041
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1330.943667
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1325.52275
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1323.335208
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-ansi-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1334.31725
+          }
+        ],
+        "median_ms": {
+          "native": 3757.514021,
+          "fex": 1332.6304585
+        },
+        "range_ms": {
+          "native": [
+            3700.321625,
+            3782.402375
+          ],
+          "fex": [
+            1323.335208,
+            1445.677208
+          ]
+        }
+      },
+      "kernel-file": {
+        "fixture": "${BUILD}/native/kernel-file-fex.exe",
+        "sha256": "910841108c0f714a7c60afb02dd7e8e222e3b6c5c6f69c84364d183563550f40",
+        "native": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3821.947458
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3745.266042
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3836.098417
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3777.409833
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3891.118917
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3777.411875
+          }
+        ],
+        "fex": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1445.281
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1441.411625
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1403.138209
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1419.492666
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1443.716
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-file-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1398.450125
+          }
+        ],
+        "median_ms": {
+          "native": 3799.6796665,
+          "fex": 1430.4521455
+        },
+        "range_ms": {
+          "native": [
+            3745.266042,
+            3891.118917
+          ],
+          "fex": [
+            1398.450125,
+            1445.281
+          ]
+        }
+      },
+      "kernel-threads": {
+        "fixture": "${BUILD}/native/kernel-threads-fex.exe",
+        "sha256": "a0c7d042a88286e0113cdb78f258c7bc12310766ec16d6a23bc0cf3292d0d347",
+        "native": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4665.347875
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4665.606167
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4669.647584
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4677.221375
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4653.319833
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4736.551417
+          }
+        ],
+        "fex": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2238.637875
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2218.087208
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2239.446292
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2272.814125
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2249.026791
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-threads-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2263.994417
+          }
+        ],
+        "median_ms": {
+          "native": 4667.6268755,
+          "fex": 2244.2365415
+        },
+        "range_ms": {
+          "native": [
+            4653.319833,
+            4736.551417
+          ],
+          "fex": [
+            2218.087208,
+            2272.814125
+          ]
+        }
+      },
+      "kernel-seh": {
+        "fixture": "${BUILD}/native/kernel-seh-fex.exe",
+        "sha256": "976bb5245904396ee764380def100d903e3a40fac6a3870ea8ec5eee2c763ec4",
+        "native": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3726.629917
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3703.666083
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3704.654167
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3684.610166
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3694.6275
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 3759.033584
+          }
+        ],
+        "fex": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1338.129333
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1332.869958
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1331.466334
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1323.79
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1318.903667
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/kernel-seh-fex.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1338.047625
+          }
+        ],
+        "median_ms": {
+          "native": 3704.1601250000003,
+          "fex": 1332.168146
+        },
+        "range_ms": {
+          "native": [
+            3684.610166,
+            3759.033584
+          ],
+          "fex": [
+            1318.903667,
+            1338.129333
+          ]
+        }
+      },
+      "compute": {
+        "fixture": "${BUILD}/native/darwin-parallel-benchmark.exe",
+        "sha256": "7968cb8b96f1d7ea9086f31bc5385dc5625d74596a5d9bd3cca406fa94fff4d9",
+        "native": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4223.238625
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4162.287333
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4142.367
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4117.892958
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4148.374833
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=native",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+            "stderr": "",
+            "wall_ms": 4164.596667
+          }
+        ],
+        "fex": [
+          {
+            "index": 0,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2011.96675
+          },
+          {
+            "index": 1,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1964.99125
+          },
+          {
+            "index": 2,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1993.344167
+          },
+          {
+            "index": 3,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 2026.685459
+          },
+          {
+            "index": 4,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1975.914916
+          },
+          {
+            "index": 5,
+            "command": [
+              "${BUILD}/native/raven",
+              "--run-process",
+              "--execution=fex",
+              "--timeout-ms=15000",
+              "${BUILD}/native/darwin-parallel-benchmark.exe"
+            ],
+            "returncode": 0,
+            "stdout": "machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188\nCHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+            "stderr": "raven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\nraven: no guest address available for PE module\n",
+            "wall_ms": 1997.556166
+          }
+        ],
+        "median_ms": {
+          "native": 4155.331083,
+          "fex": 1995.4501665
+        },
+        "range_ms": {
+          "native": [
+            4117.892958,
+            4223.238625
+          ],
+          "fex": [
+            1964.99125,
+            2026.685459
+          ]
+        }
+      }
+    }
+  },
+  "editor": {
+    "source_head": "15d7091424865d0e094cb6315f847a89db5c800d",
+    "scope": "one excluded warmup per engine/mode; balanced ABBA; launch to process-owned Notepad++ window plus successfully created Scintilla child; 50ms polling",
+    "raven_sha256": "b499ad7a75dfd55bac4d43ec332aa63420ac84650d945b98830a095d33d8e2b0",
     "module_sha256": "409b62e806e007265f50f848e8ec810b8a5a68a192a44d37de6b75b1f0dca445",
     "samples": [
       {
@@ -1011,16 +1938,16 @@
         "parallel": false,
         "index": 0,
         "command": [
-          "/tmp/raven-m5-build/native/raven",
+          "${BUILD}/native/raven",
           "--run-process",
           "--execution=native",
           "--timeout-ms=60000",
           "--desktop=macos",
-          "/tmp/raven-m5-startup-q9totf14/False-0-native/notepad++.exe"
+          "${TEMP_PATH}"
         ],
-        "log": "/tmp/raven-m5-evidence/npp-startup-0-native-0.log",
-        "startup_ms": 2368.2958749996033,
-        "screenshot": "/tmp/raven-m5-evidence/npp-startup-0-native-0.png",
+        "log": "${EDITOR_EVIDENCE}/npp-startup-0-native-0.log",
+        "startup_ms": 4705.168791988399,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-0-native-0.png",
         "returncode_after_cleanup": -15
       },
       {
@@ -1028,16 +1955,16 @@
         "parallel": false,
         "index": 0,
         "command": [
-          "/tmp/raven-m5-build/native/raven",
+          "${BUILD}/native/raven",
           "--run-process",
           "--execution=fex",
           "--timeout-ms=60000",
           "--desktop=macos",
-          "/tmp/raven-m5-startup-q9totf14/False-0-fex/notepad++.exe"
+          "${TEMP_PATH}"
         ],
-        "log": "/tmp/raven-m5-evidence/npp-startup-0-fex-0.log",
-        "startup_ms": 3165.5890830006683,
-        "screenshot": "/tmp/raven-m5-evidence/npp-startup-0-fex-0.png",
+        "log": "${EDITOR_EVIDENCE}/npp-startup-0-fex-0.log",
+        "startup_ms": 3882.797832993674,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-0-fex-0.png",
         "returncode_after_cleanup": -15
       },
       {
@@ -1045,16 +1972,16 @@
         "parallel": false,
         "index": 1,
         "command": [
-          "/tmp/raven-m5-build/native/raven",
+          "${BUILD}/native/raven",
           "--run-process",
           "--execution=fex",
           "--timeout-ms=60000",
           "--desktop=macos",
-          "/tmp/raven-m5-startup-q9totf14/False-1-fex/notepad++.exe"
+          "${TEMP_PATH}"
         ],
-        "log": "/tmp/raven-m5-evidence/npp-startup-0-fex-1.log",
-        "startup_ms": 3667.303207999794,
-        "screenshot": "/tmp/raven-m5-evidence/npp-startup-0-fex-1.png",
+        "log": "${EDITOR_EVIDENCE}/npp-startup-0-fex-1.log",
+        "startup_ms": 3900.70354200725,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-0-fex-1.png",
         "returncode_after_cleanup": -15
       },
       {
@@ -1062,16 +1989,16 @@
         "parallel": false,
         "index": 1,
         "command": [
-          "/tmp/raven-m5-build/native/raven",
+          "${BUILD}/native/raven",
           "--run-process",
           "--execution=native",
           "--timeout-ms=60000",
           "--desktop=macos",
-          "/tmp/raven-m5-startup-q9totf14/False-1-native/notepad++.exe"
+          "${TEMP_PATH}"
         ],
-        "log": "/tmp/raven-m5-evidence/npp-startup-0-native-1.log",
-        "startup_ms": 1868.5032920038793,
-        "screenshot": "/tmp/raven-m5-evidence/npp-startup-0-native-1.png",
+        "log": "${EDITOR_EVIDENCE}/npp-startup-0-native-1.log",
+        "startup_ms": 4802.634333012975,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-0-native-1.png",
         "returncode_after_cleanup": -15
       },
       {
@@ -1079,16 +2006,16 @@
         "parallel": false,
         "index": 2,
         "command": [
-          "/tmp/raven-m5-build/native/raven",
+          "${BUILD}/native/raven",
           "--run-process",
           "--execution=native",
           "--timeout-ms=60000",
           "--desktop=macos",
-          "/tmp/raven-m5-startup-q9totf14/False-2-native/notepad++.exe"
+          "${TEMP_PATH}"
         ],
-        "log": "/tmp/raven-m5-evidence/npp-startup-0-native-2.log",
-        "startup_ms": 2031.5371250035241,
-        "screenshot": "/tmp/raven-m5-evidence/npp-startup-0-native-2.png",
+        "log": "${EDITOR_EVIDENCE}/npp-startup-0-native-2.log",
+        "startup_ms": 4917.313708006986,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-0-native-2.png",
         "returncode_after_cleanup": -15
       },
       {
@@ -1096,16 +2023,118 @@
         "parallel": false,
         "index": 2,
         "command": [
-          "/tmp/raven-m5-build/native/raven",
+          "${BUILD}/native/raven",
           "--run-process",
           "--execution=fex",
           "--timeout-ms=60000",
           "--desktop=macos",
-          "/tmp/raven-m5-startup-q9totf14/False-2-fex/notepad++.exe"
+          "${TEMP_PATH}"
         ],
-        "log": "/tmp/raven-m5-evidence/npp-startup-0-fex-2.log",
-        "startup_ms": 3082.165416999487,
-        "screenshot": "/tmp/raven-m5-evidence/npp-startup-0-fex-2.png",
+        "log": "${EDITOR_EVIDENCE}/npp-startup-0-fex-2.log",
+        "startup_ms": 3996.4722500008065,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-0-fex-2.png",
+        "returncode_after_cleanup": -15
+      },
+      {
+        "backend": "fex",
+        "parallel": false,
+        "index": 3,
+        "command": [
+          "${BUILD}/native/raven",
+          "--run-process",
+          "--execution=fex",
+          "--timeout-ms=60000",
+          "--desktop=macos",
+          "${TEMP_PATH}"
+        ],
+        "log": "${EDITOR_EVIDENCE}/npp-startup-0-fex-3.log",
+        "startup_ms": 3825.728583004093,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-0-fex-3.png",
+        "returncode_after_cleanup": -15
+      },
+      {
+        "backend": "native",
+        "parallel": false,
+        "index": 3,
+        "command": [
+          "${BUILD}/native/raven",
+          "--run-process",
+          "--execution=native",
+          "--timeout-ms=60000",
+          "--desktop=macos",
+          "${TEMP_PATH}"
+        ],
+        "log": "${EDITOR_EVIDENCE}/npp-startup-0-native-3.log",
+        "startup_ms": 4813.889416996972,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-0-native-3.png",
+        "returncode_after_cleanup": -15
+      },
+      {
+        "backend": "native",
+        "parallel": false,
+        "index": 4,
+        "command": [
+          "${BUILD}/native/raven",
+          "--run-process",
+          "--execution=native",
+          "--timeout-ms=60000",
+          "--desktop=macos",
+          "${TEMP_PATH}"
+        ],
+        "log": "${EDITOR_EVIDENCE}/npp-startup-0-native-4.log",
+        "startup_ms": 4707.509041996673,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-0-native-4.png",
+        "returncode_after_cleanup": -15
+      },
+      {
+        "backend": "fex",
+        "parallel": false,
+        "index": 4,
+        "command": [
+          "${BUILD}/native/raven",
+          "--run-process",
+          "--execution=fex",
+          "--timeout-ms=60000",
+          "--desktop=macos",
+          "${TEMP_PATH}"
+        ],
+        "log": "${EDITOR_EVIDENCE}/npp-startup-0-fex-4.log",
+        "startup_ms": 3842.537333999644,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-0-fex-4.png",
+        "returncode_after_cleanup": -15
+      },
+      {
+        "backend": "fex",
+        "parallel": false,
+        "index": 5,
+        "command": [
+          "${BUILD}/native/raven",
+          "--run-process",
+          "--execution=fex",
+          "--timeout-ms=60000",
+          "--desktop=macos",
+          "${TEMP_PATH}"
+        ],
+        "log": "${EDITOR_EVIDENCE}/npp-startup-0-fex-5.log",
+        "startup_ms": 3744.040249992395,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-0-fex-5.png",
+        "returncode_after_cleanup": -15
+      },
+      {
+        "backend": "native",
+        "parallel": false,
+        "index": 5,
+        "command": [
+          "${BUILD}/native/raven",
+          "--run-process",
+          "--execution=native",
+          "--timeout-ms=60000",
+          "--desktop=macos",
+          "${TEMP_PATH}"
+        ],
+        "log": "${EDITOR_EVIDENCE}/npp-startup-0-native-5.log",
+        "startup_ms": 4848.9275830070255,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-0-native-5.png",
         "returncode_after_cleanup": -15
       },
       {
@@ -1113,16 +2142,16 @@
         "parallel": true,
         "index": 0,
         "command": [
-          "/tmp/raven-m5-build/native/raven",
+          "${BUILD}/native/raven",
           "--run-process",
           "--execution=native",
           "--timeout-ms=60000",
           "--desktop=macos",
-          "/tmp/raven-m5-startup-q9totf14/True-0-native/notepad++.exe"
+          "${TEMP_PATH}"
         ],
-        "log": "/tmp/raven-m5-evidence/npp-startup-1-native-0.log",
-        "startup_ms": 3980.147417008993,
-        "screenshot": "/tmp/raven-m5-evidence/npp-startup-1-native-0.png",
+        "log": "${EDITOR_EVIDENCE}/npp-startup-1-native-0.log",
+        "startup_ms": 6454.696458997205,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-1-native-0.png",
         "returncode_after_cleanup": -15
       },
       {
@@ -1130,16 +2159,16 @@
         "parallel": true,
         "index": 0,
         "command": [
-          "/tmp/raven-m5-build/native/raven",
+          "${BUILD}/native/raven",
           "--run-process",
           "--execution=fex",
           "--timeout-ms=60000",
           "--desktop=macos",
-          "/tmp/raven-m5-startup-q9totf14/True-0-fex/notepad++.exe"
+          "${TEMP_PATH}"
         ],
-        "log": "/tmp/raven-m5-evidence/npp-startup-1-fex-0.log",
-        "startup_ms": 2495.5327499919804,
-        "screenshot": "/tmp/raven-m5-evidence/npp-startup-1-fex-0.png",
+        "log": "${EDITOR_EVIDENCE}/npp-startup-1-fex-0.log",
+        "startup_ms": 3553.521207999438,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-1-fex-0.png",
         "returncode_after_cleanup": -15
       },
       {
@@ -1147,16 +2176,16 @@
         "parallel": true,
         "index": 1,
         "command": [
-          "/tmp/raven-m5-build/native/raven",
+          "${BUILD}/native/raven",
           "--run-process",
           "--execution=fex",
           "--timeout-ms=60000",
           "--desktop=macos",
-          "/tmp/raven-m5-startup-q9totf14/True-1-fex/notepad++.exe"
+          "${TEMP_PATH}"
         ],
-        "log": "/tmp/raven-m5-evidence/npp-startup-1-fex-1.log",
-        "startup_ms": 2566.4668750105193,
-        "screenshot": "/tmp/raven-m5-evidence/npp-startup-1-fex-1.png",
+        "log": "${EDITOR_EVIDENCE}/npp-startup-1-fex-1.log",
+        "startup_ms": 3633.950957999332,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-1-fex-1.png",
         "returncode_after_cleanup": -15
       },
       {
@@ -1164,16 +2193,16 @@
         "parallel": true,
         "index": 1,
         "command": [
-          "/tmp/raven-m5-build/native/raven",
+          "${BUILD}/native/raven",
           "--run-process",
           "--execution=native",
           "--timeout-ms=60000",
           "--desktop=macos",
-          "/tmp/raven-m5-startup-q9totf14/True-1-native/notepad++.exe"
+          "${TEMP_PATH}"
         ],
-        "log": "/tmp/raven-m5-evidence/npp-startup-1-native-1.log",
-        "startup_ms": 3367.33754099987,
-        "screenshot": "/tmp/raven-m5-evidence/npp-startup-1-native-1.png",
+        "log": "${EDITOR_EVIDENCE}/npp-startup-1-native-1.log",
+        "startup_ms": 6488.654166998458,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-1-native-1.png",
         "returncode_after_cleanup": -15
       },
       {
@@ -1181,16 +2210,16 @@
         "parallel": true,
         "index": 2,
         "command": [
-          "/tmp/raven-m5-build/native/raven",
+          "${BUILD}/native/raven",
           "--run-process",
           "--execution=native",
           "--timeout-ms=60000",
           "--desktop=macos",
-          "/tmp/raven-m5-startup-q9totf14/True-2-native/notepad++.exe"
+          "${TEMP_PATH}"
         ],
-        "log": "/tmp/raven-m5-evidence/npp-startup-1-native-2.log",
-        "startup_ms": 4460.163374998956,
-        "screenshot": "/tmp/raven-m5-evidence/npp-startup-1-native-2.png",
+        "log": "${EDITOR_EVIDENCE}/npp-startup-1-native-2.log",
+        "startup_ms": 6491.118332996848,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-1-native-2.png",
         "returncode_after_cleanup": -15
       },
       {
@@ -1198,108 +2227,144 @@
         "parallel": true,
         "index": 2,
         "command": [
-          "/tmp/raven-m5-build/native/raven",
+          "${BUILD}/native/raven",
           "--run-process",
           "--execution=fex",
           "--timeout-ms=60000",
           "--desktop=macos",
-          "/tmp/raven-m5-startup-q9totf14/True-2-fex/notepad++.exe"
+          "${TEMP_PATH}"
         ],
-        "log": "/tmp/raven-m5-evidence/npp-startup-1-fex-2.log",
-        "startup_ms": 3663.9900420123013,
-        "screenshot": "/tmp/raven-m5-evidence/npp-startup-1-fex-2.png",
+        "log": "${EDITOR_EVIDENCE}/npp-startup-1-fex-2.log",
+        "startup_ms": 3737.3156670073513,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-1-fex-2.png",
+        "returncode_after_cleanup": -15
+      },
+      {
+        "backend": "fex",
+        "parallel": true,
+        "index": 3,
+        "command": [
+          "${BUILD}/native/raven",
+          "--run-process",
+          "--execution=fex",
+          "--timeout-ms=60000",
+          "--desktop=macos",
+          "${TEMP_PATH}"
+        ],
+        "log": "${EDITOR_EVIDENCE}/npp-startup-1-fex-3.log",
+        "startup_ms": 3611.6654579964234,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-1-fex-3.png",
+        "returncode_after_cleanup": -15
+      },
+      {
+        "backend": "native",
+        "parallel": true,
+        "index": 3,
+        "command": [
+          "${BUILD}/native/raven",
+          "--run-process",
+          "--execution=native",
+          "--timeout-ms=60000",
+          "--desktop=macos",
+          "${TEMP_PATH}"
+        ],
+        "log": "${EDITOR_EVIDENCE}/npp-startup-1-native-3.log",
+        "startup_ms": 6575.651207996998,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-1-native-3.png",
+        "returncode_after_cleanup": -15
+      },
+      {
+        "backend": "native",
+        "parallel": true,
+        "index": 4,
+        "command": [
+          "${BUILD}/native/raven",
+          "--run-process",
+          "--execution=native",
+          "--timeout-ms=60000",
+          "--desktop=macos",
+          "${TEMP_PATH}"
+        ],
+        "log": "${EDITOR_EVIDENCE}/npp-startup-1-native-4.log",
+        "startup_ms": 6700.370541002485,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-1-native-4.png",
+        "returncode_after_cleanup": -15
+      },
+      {
+        "backend": "fex",
+        "parallel": true,
+        "index": 4,
+        "command": [
+          "${BUILD}/native/raven",
+          "--run-process",
+          "--execution=fex",
+          "--timeout-ms=60000",
+          "--desktop=macos",
+          "${TEMP_PATH}"
+        ],
+        "log": "${EDITOR_EVIDENCE}/npp-startup-1-fex-4.log",
+        "startup_ms": 3607.3569159925682,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-1-fex-4.png",
+        "returncode_after_cleanup": -15
+      },
+      {
+        "backend": "fex",
+        "parallel": true,
+        "index": 5,
+        "command": [
+          "${BUILD}/native/raven",
+          "--run-process",
+          "--execution=fex",
+          "--timeout-ms=60000",
+          "--desktop=macos",
+          "${TEMP_PATH}"
+        ],
+        "log": "${EDITOR_EVIDENCE}/npp-startup-1-fex-5.log",
+        "startup_ms": 3723.993999999948,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-1-fex-5.png",
+        "returncode_after_cleanup": -15
+      },
+      {
+        "backend": "native",
+        "parallel": true,
+        "index": 5,
+        "command": [
+          "${BUILD}/native/raven",
+          "--run-process",
+          "--execution=native",
+          "--timeout-ms=60000",
+          "--desktop=macos",
+          "${TEMP_PATH}"
+        ],
+        "log": "${EDITOR_EVIDENCE}/npp-startup-1-native-5.log",
+        "startup_ms": 6542.334583005868,
+        "screenshot": "${EDITOR_EVIDENCE}/npp-startup-1-native-5.png",
         "returncode_after_cleanup": -15
       }
     ],
     "medians_ms": {
-      "native/0": 2031.5371250035241,
-      "fex/0": 3165.5890830006683,
-      "native/1": 3980.147417008993,
-      "fex/1": 2566.4668750105193
+      "native/0": 4808.261875004973,
+      "fex/0": 3862.667583496659,
+      "native/1": 6516.726458001358,
+      "fex/1": 3622.8082079978776
+    },
+    "ranges_ms": {
+      "native/0": [
+        4705.168791988399,
+        4917.313708006986
+      ],
+      "fex/0": [
+        3744.040249992395,
+        3996.4722500008065
+      ],
+      "native/1": [
+        6454.696458997205,
+        6700.370541002485
+      ],
+      "fex/1": [
+        3553.521207999438,
+        3737.3156670073513
+      ]
     }
-  },
-  "applications": [
-    {
-      "app": "npp",
-      "backend": "fex",
-      "command": [
-        "/tmp/raven-m5-build/native/raven",
-        "--run-process",
-        "--execution=fex",
-        "--timeout-ms=60000",
-        "--desktop=macos",
-        "/tmp/raven-m5-npp/notepad++.exe"
-      ],
-      "returncode": -15,
-      "alive_at_capture": true,
-      "elapsed_s": 35.1955017500004,
-      "log": "/tmp/raven-m5-evidence/npp-fex.log",
-      "screenshot": "/tmp/raven-m5-evidence/npp-fex.png"
-    },
-    {
-      "app": "npp",
-      "backend": "native",
-      "command": [
-        "/tmp/raven-m5-build/native/raven",
-        "--run-process",
-        "--execution=native",
-        "--timeout-ms=60000",
-        "--desktop=macos",
-        "/tmp/raven-m5-npp/notepad++.exe"
-      ],
-      "returncode": -15,
-      "alive_at_capture": true,
-      "elapsed_s": 35.22456858299847,
-      "log": "/tmp/raven-m5-evidence/npp-native.log",
-      "screenshot": "/tmp/raven-m5-evidence/npp-native.png"
-    },
-    {
-      "app": "steam",
-      "backend": "fex",
-      "command": [
-        "/tmp/raven-m5-build/native/raven",
-        "--run-process",
-        "--execution=fex",
-        "--timeout-ms=60000",
-        "--desktop=macos",
-        "--directory=C:\\Program Files (x86)\\Steam",
-        "/tmp/raven-m5-steam/drive_c/Program Files (x86)/Steam/steam.exe"
-      ],
-      "returncode": -15,
-      "alive_at_capture": true,
-      "elapsed_s": 35.62587687499763,
-      "log": "/tmp/raven-m5-evidence/steam-fex.log",
-      "screenshot": "/tmp/raven-m5-evidence/steam-fex.png"
-    },
-    {
-      "app": "steam",
-      "backend": "native",
-      "command": [
-        "/tmp/raven-m5-build/native/raven",
-        "--run-process",
-        "--execution=native",
-        "--timeout-ms=60000",
-        "--desktop=macos",
-        "--directory=C:\\Program Files (x86)\\Steam",
-        "/tmp/raven-m5-steam/drive_c/Program Files (x86)/Steam/steam.exe"
-      ],
-      "returncode": -15,
-      "alive_at_capture": true,
-      "elapsed_s": 35.31813379199593,
-      "log": "/tmp/raven-m5-evidence/steam-native.log",
-      "screenshot": "/tmp/raven-m5-evidence/steam-native.png"
-    }
-  ],
-  "module_root": "/tmp/raven-m5-modules",
-  "screenshots": {
-    "npp_fex": "/tmp/raven-m5-evidence/npp-startup-1-fex-0.png",
-    "npp_native": "/tmp/raven-m5-evidence/npp-startup-1-native-0.png",
-    "steam_fex": "/tmp/raven-m5-evidence/steam-fex-window.png"
-  },
-  "limitations": [
-    "Shared host had concurrent ctest/build/app workloads; no load isolation.",
-    "Steam stops short of D3D11 because native arm64 DXMT bridge is missing.",
-    "Chrome not run.",
-    "Context fixture exposes Rosetta unimplemented SetThreadContext."
-  ]
+  }
 }
