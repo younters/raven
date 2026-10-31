@@ -15,5 +15,7 @@ void entry(void)
     if (convert(&n, &out, 0, L'A', NULL) != 34 || n != (size_t)-1) ExitProcess(3);
     if (convert(&n, &out, 1, 0x100, NULL) != 42 || out != 0) ExitProcess(4);
     if (!alpha('A', NULL) || alpha('1', NULL) || collate("a", "b", NULL) >= 0) ExitProcess(5);
+    char **(*command_line)(void) = (void *)GetProcAddress(crt, "__p__acmdln");
+    if (!command_line || !*command_line() || lstrcmpA(*command_line(), GetCommandLineA())) ExitProcess(6);
     ExitProcess(0);
 }
