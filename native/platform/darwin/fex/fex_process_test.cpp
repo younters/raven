@@ -90,7 +90,7 @@ int main(int argc, char **argv)
 		} else if (mode == "selfmodify") {
 			const uint8_t code[]{0xb8, 1, 0, 0, 0, 0xc3};
 			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
-		} else if (mode == "timeout") {
+		} else if (mode == "timeout" || mode == "wait-unwind") {
 			loaded.data()[image.entry] = 0xeb; loaded.data()[image.entry + 1] = 0xfe; loaded.data()[image.entry + 2] = 0xc3;
 		} else if (mode == "ud2") {
 			loaded.data()[image.entry] = 0x0f; loaded.data()[image.entry + 1] = 0x0b;
@@ -130,6 +130,22 @@ int main(int argc, char **argv)
 			return 0;
 		}
 		raven::FexProcess process(images, root);
+		if (mode == "wait-unwind") {
+			process.set_execution_wait([](auto, auto) { throw std::runtime_error("wait sentinel"); });
+			bool caught = false;
+			try { process.call(loaded.base() + image.entry, {}); }
+			catch (const std::runtime_error &error) { caught = std::string(error.what()) == "wait sentinel"; }
+			check(caught && process.stopped(), "throwing wait left worker running");
+			process.set_execution_wait({});
+			auto context = process.context();
+			context.registers.rip = loaded.base() + image.entry + 2;
+			context.registers.rax = 42;
+			process.set_context(context);
+			const auto result = process.resume();
+			check(result.stop == raven::NativeStop::returned && result.value == 42, "unwound worker cannot resume");
+			std::cout << "PASS: throwing execution wait pauses worker and permits repair\n";
+			return 0;
+		}
 		if (mode == "served-malformed") {
 			try { process.set_served_calls(nullptr, {loaded.base() + image.entry}, 112, 85,
 				{loaded.base() + image.entry + 109}, {}, {}); }

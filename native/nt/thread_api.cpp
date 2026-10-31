@@ -1,4 +1,7 @@
 #include "child_process.h"
+#ifdef RAVEN_FEX_PROCESS
+#include "platform/darwin/fex/thread_api.h"
+#endif
 #include "kernel_context.h"
 #include "mutex.h"
 #include "semaphore.h"
@@ -589,6 +592,9 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(6);
 			return;
 		}
+#ifdef RAVEN_FEX_PROCESS
+		if (!validate_fex_thread_context(call, *thread, threads.current_id())) return;
+#endif
 		const auto &registers = thread->id == threads.current_id() ? call.process.context().registers : thread->snapshot.context.registers;
 		const uint32_t flags = call.load<uint32_t>(call[1] + 0x30);
 		const auto put = [&](size_t at, uint64_t value) { call.store<uint64_t>(call[1] + at, value); };
@@ -610,6 +616,9 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// The registers of a suspended thread from a CONTEXT (x64): the control and integer groups, which it continues with when resumed. A
 	// thread that is not suspended, the caller among them, keeps its registers: Windows leaves the outcome of that undefined.
+#ifdef RAVEN_FEX_PROCESS
+	if (!register_fex_thread_context(registry, threads, thread_from))
+#endif
 	registry.add("SetThreadContext", 2, [thread_from, &threads, &context](ApiCall &call) {
 		if (call.pointer_width() == 4 || !call[1]) {
 			call.fail(call[1] ? 50 : 87);
@@ -976,6 +985,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(6);
 			return;
 		}
+		if (thread->state == GuestThread::State::done) { call.fail(31); return; }
 		thread->apcs.push_back({call[0], call[2]});
 		call.ret(1);
 	});
