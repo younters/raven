@@ -1015,3 +1015,5 @@ if(RAVEN_FEX_MODHOST AND TARGET fex_process_test)
             LABELS "fex;m3;parallel" ENVIRONMENT "RAVEN_PARALLEL=1;RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")
     endforeach()
 endif()
+
+include(${RAVEN_DARWIN_DIR}/fex/parity.cmake)
