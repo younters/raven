@@ -651,7 +651,14 @@ void FexProcess::map_image(LoadedImage &image)
 	if ((state->window && !memory_available(address, n)) || (!state->window && mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS))
 		throw std::runtime_error("FEX guest image address conflict at " + std::to_string(address));
 	auto *p = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, image.descriptor(), 0);
-	if (p == MAP_FAILED) { munmap(reinterpret_cast<void *>(address), n); throw std::runtime_error("FEX shared image mapping failed"); }
+	if (p == MAP_FAILED) {
+		if (state->window)
+			(void)mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_NONE,
+				MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
+		else
+			munmap(reinterpret_cast<void *>(address), n);
+		throw std::runtime_error("FEX shared image mapping failed");
+	}
 	state->regions.emplace(address, State::Region{n, true});
 	state->images.push_back(&image);
 	for (size_t at = 0; at < n; at += 4096) state->pages[address + at] = PROT_NONE;
