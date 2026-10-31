@@ -1,0 +1,362 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="28"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="82"
+	timestamp="2026-10-30T19:26:46"
+	>
+	<testcase name="native_parity_kernel-ansi_native_0" classname="native_parity_kernel-ansi_native_0" time="3.48899" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-ansi_native_1" classname="native_parity_kernel-ansi_native_1" time="3.79401" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-ansi_fex_0" classname="native_parity_kernel-ansi_fex_0" time="1.65007" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-ansi_fex_1" classname="native_parity_kernel-ansi_fex_1" time="1.43749" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-file_native_0" classname="native_parity_kernel-file_native_0" time="3.64515" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-file_native_1" classname="native_parity_kernel-file_native_1" time="4.24679" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-file_fex_0" classname="native_parity_kernel-file_fex_0" time="2.1782" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-file_fex_1" classname="native_parity_kernel-file_fex_1" time="1.76893" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-threads_native_0" classname="native_parity_kernel-threads_native_0" time="5.19817" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-threads_native_1" classname="native_parity_kernel-threads_native_1" time="4.93764" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-threads_fex_0" classname="native_parity_kernel-threads_fex_0" time="2.55815" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-threads_fex_1" classname="native_parity_kernel-threads_fex_1" time="2.32839" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-seh_native_0" classname="native_parity_kernel-seh_native_0" time="4.22669" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-seh_native_1" classname="native_parity_kernel-seh_native_1" time="5.07366" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-seh_fex_0" classname="native_parity_kernel-seh_fex_0" time="2.1831" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_kernel-seh_fex_1" classname="native_parity_kernel-seh_fex_1" time="1.71214" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;process"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_contention_native" classname="native_parity_contention_native" time="3.79055" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;parallel"/>
+		</properties>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_contention_fex" classname="native_parity_contention_fex" time="1.39188" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_context_native" classname="native_parity_context_native" time="3.76591" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;parallel"/>
+		</properties>
+		<system-out>FAIL: expected verified zero entry return, host exit=122
+Native entry returned 122 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_context_fex" classname="native_parity_context_fex" time="1.39177" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_worker-seh_native" classname="native_parity_worker-seh_native" time="3.8444" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;parallel"/>
+		</properties>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_worker-seh_fex" classname="native_parity_worker-seh_fex" time="1.41388" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_apc_native" classname="native_parity_apc_native" time="3.81488" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;parallel"/>
+		</properties>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_apc_fex" classname="native_parity_apc_fex" time="1.84269" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_lifecycle_native" classname="native_parity_lifecycle_native" time="3.98432" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;parallel"/>
+		</properties>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_lifecycle_fex" classname="native_parity_lifecycle_fex" time="1.47331" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_negatives_native" classname="native_parity_negatives_native" time="3.77978" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;parallel"/>
+		</properties>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parity_negatives_fex" classname="native_parity_negatives_fex" time="1.40841" status="run">
+		<properties>
+			<property name="cmake_labels" value="engine-parity;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+</testsuite>

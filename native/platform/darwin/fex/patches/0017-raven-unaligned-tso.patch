@@ -1,0 +1,14 @@
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -665,5 +665,10 @@ extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, ARM64_NT_CONTEXT *Native) {
+   auto *Thread = Area.ThreadState();
+   if (!Thread) return STATUS_NOT_SUPPORTED;
++  // Darwin raises SIGBUS for unaligned acquire/release TSO accesses. Repair
++  // through the same decoder as the Windows exception frontend before AV/SEH.
++  if (Record->ExceptionCode == EXCEPTION_DATATYPE_MISALIGNMENT &&
++      Exception::HandleUnalignedAccess(Area, *Native, CTX->IsAddressInCodeBuffer(Thread, Native->Pc))) return STATUS_SUCCESS;
+   if (Record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+     const auto Address = Record->ExceptionInformation[1];
++    if (OvercommitTracker && OvercommitTracker->HandleAccessViolation(Address)) return STATUS_SUCCESS;
+     if (UserSharedDataBacking && Record->ExceptionInformation[0] == 0 &&

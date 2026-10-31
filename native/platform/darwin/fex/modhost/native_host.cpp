@@ -296,6 +296,7 @@ int32_t unix_call(uint64_t, uint32_t, void *) {
 	return RavenNT::not_supported;
 }
 int32_t exception_callback(void *opaque, void *packet, void *) {
+	RavenFault::alignment_recovery = nullptr;
 	require_native_x18();
 	auto *record = static_cast<RavenFault::Record *>(opaque);
 	auto *context = static_cast<uint8_t *>(packet);

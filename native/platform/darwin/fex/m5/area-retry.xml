@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="3"
+	failures="1"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="16"
+	timestamp="2026-10-30T19:25:34"
+	>
+	<testcase name="native_darwin_handoff" classname="native_darwin_handoff" time="1.35" status="run">
+		<properties/>
+		<system-out>2000 5383 6987
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_handoff_parallel" classname="native_darwin_handoff_parallel" time="1.23617" status="run">
+		<properties/>
+		<system-out>2000 4395 5189
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_pacing" classname="darwin_dxmt_pacing" time="13.6824" status="fail">
+		<failure message="Failed"/>
+		<properties/>
+		<system-out>Traceback (most recent call last):
+  File "${REPO}/native/platform/darwin/tests/run_dxmt.py", line 162, in &lt;module&gt;
+    sys.exit(main())
+             ~~~~^^
+  File "${REPO}/native/platform/darwin/tests/run_dxmt.py", line 155, in main
+    raise RuntimeError(f"minimum-duration presents were not paced: {text}")
+RuntimeError: minimum-duration presents were not paced: 16 36968195
+</system-out>
+	</testcase>
+</testsuite>

@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "xtajit64_sha256": "9f1dc47f38fb51df2ff41353410793aa5c69f988d56831037ce0f3db45db25aa",
-  "raven_process_init_rva": 26860,
+  "xtajit64_sha256": "409b62e806e007265f50f848e8ec810b8a5a68a192a44d37de6b75b1f0dca445",
+  "raven_process_init_rva": 27468,
   "patches": {
     "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
     "0002-raven-host-frontend.patch": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da",
@@ -14,6 +14,7 @@
     "0009-raven-doorbell-stop.patch": "ac41d37a32f07deba437002373f4628d1f12d65e3d3a7d48cf98c303b0c5449e",
     "0010-raven-shared-data-and-return-stack.patch": "f91729012073e54bac788909509080ea0395fd7819414fc9cfdda07a6ff668de",
     "0011-raven-gate-callret-repair.patch": "e279bfb28511db4c4fa35abfaccea508e184a1297230764d343e1d0565d0459a",
-    "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657"
+    "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657",
+    "0017-raven-unaligned-tso.patch": "58626f13198f13301b743896c59fa3bbc23b6ff3aba37ae72654d33b8c6a2dac"
   }
 }

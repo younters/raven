@@ -1,0 +1,13 @@
+Test project ${BUILD}
+    Start 548: darwin_x87sidecar_correctness
+1/4 Test #548: darwin_x87sidecar_correctness ....   Passed    3.01 sec
+    Start 549: darwin_x87sidecar_fallback
+2/4 Test #549: darwin_x87sidecar_fallback .......   Passed   11.08 sec
+    Start 550: darwin_x87sidecar_x64
+3/4 Test #550: darwin_x87sidecar_x64 ............   Passed    2.92 sec
+    Start 551: darwin_x87sidecar_child
+4/4 Test #551: darwin_x87sidecar_child ..........   Passed    5.49 sec
+
+100% tests passed out of 4
+
+Total Test time (real) =  22.51 sec

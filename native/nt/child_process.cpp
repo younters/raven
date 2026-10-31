@@ -5,6 +5,7 @@
 #include "child_process.h"
 #include "runtime_executable.h"
 #include "console.h"
+#include "../pe/module_set.h"
 
 #include "elevation.h"
 #include "text.h"
@@ -134,6 +135,11 @@ void ProcessObject::terminate(uint32_t exit)
 
 std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &error)
 {
+#ifdef __APPLE__
+	auto child_bytes = ModuleBytes::map(launch.image);
+	if (!child_bytes) { error = 2; return nullptr; }
+	const bool child_is_64 = PEImage(*child_bytes).is_64;
+#endif
 	// The child may write to the terminal too, moving the cursor where this process cannot follow it.
 	TerminalConsole::instance().mark_stale();
 	char self[4096];
@@ -145,7 +151,13 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 	self[length] = 0;
 	const auto runtime = child_runtime_executable(self).string();
 	// What the parent was started with, such as the window system and the time budget, applies to its children.
-	std::vector<std::string> arguments{runtime, "--run-process", "--execution=native"};
+	std::vector<std::string> arguments{runtime, "--run-process",
+#ifdef __APPLE__
+		raven_darwin::child_execution_argument(child_is_64)
+#else
+		"--execution=native"
+#endif
+	};
 	if (const char *options = std::getenv("RAVEN_CHILD_OPTIONS")) {
 		std::istringstream words(options);
 		for (std::string word; words >> word;)

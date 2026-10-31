@@ -1,0 +1,349 @@
+Test project ${BUILD}
+        Start  12: native_cpu_contracts
+  1/128 Test  #12: native_cpu_contracts ..........................   Passed    1.17 sec
+        Start  16: native_x86_contracts
+  2/128 Test  #16: native_x86_contracts ..........................   Passed    0.14 sec
+        Start  27: native_exception_contract
+  3/128 Test  #27: native_exception_contract .....................   Passed    0.22 sec
+        Start 246: native_kernel_files
+  4/128 Test #246: native_kernel_files ...........................   Passed    4.17 sec
+        Start 247: native_kernel_ansi
+  5/128 Test #247: native_kernel_ansi ............................   Passed    0.20 sec
+        Start 248: native_kernel_threads
+  6/128 Test #248: native_kernel_threads .........................   Passed    1.14 sec
+        Start 252: native_kernel_file_persistence
+  7/128 Test #252: native_kernel_file_persistence ................   Passed    0.03 sec
+        Start 253: native_kernel_seh
+  8/128 Test #253: native_kernel_seh .............................   Passed    0.19 sec
+        Start 257: native_cmd
+  9/128 Test #257: native_cmd ....................................***Failed  Required regular expression not found. Regex=[Native entry returned 0 
+] 75.45 sec
+raven: native entry timed out at 0x0
+
+        Start 340: native_dynamic_loader_contract
+ 10/128 Test #340: native_dynamic_loader_contract ................   Passed   16.78 sec
+        Start 356: native_darwin_idle_wait_queue
+ 11/128 Test #356: native_darwin_idle_wait_queue .................   Passed    0.01 sec
+        Start 434: native_darwin_capture_permission
+ 12/128 Test #434: native_darwin_capture_permission ..............   Passed    0.02 sec
+        Start 435: native_darwin_audio_offline
+ 13/128 Test #435: native_darwin_audio_offline ...................   Passed    3.82 sec
+        Start 436: native_darwin_audio_device
+ 14/128 Test #436: native_darwin_audio_device ....................   Passed    0.73 sec
+        Start 437: native_darwin_capture_authorized
+ 15/128 Test #437: native_darwin_capture_authorized ..............***Skipped   0.02 sec
+        Start 438: native_darwin_wave_x64
+ 16/128 Test #438: native_darwin_wave_x64 ........................   Passed    4.50 sec
+        Start 439: native_darwin_wave_x32
+ 17/128 Test #439: native_darwin_wave_x32 ........................   Passed    4.70 sec
+        Start 440: native_darwin_dsound_x64
+ 18/128 Test #440: native_darwin_dsound_x64 ......................   Passed    4.10 sec
+        Start 441: native_darwin_dsound_x32
+ 19/128 Test #441: native_darwin_dsound_x32 ......................   Passed    4.27 sec
+        Start 442: native_darwin_wasapi_x64
+ 20/128 Test #442: native_darwin_wasapi_x64 ......................   Passed    3.87 sec
+        Start 443: native_darwin_wasapi_x32
+ 21/128 Test #443: native_darwin_wasapi_x32 ......................   Passed    4.14 sec
+        Start 444: native_darwin_wavein_x64
+ 22/128 Test #444: native_darwin_wavein_x64 ......................   Passed    3.53 sec
+        Start 445: native_darwin_wavein_x32
+ 23/128 Test #445: native_darwin_wavein_x32 ......................   Passed    3.78 sec
+        Start 446: native_darwin_xaudio7_x64
+ 24/128 Test #446: native_darwin_xaudio7_x64 .....................   Passed    3.85 sec
+        Start 447: native_darwin_xaudio7_x32
+ 25/128 Test #447: native_darwin_xaudio7_x32 .....................   Passed    4.12 sec
+        Start 448: native_darwin_playsound_x64
+ 26/128 Test #448: native_darwin_playsound_x64 ...................   Passed    3.75 sec
+        Start 449: native_darwin_playsound_x32
+ 27/128 Test #449: native_darwin_playsound_x32 ...................   Passed    4.09 sec
+        Start 450: native_darwin_xaudio_callbacks_serial_x64
+ 28/128 Test #450: native_darwin_xaudio_callbacks_serial_x64 .....   Passed    4.30 sec
+        Start 451: native_darwin_xaudio_callbacks_parallel_x64
+ 29/128 Test #451: native_darwin_xaudio_callbacks_parallel_x64 ...   Passed    0.90 sec
+        Start 452: native_darwin_xaudio_x64
+ 30/128 Test #452: native_darwin_xaudio_x64 ......................   Passed    0.50 sec
+        Start 453: native_darwin_xaudio_parallel_x64
+ 31/128 Test #453: native_darwin_xaudio_parallel_x64 .............   Passed    0.49 sec
+        Start 454: native_darwin_xaudio_lifecycle_x64
+ 32/128 Test #454: native_darwin_xaudio_lifecycle_x64 ............   Passed    0.24 sec
+        Start 455: native_darwin_xaudio_callbacks_serial_x32
+ 33/128 Test #455: native_darwin_xaudio_callbacks_serial_x32 .....   Passed    4.58 sec
+        Start 456: native_darwin_xaudio_callbacks_parallel_x32
+ 34/128 Test #456: native_darwin_xaudio_callbacks_parallel_x32 ...   Passed    1.17 sec
+        Start 457: native_darwin_xaudio_x32
+ 35/128 Test #457: native_darwin_xaudio_x32 ......................   Passed    0.79 sec
+        Start 458: native_darwin_xaudio_parallel_x32
+ 36/128 Test #458: native_darwin_xaudio_parallel_x32 .............   Passed    0.77 sec
+        Start 459: native_darwin_xaudio_lifecycle_x32
+ 37/128 Test #459: native_darwin_xaudio_lifecycle_x32 ............   Passed    0.53 sec
+        Start 460: native_darwin_runtime_microphone_plist
+ 38/128 Test #460: native_darwin_runtime_microphone_plist ........   Passed    0.03 sec
+        Start 461: native_darwin_dcomp_commit
+ 39/128 Test #461: native_darwin_dcomp_commit ....................   Passed    0.02 sec
+        Start 462: native_darwin_scheduler_wait
+ 40/128 Test #462: native_darwin_scheduler_wait ..................   Passed    0.24 sec
+        Start 463: native_darwin_scheduler_wait_parallel
+ 41/128 Test #463: native_darwin_scheduler_wait_parallel .........   Passed    0.25 sec
+        Start 464: native_darwin_parallel_contracts
+ 42/128 Test #464: native_darwin_parallel_contracts ..............   Passed    0.16 sec
+        Start 465: native_darwin_private_fallback_contracts
+ 43/128 Test #465: native_darwin_private_fallback_contracts ......   Passed    0.14 sec
+        Start 466: native_darwin_handoff
+ 44/128 Test #466: native_darwin_handoff .........................***Failed    0.04 sec
+raven: cannot open PE file
+
+        Start 467: native_darwin_handoff_parallel
+ 45/128 Test #467: native_darwin_handoff_parallel ................***Failed    0.03 sec
+raven: cannot open PE file
+
+        Start 468: native_darwin_handoff_runner
+ 46/128 Test #468: native_darwin_handoff_runner ..................   Passed    0.16 sec
+        Start 469: native_darwin_hidden_vulkan_surface
+ 47/128 Test #469: native_darwin_hidden_vulkan_surface ...........   Passed    3.68 sec
+        Start 470: darwin_dxmt_identity
+ 48/128 Test #470: darwin_dxmt_identity ..........................   Passed   12.92 sec
+        Start 471: darwin_dxmt_self_share
+ 49/128 Test #471: darwin_dxmt_self_share ........................   Passed    3.95 sec
+        Start 472: darwin_d3d_compile
+ 50/128 Test #472: darwin_d3d_compile ............................   Passed    3.67 sec
+        Start 473: darwin_d3d_compile_local
+ 51/128 Test #473: darwin_d3d_compile_local ......................   Passed    3.72 sec
+        Start 474: darwin_nt_file
+ 52/128 Test #474: darwin_nt_file ................................   Passed    4.13 sec
+        Start 475: darwin_dxmt_keyed_x64
+ 53/128 Test #475: darwin_dxmt_keyed_x64 .........................   Passed    5.32 sec
+        Start 476: darwin_socket_catalog_x64
+ 54/128 Test #476: darwin_socket_catalog_x64 .....................   Passed    4.92 sec
+        Start 477: darwin_dxmt_keyed_x32
+ 55/128 Test #477: darwin_dxmt_keyed_x32 .........................   Passed    6.23 sec
+        Start 478: darwin_socket_catalog_x32
+ 56/128 Test #478: darwin_socket_catalog_x32 .....................   Passed    3.83 sec
+        Start 479: darwin_dxmt_shared
+ 57/128 Test #479: darwin_dxmt_shared ............................   Passed    5.06 sec
+        Start 480: darwin_dxmt_shared_keyed
+ 58/128 Test #480: darwin_dxmt_shared_keyed ......................   Passed    4.15 sec
+        Start 481: darwin_dxmt_device10
+ 59/128 Test #481: darwin_dxmt_device10 ..........................   Passed   13.10 sec
+        Start 482: darwin_dcomp_local
+ 60/128 Test #482: darwin_dcomp_local ............................   Passed    8.34 sec
+        Start 483: darwin_dcomp_foreign
+ 61/128 Test #483: darwin_dcomp_foreign ..........................   Passed    7.72 sec
+        Start 484: darwin_dcomp_local-hidpi
+ 62/128 Test #484: darwin_dcomp_local-hidpi ......................   Passed    8.76 sec
+        Start 485: darwin_dcomp_foreign-hidpi
+ 63/128 Test #485: darwin_dcomp_foreign-hidpi ....................   Passed    8.06 sec
+        Start 486: darwin_dcomp_popup
+ 64/128 Test #486: darwin_dcomp_popup ............................   Passed    7.60 sec
+        Start 487: darwin_dcomp_popup-hidpi
+ 65/128 Test #487: darwin_dcomp_popup-hidpi ......................   Passed    7.52 sec
+        Start 488: darwin_dxmt_device
+ 66/128 Test #488: darwin_dxmt_device ............................   Passed    3.69 sec
+        Start 489: darwin_dxmt_pool
+ 67/128 Test #489: darwin_dxmt_pool ..............................   Passed    3.69 sec
+        Start 490: darwin_dxmt_pacing
+ 68/128 Test #490: darwin_dxmt_pacing ............................***Failed    5.05 sec
+Traceback (most recent call last):
+  File "${REPO}/native/platform/darwin/tests/run_dxmt.py", line 162, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "${REPO}/native/platform/darwin/tests/run_dxmt.py", line 155, in main
+    raise RuntimeError(f"minimum-duration presents were not paced: {text}")
+RuntimeError: minimum-duration presents were not paced: 16 37252845
+
+        Start 491: darwin_dxmt_triangle
+ 69/128 Test #491: darwin_dxmt_triangle ..........................   Passed    4.06 sec
+        Start 492: darwin_dxmt_window
+ 70/128 Test #492: darwin_dxmt_window ............................   Passed   29.16 sec
+        Start 493: darwin_dxmt_deferred
+ 71/128 Test #493: darwin_dxmt_deferred ..........................   Passed    4.07 sec
+        Start 494: darwin_dxmt_geometry
+ 72/128 Test #494: darwin_dxmt_geometry ..........................   Passed    3.88 sec
+        Start 495: darwin_dxmt_tessellation
+ 73/128 Test #495: darwin_dxmt_tessellation ......................   Passed    3.84 sec
+        Start 496: darwin_dxmt_textured
+ 74/128 Test #496: darwin_dxmt_textured ..........................   Passed    3.86 sec
+        Start 497: darwin_dxmt_msaa
+ 75/128 Test #497: darwin_dxmt_msaa ..............................   Passed    3.96 sec
+        Start 498: darwin_dxmt_compute
+ 76/128 Test #498: darwin_dxmt_compute ...........................   Passed    3.79 sec
+        Start 499: darwin_dxmt_features
+ 77/128 Test #499: darwin_dxmt_features ..........................***Failed    3.88 sec
+DXMT features: exit 1, 'FAIL query data 00000001'
+info:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1
+info:  Using feature level D3D_FEATURE_LEVEL_11_0
+
+
+        Start 500: darwin_dxmt_fullscreen
+ 78/128 Test #500: darwin_dxmt_fullscreen ........................   Passed    5.18 sec
+        Start 501: darwin_dxmt_present_rate
+ 79/128 Test #501: darwin_dxmt_present_rate ......................   Passed   11.96 sec
+        Start 502: darwin_unix_call
+ 80/128 Test #502: darwin_unix_call ..............................   Passed    0.35 sec
+        Start 503: darwin_unix_call_parallel
+ 81/128 Test #503: darwin_unix_call_parallel .....................   Passed    0.46 sec
+        Start 504: darwin_compat_contract
+ 82/128 Test #504: darwin_compat_contract ........................   Passed    0.40 sec
+        Start 505: native_darwin_dock_policy
+ 83/128 Test #505: native_darwin_dock_policy .....................   Passed    0.00 sec
+        Start 506: native_darwin_host_launch
+ 84/128 Test #506: native_darwin_host_launch .....................   Passed    0.00 sec
+        Start 507: native_darwin_foreground
+ 85/128 Test #507: native_darwin_foreground ......................   Passed    0.01 sec
+        Start 508: native_darwin_cocoa_policy
+ 86/128 Test #508: native_darwin_cocoa_policy ....................   Passed    0.33 sec
+        Start 509: native_darwin_cocoa_hidden_surface
+ 87/128 Test #509: native_darwin_cocoa_hidden_surface ............   Passed    0.13 sec
+        Start 510: native_darwin_cocoa_input
+ 88/128 Test #510: native_darwin_cocoa_input .....................   Passed    0.13 sec
+        Start 511: native_darwin_reexec
+ 89/128 Test #511: native_darwin_reexec ..........................   Passed    0.15 sec
+        Start 512: native_darwin_runtime
+ 90/128 Test #512: native_darwin_runtime .........................***Failed    0.11 sec
+host TSC is not the guest's monotonic nanosecond counter
+
+        Start 513: native_darwin_system_api
+ 91/128 Test #513: native_darwin_system_api ......................   Passed    3.65 sec
+        Start 514: native_darwin_cursor_dpi
+ 92/128 Test #514: native_darwin_cursor_dpi ......................   Passed    3.65 sec
+        Start 515: native_darwin_gdi_presenter
+ 93/128 Test #515: native_darwin_gdi_presenter ...................   Passed    0.06 sec
+        Start 516: native_darwin_apps
+ 94/128 Test #516: native_darwin_apps ............................   Passed    0.12 sec
+        Start 517: native_darwin_app_compiler_x64
+ 95/128 Test #517: native_darwin_app_compiler_x64 ................   Passed    1.08 sec
+        Start 518: native_darwin_sspi_ansi_x64
+ 96/128 Test #518: native_darwin_sspi_ansi_x64 ...................   Passed    1.06 sec
+        Start 519: native_darwin_socket_exclusive_x64
+ 97/128 Test #519: native_darwin_socket_exclusive_x64 ............   Passed    1.02 sec
+        Start 520: native_darwin_processor_count_x64
+ 98/128 Test #520: native_darwin_processor_count_x64 .............   Passed    1.08 sec
+        Start 521: native_darwin_appcontainer_stub_x64
+ 99/128 Test #521: native_darwin_appcontainer_stub_x64 ...........   Passed    1.02 sec
+        Start 522: native_darwin_app_compiler_x32
+100/128 Test #522: native_darwin_app_compiler_x32 ................   Passed    1.26 sec
+        Start 523: native_darwin_sspi_ansi_x32
+101/128 Test #523: native_darwin_sspi_ansi_x32 ...................   Passed    1.27 sec
+        Start 524: native_darwin_socket_exclusive_x32
+102/128 Test #524: native_darwin_socket_exclusive_x32 ............   Passed    1.28 sec
+        Start 525: native_darwin_processor_count_x32
+103/128 Test #525: native_darwin_processor_count_x32 .............   Passed    1.26 sec
+        Start 526: native_darwin_appcontainer_stub_x32
+104/128 Test #526: native_darwin_appcontainer_stub_x32 ...........   Passed    1.26 sec
+        Start 527: native_darwin_installer_widl
+105/128 Test #527: native_darwin_installer_widl ..................***Skipped   0.04 sec
+        Start 528: native_darwin_teardown_wait_x64
+106/128 Test #528: native_darwin_teardown_wait_x64 ...............   Passed    4.35 sec
+        Start 529: native_darwin_teardown_multi_x64
+107/128 Test #529: native_darwin_teardown_multi_x64 ..............   Passed    4.35 sec
+        Start 530: native_darwin_process_creation_x64
+108/128 Test #530: native_darwin_process_creation_x64 ............   Passed    2.10 sec
+        Start 535: native_darwin_teardown_wait_x32
+109/128 Test #535: native_darwin_teardown_wait_x32 ...............   Passed    4.69 sec
+        Start 536: native_darwin_teardown_multi_x32
+110/128 Test #536: native_darwin_teardown_multi_x32 ..............   Passed    4.78 sec
+        Start 537: native_darwin_process_creation_x32
+111/128 Test #537: native_darwin_process_creation_x32 ............   Passed    2.63 sec
+        Start 544: native_darwin_desktop_dpi_x64
+112/128 Test #544: native_darwin_desktop_dpi_x64 .................   Passed    3.99 sec
+        Start 545: native_darwin_desktop_dpi_x32
+113/128 Test #545: native_darwin_desktop_dpi_x32 .................   Passed    1.74 sec
+        Start 546: native_darwin_parallel_input
+114/128 Test #546: native_darwin_parallel_input ..................   Passed    1.08 sec
+        Start 547: native_darwin_parallel_input_x32
+115/128 Test #547: native_darwin_parallel_input_x32 ..............   Passed    1.33 sec
+        Start 548: darwin_x87sidecar_correctness
+116/128 Test #548: darwin_x87sidecar_correctness .................***Failed    0.06 sec
+Traceback (most recent call last):
+  File "${REPO}/scripts/test-x87sidecar.py", line 72, in <module>
+    main()
+    ~~~~^^
+  File "${REPO}/scripts/test-x87sidecar.py", line 40, in main
+    baseline = run(raven, fixture, "")
+  File "${REPO}/scripts/test-x87sidecar.py", line 29, in run
+    raise RuntimeError(f"guest failed: {process.returncode}, stdout={out!r}\n{text}")
+RuntimeError: guest failed: 1, stdout=b''
+raven: cannot open PE file
+
+
+        Start 549: darwin_x87sidecar_fallback
+117/128 Test #549: darwin_x87sidecar_fallback ....................***Failed    0.05 sec
+Traceback (most recent call last):
+  File "${REPO}/scripts/test-x87sidecar.py", line 72, in <module>
+    main()
+    ~~~~^^
+  File "${REPO}/scripts/test-x87sidecar.py", line 40, in main
+    baseline = run(raven, fixture, "")
+  File "${REPO}/scripts/test-x87sidecar.py", line 29, in run
+    raise RuntimeError(f"guest failed: {process.returncode}, stdout={out!r}\n{text}")
+RuntimeError: guest failed: 1, stdout=b''
+raven: cannot open PE file
+
+
+        Start 550: darwin_x87sidecar_x64
+118/128 Test #550: darwin_x87sidecar_x64 .........................***Failed    0.05 sec
+Traceback (most recent call last):
+  File "${REPO}/scripts/test-x87sidecar.py", line 72, in <module>
+    main()
+    ~~~~^^
+  File "${REPO}/scripts/test-x87sidecar.py", line 40, in main
+    baseline = run(raven, fixture, "")
+  File "${REPO}/scripts/test-x87sidecar.py", line 29, in run
+    raise RuntimeError(f"guest failed: {process.returncode}, stdout={out!r}\n{text}")
+RuntimeError: guest failed: 1, stdout=b''
+raven: cannot open PE file
+
+
+        Start 551: darwin_x87sidecar_child
+119/128 Test #551: darwin_x87sidecar_child .......................***Failed    0.05 sec
+Traceback (most recent call last):
+  File "${REPO}/scripts/test-x87sidecar.py", line 72, in <module>
+    main()
+    ~~~~^^
+  File "${REPO}/scripts/test-x87sidecar.py", line 40, in main
+    baseline = run(raven, fixture, "")
+  File "${REPO}/scripts/test-x87sidecar.py", line 29, in run
+    raise RuntimeError(f"guest failed: {process.returncode}, stdout={out!r}\n{text}")
+RuntimeError: guest failed: 1, stdout=b''
+raven: cannot open PE file
+
+
+        Start 552: native_darwin_teardown_ps_rows
+120/128 Test #552: native_darwin_teardown_ps_rows ................   Passed    0.03 sec
+        Start 553: native_darwin_dxmt_drawable_pool
+121/128 Test #553: native_darwin_dxmt_drawable_pool ..............   Passed    0.70 sec
+        Start 554: native_darwin_fd_budget
+122/128 Test #554: native_darwin_fd_budget .......................   Passed    0.04 sec
+        Start 555: native_darwin_adapter_protocol
+123/128 Test #555: native_darwin_adapter_protocol ................   Passed    0.41 sec
+        Start 556: native_darwin_watch_lifetime
+124/128 Test #556: native_darwin_watch_lifetime ..................   Passed    0.02 sec
+        Start 557: native_darwin_rosetta_runner
+125/128 Test #557: native_darwin_rosetta_runner ..................   Passed    0.08 sec
+        Start 558: native_darwin_fd_budget_low_hard
+126/128 Test #558: native_darwin_fd_budget_low_hard ..............***Skipped   0.00 sec
+        Start 559: native_darwin_fd_budget_startup
+127/128 Test #559: native_darwin_fd_budget_startup ...............   Passed    0.04 sec
+        Start 560: native_darwin_dxmt_slot_state
+128/128 Test #560: native_darwin_dxmt_slot_state .................   Passed    0.00 sec
+
+92% tests passed, 10 tests failed out of 128
+
+Total Test time (real) = 434.67 sec
+
+The following tests did not run:
+	437 - native_darwin_capture_authorized (Skipped)
+	527 - native_darwin_installer_widl (Skipped)
+	558 - native_darwin_fd_budget_low_hard (Skipped)
+
+The following tests FAILED:
+	257 - native_cmd (Failed)
+	466 - native_darwin_handoff (Failed)
+	467 - native_darwin_handoff_parallel (Failed)
+	490 - darwin_dxmt_pacing (Failed)
+	499 - darwin_dxmt_features (Failed)
+	512 - native_darwin_runtime (Failed)
+	548 - darwin_x87sidecar_correctness (Failed)
+	549 - darwin_x87sidecar_fallback (Failed)
+	550 - darwin_x87sidecar_x64 (Failed)
+	551 - darwin_x87sidecar_child (Failed)
+Errors while running CTest

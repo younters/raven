@@ -312,7 +312,7 @@ int main(int argc, char **argv)
 		if (bind_imports || run_modules || run_process) {
 			raven::ModuleSet modules;
 #ifdef RAVEN_FEX_PROCESS
-			if (use_fex) modules.set_address_space(raven::fex_address_available, 0x10000000000ULL);
+			if (use_fex) modules.set_address_space(raven::fex_reserve_image_address, 0x10000000000ULL);
 #endif
 			raven::PEModule *entry = nullptr;
 			for (int i = (run_modules || run_process) ? first_file : 2; i < last_file; ++i) {
@@ -403,7 +403,7 @@ int main(int argc, char **argv)
 										if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
 											::dup2(quiet, 1);
 										const std::string self = raven::child_runtime_executable(std::filesystem::read_symlink("/proc/self/exe")).string(), path = program.string();
-										::execl(self.c_str(), self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
+										::execl(self.c_str(), self.c_str(), "--run-process", use_fex ? "--execution=fex" : "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
 											server, static_cast<char *>(nullptr));
 										::_exit(127);
 									}

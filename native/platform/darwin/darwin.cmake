@@ -127,14 +127,14 @@ if(TARGET raven_cpu)
         set(RAVEN_DARWIN_PARALLEL_BENCHMARK ${CMAKE_CURRENT_BINARY_DIR}/darwin-parallel-benchmark.exe)
         add_custom_command(OUTPUT ${RAVEN_DARWIN_PARALLEL_BENCHMARK}
             COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector
-                -Wl,--entry,raven_entry,--image-base,0x199a00000
+                -Wl,--entry,raven_entry,--image-base,0x10000000000,--no-insert-timestamp
                 -o ${RAVEN_DARWIN_PARALLEL_BENCHMARK} ${RAVEN_DARWIN_DIR}/parallel_benchmark.c -lkernel32
             DEPENDS ${RAVEN_DARWIN_DIR}/parallel_benchmark.c VERBATIM)
         add_custom_target(darwin_parallel_benchmark ALL DEPENDS ${RAVEN_DARWIN_PARALLEL_BENCHMARK})
         set(RAVEN_DARWIN_HANDOFF_BENCHMARK ${CMAKE_CURRENT_BINARY_DIR}/darwin-handoff-benchmark.exe)
         add_custom_command(OUTPUT ${RAVEN_DARWIN_HANDOFF_BENCHMARK}
             COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector
-                -Wl,--entry,raven_entry,--image-base,0x199a00000
+                -Wl,--entry,raven_entry,--image-base,0x10000000000,--no-insert-timestamp
                 -o ${RAVEN_DARWIN_HANDOFF_BENCHMARK} ${RAVEN_DARWIN_DIR}/handoff_benchmark.c -lkernel32
             DEPENDS ${RAVEN_DARWIN_DIR}/handoff_benchmark.c VERBATIM)
         add_custom_target(darwin_handoff_benchmark ALL DEPENDS ${RAVEN_DARWIN_HANDOFF_BENCHMARK})
@@ -904,15 +904,15 @@ if(RAVEN_FEX_MODHOST AND TARGET raven_cpu AND RAVEN_MINGW64)
     set(FEX_FIXED ${CMAKE_CURRENT_BINARY_DIR}/fex-fixed-low.exe)
     add_custom_command(OUTPUT ${FEX_FIXED}
         COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
-            -Wl,--entry,raven_entry,--image-base,0x400000,--no-insert-timestamp
-            -o ${FEX_FIXED} ${PROJECT_SOURCE_DIR}/testdata/native_cpu/entry.c
-        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_cpu/entry.c VERBATIM)
+            -Wl,--entry,raven_entry,--image-base,0x8000000000,--no-insert-timestamp
+            -o ${FEX_FIXED} ${RAVEN_DARWIN_DIR}/fex/fixed_client.c
+        DEPENDS ${RAVEN_DARWIN_DIR}/fex/fixed_client.c VERBATIM)
     add_custom_target(fex_placement_fixtures DEPENDS ${FEX_PLACEMENT} ${FEX_FIXED})
     add_test(NAME native_placement_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
         --raven $<TARGET_FILE:raven> --fixture ${FEX_PLACEMENT} --modules "${RAVEN_FEX_MODULE_ROOT}")
-    add_test(NAME native_fixed_image_conflict_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
-        --raven $<TARGET_FILE:raven> --fixture ${FEX_FIXED} --modules "${RAVEN_FEX_MODULE_ROOT}" --expect-placement-conflict)
-    set_tests_properties(native_placement_fex native_fixed_image_conflict_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;m2;placement")
+    add_test(NAME native_fixed_image_preferred_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+        --raven $<TARGET_FILE:raven> --fixture ${FEX_FIXED} --modules "${RAVEN_FEX_MODULE_ROOT}")
+    set_tests_properties(native_placement_fex native_fixed_image_preferred_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;m2;placement")
 endif()
 
 if(RAVEN_FEX_MODHOST AND TARGET kernel_seh_fixture)
@@ -1100,3 +1100,4 @@ if(TARGET raven-fex-host)
     add_test(NAME darwin_fex_child_executable COMMAND darwin_fex_child_executable_test)
     set_tests_properties(darwin_fex_child_executable PROPERTIES LABELS "fex;contract;darwin")
 endif()
+include(${RAVEN_DARWIN_DIR}/fex/parity.cmake)

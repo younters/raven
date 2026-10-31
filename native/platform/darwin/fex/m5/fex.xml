@@ -1,0 +1,1751 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="118"
+	failures="1"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="42"
+	timestamp="2026-10-30T19:24:35"
+	>
+	<testcase name="native_entry_fex" classname="native_entry_fex" time="0.0282155" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX entry returned 500500
+</system-out>
+	</testcase>
+	<testcase name="native_syscall_fex" classname="native_syscall_fex" time="0.0245382" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX syscall returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_fault_fex" classname="native_fault_fex" time="0.02362" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX fault returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_breakpoint_fex" classname="native_breakpoint_fex" time="0.0232612" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: INT3 precise breakpoint
+</system-out>
+	</testcase>
+	<testcase name="native_divide_fex" classname="native_divide_fex" time="0.0230445" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+divide exception code=c0000094
+</system-out>
+	</testcase>
+	<testcase name="native_ud2_fex" classname="native_ud2_fex" time="0.0231592" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: UD2 precise illegal instruction
+</system-out>
+	</testcase>
+	<testcase name="native_timeout_fex" classname="native_timeout_fex" time="0.0536437" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX timeout returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_selfmodify_fex" classname="native_selfmodify_fex" time="0.0239536" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX selfmodify returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_lifetime_fex" classname="native_lifetime_fex" time="0.0235215" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: second process rejected during and after controller lifetime
+</system-out>
+	</testcase>
+	<testcase name="native_served-malformed_fex" classname="native_served-malformed_fex" time="0.0231065" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: malformed real served stub rejected before execution
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u8-zero_fex" classname="native_matrix-u8-zero_fex" time="0.023157" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u8-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u8-overflow_fex" classname="native_matrix-u8-overflow_fex" time="0.0233213" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u8-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u8-valid_fex" classname="native_matrix-u8-valid_fex" time="0.0234044" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u8-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u8-fold-zero_fex" classname="native_matrix-u8-fold-zero_fex" time="0.0232441" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u8-fold-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u8-fold-valid_fex" classname="native_matrix-u8-fold-valid_fex" time="0.0235781" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u8-fold-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u8-wide-valid_fex" classname="native_matrix-u8-wide-valid_fex" time="0.0234108" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u8-wide-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u16-zero_fex" classname="native_matrix-u16-zero_fex" time="0.0232978" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u16-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u16-overflow_fex" classname="native_matrix-u16-overflow_fex" time="0.0234415" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u16-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u16-valid_fex" classname="native_matrix-u16-valid_fex" time="0.023319" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u16-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u16-fold-zero_fex" classname="native_matrix-u16-fold-zero_fex" time="0.0230897" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u16-fold-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u16-fold-valid_fex" classname="native_matrix-u16-fold-valid_fex" time="0.0234489" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u16-fold-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u16-wide-valid_fex" classname="native_matrix-u16-wide-valid_fex" time="0.0238122" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u16-wide-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u32-zero_fex" classname="native_matrix-u32-zero_fex" time="0.0238248" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u32-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u32-overflow_fex" classname="native_matrix-u32-overflow_fex" time="0.0232177" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u32-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u32-valid_fex" classname="native_matrix-u32-valid_fex" time="0.0236826" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u32-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u32-fold-zero_fex" classname="native_matrix-u32-fold-zero_fex" time="0.023297" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u32-fold-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u32-fold-valid_fex" classname="native_matrix-u32-fold-valid_fex" time="0.0233189" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u32-fold-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u32-wide-valid_fex" classname="native_matrix-u32-wide-valid_fex" time="0.0236689" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u32-wide-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u64-zero_fex" classname="native_matrix-u64-zero_fex" time="0.0240416" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u64-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u64-overflow_fex" classname="native_matrix-u64-overflow_fex" time="0.023784" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u64-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u64-valid_fex" classname="native_matrix-u64-valid_fex" time="0.0233952" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u64-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u64-fold-zero_fex" classname="native_matrix-u64-fold-zero_fex" time="0.0234916" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u64-fold-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u64-fold-valid_fex" classname="native_matrix-u64-fold-valid_fex" time="0.0237059" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u64-fold-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-u64-wide-valid_fex" classname="native_matrix-u64-wide-valid_fex" time="0.0239401" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-u64-wide-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s8-zero_fex" classname="native_matrix-s8-zero_fex" time="0.0235965" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s8-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s8-overflow_fex" classname="native_matrix-s8-overflow_fex" time="0.0233214" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s8-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s8-valid_fex" classname="native_matrix-s8-valid_fex" time="0.0236296" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s8-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s8-fold-zero_fex" classname="native_matrix-s8-fold-zero_fex" time="0.023355" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s8-fold-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s8-fold-valid_fex" classname="native_matrix-s8-fold-valid_fex" time="0.0232477" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s8-fold-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s8-wide-valid_fex" classname="native_matrix-s8-wide-valid_fex" time="0.0232974" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s8-wide-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s8-fold-overflow_fex" classname="native_matrix-s8-fold-overflow_fex" time="0.023203" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s8-fold-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s8-negative-limit_fex" classname="native_matrix-s8-negative-limit_fex" time="0.023405" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s8-negative-limit returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s8-positive-limit_fex" classname="native_matrix-s8-positive-limit_fex" time="0.0232106" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s8-positive-limit returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s8-positive-overflow_fex" classname="native_matrix-s8-positive-overflow_fex" time="0.0233131" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s8-positive-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s16-zero_fex" classname="native_matrix-s16-zero_fex" time="0.0234624" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s16-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s16-overflow_fex" classname="native_matrix-s16-overflow_fex" time="0.0245925" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s16-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s16-valid_fex" classname="native_matrix-s16-valid_fex" time="0.0234467" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s16-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s16-fold-zero_fex" classname="native_matrix-s16-fold-zero_fex" time="0.0236738" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s16-fold-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s16-fold-valid_fex" classname="native_matrix-s16-fold-valid_fex" time="0.0232105" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s16-fold-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s16-wide-valid_fex" classname="native_matrix-s16-wide-valid_fex" time="0.0234315" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s16-wide-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s16-fold-overflow_fex" classname="native_matrix-s16-fold-overflow_fex" time="0.0229616" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s16-fold-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s16-negative-limit_fex" classname="native_matrix-s16-negative-limit_fex" time="0.0232726" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s16-negative-limit returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s16-positive-limit_fex" classname="native_matrix-s16-positive-limit_fex" time="0.0234065" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s16-positive-limit returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s16-positive-overflow_fex" classname="native_matrix-s16-positive-overflow_fex" time="0.023874" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s16-positive-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s16-wide-overflow_fex" classname="native_matrix-s16-wide-overflow_fex" time="0.0239062" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s16-wide-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s32-zero_fex" classname="native_matrix-s32-zero_fex" time="0.0239323" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s32-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s32-overflow_fex" classname="native_matrix-s32-overflow_fex" time="0.0233472" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s32-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s32-valid_fex" classname="native_matrix-s32-valid_fex" time="0.0235082" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s32-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s32-fold-zero_fex" classname="native_matrix-s32-fold-zero_fex" time="0.023584" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s32-fold-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s32-fold-valid_fex" classname="native_matrix-s32-fold-valid_fex" time="0.023476" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s32-fold-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s32-wide-valid_fex" classname="native_matrix-s32-wide-valid_fex" time="0.0235178" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s32-wide-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s32-fold-overflow_fex" classname="native_matrix-s32-fold-overflow_fex" time="0.0235379" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s32-fold-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s32-negative-limit_fex" classname="native_matrix-s32-negative-limit_fex" time="0.0257348" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s32-negative-limit returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s32-positive-limit_fex" classname="native_matrix-s32-positive-limit_fex" time="0.0249065" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s32-positive-limit returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s32-positive-overflow_fex" classname="native_matrix-s32-positive-overflow_fex" time="0.024541" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s32-positive-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s32-wide-overflow_fex" classname="native_matrix-s32-wide-overflow_fex" time="0.0240731" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s32-wide-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s64-zero_fex" classname="native_matrix-s64-zero_fex" time="0.0237583" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s64-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s64-overflow_fex" classname="native_matrix-s64-overflow_fex" time="0.0303581" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s64-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s64-valid_fex" classname="native_matrix-s64-valid_fex" time="0.0251275" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s64-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s64-fold-zero_fex" classname="native_matrix-s64-fold-zero_fex" time="0.0246761" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s64-fold-zero returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s64-fold-valid_fex" classname="native_matrix-s64-fold-valid_fex" time="0.024638" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s64-fold-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s64-wide-valid_fex" classname="native_matrix-s64-wide-valid_fex" time="0.024011" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s64-wide-valid returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s64-fold-overflow_fex" classname="native_matrix-s64-fold-overflow_fex" time="0.0246321" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s64-fold-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s64-negative-limit_fex" classname="native_matrix-s64-negative-limit_fex" time="0.024258" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s64-negative-limit returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s64-positive-limit_fex" classname="native_matrix-s64-positive-limit_fex" time="0.0240767" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s64-positive-limit returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s64-positive-overflow_fex" classname="native_matrix-s64-positive-overflow_fex" time="0.0239306" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s64-positive-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_matrix-s64-wide-overflow_fex" classname="native_matrix-s64-wide-overflow_fex" time="0.0239478" status="run">
+		<properties>
+			<property name="cmake_labels" value="divide;fex;m2"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX matrix-s64-wide-overflow returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_kernel-ansi_fex" classname="native_kernel-ansi_fex" time="1.60375" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;process"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_kernel-file_fex" classname="native_kernel-file_fex" time="1.64141" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;process"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_kernel-threads_fex" classname="native_kernel-threads_fex" time="2.51048" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;process"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_kernel-seh_fex" classname="native_kernel-seh_fex" time="1.60678" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;process;seh"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_placement_fex" classname="native_placement_fex" time="1.61085" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;placement"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_fixed_image_preferred_fex" classname="native_fixed_image_preferred_fex" time="0.0509312" status="fail">
+		<failure message="Failed"/>
+		<properties>
+			<property name="cmake_labels" value="fex;m2;placement"/>
+		</properties>
+		<system-out>raven: PE preferred base is unavailable and image has no relocation table
+FAIL: expected verified zero entry return, host exit=1
+</system-out>
+	</testcase>
+	<testcase name="native_write_av_fex" classname="native_write_av_fex" time="1.58896" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;seh"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="fex_process_runner_contract" classname="fex_process_runner_contract" time="0.113141" status="run">
+		<properties>
+			<property name="cmake_labels" value="contract;fex"/>
+		</properties>
+		<system-out>.
+----------------------------------------------------------------------
+Ran 1 test in 0.066s
+
+OK
+</system-out>
+	</testcase>
+	<testcase name="native_internal_brk_rejection_fex" classname="native_internal_brk_rejection_fex" time="0.0577017" status="run">
+		<properties>
+			<property name="cmake_labels" value="fault;fex;m2"/>
+		</properties>
+		<system-out>unhandled FEX native or unsupported fault
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: native BRK rejected with exit 133
+</system-out>
+	</testcase>
+	<testcase name="native_empty_module_argument_fex" classname="native_empty_module_argument_fex" time="1.62387" status="run">
+		<properties>
+			<property name="cmake_labels" value="contract;fex"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_kernel_file_persistence_fex" classname="native_kernel_file_persistence_fex" time="0.052673" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;process"/>
+		</properties>
+		<system-out>The guest's file landed in the prefix with the exact bytes it wrote
+</system-out>
+	</testcase>
+	<testcase name="native_review_breakpoint-seh_fex" classname="native_review_breakpoint-seh_fex" time="1.61596" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;review"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_review_read-av_fex" classname="native_review_read-av_fex" time="1.6819" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;review"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_review_nested-seh_fex" classname="native_review_nested-seh_fex" time="1.72177" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;review"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_review_unhandled_fex" classname="native_review_unhandled_fex" time="1.68555" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;review"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: unhandled exception e0424242 at 6fff00005bbf (kernel32.dll+5bbf)
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native process exited with status 3762438722
+PASS: unhandled NT status 0xe0424242 preserved in process exit channel
+</system-out>
+	</testcase>
+	<testcase name="native_review_subpage_fex" classname="native_review_subpage_fex" time="1.69253" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;review"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_review_guard-unsupported_fex" classname="native_review_guard-unsupported_fex" time="1.58754" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;review"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_review_divide-overflow_fex" classname="native_review_divide-overflow_fex" time="1.65408" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;review"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parallel_contention_fex" classname="native_parallel_contention_fex" time="1.43607" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m3;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parallel_context_fex" classname="native_parallel_context_fex" time="1.39118" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m3;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parallel_worker-seh_fex" classname="native_parallel_worker-seh_fex" time="1.39314" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m3;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parallel_apc_fex" classname="native_parallel_apc_fex" time="1.46825" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m3;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parallel_lifecycle_fex" classname="native_parallel_lifecycle_fex" time="1.4771" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m3;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parallel_worker-unhandled_fex" classname="native_parallel_worker-unhandled_fex" time="1.39071" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m3;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: unhandled exception e0424242 at 6fff00005bbf (kernel32.dll+5bbf)
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native process exited with status 3762438722
+PASS: unhandled NT status 0xe0424242 preserved in process exit channel
+</system-out>
+	</testcase>
+	<testcase name="native_parallel_negatives_fex" classname="native_parallel_negatives_fex" time="1.40095" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m3;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parallel_worker-av_fex" classname="native_parallel_worker-av_fex" time="1.3867" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m3;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: unhandled exception c0000005 at 1000000107a (fex-parallel-worker-av.exe+107a)
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native process exited with status 3221225477
+PASS: unhandled NT status 0xc0000005 preserved in process exit channel
+</system-out>
+	</testcase>
+	<testcase name="native_cooperative_context_fex" classname="native_cooperative_context_fex" time="1.63025" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m3"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parallel_kernel_threads_fex" classname="native_parallel_kernel_threads_fex" time="2.32077" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m3;parallel"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_parallel_timeout_fex" classname="native_parallel_timeout_fex" time="0.0511367" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m3;parallel"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX timeout returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_parallel_selfmodify_fex" classname="native_parallel_selfmodify_fex" time="0.0245262" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m3;parallel"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX selfmodify returned 42
+</system-out>
+	</testcase>
+	<testcase name="native_parallel_wait-unwind_fex" classname="native_parallel_wait-unwind_fex" time="0.0239133" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m3;parallel"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: throwing execution wait pauses worker and permits repair
+</system-out>
+	</testcase>
+	<testcase name="fex_nt-service" classname="fex_nt-service" time="0.0239002" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX nt-service returned 42
+</system-out>
+	</testcase>
+	<testcase name="fex_nt-service_parallel" classname="fex_nt-service_parallel" time="0.0241122" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX nt-service returned 42
+</system-out>
+	</testcase>
+	<testcase name="fex_unaligned" classname="fex_unaligned" time="0.0233588" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX unaligned returned 42
+</system-out>
+	</testcase>
+	<testcase name="fex_unaligned_parallel" classname="fex_unaligned_parallel" time="0.0237486" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: FEX unaligned returned 42
+</system-out>
+	</testcase>
+	<testcase name="fex_debug-print" classname="fex_debug-print" time="0.0235167" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: canonical INT 2D completion
+</system-out>
+	</testcase>
+	<testcase name="fex_debug-print_parallel" classname="fex_debug-print_parallel" time="0.0249243" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex"/>
+		</properties>
+		<system-out>machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: canonical INT 2D completion
+</system-out>
+	</testcase>
+	<testcase name="fex_modhost_driver_contract" classname="fex_modhost_driver_contract" time="0.17948" status="run">
+		<properties>
+			<property name="cmake_labels" value="contract;fex"/>
+		</properties>
+		<system-out>..launch failed
+Command 'probe' timed out after 10 seconds
+.....
+----------------------------------------------------------------------
+Ran 7 tests in 0.094s
+
+OK
+XFAIL: first_faults=1 second_faults=0XFAIL: first_faults=1 second_faults=0XFAIL: first_faults=1 second_faults=0unrelated failure
+</system-out>
+	</testcase>
+	<testcase name="fex_modhost_substrate" classname="fex_modhost_substrate" time="0.0579115" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;substrate"/>
+		</properties>
+		<system-out>PASS: negative fault repair, dynamic checked imports/concurrency, shared sections, RX JIT, worker termination
+PASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)
+PASS: MAP_JIT execution, nested write modes, sixteen arguments, d8-d15/q8-q15/x18 sentinels and native/signal x18
+unhandled module NT exception c00000bb
+PASS: substrate only; no module init or guest execution claimed
+</system-out>
+	</testcase>
+	<testcase name="fex_modhost_execution" classname="fex_modhost_execution" time="0.418199" status="run">
+		<properties>
+			<property name="cmake_labels" value="execution;fex"/>
+		</properties>
+		<system-out>PASS: negative fault repair, dynamic checked imports/concurrency, shared sections, RX JIT, worker termination
+PASS: native VM, heap, CRT, SRW/condition/address waits, QPC substrate (not PE execution)
+PASS: MAP_JIT execution, nested write modes, sixteen arguments, d8-d15/q8-q15/x18 sentinels and native/signal x18
+unhandled module NT exception c00000bb
+PASS: benchmark function bodies match original SPIKE assembly bytes
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+PASS: non-JIT host fault in actual call/return guard rejected without context changes
+PASS: x86-64 dispatch args=7,11,13,17 host_result=224 resumed_result=4884 calls=1
+PASS: precise AV guest_rip=1363f000a fault_address=1363ec000 repaired_result=4665
+PASS: nested harness-to-guest callback argument=41 result=124 outer_resumed_result=5008
+P...
+[This part of the test output was removed since it exceeds the threshold of 1024 bytes.]
+</system-out>
+	</testcase>
+	<testcase name="fex_modhost_tier0_gap_expected_failure" classname="fex_modhost_tier0_gap_expected_failure" time="0.0369873" status="run">
+		<properties>
+			<property name="cmake_labels" value="expected-failure;fex"/>
+		</properties>
+		<system-out>XFAIL: first_faults=1 second_faults=0; second 4K page was exposed by first repair
+</system-out>
+	</testcase>
+</testsuite>

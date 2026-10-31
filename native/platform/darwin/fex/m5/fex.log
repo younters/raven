@@ -1,0 +1,264 @@
+Test project ${BUILD}
+        Start 357: native_entry_fex
+  1/118 Test #357: native_entry_fex ..........................   Passed    0.03 sec
+        Start 358: native_syscall_fex
+  2/118 Test #358: native_syscall_fex ........................   Passed    0.02 sec
+        Start 359: native_fault_fex
+  3/118 Test #359: native_fault_fex ..........................   Passed    0.02 sec
+        Start 360: native_breakpoint_fex
+  4/118 Test #360: native_breakpoint_fex .....................   Passed    0.02 sec
+        Start 361: native_divide_fex
+  5/118 Test #361: native_divide_fex .........................   Passed    0.02 sec
+        Start 362: native_ud2_fex
+  6/118 Test #362: native_ud2_fex ............................   Passed    0.02 sec
+        Start 363: native_timeout_fex
+  7/118 Test #363: native_timeout_fex ........................   Passed    0.05 sec
+        Start 364: native_selfmodify_fex
+  8/118 Test #364: native_selfmodify_fex .....................   Passed    0.02 sec
+        Start 365: native_lifetime_fex
+  9/118 Test #365: native_lifetime_fex .......................   Passed    0.02 sec
+        Start 366: native_served-malformed_fex
+ 10/118 Test #366: native_served-malformed_fex ...............   Passed    0.02 sec
+        Start 367: native_matrix-u8-zero_fex
+ 11/118 Test #367: native_matrix-u8-zero_fex .................   Passed    0.02 sec
+        Start 368: native_matrix-u8-overflow_fex
+ 12/118 Test #368: native_matrix-u8-overflow_fex .............   Passed    0.02 sec
+        Start 369: native_matrix-u8-valid_fex
+ 13/118 Test #369: native_matrix-u8-valid_fex ................   Passed    0.02 sec
+        Start 370: native_matrix-u8-fold-zero_fex
+ 14/118 Test #370: native_matrix-u8-fold-zero_fex ............   Passed    0.02 sec
+        Start 371: native_matrix-u8-fold-valid_fex
+ 15/118 Test #371: native_matrix-u8-fold-valid_fex ...........   Passed    0.02 sec
+        Start 372: native_matrix-u8-wide-valid_fex
+ 16/118 Test #372: native_matrix-u8-wide-valid_fex ...........   Passed    0.02 sec
+        Start 373: native_matrix-u16-zero_fex
+ 17/118 Test #373: native_matrix-u16-zero_fex ................   Passed    0.02 sec
+        Start 374: native_matrix-u16-overflow_fex
+ 18/118 Test #374: native_matrix-u16-overflow_fex ............   Passed    0.02 sec
+        Start 375: native_matrix-u16-valid_fex
+ 19/118 Test #375: native_matrix-u16-valid_fex ...............   Passed    0.02 sec
+        Start 376: native_matrix-u16-fold-zero_fex
+ 20/118 Test #376: native_matrix-u16-fold-zero_fex ...........   Passed    0.02 sec
+        Start 377: native_matrix-u16-fold-valid_fex
+ 21/118 Test #377: native_matrix-u16-fold-valid_fex ..........   Passed    0.02 sec
+        Start 378: native_matrix-u16-wide-valid_fex
+ 22/118 Test #378: native_matrix-u16-wide-valid_fex ..........   Passed    0.02 sec
+        Start 379: native_matrix-u32-zero_fex
+ 23/118 Test #379: native_matrix-u32-zero_fex ................   Passed    0.02 sec
+        Start 380: native_matrix-u32-overflow_fex
+ 24/118 Test #380: native_matrix-u32-overflow_fex ............   Passed    0.02 sec
+        Start 381: native_matrix-u32-valid_fex
+ 25/118 Test #381: native_matrix-u32-valid_fex ...............   Passed    0.02 sec
+        Start 382: native_matrix-u32-fold-zero_fex
+ 26/118 Test #382: native_matrix-u32-fold-zero_fex ...........   Passed    0.02 sec
+        Start 383: native_matrix-u32-fold-valid_fex
+ 27/118 Test #383: native_matrix-u32-fold-valid_fex ..........   Passed    0.02 sec
+        Start 384: native_matrix-u32-wide-valid_fex
+ 28/118 Test #384: native_matrix-u32-wide-valid_fex ..........   Passed    0.02 sec
+        Start 385: native_matrix-u64-zero_fex
+ 29/118 Test #385: native_matrix-u64-zero_fex ................   Passed    0.02 sec
+        Start 386: native_matrix-u64-overflow_fex
+ 30/118 Test #386: native_matrix-u64-overflow_fex ............   Passed    0.02 sec
+        Start 387: native_matrix-u64-valid_fex
+ 31/118 Test #387: native_matrix-u64-valid_fex ...............   Passed    0.02 sec
+        Start 388: native_matrix-u64-fold-zero_fex
+ 32/118 Test #388: native_matrix-u64-fold-zero_fex ...........   Passed    0.02 sec
+        Start 389: native_matrix-u64-fold-valid_fex
+ 33/118 Test #389: native_matrix-u64-fold-valid_fex ..........   Passed    0.02 sec
+        Start 390: native_matrix-u64-wide-valid_fex
+ 34/118 Test #390: native_matrix-u64-wide-valid_fex ..........   Passed    0.02 sec
+        Start 391: native_matrix-s8-zero_fex
+ 35/118 Test #391: native_matrix-s8-zero_fex .................   Passed    0.02 sec
+        Start 392: native_matrix-s8-overflow_fex
+ 36/118 Test #392: native_matrix-s8-overflow_fex .............   Passed    0.02 sec
+        Start 393: native_matrix-s8-valid_fex
+ 37/118 Test #393: native_matrix-s8-valid_fex ................   Passed    0.02 sec
+        Start 394: native_matrix-s8-fold-zero_fex
+ 38/118 Test #394: native_matrix-s8-fold-zero_fex ............   Passed    0.02 sec
+        Start 395: native_matrix-s8-fold-valid_fex
+ 39/118 Test #395: native_matrix-s8-fold-valid_fex ...........   Passed    0.02 sec
+        Start 396: native_matrix-s8-wide-valid_fex
+ 40/118 Test #396: native_matrix-s8-wide-valid_fex ...........   Passed    0.02 sec
+        Start 397: native_matrix-s8-fold-overflow_fex
+ 41/118 Test #397: native_matrix-s8-fold-overflow_fex ........   Passed    0.02 sec
+        Start 398: native_matrix-s8-negative-limit_fex
+ 42/118 Test #398: native_matrix-s8-negative-limit_fex .......   Passed    0.02 sec
+        Start 399: native_matrix-s8-positive-limit_fex
+ 43/118 Test #399: native_matrix-s8-positive-limit_fex .......   Passed    0.02 sec
+        Start 400: native_matrix-s8-positive-overflow_fex
+ 44/118 Test #400: native_matrix-s8-positive-overflow_fex ....   Passed    0.02 sec
+        Start 401: native_matrix-s16-zero_fex
+ 45/118 Test #401: native_matrix-s16-zero_fex ................   Passed    0.02 sec
+        Start 402: native_matrix-s16-overflow_fex
+ 46/118 Test #402: native_matrix-s16-overflow_fex ............   Passed    0.02 sec
+        Start 403: native_matrix-s16-valid_fex
+ 47/118 Test #403: native_matrix-s16-valid_fex ...............   Passed    0.02 sec
+        Start 404: native_matrix-s16-fold-zero_fex
+ 48/118 Test #404: native_matrix-s16-fold-zero_fex ...........   Passed    0.02 sec
+        Start 405: native_matrix-s16-fold-valid_fex
+ 49/118 Test #405: native_matrix-s16-fold-valid_fex ..........   Passed    0.02 sec
+        Start 406: native_matrix-s16-wide-valid_fex
+ 50/118 Test #406: native_matrix-s16-wide-valid_fex ..........   Passed    0.02 sec
+        Start 407: native_matrix-s16-fold-overflow_fex
+ 51/118 Test #407: native_matrix-s16-fold-overflow_fex .......   Passed    0.02 sec
+        Start 408: native_matrix-s16-negative-limit_fex
+ 52/118 Test #408: native_matrix-s16-negative-limit_fex ......   Passed    0.02 sec
+        Start 409: native_matrix-s16-positive-limit_fex
+ 53/118 Test #409: native_matrix-s16-positive-limit_fex ......   Passed    0.02 sec
+        Start 410: native_matrix-s16-positive-overflow_fex
+ 54/118 Test #410: native_matrix-s16-positive-overflow_fex ...   Passed    0.02 sec
+        Start 411: native_matrix-s16-wide-overflow_fex
+ 55/118 Test #411: native_matrix-s16-wide-overflow_fex .......   Passed    0.02 sec
+        Start 412: native_matrix-s32-zero_fex
+ 56/118 Test #412: native_matrix-s32-zero_fex ................   Passed    0.02 sec
+        Start 413: native_matrix-s32-overflow_fex
+ 57/118 Test #413: native_matrix-s32-overflow_fex ............   Passed    0.02 sec
+        Start 414: native_matrix-s32-valid_fex
+ 58/118 Test #414: native_matrix-s32-valid_fex ...............   Passed    0.02 sec
+        Start 415: native_matrix-s32-fold-zero_fex
+ 59/118 Test #415: native_matrix-s32-fold-zero_fex ...........   Passed    0.02 sec
+        Start 416: native_matrix-s32-fold-valid_fex
+ 60/118 Test #416: native_matrix-s32-fold-valid_fex ..........   Passed    0.02 sec
+        Start 417: native_matrix-s32-wide-valid_fex
+ 61/118 Test #417: native_matrix-s32-wide-valid_fex ..........   Passed    0.02 sec
+        Start 418: native_matrix-s32-fold-overflow_fex
+ 62/118 Test #418: native_matrix-s32-fold-overflow_fex .......   Passed    0.02 sec
+        Start 419: native_matrix-s32-negative-limit_fex
+ 63/118 Test #419: native_matrix-s32-negative-limit_fex ......   Passed    0.03 sec
+        Start 420: native_matrix-s32-positive-limit_fex
+ 64/118 Test #420: native_matrix-s32-positive-limit_fex ......   Passed    0.02 sec
+        Start 421: native_matrix-s32-positive-overflow_fex
+ 65/118 Test #421: native_matrix-s32-positive-overflow_fex ...   Passed    0.02 sec
+        Start 422: native_matrix-s32-wide-overflow_fex
+ 66/118 Test #422: native_matrix-s32-wide-overflow_fex .......   Passed    0.02 sec
+        Start 423: native_matrix-s64-zero_fex
+ 67/118 Test #423: native_matrix-s64-zero_fex ................   Passed    0.02 sec
+        Start 424: native_matrix-s64-overflow_fex
+ 68/118 Test #424: native_matrix-s64-overflow_fex ............   Passed    0.03 sec
+        Start 425: native_matrix-s64-valid_fex
+ 69/118 Test #425: native_matrix-s64-valid_fex ...............   Passed    0.03 sec
+        Start 426: native_matrix-s64-fold-zero_fex
+ 70/118 Test #426: native_matrix-s64-fold-zero_fex ...........   Passed    0.02 sec
+        Start 427: native_matrix-s64-fold-valid_fex
+ 71/118 Test #427: native_matrix-s64-fold-valid_fex ..........   Passed    0.02 sec
+        Start 428: native_matrix-s64-wide-valid_fex
+ 72/118 Test #428: native_matrix-s64-wide-valid_fex ..........   Passed    0.02 sec
+        Start 429: native_matrix-s64-fold-overflow_fex
+ 73/118 Test #429: native_matrix-s64-fold-overflow_fex .......   Passed    0.02 sec
+        Start 430: native_matrix-s64-negative-limit_fex
+ 74/118 Test #430: native_matrix-s64-negative-limit_fex ......   Passed    0.02 sec
+        Start 431: native_matrix-s64-positive-limit_fex
+ 75/118 Test #431: native_matrix-s64-positive-limit_fex ......   Passed    0.02 sec
+        Start 432: native_matrix-s64-positive-overflow_fex
+ 76/118 Test #432: native_matrix-s64-positive-overflow_fex ...   Passed    0.02 sec
+        Start 433: native_matrix-s64-wide-overflow_fex
+ 77/118 Test #433: native_matrix-s64-wide-overflow_fex .......   Passed    0.02 sec
+        Start 561: native_kernel-ansi_fex
+ 78/118 Test #561: native_kernel-ansi_fex ....................   Passed    1.60 sec
+        Start 562: native_kernel-file_fex
+ 79/118 Test #562: native_kernel-file_fex ....................   Passed    1.64 sec
+        Start 563: native_kernel-threads_fex
+ 80/118 Test #563: native_kernel-threads_fex .................   Passed    2.51 sec
+        Start 564: native_kernel-seh_fex
+ 81/118 Test #564: native_kernel-seh_fex .....................   Passed    1.61 sec
+        Start 565: native_placement_fex
+ 82/118 Test #565: native_placement_fex ......................   Passed    1.61 sec
+        Start 566: native_fixed_image_preferred_fex
+ 83/118 Test #566: native_fixed_image_preferred_fex ..........***Failed    0.05 sec
+raven: PE preferred base is unavailable and image has no relocation table
+FAIL: expected verified zero entry return, host exit=1
+
+        Start 567: native_write_av_fex
+ 84/118 Test #567: native_write_av_fex .......................   Passed    1.59 sec
+        Start 568: fex_process_runner_contract
+ 85/118 Test #568: fex_process_runner_contract ...............   Passed    0.11 sec
+        Start 569: native_internal_brk_rejection_fex
+ 86/118 Test #569: native_internal_brk_rejection_fex .........   Passed    0.06 sec
+        Start 570: native_empty_module_argument_fex
+ 87/118 Test #570: native_empty_module_argument_fex ..........   Passed    1.62 sec
+        Start 571: native_kernel_file_persistence_fex
+ 88/118 Test #571: native_kernel_file_persistence_fex ........   Passed    0.05 sec
+        Start 572: native_review_breakpoint-seh_fex
+ 89/118 Test #572: native_review_breakpoint-seh_fex ..........   Passed    1.62 sec
+        Start 574: native_review_read-av_fex
+ 90/118 Test #574: native_review_read-av_fex .................   Passed    1.68 sec
+        Start 576: native_review_nested-seh_fex
+ 91/118 Test #576: native_review_nested-seh_fex ..............   Passed    1.72 sec
+        Start 578: native_review_unhandled_fex
+ 92/118 Test #578: native_review_unhandled_fex ...............   Passed    1.69 sec
+        Start 580: native_review_subpage_fex
+ 93/118 Test #580: native_review_subpage_fex .................   Passed    1.69 sec
+        Start 582: native_review_guard-unsupported_fex
+ 94/118 Test #582: native_review_guard-unsupported_fex .......   Passed    1.59 sec
+        Start 584: native_review_divide-overflow_fex
+ 95/118 Test #584: native_review_divide-overflow_fex .........   Passed    1.65 sec
+        Start 586: native_parallel_contention_fex
+ 96/118 Test #586: native_parallel_contention_fex ............   Passed    1.44 sec
+        Start 587: native_parallel_context_fex
+ 97/118 Test #587: native_parallel_context_fex ...............   Passed    1.39 sec
+        Start 588: native_parallel_worker-seh_fex
+ 98/118 Test #588: native_parallel_worker-seh_fex ............   Passed    1.39 sec
+        Start 589: native_parallel_apc_fex
+ 99/118 Test #589: native_parallel_apc_fex ...................   Passed    1.47 sec
+        Start 590: native_parallel_lifecycle_fex
+100/118 Test #590: native_parallel_lifecycle_fex .............   Passed    1.48 sec
+        Start 591: native_parallel_worker-unhandled_fex
+101/118 Test #591: native_parallel_worker-unhandled_fex ......   Passed    1.39 sec
+        Start 592: native_parallel_negatives_fex
+102/118 Test #592: native_parallel_negatives_fex .............   Passed    1.40 sec
+        Start 593: native_parallel_worker-av_fex
+103/118 Test #593: native_parallel_worker-av_fex .............   Passed    1.39 sec
+        Start 594: native_cooperative_context_fex
+104/118 Test #594: native_cooperative_context_fex ............   Passed    1.63 sec
+        Start 597: native_parallel_kernel_threads_fex
+105/118 Test #597: native_parallel_kernel_threads_fex ........   Passed    2.32 sec
+        Start 598: native_parallel_timeout_fex
+106/118 Test #598: native_parallel_timeout_fex ...............   Passed    0.05 sec
+        Start 599: native_parallel_selfmodify_fex
+107/118 Test #599: native_parallel_selfmodify_fex ............   Passed    0.02 sec
+        Start 600: native_parallel_wait-unwind_fex
+108/118 Test #600: native_parallel_wait-unwind_fex ...........   Passed    0.02 sec
+        Start 601: fex_nt-service
+109/118 Test #601: fex_nt-service ............................   Passed    0.02 sec
+        Start 602: fex_nt-service_parallel
+110/118 Test #602: fex_nt-service_parallel ...................   Passed    0.02 sec
+        Start 603: fex_unaligned
+111/118 Test #603: fex_unaligned .............................   Passed    0.02 sec
+        Start 604: fex_unaligned_parallel
+112/118 Test #604: fex_unaligned_parallel ....................   Passed    0.02 sec
+        Start 605: fex_debug-print
+113/118 Test #605: fex_debug-print ...........................   Passed    0.02 sec
+        Start 606: fex_debug-print_parallel
+114/118 Test #606: fex_debug-print_parallel ..................   Passed    0.02 sec
+        Start 635: fex_modhost_driver_contract
+115/118 Test #635: fex_modhost_driver_contract ...............   Passed    0.18 sec
+        Start 636: fex_modhost_substrate
+116/118 Test #636: fex_modhost_substrate .....................   Passed    0.06 sec
+        Start 637: fex_modhost_execution
+117/118 Test #637: fex_modhost_execution .....................   Passed    0.42 sec
+        Start 638: fex_modhost_tier0_gap_expected_failure
+118/118 Test #638: fex_modhost_tier0_gap_expected_failure ....   Passed    0.04 sec
+
+99% tests passed, 1 tests failed out of 118
+
+Label Time Summary:
+contract            =   1.92 sec*proc (3 tests)
+divide              =   1.59 sec*proc (67 tests)
+execution           =   0.42 sec*proc (1 test)
+expected-failure    =   0.04 sec*proc (1 test)
+fault               =   0.06 sec*proc (1 test)
+fex                 =  42.20 sec*proc (118 tests)
+m2                  =  24.23 sec*proc (93 tests)
+m3                  =  15.39 sec*proc (13 tests)
+parallel            =  13.76 sec*proc (12 tests)
+placement           =   1.66 sec*proc (2 tests)
+process             =   7.42 sec*proc (5 tests)
+review              =  11.64 sec*proc (7 tests)
+seh                 =   3.20 sec*proc (2 tests)
+substrate           =   0.06 sec*proc (1 test)
+
+Total Test time (real) =  42.23 sec
+
+The following tests FAILED:
+	566 - native_fixed_image_preferred_fex (Failed)         fex m2 placement
+Errors while running CTest

@@ -17,6 +17,10 @@ namespace {
 // mapping through static teardown; the OS releases it at host-process exit.
 Mapping *const module_mapping = new Mapping{MAP_FAILED, 0};
 bool module_claimed = false;
+struct PendingImages {
+	std::map<uint64_t, size_t> ranges;
+	~PendingImages() { for (auto [base, size] : ranges) munmap(reinterpret_cast<void *>(base), size); }
+} pending_images;
 bool selected_fex = false;
 thread_local void *guest_teb = nullptr;
 thread_local sigjmp_buf stop_frame;
@@ -42,6 +46,7 @@ uint64_t process_dispatch(uint64_t number, void *packet)
 }
 int32_t process_exception(void *opaque, void *packet, void *)
 {
+	RavenFault::alignment_recovery = nullptr;
 	auto &record = *static_cast<RavenFault::Record *>(opaque);
 	last_stop = {record.code == 0x102 ? raven::NativeStop::timeout : raven::NativeStop::exception, record.code, packet_word(packet, 0xf8), record};
 	siglongjmp(stop_frame, 1);
@@ -185,6 +190,7 @@ struct FexProcess::State {
 	std::map<uint64_t, Region> regions;
 	std::map<uint64_t, int> pages;
 	std::set<uint64_t> traps;
+	std::map<uint64_t, size_t> image_reservations;
 	std::vector<LoadedImage *> images;
 	NativeThreadState thread;
 	NativeContext initial;
@@ -208,6 +214,7 @@ struct FexProcess::State {
 		// Mapping is a simple scope owner; the vector entries are released here.
 		if (stack != MAP_FAILED) munmap(stack, stack_size);
 		if (gate != MAP_FAILED) munmap(gate, 16384);
+		for (auto [base, size] : image_reservations) munmap(reinterpret_cast<void *>(base), size);
 		for (auto [base, region] : regions) munmap(reinterpret_cast<void *>(base), region.size);
 	}
 	void require_owner() const
@@ -224,6 +231,18 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 		throw std::runtime_error("FEX module already claimed; a second FexProcess in this host is unsupported");
 	if (root.empty())
 		throw std::runtime_error("FEX requires RAVEN_FEX_MODULE_ROOT");
+	// Reserve initial preferred/fallback bases before FEX/dyld initialization
+	// can claim them. map_image replaces only these owned reservations.
+	for (auto *image : images) {
+		const auto n = (image->data().size() + 16383) & ~size_t(16383);
+		mach_vm_address_t base = image->base();
+		auto reserved = pending_images.ranges.find(base);
+		if (reserved != pending_images.ranges.end() && reserved->second == n)
+			pending_images.ranges.erase(reserved);
+		else if (mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS)
+			throw std::runtime_error("FEX guest image reservation conflict at " + std::to_string(image->base()));
+		state->image_reservations.emplace(base, n);
+	}
 	module_claimed = true;
 	std::string path = root + "/xtajit64.dll";
 	char program[] = "raven-fex";
@@ -285,6 +304,7 @@ NativeResult FexProcess::resume()
 	state->require_owner();
 	if (!state->active || state->thread.awaiting_api)
 		throw std::runtime_error("FEX has no resumable call or awaits an API result");
+	state->thread.awaiting_syscall = state->thread.debug_print_fault = false;
 	if (state->resume_hook) state->resume_hook();
 	if (state->parallel) {
 		auto *worker = state->workers.at(state->selected).get();
@@ -340,8 +360,22 @@ NativeResult FexProcess::resume()
 	state->thread.context.registers.orig_rax = last_stop.value;
 	NativeResult result{last_stop.kind, last_stop.value, last_stop.rip,
 		last_stop.kind == NativeStop::exception ? SIGSEGV : 0};
+	state->thread.debug_print_fault = false;
 	if (last_stop.kind == NativeStop::exception) {
 		auto &record = last_stop.exception;
+		// INT 2D debug-print handling is restricted to the canonical provider body.
+		if (!state->traps.empty() && result.value == 0x80000003 && record.flags == 0 &&
+			record.count == 1 && record.information[0] == 1 && context().registers.rax == 1 &&
+			result.instruction >= 2 && !state->traps.contains(result.instruction - 2) && has_protection(result.instruction - 2, 4, PROT_READ | PROT_EXEC) &&
+			read_memory(result.instruction - 2, 4) == std::vector<uint8_t>{0xcd, 0x2d, 0xcc, 0xc3}) {
+			// FEX reports INT 2D after its two-byte instruction. Normalize only
+			// the canonical service that the provider can complete as a fault.
+			auto saved = context();
+			result.instruction -= 2;
+			saved.registers.rip = result.instruction;
+			set_context(saved);
+			state->thread.debug_print_fault = true;
+		}
 		result.exception_flags = record.flags;
 		if (record.count > 15) throw std::runtime_error("FEX exception information exceeds packet");
 		result.exception_information.assign(record.information, record.information + record.count);
@@ -362,6 +396,15 @@ NativeResult FexProcess::resume()
 		result.signal = result.value == 0xc000001d ? SIGILL : result.value == 0xc0000094 ? SIGFPE :
 			result.value == 0x80000003 ? SIGTRAP : SIGSEGV;
 		if (result.signal == SIGFPE) result.signal_code = FPE_INTDIV;
+		if (state->thread.debug_print_fault) {
+			result.value = 1;
+			result.signal = SIGSEGV;
+			result.signal_code = SI_KERNEL;
+		}
+	}
+	if (result.stop == NativeStop::syscall) {
+		state->thread.awaiting_syscall = true;
+		state->thread.context.registers.orig_rax = result.value;
 	}
 	if (result.stop == NativeStop::returned) {
 		state->thread.active_call = false;
@@ -454,6 +497,18 @@ bool fex_address_available(uint64_t address, uint64_t size)
 		if (++calls < 8 || !(calls % 1000)) std::cerr << "FEX available " << std::hex << address << "+" << size << " next=" << base << "+" << length << " status=" << status << std::dec << "\n";
 	}
 	return status == KERN_INVALID_ADDRESS || (status == KERN_SUCCESS && base >= address + size);
+}
+bool fex_reserve_image_address(uint64_t address, uint64_t size)
+{
+	// Loader preflight must claim the range immediately: even host allocation
+	// during PE preparation can otherwise occupy a free preferred base.
+	const auto n = (size + 16383) & ~uint64_t(16383);
+	if (auto it = pending_images.ranges.find(address); it != pending_images.ranges.end())
+		return it->second == n;
+	mach_vm_address_t base = address;
+	if (mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS) return false;
+	pending_images.ranges.emplace(address, n);
+	return true;
 }
 bool FexProcess::memory_available(uint64_t address, size_t size) const { return fex_address_available(address, size); }
 std::vector<uint8_t> FexProcess::read_memory(uint64_t address, size_t size) const
@@ -565,9 +620,11 @@ void FexProcess::map_image(LoadedImage &image)
 	const auto address = image.base();
 	const auto n = (image.data().size() + 16383) & ~size_t(16383);
 	mach_vm_address_t base = address;
-	if (mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS)
+	if (!state->image_reservations.contains(address) &&
+		mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS)
 		throw std::runtime_error("FEX guest image address conflict at " + std::to_string(address));
 	auto *p = mmap(reinterpret_cast<void *>(address), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, image.descriptor(), 0);
+	state->image_reservations.erase(address);
 	if (p == MAP_FAILED) { munmap(reinterpret_cast<void *>(address), n); throw std::runtime_error("FEX shared image mapping failed"); }
 	state->regions.emplace(address, State::Region{n, true});
 	state->images.push_back(&image);
@@ -616,22 +673,29 @@ std::array<uint64_t, 4> FexProcess::api_float_arguments() const
 void FexProcess::enter_nt_service(uint64_t instruction, uint32_t number)
 {
 	state->require_owner();
-	if (!state->active || state->thread.awaiting_api || !state->thread.awaiting_syscall)
-		throw std::runtime_error("FEX process is not at a pending syscall service");
+	if (!stopped() || !state->active || state->thread.awaiting_api || !state->thread.awaiting_syscall)
+		throw std::runtime_error("FEX is not at a pending syscall service");
 	auto saved = context();
-	bool executable = instruction >= 2 && instruction < UINT64_MAX;
-	if (executable) for (uint64_t at = instruction - 2; at <= instruction; ++at) {
-		const auto page = state->pages.find(at & ~uint64_t(4095));
-		executable = executable && page != state->pages.end() && (page->second & PROT_EXEC);
-	}
-	if (saved.registers.rip != instruction || saved.registers.orig_rax != number || !executable ||
+	if (saved.registers.rip != instruction || saved.registers.orig_rax != number || instruction < 2 ||
+		!has_protection(instruction - 2, 3, PROT_READ | PROT_EXEC) ||
 		read_memory(instruction - 2, 3) != std::vector<uint8_t>{0x0f, 0x05, 0xc3})
 		throw std::runtime_error("FEX NT service boundary does not match the captured syscall");
 	saved.registers.rcx = saved.registers.r10;
-	saved.registers.orig_rax = uint64_t(-1);
 	set_context(saved);
 	state->thread.awaiting_syscall = false;
 	state->thread.awaiting_api = true;
+}
+void FexProcess::complete_debug_print(uint64_t instruction)
+{
+	state->require_owner();
+	const auto saved = context();
+	if (!stopped() || !state->active || state->thread.awaiting_api || state->thread.awaiting_syscall ||
+		!state->thread.debug_print_fault || saved.registers.rip != instruction || saved.registers.rax != 1 ||
+		read_memory(instruction, 4) != std::vector<uint8_t>{0xcd, 0x2d, 0xcc, 0xc3})
+		throw std::runtime_error("FEX debug print does not match a captured INT 2D service");
+	state->thread.debug_print_fault = false;
+	state->thread.awaiting_api = true;
+	return_api(0);
 }
 void FexProcess::return_api(uint64_t value)
 {
@@ -649,6 +713,7 @@ void FexProcess::end_call()
 {
 	if (state->parallel) state->workers.at(state->selected)->pause();
 	state->active = state->thread.active_call = state->thread.awaiting_api = false;
+	state->thread.awaiting_syscall = state->thread.debug_print_fault = false;
 	state->thread.callbacks.clear();
 }
 void FexProcess::abandon_call() { end_call(); }

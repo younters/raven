@@ -112,7 +112,7 @@ PEModule &ModuleSet::add(std::string name, ModuleBytes bytes, std::function<bool
 	}
 	if (overlap_for(base, image.image_size)) {
 		if (!adding_data && !has_relocs(image))
-			throw std::runtime_error("PE preferred base conflicts with host mappings and image has no relocation table");
+			throw std::runtime_error("PE preferred base is unavailable and image has no relocation table");
 		base = image.is_64 ? relocation_base64 : 0x10000000ULL;
 		for (;;) {
 			if (base >= limit || image.image_size > limit - base)
