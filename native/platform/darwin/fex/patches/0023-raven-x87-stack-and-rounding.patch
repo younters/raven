@@ -1,0 +1,65 @@
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -425,10 +425,18 @@
+ 
+   if (FloatingPoint) {
+     // Floating-point register state
+-    memcpy(State.mm, Context.FltSave.FloatRegisters, sizeof(State.mm));
++    for (unsigned i = 0; i < 8; ++i)
++      memcpy(State.mm[((Context.FltSave.StatusWord >> 11) + i) & 7], &Context.FltSave.FloatRegisters[i], 16);
+ 
+     State.FCW = Context.FltSave.ControlWord;
+     State.mxcsr = Context.MxCsr;
++#ifdef RAVEN_HOST
++    uint64_t FPCR;
++    asm volatile("mrs %0, fpcr" : "=r"(FPCR));
++    FPCR = (FPCR & ~uint64_t(7 << 22)) | ((uint64_t(State.mxcsr) & 0x2000) << 10) |
++           ((uint64_t(State.mxcsr) & 0x4000) << 8) | ((uint64_t(State.mxcsr) & 0x8000) << 9);
++    asm volatile("msr fpcr, %0" :: "r"(FPCR));
++#endif
+     State.flags[FEXCore::X86State::X87FLAG_IE_LOC] = Context.FltSave.StatusWord & 1;
+     State.flags[FEXCore::X86State::X87FLAG_C0_LOC] = (Context.FltSave.StatusWord >> 8) & 1;
+     State.flags[FEXCore::X86State::X87FLAG_C1_LOC] = (Context.FltSave.StatusWord >> 9) & 1;
+@@ -572,7 +580,9 @@
+     Context.Rip = Packet.Pc;
+     Context.EFlags = CTX->ReconstructCompactedEFLAGS(Thread, false, nullptr, 0);
+     memcpy(Context.FltSave.XmmRegisters, Packet.V, sizeof(Context.FltSave.XmmRegisters));
+-    memcpy(Context.FltSave.FloatRegisters, Thread->CurrentFrame->State.mm, sizeof(Context.FltSave.FloatRegisters));
++    for (unsigned i = 0; i < 8; ++i)
++      memcpy(&Context.FltSave.FloatRegisters[i], Thread->CurrentFrame->State.mm[
++        (Thread->CurrentFrame->State.flags[FEXCore::X86State::X87FLAG_TOP_LOC] + i) & 7], 16);
+     Context.FltSave.ControlWord = Thread->CurrentFrame->State.FCW;
+     const auto &State = Thread->CurrentFrame->State;
+     Context.FltSave.StatusWord = (State.flags[FEXCore::X86State::X87FLAG_TOP_LOC] << 11) |
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -245,10 +245,18 @@
+   const auto* XSave = reinterpret_cast<XSAVE_FORMAT*>(Context->ExtendedRegisters);
+ 
+   CTX->SetXMMRegistersFromState(Thread, reinterpret_cast<const __uint128_t*>(XSave->XmmRegisters), nullptr);
+-  memcpy(State.mm, XSave->FloatRegisters, sizeof(State.mm));
++  for (unsigned i = 0; i < 8; ++i)
++    memcpy(State.mm[((XSave->StatusWord >> 11) + i) & 7], &XSave->FloatRegisters[i], 16);
+ 
+   State.FCW = XSave->ControlWord;
+   State.mxcsr = XSave->MxCsr;
++#ifdef RAVEN_HOST
++    uint64_t FPCR;
++    asm volatile("mrs %0, fpcr" : "=r"(FPCR));
++    FPCR = (FPCR & ~uint64_t(7 << 22)) | ((uint64_t(State.mxcsr) & 0x2000) << 10) |
++           ((uint64_t(State.mxcsr) & 0x4000) << 8) | ((uint64_t(State.mxcsr) & 0x8000) << 9);
++    asm volatile("msr fpcr, %0" :: "r"(FPCR));
++#endif
+   State.flags[FEXCore::X86State::X87FLAG_IE_LOC] = XSave->StatusWord & 1;
+   State.flags[FEXCore::X86State::X87FLAG_C0_LOC] = (XSave->StatusWord >> 8) & 1;
+   State.flags[FEXCore::X86State::X87FLAG_C1_LOC] = (XSave->StatusWord >> 9) & 1;
+@@ -287,7 +295,8 @@
+   auto* XSave = reinterpret_cast<XSAVE_FORMAT*>(Context->ExtendedRegisters);
+ 
+   CTX->ReconstructXMMRegisters(Thread, reinterpret_cast<__uint128_t*>(XSave->XmmRegisters), nullptr);
+-  memcpy(XSave->FloatRegisters, State.mm, sizeof(State.mm));
++  for (unsigned i = 0; i < 8; ++i)
++    memcpy(&XSave->FloatRegisters[i], State.mm[(State.flags[FEXCore::X86State::X87FLAG_TOP_LOC] + i) & 7], 16);
+ 
+   XSave->ControlWord = State.FCW;
+   XSave->MxCsr = State.mxcsr;

@@ -75,6 +75,7 @@ public:
 	void set_execution_wait(std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> wait);
 	void stop_thread(const NativeThreadState &thread);
 	void pause_thread(NativeThreadState &thread);
+	void resume_context_thread(NativeThreadState &thread);
 	void enter_fault_dispatch();
 	void redirect(const NativeContext &context, size_t depth);
 	std::vector<uint64_t> api_arguments(size_t count) const;

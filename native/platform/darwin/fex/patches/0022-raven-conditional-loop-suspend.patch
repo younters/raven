@@ -1,0 +1,14 @@
+--- a/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/BranchOps.cpp
+@@ -248,6 +248,11 @@
+   auto Op = IROp->C<IR::IROp_CondJump>();
+ 
+   auto TrueTargetLabel = JumpTarget(Op->TrueBlock);
++#if defined(ARCHITECTURE_arm64ec) || defined(FEX_GUEST_WINDOW)
++  // Conditional back edges can remain inside a multiblock indefinitely.
++  // The check preserves NZCV and must precede the taken back edge as well.
++  if (TrueTargetLabel->Backward.Location) EmitSuspendInterruptCheck();
++#endif
+ 
+   if (Op->FromNZCV) {
+     b_OrRestart(MapCC(Op->Cond), TrueTargetLabel);

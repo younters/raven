@@ -554,6 +554,9 @@ NativeContext FexProcess::context() const
 		for (size_t i = 0; i < 8; ++i) *registers[i] = *reinterpret_cast<uint32_t *>(p + 0x9c + i * 4);
 		r.rsp = *reinterpret_cast<uint32_t *>(p + 0xc4); r.eflags = *reinterpret_cast<uint32_t *>(p + 0xc0);
 		r.fs_base = state->teb;
+		r.gs = *reinterpret_cast<uint32_t *>(p+0x8c); r.fs = *reinterpret_cast<uint32_t *>(p+0x90);
+		r.es = *reinterpret_cast<uint32_t *>(p+0x94); r.ds = *reinterpret_cast<uint32_t *>(p+0x98);
+		r.cs = *reinterpret_cast<uint32_t *>(p+0xbc); r.ss = *reinterpret_cast<uint32_t *>(p+0xc8);
 		result.xstate.assign(p + 0xcc, p + 0x2cc);
 		return result;
 	}
@@ -564,6 +567,9 @@ NativeContext FexProcess::context() const
 	r.orig_rax = state->thread.awaiting_syscall ? state->thread.context.registers.orig_rax : uint64_t(-1);
 	r.gs_base = state->teb;
 	r.eflags = *reinterpret_cast<uint32_t *>(p + 0x44);
+	r.cs = *reinterpret_cast<uint16_t *>(p+0x38); r.ds = *reinterpret_cast<uint16_t *>(p+0x3a);
+	r.es = *reinterpret_cast<uint16_t *>(p+0x3c); r.fs = *reinterpret_cast<uint16_t *>(p+0x3e);
+	r.gs = *reinterpret_cast<uint16_t *>(p+0x40); r.ss = *reinterpret_cast<uint16_t *>(p+0x42);
 	result.xstate.assign(p + 0x100, p + 0x300);
 	return result;
 }
@@ -578,6 +584,9 @@ void FexProcess::set_context(const NativeContext &value)
 		memcpy(p + 0x9c, regs, sizeof(regs));
 		const uint32_t sp = uint32_t(r.rsp), flags = uint32_t(r.eflags);
 		memcpy(p + 0xc4, &sp, 4); memcpy(p + 0xc0, &flags, 4);
+        const uint32_t segments[]{uint32_t(r.gs),uint32_t(r.fs),uint32_t(r.es),uint32_t(r.ds)};
+        memcpy(p+0x8c,segments,sizeof segments);
+        const uint32_t cs=r.cs, ss=r.ss; memcpy(p+0xbc,&cs,4); memcpy(p+0xc8,&ss,4);
 		if (!value.xstate.empty()) {
 			if (value.xstate.size() != 512) throw std::runtime_error("WoW64 requires a 512-byte FP packet");
 			memcpy(p + 0xcc, value.xstate.data(), 512);
@@ -609,7 +618,9 @@ void FexProcess::set_context(const NativeContext &value)
 	memcpy(p + 0x78, registers, sizeof(registers));
 	uint32_t flags = uint32_t(r.eflags);
 	memcpy(p + 0x44, &flags, 4);
-	if (!value.xstate.empty()) memcpy(p + 0x100, value.xstate.data(), 512);
+    const uint16_t segments[]{uint16_t(r.cs),uint16_t(r.ds),uint16_t(r.es),uint16_t(r.fs),uint16_t(r.gs),uint16_t(r.ss)};
+    memcpy(p+0x38,segments,sizeof segments);
+	if (!value.xstate.empty()) { memcpy(p + 0x100, value.xstate.data(), 512); memcpy(p + 0x34, value.xstate.data()+24, 4); }
 }
 NativeResult run_fex_entry(const PEImage &image, LoadedImage &loaded, const std::string &root)
 {
@@ -1185,6 +1196,24 @@ void FexProcess::stop_thread(const NativeThreadState &thread)
 		}
 	}
 }
+void FexProcess::resume_context_thread(NativeThreadState &thread)
+{
+	if (!state->parallel) return;
+	auto &worker = *state->workers.at(thread.task);
+	if (worker.result.kind != NativeStop::timeout) return;
+	const auto caller = save_thread(true);
+	load_thread(thread);
+	set_context(thread.context);
+	load_thread(caller);
+	{
+		std::lock_guard lock(worker.mutex);
+		worker.stopped.store(false, std::memory_order_release);
+		worker.requested = true;
+	}
+	thread.stopped = false;
+	thread.context_in_task = true;
+	worker.wake.notify_all();
+}
 void FexProcess::pause_thread(NativeThreadState &thread)
 {
 	if (!state->parallel || thread.stopped) return;
@@ -1192,8 +1221,14 @@ void FexProcess::pause_thread(NativeThreadState &thread)
 	auto teb = state->teb;
 	state->selected = thread.task;
 	state->teb = wow64_module ? thread.context.registers.fs_base : thread.context.registers.gs_base;
-	state->workers.at(thread.task)->pause();
-	thread.context = context();
+	try {
+		state->workers.at(thread.task)->pause();
+		thread.context = context();
+	} catch (...) {
+		state->selected = selected;
+		state->teb = teb;
+		throw;
+	}
 	thread.stopped = true;
 	thread.context_in_task = false;
 	state->selected = selected;

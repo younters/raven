@@ -675,6 +675,49 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.write(call[0], bytes);
 	};
 	// The processor state the system saves for threads: the x87 and SSE registers; programs then take the paths that need no more.
+	registry.add("InitializeContext", 4, [](ApiCall &call) {
+		if (!call[3] || !call[2]) { call.fail(87); return; }
+		const bool wide = call.pointer_width() == 8;
+		const uint32_t size = wide ? 1232 : 716, flags = call.u32(1);
+		const bool extended = flags & 0x40;
+		const uint32_t required = size + 15 + (extended ? 24 + 63 + 64 : 0);
+		const auto capacity = call.load<uint32_t>(call[3]);
+		call.store<uint32_t>(call[3], required);
+		if (!call[0] || capacity < required) { call.fail(122); return; }
+		const auto address = (call[0] + 15) & ~uint64_t(15);
+		call.write(address, std::vector<uint8_t>(size));
+		call.store<uint32_t>(address + (wide ? 0x30 : 0), flags);
+		if (extended) {
+			const auto ex = address + size, xs = (ex + 24 + 63) & ~uint64_t(63);
+			call.store<int32_t>(ex, -int32_t(size)); call.store<uint32_t>(ex+4, xs+64-address);
+			call.store<int32_t>(ex+8, -int32_t(size)); call.store<uint32_t>(ex+12, size);
+			call.store<int32_t>(ex+16, xs-ex); call.store<uint32_t>(ex+20,64);
+			call.write(xs,std::vector<uint8_t>(64));
+		}
+		call.store_pointer(call[2],address); call.ret(1);
+	});
+	registry.add("CopyContext", 3, [](ApiCall &call) {
+		if (!call[0] || !call[2]) { call.fail(87); return; }
+		const bool wide=call.pointer_width()==8;
+		const auto flags=call.u32(1);
+		const auto copy=[&](size_t offset,size_t size) { call.write(call[0]+offset,call.read(call[2]+offset,size)); };
+		if (wide) {
+			if (flags&1) { copy(0x38,2); copy(0x42,6); copy(0x98,16); copy(0xf8,8); }
+			if (flags&2) { copy(0x78,32); copy(0xa8,80); }
+			if (flags&4) copy(0x3a,8);
+			if (flags&8) { copy(0x34,4); copy(0x100,512); }
+			if (flags&16) copy(0x48,48);
+		} else {
+			if (flags&1) copy(0xb4,24);
+			if (flags&2) copy(0x9c,24);
+			if (flags&4) copy(0x8c,16);
+			if (flags&8) copy(0x1c,112);
+			if (flags&16) copy(4,24);
+			if (flags&32) copy(0xcc,512);
+		}
+		const auto at=call[0]+(wide?0x30:0);
+		call.store<uint32_t>(at,call.load<uint32_t>(at)|flags); call.ret(1);
+	});
 	registry.add("GetEnabledXStateFeatures", 0, [](ApiCall &call) { call.ret(3); });
 	// Where a CONTEXT keeps an extended state feature: of the two features enabled above, the legacy floating-point state is the
 	// FXSAVE area (FltSave on x64, ExtendedRegisters on x86) and the SSE state its XMM registers. No other feature is in a context.

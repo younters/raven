@@ -10,7 +10,7 @@ int raven_entry(void) {
     registers.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
     if (!thread) return 1;
     while (!ready) Sleep(1);
-    if (SetThreadContext(thread, &registers) || GetLastError() != ERROR_ACCESS_DENIED) return 2;
+    if (!GetThreadContext(thread, &registers) || !registers.Rip) return 2;
     if (SuspendThread(thread) != 0 || !GetThreadContext(thread, &registers)) return 3;
     registers.Rip = (DWORD64)target;
     registers.Rcx = 321;

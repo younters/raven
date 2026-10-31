@@ -1645,6 +1645,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	std::map<uint64_t,std::pair<uint32_t,std::string>> services;
 	std::map<uint32_t, std::string> generated_services;
 	std::vector<std::string_view> nt_names(NativeMemory::nt_exports().begin(),NativeMemory::nt_exports().end());
+	nt_names.push_back("NtGetContextThread");
+	nt_names.push_back("NtSetContextThread");
 #ifdef __APPLE__
 	nt_names.push_back("__wine_dbg_output");
 	nt_names.push_back("__wine_unix_call_dispatcher");

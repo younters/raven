@@ -150,6 +150,7 @@ void NativeX86System::lock_shared(uint64_t address)
 
 bool NativeX86System::dispatch(std::string_view name)
 {
+	if (name == "GetThreadContext" || name == "SetThreadContext") return false;
 	// Semaphore state and cross-process transfers use the same implementation in both widths.
 	if (name == "CreateSemaphoreA" || name == "CreateSemaphoreW" || name == "ReleaseSemaphore") return false;
 #ifdef __APPLE__
