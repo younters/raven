@@ -19,6 +19,10 @@ int raven_entry(void)
     MEMORY_BASIC_INFORMATION info;
     if (!VirtualQuery(p + 4096, &info, sizeof info) || info.State != MEM_RESERVE) return 5;
     if (!VirtualFree(p, 0, MEM_RELEASE)) return 6;
+    p = allocate(NULL, NULL, 4096, MEM_COMMIT, PAGE_READWRITE, &param, 1);
+    if (!p || ((uintptr_t)p & (req.alignment - 1))) return 13;
+    p[0] = 42;
+    if (p[0] != 42 || !VirtualFree(p, 0, MEM_RELEASE)) return 14;
     req.alignment = 98304;
     if (allocate(NULL, NULL, 65536, MEM_RESERVE, PAGE_READWRITE, &param, 1) || GetLastError() != ERROR_INVALID_PARAMETER) return 7;
     if (allocate(NULL, NULL, 65536, MEM_RESERVE, PAGE_EXECUTE_READ, NULL, 0)) return 8;
