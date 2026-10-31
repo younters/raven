@@ -266,7 +266,7 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 		throw std::runtime_error("FEX requires RAVEN_FEX_MODULE_ROOT");
 	// Reserve initial preferred/fallback bases before FEX/dyld initialization
 	// can claim them. map_image replaces only these owned reservations.
-	for (auto *image : images) {
+	if (!wow64_module) for (auto *image : images) {
 		const auto n = (image->data().size() + 16383) & ~size_t(16383);
 		mach_vm_address_t base = image->base();
 		auto reserved = pending_images.ranges.find(base);
@@ -547,10 +547,6 @@ void FexProcess::set_context(const NativeContext &value)
 	const uint64_t registers[]{r.rax, r.rcx, r.rdx, r.rbx, r.rsp, r.rbp, r.rsi, r.rdi,
 		r.r8, r.r9, r.r10, r.r11, r.r12, r.r13, r.r14, r.r15, r.rip};
 	auto *p = state->environment()->context.data();
-	// BeginSimulation must refresh FEX's cached GS base from this guest TEB.
-	// The captured EC packet omits CONTEXT_SEGMENTS; ThreadInit used a private
-	// host TEB, which otherwise remains cached across guest thread switches.
-	*reinterpret_cast<uint32_t *>(p + 0x30) |= 4; // CONTEXT_SEGMENTS
 	memcpy(p + 0x78, registers, sizeof(registers));
 	uint32_t flags = uint32_t(r.eflags);
 	memcpy(p + 0x44, &flags, 4);
