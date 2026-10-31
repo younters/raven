@@ -1853,7 +1853,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                             -o ${pipe_roundtrip_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/pipe_roundtrip_client.c -lkernel32 -lgcc
                         DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/pipe_roundtrip_client.c VERBATIM)
                     list(APPEND DYNAMIC_DIALOG_CLIENTS ${pipe_roundtrip_client})
-                    add_test(NAME native_pipe_roundtrip_x${width} COMMAND raven --run-process --execution=native --stdio=inherit ${pipe_roundtrip_client} -- -b)
+                    add_test(NAME native_pipe_roundtrip_x${width} COMMAND raven --run-process --execution=native --timeout-ms=25000 --stdio=inherit ${pipe_roundtrip_client} -- -b)
                     set_tests_properties(native_pipe_roundtrip_x${width} PROPERTIES TIMEOUT 30
                         ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/pipe-roundtrip-prefix)
                     set(object_name_client ${CMAKE_CURRENT_BINARY_DIR}/object-name${width}.exe)
@@ -2859,7 +2859,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                         if(Python3_Interpreter_FOUND)
                             set(parallel_sampling)
                             if(width EQUAL 64)
-                                set(parallel_sampling --sample)
+                                set(parallel_sampling --sample --seh)
                             endif()
                             add_test(NAME native_parallel_${kind}_x${width} COMMAND ${Python3_EXECUTABLE}
                                 ${PROJECT_SOURCE_DIR}/scripts/native-parallel-lifecycle.py $<TARGET_FILE:raven> ${parallel_client} ${parallel_sampling})
