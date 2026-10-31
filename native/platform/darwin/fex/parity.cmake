@@ -55,3 +55,15 @@ if(RAVEN_FEX_MODHOST AND TARGET fex_parallel_fixtures)
     endforeach()
 endif()
 
+# Exercise real child creation through modern raven and its FEX redirect for both widths.
+if(RAVEN_FEX_MODHOST)
+    foreach(width 32 64)
+        if(TARGET process_creation_fixture${width})
+            add_test(NAME native_fex_child_x${width} COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py --require-modules
+                --raven $<TARGET_FILE:raven> --fixture ${CMAKE_CURRENT_BINARY_DIR}/process-creation${width}.exe
+                --modules "${RAVEN_FEX_MODULE_ROOT}" --timeout-ms 30000)
+            set_tests_properties(native_fex_child_x${width} PROPERTIES TIMEOUT 45 LABELS "fex;process;child")
+        endif()
+    endforeach()
+endif()

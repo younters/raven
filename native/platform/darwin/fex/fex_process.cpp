@@ -785,7 +785,7 @@ std::array<uint64_t, 4> FexProcess::api_float_arguments() const
 void FexProcess::enter_nt_service(uint64_t instruction, uint32_t number)
 {
 	state->require_owner();
-	if (!stopped() || !state->active || state->thread.awaiting_api || !state->thread.awaiting_syscall)
+	if (mode() != NativeMode::x64 || !stopped() || !state->active || state->thread.awaiting_api || !state->thread.awaiting_syscall)
 		throw std::runtime_error("FEX is not at a pending syscall service");
 	auto saved = context();
 	if (saved.registers.rip != instruction || saved.registers.orig_rax != number || instruction < 2 ||
@@ -1085,23 +1085,5 @@ void FexProcess::set_teb(uint64_t base)
 {
 	if (mode() != NativeMode::x86) throw std::runtime_error("FEX x64 set_teb is unsupported");
 	auto saved = context(); saved.registers.fs_base = base; set_context(saved);
-}
-}
-
-namespace raven {
-void FexProcess::enter_nt_service(uint64_t instruction, uint32_t number)
-{
-	state->require_owner();
-	if (mode() != NativeMode::x64 || !state->active || state->thread.awaiting_api || !state->thread.awaiting_syscall)
-		throw std::runtime_error("FEX process is not at a pending x64 syscall service");
-	auto saved = context();
-	if (saved.registers.rip != instruction || saved.registers.orig_rax != number || instruction < 2 ||
-		read_memory(instruction - 2, 2) != std::vector<uint8_t>{0x0f, 0x05} ||
-		read_memory(instruction, 1) != std::vector<uint8_t>{0xc3})
-		throw std::runtime_error("FEX NT service boundary does not match the captured syscall");
-	saved.registers.rcx = saved.registers.r10;
-	set_context(saved);
-	state->thread.awaiting_syscall = false;
-	state->thread.awaiting_api = true;
 }
 }

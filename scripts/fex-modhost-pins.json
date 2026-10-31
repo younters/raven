@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "xtajit64_sha256": "edd9d2ed91b028a23d7f8cf481eda22435c82c87bae4eed5e63b1abf680a8657",
-  "raven_process_init_rva": 27120,
+  "xtajit64_sha256": "a5dba8b9a4442cebeadd3d1fdbb19d3b17a7042a205dcec4a24d34031289f9ab",
+  "raven_process_init_rva": 27700,
   "patches": {
     "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
     "0002-raven-host-frontend.patch": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da",
