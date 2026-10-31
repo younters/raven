@@ -1,0 +1,18 @@
+{
+  "description": "Same legacy-linked dylib called through dlopen from modern versus legacy main executables; no entitlement or debugger.",
+  "kernel_source": "https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/arm64/machine_task.c",
+  "results": [
+    {
+      "executable": "/tmp/fex-x18-modern",
+      "returncode": 1,
+      "stdout": "pid=60985 page_size=16384 toggle=1 query=1 mode=default\nspin=0000000000000000 spin_bad=7019973 sleep_bad=100/100 signals=28 context_bad=28 live_bad=28 after_signals=0000000000000000\n",
+      "stderr": ""
+    },
+    {
+      "executable": "/tmp/fex-x18-legacy",
+      "returncode": 0,
+      "stdout": "pid=61037 page_size=16384 toggle=1 query=1 mode=default\nspin=123456789abcdef0 spin_bad=0 sleep_bad=0/100 signals=28 context_bad=0 live_bad=0 after_signals=123456789abcdef0\n",
+      "stderr": ""
+    }
+  ]
+}

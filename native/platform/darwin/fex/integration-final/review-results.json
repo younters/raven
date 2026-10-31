@@ -1,0 +1,505 @@
+{
+  "focused": {
+    "summary": {
+      "name": "(empty)",
+      "tests": "197",
+      "failures": "1",
+      "disabled": "0",
+      "skipped": "0",
+      "hostname": "",
+      "time": "19",
+      "timestamp": "2026-10-31T03:58:32"
+    },
+    "failures": [
+      {
+        "test": "native_fresh_prefix_x64_fex",
+        "classification": "See qualification notes",
+        "output": "raven: PE preferred base is unavailable and image has no relocation table\nmachine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189\nCHPE native RavenProcessInit RVA=6cbc TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: FEX host ABI v2 rejects v1 and truncated host tables\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\nFAIL: fresh FEX prefix did not complete COM registration\n"
+      }
+    ],
+    "review_lanes": [
+      {
+        "test": "native_fex_child_x32",
+        "passed": true,
+        "seconds": "0.997452"
+      },
+      {
+        "test": "native_fex_child_x64",
+        "passed": true,
+        "seconds": "0.55374"
+      },
+      {
+        "test": "native_tls_slots_x32_native_0",
+        "passed": true,
+        "seconds": "1.2852"
+      },
+      {
+        "test": "native_tls_slots_x32_native_1",
+        "passed": true,
+        "seconds": "1.6053"
+      },
+      {
+        "test": "native_tls_slots_x32_fex_0",
+        "passed": true,
+        "seconds": "0.930815"
+      },
+      {
+        "test": "native_tls_slots_x32_fex_1",
+        "passed": true,
+        "seconds": "0.793599"
+      },
+      {
+        "test": "native_tls_slots_x64_native_0",
+        "passed": true,
+        "seconds": "0.883652"
+      },
+      {
+        "test": "native_tls_slots_x64_native_1",
+        "passed": true,
+        "seconds": "1.10042"
+      },
+      {
+        "test": "native_tls_slots_x64_fex_0",
+        "passed": true,
+        "seconds": "0.726498"
+      },
+      {
+        "test": "native_tls_slots_x64_fex_1",
+        "passed": true,
+        "seconds": "0.590827"
+      },
+      {
+        "test": "native_jit_stress_x32_native_0",
+        "passed": true,
+        "seconds": "1.0812"
+      },
+      {
+        "test": "native_jit_stress_x32_native_1",
+        "passed": true,
+        "seconds": "0.869352"
+      },
+      {
+        "test": "native_jit_stress_x32_fex_0",
+        "passed": true,
+        "seconds": "0.759669"
+      },
+      {
+        "test": "native_jit_stress_x32_fex_1",
+        "passed": true,
+        "seconds": "0.659474"
+      },
+      {
+        "test": "native_jit_stress_x64_native_0",
+        "passed": true,
+        "seconds": "0.524442"
+      },
+      {
+        "test": "native_jit_stress_x64_native_1",
+        "passed": true,
+        "seconds": "0.306846"
+      },
+      {
+        "test": "native_jit_stress_x64_fex_0",
+        "passed": true,
+        "seconds": "0.607231"
+      },
+      {
+        "test": "native_jit_stress_x64_fex_1",
+        "passed": true,
+        "seconds": "0.470572"
+      },
+      {
+        "test": "native_fresh_prefix_x32_native",
+        "passed": true,
+        "seconds": "3.59905"
+      },
+      {
+        "test": "native_fresh_prefix_x32_fex",
+        "passed": true,
+        "seconds": "3.52188"
+      },
+      {
+        "test": "native_fresh_prefix_x64_native",
+        "passed": true,
+        "seconds": "3.41917"
+      },
+      {
+        "test": "native_fresh_prefix_x64_fex",
+        "passed": false,
+        "seconds": "3.00391"
+      },
+      {
+        "test": "native_teb_switch_x32_fex",
+        "passed": true,
+        "seconds": "0.0291649"
+      },
+      {
+        "test": "native_teb_switch_x64_fex",
+        "passed": true,
+        "seconds": "0.0298935"
+      },
+      {
+        "test": "native_module_regressions_fex",
+        "passed": true,
+        "seconds": "0.0278304"
+      },
+      {
+        "test": "native_reserved_write_rejection_fex",
+        "passed": true,
+        "seconds": "0.0606837"
+      }
+    ]
+  },
+  "registration": {
+    "summary": {
+      "name": "(empty)",
+      "tests": "4",
+      "failures": "0",
+      "disabled": "0",
+      "skipped": "0",
+      "hostname": "",
+      "time": "13",
+      "timestamp": "2026-10-31T03:59:14"
+    },
+    "failures": []
+  },
+  "full": {
+    "summary": {
+      "name": "(empty)",
+      "tests": "731",
+      "failures": "25",
+      "disabled": "1",
+      "skipped": "6",
+      "hostname": "",
+      "time": "99",
+      "timestamp": "2026-10-31T03:59:28"
+    },
+    "failures": [
+      {
+        "test": "native_compatible_bitmap_contract",
+        "classification": "Bootstrap-input-dependent failure: baseline host/current agent fails; current host/baseline agent passes. Agent sources/build settings unchanged by this review; exact agent cause not established.",
+        "output": "DIB deletion retained guest allocation\n"
+      },
+      {
+        "test": "native_dwrite",
+        "classification": "Previously recorded failure",
+        "output": "Native entry returned 20 (process initialization not implemented)\n"
+      },
+      {
+        "test": "native_pipe_roundtrip_x32",
+        "classification": "Intermittent timeout under full-suite load; serial recheck passed.",
+        "output": "raven: native entry timed out at 0x0\n"
+      },
+      {
+        "test": "native_fiber_x64",
+        "classification": "Pre-existing missing native IsThreadAFiber; same failure with existing macos runtime and current fixture.",
+        "output": "raven: unimplemented native API IsThreadAFiber\nraven: unimplemented native process API at 0x6fff00004cef\n"
+      },
+      {
+        "test": "native_parallel_lifecycle_x64",
+        "classification": "Previously recorded failure",
+        "output": "exit: expected exit 0\nfault: exit 5\nNative process exited with status 3221225477\nraven: unhandled exception c0000005 at 199801025 (parallel-lifecycle64.exe+1025)\n\n"
+      },
+      {
+        "test": "native_xmllite_x64",
+        "classification": "Previously recorded failure",
+        "output": "Native entry returned 111 (process initialization not implemented)\n"
+      },
+      {
+        "test": "native_xmllite_x32",
+        "classification": "Previously recorded failure",
+        "output": "Native entry returned 111 (process initialization not implemented)\n"
+      },
+      {
+        "test": "native_twinapi_x64",
+        "classification": "Previously recorded failure",
+        "output": "raven: unimplemented native API QISearch\nraven: unimplemented native process API at 0x6fff00151c3f\n"
+      },
+      {
+        "test": "native_twinapi_x32",
+        "classification": "Previously recorded failure",
+        "output": "raven: unimplemented native x86 API QISearch\nraven: unimplemented native process API at 0x70401c31\n"
+      },
+      {
+        "test": "native_x86_dwrite",
+        "classification": "Previously recorded failure",
+        "output": "Native entry returned 20 (process initialization not implemented)\n"
+      },
+      {
+        "test": "native_darwin_parallel_contracts",
+        "classification": "Intermittent scheduler wake failure under full-suite load; serial recheck passed.",
+        "output": "a guest stop did not wake the scheduler\n"
+      },
+      {
+        "test": "darwin_dxmt_device10",
+        "classification": "Previously recorded failure",
+        "output": "DXMT device10: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_0\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_1\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_0\n\n"
+      },
+      {
+        "test": "darwin_dcomp_local",
+        "classification": "Previously recorded failure",
+        "output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -5 before stage 1\n"
+      },
+      {
+        "test": "darwin_dcomp_foreign",
+        "classification": "Previously recorded failure",
+        "output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n"
+      },
+      {
+        "test": "darwin_dcomp_local-hidpi",
+        "classification": "Previously recorded failure",
+        "output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -5 before stage 1\n"
+      },
+      {
+        "test": "darwin_dcomp_foreign-hidpi",
+        "classification": "Previously recorded failure",
+        "output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n"
+      },
+      {
+        "test": "darwin_dcomp_popup",
+        "classification": "Previously recorded failure",
+        "output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n"
+      },
+      {
+        "test": "darwin_dcomp_popup-hidpi",
+        "classification": "Previously recorded failure",
+        "output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n"
+      },
+      {
+        "test": "darwin_dxmt_pacing",
+        "classification": "Previously recorded failure",
+        "output": "DXMT pacing: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n"
+      },
+      {
+        "test": "darwin_dxmt_window",
+        "classification": "Previously recorded failure",
+        "output": "DXMT presentation: fixture exited -5 before window.txt\n"
+      },
+      {
+        "test": "darwin_dxmt_fullscreen",
+        "classification": "Previously recorded failure",
+        "output": "DXMT fullscreen: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n"
+      },
+      {
+        "test": "darwin_dxmt_present_rate",
+        "classification": "Previously recorded failure",
+        "output": "DXMT present_rate: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n"
+      },
+      {
+        "test": "native_parity_context_native",
+        "classification": "Previously recorded failure",
+        "output": "FAIL: expected verified zero entry return, host exit=122\nNative entry returned 122 (process initialization not implemented)\n"
+      },
+      {
+        "test": "fex_modhost_substrate",
+        "classification": "Intermittent abort under full-suite load; final focused and serial recheck passed. Exact contention cause not established.",
+        "output": "unexpected exit -6 (expected 0)\n"
+      },
+      {
+        "test": "fex_modhost_execution",
+        "classification": "Intermittent abort under full-suite load; final focused and serial recheck passed. Exact contention cause not established.",
+        "output": "unexpected exit -6 (expected 0)\n"
+      }
+    ],
+    "review_lanes": [
+      {
+        "test": "native_fex_child_x32",
+        "passed": true,
+        "seconds": "1.09724"
+      },
+      {
+        "test": "native_fex_child_x64",
+        "passed": true,
+        "seconds": "0.565362"
+      },
+      {
+        "test": "native_tls_slots_x32_native_0",
+        "passed": true,
+        "seconds": "1.11233"
+      },
+      {
+        "test": "native_tls_slots_x32_native_1",
+        "passed": true,
+        "seconds": "1.30636"
+      },
+      {
+        "test": "native_tls_slots_x32_fex_0",
+        "passed": true,
+        "seconds": "1.00879"
+      },
+      {
+        "test": "native_tls_slots_x32_fex_1",
+        "passed": true,
+        "seconds": "1.15666"
+      },
+      {
+        "test": "native_tls_slots_x64_native_0",
+        "passed": true,
+        "seconds": "0.872688"
+      },
+      {
+        "test": "native_tls_slots_x64_native_1",
+        "passed": true,
+        "seconds": "0.977071"
+      },
+      {
+        "test": "native_tls_slots_x64_fex_0",
+        "passed": true,
+        "seconds": "0.70965"
+      },
+      {
+        "test": "native_tls_slots_x64_fex_1",
+        "passed": true,
+        "seconds": "0.511656"
+      },
+      {
+        "test": "native_jit_stress_x32_native_0",
+        "passed": true,
+        "seconds": "0.832227"
+      },
+      {
+        "test": "native_jit_stress_x32_native_1",
+        "passed": true,
+        "seconds": "0.813394"
+      },
+      {
+        "test": "native_jit_stress_x32_fex_0",
+        "passed": true,
+        "seconds": "0.944542"
+      },
+      {
+        "test": "native_jit_stress_x32_fex_1",
+        "passed": true,
+        "seconds": "0.803211"
+      },
+      {
+        "test": "native_jit_stress_x64_native_0",
+        "passed": true,
+        "seconds": "0.538769"
+      },
+      {
+        "test": "native_jit_stress_x64_native_1",
+        "passed": true,
+        "seconds": "0.474149"
+      },
+      {
+        "test": "native_jit_stress_x64_fex_0",
+        "passed": true,
+        "seconds": "0.56089"
+      },
+      {
+        "test": "native_jit_stress_x64_fex_1",
+        "passed": true,
+        "seconds": "0.42774"
+      },
+      {
+        "test": "native_fresh_prefix_x32_native",
+        "passed": true,
+        "seconds": "3.65966"
+      },
+      {
+        "test": "native_fresh_prefix_x32_fex",
+        "passed": true,
+        "seconds": "3.56009"
+      },
+      {
+        "test": "native_fresh_prefix_x64_native",
+        "passed": true,
+        "seconds": "3.44036"
+      },
+      {
+        "test": "native_fresh_prefix_x64_fex",
+        "passed": true,
+        "seconds": "3.78183"
+      },
+      {
+        "test": "native_teb_switch_x32_fex",
+        "passed": true,
+        "seconds": "0.0279547"
+      },
+      {
+        "test": "native_teb_switch_x64_fex",
+        "passed": true,
+        "seconds": "0.0283704"
+      },
+      {
+        "test": "native_module_regressions_fex",
+        "passed": true,
+        "seconds": "0.0307735"
+      },
+      {
+        "test": "native_reserved_write_rejection_fex",
+        "passed": true,
+        "seconds": "0.0631176"
+      }
+    ]
+  },
+  "serial_recheck": {
+    "summary": {
+      "name": "(empty)",
+      "tests": "6",
+      "failures": "2",
+      "disabled": "0",
+      "skipped": "0",
+      "hostname": "",
+      "time": "3",
+      "timestamp": "2026-10-31T04:01:26"
+    },
+    "failures": [
+      {
+        "test": "native_compatible_bitmap_contract",
+        "classification": "Bootstrap-input-dependent failure: baseline host/current agent fails; current host/baseline agent passes. Agent sources/build settings unchanged by this review; exact agent cause not established.",
+        "output": "DIB deletion retained guest allocation\n"
+      },
+      {
+        "test": "native_fiber_x64",
+        "classification": "Pre-existing missing native IsThreadAFiber; same failure with existing macos runtime and current fixture.",
+        "output": "raven: unimplemented native API IsThreadAFiber\nraven: unimplemented native process API at 0x6fff00004cef\n"
+      }
+    ]
+  },
+  "baseline": {
+    "summary": {
+      "name": "(empty)",
+      "tests": "2",
+      "failures": "1",
+      "disabled": "0",
+      "skipped": "0",
+      "hostname": "",
+      "time": "0",
+      "timestamp": "2026-10-31T04:02:21"
+    },
+    "failures": [
+      {
+        "test": "baseline_fiber_x64",
+        "classification": "See qualification notes",
+        "output": "raven: unimplemented native API IsThreadAFiber\nraven: unimplemented native process API at 0x6fff00004cef\n"
+      }
+    ]
+  },
+  "bitmap_inputs": {
+    "summary": {
+      "name": "(empty)",
+      "tests": "3",
+      "failures": "1",
+      "disabled": "0",
+      "skipped": "0",
+      "hostname": "",
+      "time": "0",
+      "timestamp": "2026-10-31T04:03:04"
+    },
+    "failures": [
+      {
+        "test": "bitmap_baseline_host_current_agent",
+        "classification": "See qualification notes",
+        "output": "DIB deletion retained guest allocation\n"
+      }
+    ]
+  },
+  "modules": {
+    "root": "/tmp/raven-review-modules",
+    "build_id": "integration-review",
+    "xtajit64_sha256": "703ee6a07b7f612941447272cccad9a8487b8dfa4e1e5c54d434fa643a6504bf",
+    "xtajit_sha256": "b84bca9f2b7e8797c46c51729149c4c8dfeb35b5b230960635f5493929df45d9"
+  }
+}

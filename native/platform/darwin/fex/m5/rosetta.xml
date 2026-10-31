@@ -1,0 +1,896 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="128"
+	failures="10"
+	disabled="0"
+	skipped="3"
+	hostname=""
+	time="434"
+	timestamp="2026-10-30T19:13:28"
+	>
+	<testcase name="native_cpu_contracts" classname="native_cpu_contracts" time="1.16784" status="run">
+		<properties/>
+		<system-out>Persistent calls, registered API stops/resumption, XSTATE, guest memory, repaired faults and terminal timeouts passed
+Nested callbacks, separate stack frames, caller restoration, depth limit, syscall containment, repaired faults and terminal timeout passed
+Dynamic memory allocation, protections, release, instruction fault repair and API/syscall context preservation passed
+Post-start shared image mappings, permissions, collisions, release and pending API context passed
+Native PE64 instructions, shared writes, stack, protections, syscall containment, faults and cleanup passed
+</system-out>
+	</testcase>
+	<testcase name="native_x86_contracts" classname="native_x86_contracts" time="0.139675" status="run">
+		<properties/>
+		<system-out>PE32 compatibility-mode calls, stdcall frames, FS TEB, API traps and host memory operations verified
+</system-out>
+	</testcase>
+	<testcase name="native_exception_contract" classname="native_exception_contract" time="0.223141" status="run">
+		<properties/>
+		<system-out>Win32/RTL exception capture, DWORD ABI, record bounds and preserved pending callers passed
+</system-out>
+	</testcase>
+	<testcase name="native_kernel_files" classname="native_kernel_files" time="4.16905" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_kernel_ansi" classname="native_kernel_ansi" time="0.199267" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_kernel_threads" classname="native_kernel_threads" time="1.13978" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_kernel_file_persistence" classname="native_kernel_file_persistence" time="0.0287926" status="run">
+		<properties/>
+		<system-out>The guest's file landed in the prefix with the exact bytes it wrote
+</system-out>
+	</testcase>
+	<testcase name="native_kernel_seh" classname="native_kernel_seh" time="0.192845" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_cmd" classname="native_cmd" time="75.4501" status="fail">
+		<failure message="Failed"/>
+		<properties/>
+		<system-out>raven: native entry timed out at 0x0
+</system-out>
+	</testcase>
+	<testcase name="native_dynamic_loader_contract" classname="native_dynamic_loader_contract" time="16.7784" status="run">
+		<properties/>
+		<system-out>raven: unhandled exception c0000005 at 240001042 (probe.dll+1042)
+raven: unhandled exception c0000005 at 24000101d (probe.dll+101d)
+Dynamic guest loading, dependency rollback, unsupported executable loading and terminal attach stops passed
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_idle_wait_queue" classname="native_darwin_idle_wait_queue" time="0.00505179" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_capture_permission" classname="native_darwin_capture_permission" time="0.0153832" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_audio_offline" classname="native_darwin_audio_offline" time="3.82292" status="run">
+		<properties/>
+		<system-out>CoreAudio offline contract: 0 failures
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_audio_device" classname="native_darwin_audio_device" time="0.725995" status="run">
+		<properties/>
+		<system-out>CoreAudio real device: callbacks=56 bytes=88200 padding=0
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_capture_authorized" classname="native_darwin_capture_authorized" time="0.0248187" status="notrun">
+		<skipped message="SKIP_RETURN_CODE=77"/>
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_wave_x64" classname="native_darwin_wave_x64" time="4.50167" status="run">
+		<properties/>
+		<system-out>CoreAudio: callbacks=70 presented_frames=22050 submitted_frames=44100 position_frames=0
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_wave_x32" classname="native_darwin_wave_x32" time="4.69729" status="run">
+		<properties/>
+		<system-out>CoreAudio: callbacks=71 presented_frames=22050 submitted_frames=44100 position_frames=0
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_dsound_x64" classname="native_darwin_dsound_x64" time="4.09805" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+CoreAudio: callbacks=47 presented_frames=11419 submitted_frames=13440 position_frames=11419
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_dsound_x32" classname="native_darwin_dsound_x32" time="4.26637" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+CoreAudio: callbacks=46 presented_frames=11559 submitted_frames=13920 position_frames=11559
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_wasapi_x64" classname="native_darwin_wasapi_x64" time="3.87302" status="run">
+		<properties/>
+		<system-out>Raven audio: IMMDeviceEnumerator.RegisterEndpointNotificationCallback
+Raven audio: IMMDeviceEnumerator.UnregisterEndpointNotificationCallback
+Raven audio: IMMDeviceEnumerator.EnumAudioEndpoints
+Raven audio: IMMDeviceCollection.GetCount
+Raven audio: IMMDeviceEnumerator.EnumAudioEndpoints
+Raven audio: IMMDeviceCollection.GetCount
+Raven audio: IMMDeviceCollection.Item
+Raven audio: IMMDevice.QueryInterface
+Raven audio: IMMEndpoint.GetDataFlow
+Raven audio: IMMDevice.Activate
+Raven audio: Activate IID IAudioClient3 bytes 07 ee d4 7e 67 8e d4 4c 8c 1a 2b 7a 59 87 ad 42
+Raven audio: IAudioClient3.GetMixFormat
+Raven audio: IAudioClient3.Release
+Raven audio: IMMEndpoint.Release
+Raven audio: IMMDevice.Release
+Raven audio: IMMDeviceCollection.Release
+Raven audio: IMMDeviceEnumerator.GetDefaultAudioEndpoint
+Raven audio: IMMDevice.OpenPropertyStore
+Raven audio: IMMDevice.Activate
+Raven audio: Activate IID IAudioEndpointVolume bytes 82 2c df 5c 1e 84 46 45 97 22 0c f7 40 78 22 9a
+Raven audio: IAudioEndpointVolume.GetChannel...
+[This part of the test output was removed since it exceeds the threshold of 1024 bytes.]
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_wasapi_x32" classname="native_darwin_wasapi_x32" time="4.14084" status="run">
+		<properties/>
+		<system-out>Raven audio: IMMDeviceEnumerator.RegisterEndpointNotificationCallback
+Raven audio: IMMDeviceEnumerator.UnregisterEndpointNotificationCallback
+Raven audio: IMMDeviceEnumerator.EnumAudioEndpoints
+Raven audio: IMMDeviceCollection.GetCount
+Raven audio: IMMDeviceEnumerator.EnumAudioEndpoints
+Raven audio: IMMDeviceCollection.GetCount
+Raven audio: IMMDeviceCollection.Item
+Raven audio: IMMDevice.QueryInterface
+Raven audio: IMMEndpoint.GetDataFlow
+Raven audio: IMMDevice.Activate
+Raven audio: Activate IID IAudioClient3 bytes 07 ee d4 7e 67 8e d4 4c 8c 1a 2b 7a 59 87 ad 42
+Raven audio: IAudioClient3.GetMixFormat
+Raven audio: IAudioClient3.Release
+Raven audio: IMMEndpoint.Release
+Raven audio: IMMDevice.Release
+Raven audio: IMMDeviceCollection.Release
+Raven audio: IMMDeviceEnumerator.GetDefaultAudioEndpoint
+Raven audio: IMMDevice.OpenPropertyStore
+Raven audio: IMMDevice.Activate
+Raven audio: Activate IID IAudioEndpointVolume bytes 82 2c df 5c 1e 84 46 45 97 22 0c f7 40 78 22 9a
+Raven audio: IAudioEndpointVolume.GetChannel...
+[This part of the test output was removed since it exceeds the threshold of 1024 bytes.]
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_wavein_x64" classname="native_darwin_wavein_x64" time="3.53058" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_wavein_x32" classname="native_darwin_wavein_x32" time="3.78487" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_xaudio7_x64" classname="native_darwin_xaudio7_x64" time="3.85075" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+CoreAudio: callbacks=29 presented_frames=8968 submitted_frames=11040 position_frames=8968
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_xaudio7_x32" classname="native_darwin_xaudio7_x32" time="4.11777" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+CoreAudio: callbacks=28 presented_frames=8631 submitted_frames=11040 position_frames=8631
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_playsound_x64" classname="native_darwin_playsound_x64" time="3.74704" status="run">
+		<properties/>
+		<system-out>CoreAudio: callbacks=4 presented_frames=0 submitted_frames=2400 position_frames=0
+CoreAudio: callbacks=5 presented_frames=0 submitted_frames=2400 position_frames=0
+CoreAudio: callbacks=5 presented_frames=0 submitted_frames=2400 position_frames=0
+CoreAudio: callbacks=7 presented_frames=0 submitted_frames=2400 position_frames=0
+CoreAudio: callbacks=6 presented_frames=0 submitted_frames=2400 position_frames=0
+CoreAudio: callbacks=6 presented_frames=0 submitted_frames=2400 position_frames=0
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_playsound_x32" classname="native_darwin_playsound_x32" time="4.09347" status="run">
+		<properties/>
+		<system-out>CoreAudio: callbacks=4 presented_frames=0 submitted_frames=2400 position_frames=0
+CoreAudio: callbacks=5 presented_frames=0 submitted_frames=2400 position_frames=0
+CoreAudio: callbacks=5 presented_frames=0 submitted_frames=2400 position_frames=0
+CoreAudio: callbacks=7 presented_frames=0 submitted_frames=2400 position_frames=0
+CoreAudio: callbacks=6 presented_frames=0 submitted_frames=2400 position_frames=0
+CoreAudio: callbacks=6 presented_frames=0 submitted_frames=2400 position_frames=0
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_xaudio_callbacks_serial_x64" classname="native_darwin_xaudio_callbacks_serial_x64" time="4.29996" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+Raven audio: XAudio2 callback index=3 this=140002000 value=1 method=140001180
+Raven audio: XAudio2 callback index=3 this=140002000 value=2 method=140001180
+Raven audio: XAudio2 callback index=4 this=140002000 value=1 method=140001050
+Raven audio: XAudio2 callback index=3 this=140002000 value=3 method=140001180
+Raven audio: XAudio2 callback index=4 this=140002000 value=2 method=140001050
+Raven audio: XAudio2 callback index=4 this=140002000 value=3 method=140001050
+Raven audio: XAudio2 callback index=3 this=140002000 value=1 method=140001180
+Raven audio: XAudio2 callback index=3 this=140002000 value=4 method=140001180
+Raven audio: XAudio2 callback index=4 this=140002000 value=4 method=140001050
+Raven audio: XAudio2 callback index=3 this=140002000 value=1 method=140001180
+Raven audio: XAudio2 callback index=4 this=140002000 value=1 method=140001050
+CoreAudio: callbacks=72 presented_frames=27863 submitted_frames=30240 position_frames=27863
+Native entry returned...
+[This part of the test output was removed since it exceeds the threshold of 1024 bytes.]
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_xaudio_callbacks_parallel_x64" classname="native_darwin_xaudio_callbacks_parallel_x64" time="0.902596" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+Raven audio: XAudio2 callback index=3 this=140002000 value=1 method=140001180
+Raven audio: XAudio2 callback index=3 this=140002000 value=2 method=140001180
+Raven audio: XAudio2 callback index=4 this=140002000 value=1 method=140001050
+Raven audio: XAudio2 callback index=3 this=140002000 value=3 method=140001180
+Raven audio: XAudio2 callback index=4 this=140002000 value=2 method=140001050
+Raven audio: XAudio2 callback index=4 this=140002000 value=3 method=140001050
+Raven audio: XAudio2 callback index=3 this=140002000 value=1 method=140001180
+Raven audio: XAudio2 callback index=3 this=140002000 value=4 method=140001180
+Raven audio: XAudio2 callback index=4 this=140002000 value=4 method=140001050
+Raven audio: XAudio2 callback index=3 this=140002000 value=1 method=140001180
+Raven audio: XAudio2 callback index=4 this=140002000 value=1 method=140001050
+CoreAudio: callbacks=74 presented_frames=28405 submitted_frames=30720 position_frames=28405
+Native entry returned...
+[This part of the test output was removed since it exceeds the threshold of 1024 bytes.]
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_xaudio_x64" classname="native_darwin_xaudio_x64" time="0.502719" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+Raven audio: XAudio2 callback index=3 this=140002000 value=1234 method=140001050
+Raven audio: XAudio2 callback index=4 this=140002000 value=1234 method=140001070
+Raven audio: XAudio2 callback index=2 this=140002000 value=0 method=140001020
+CoreAudio: callbacks=29 presented_frames=9066 submitted_frames=11520 position_frames=9066
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_xaudio_parallel_x64" classname="native_darwin_xaudio_parallel_x64" time="0.487097" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+Raven audio: XAudio2 callback index=3 this=140002000 value=1234 method=140001050
+Raven audio: XAudio2 callback index=4 this=140002000 value=1234 method=140001070
+Raven audio: XAudio2 callback index=2 this=140002000 value=0 method=140001020
+CoreAudio: callbacks=29 presented_frames=8827 submitted_frames=11520 position_frames=8827
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_xaudio_lifecycle_x64" classname="native_darwin_xaudio_lifecycle_x64" time="0.235718" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+Raven audio: XAudio2 callback index=3 this=140002000 value=1234 method=140001060
+CoreAudio: callbacks=6 presented_frames=0 submitted_frames=2400 position_frames=0
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_xaudio_callbacks_serial_x32" classname="native_darwin_xaudio_callbacks_serial_x32" time="4.58369" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+Raven audio: XAudio2 callback index=3 this=402000 value=1 method=401190
+Raven audio: XAudio2 callback index=3 this=402000 value=2 method=401190
+Raven audio: XAudio2 callback index=4 this=402000 value=1 method=401050
+Raven audio: XAudio2 callback index=3 this=402000 value=3 method=401190
+Raven audio: XAudio2 callback index=4 this=402000 value=2 method=401050
+Raven audio: XAudio2 callback index=4 this=402000 value=3 method=401050
+Raven audio: XAudio2 callback index=3 this=402000 value=1 method=401190
+Raven audio: XAudio2 callback index=3 this=402000 value=4 method=401190
+Raven audio: XAudio2 callback index=4 this=402000 value=4 method=401050
+Raven audio: XAudio2 callback index=3 this=402000 value=1 method=401190
+Raven audio: XAudio2 callback index=4 this=402000 value=1 method=401050
+CoreAudio: callbacks=71 presented_frames=28178 submitted_frames=30720 position_frames=28178
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_xaudio_callbacks_parallel_x32" classname="native_darwin_xaudio_callbacks_parallel_x32" time="1.17217" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+Raven audio: XAudio2 callback index=3 this=402000 value=1 method=401190
+Raven audio: XAudio2 callback index=3 this=402000 value=2 method=401190
+Raven audio: XAudio2 callback index=4 this=402000 value=1 method=401050
+Raven audio: XAudio2 callback index=3 this=402000 value=3 method=401190
+Raven audio: XAudio2 callback index=4 this=402000 value=2 method=401050
+Raven audio: XAudio2 callback index=4 this=402000 value=3 method=401050
+Raven audio: XAudio2 callback index=3 this=402000 value=1 method=401190
+Raven audio: XAudio2 callback index=3 this=402000 value=4 method=401190
+Raven audio: XAudio2 callback index=4 this=402000 value=4 method=401050
+Raven audio: XAudio2 callback index=3 this=402000 value=1 method=401190
+Raven audio: XAudio2 callback index=4 this=402000 value=1 method=401050
+CoreAudio: callbacks=71 presented_frames=28014 submitted_frames=30720 position_frames=28014
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_xaudio_x32" classname="native_darwin_xaudio_x32" time="0.794521" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+Raven audio: XAudio2 callback index=3 this=402000 value=1234 method=401050
+Raven audio: XAudio2 callback index=4 this=402000 value=1234 method=401070
+Raven audio: XAudio2 callback index=2 this=402000 value=0 method=401020
+CoreAudio: callbacks=29 presented_frames=8864 submitted_frames=11040 position_frames=8864
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_xaudio_parallel_x32" classname="native_darwin_xaudio_parallel_x32" time="0.766161" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+Raven audio: XAudio2 callback index=3 this=402000 value=1234 method=401050
+Raven audio: XAudio2 callback index=4 this=402000 value=1234 method=401070
+Raven audio: XAudio2 callback index=2 this=402000 value=0 method=401020
+CoreAudio: callbacks=29 presented_frames=8823 submitted_frames=11040 position_frames=8823
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_xaudio_lifecycle_x32" classname="native_darwin_xaudio_lifecycle_x32" time="0.527324" status="run">
+		<properties/>
+		<system-out>Raven audio: clients=0 clock=0 CoreAudio callbacks=0
+Raven audio: XAudio2 callback index=3 this=402000 value=1234 method=401060
+CoreAudio: callbacks=6 presented_frames=0 submitted_frames=2400 position_frames=0
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_runtime_microphone_plist" classname="native_darwin_runtime_microphone_plist" time="0.0295265" status="run">
+		<properties/>
+		<system-out>Runtime embedded microphone usage description verified
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_dcomp_commit" classname="native_darwin_dcomp_commit" time="0.01963" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_scheduler_wait" classname="native_darwin_scheduler_wait" time="0.243162" status="run">
+		<properties/>
+		<system-out>socket wake count 30 p50_us 31 p95_us 59
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_scheduler_wait_parallel" classname="native_darwin_scheduler_wait_parallel" time="0.246845" status="run">
+		<properties/>
+		<system-out>socket wake count 30 p50_us 33 p95_us 72
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_parallel_contracts" classname="native_darwin_parallel_contracts" time="0.16001" status="run">
+		<properties/>
+		<system-out>Darwin parallel pthread contracts passed
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_private_fallback_contracts" classname="native_darwin_private_fallback_contracts" time="0.142503" status="run">
+		<properties/>
+		<system-out>Darwin parallel pthread contracts passed
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_handoff" classname="native_darwin_handoff" time="0.0362785" status="fail">
+		<failure message="Failed"/>
+		<properties/>
+		<system-out>raven: cannot open PE file
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_handoff_parallel" classname="native_darwin_handoff_parallel" time="0.0318704" status="fail">
+		<failure message="Failed"/>
+		<properties/>
+		<system-out>raven: cannot open PE file
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_handoff_runner" classname="native_darwin_handoff_runner" time="0.159955" status="run">
+		<properties/>
+		<system-out>...
+----------------------------------------------------------------------
+Ran 3 tests in 0.108s
+
+OK
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_hidden_vulkan_surface" classname="native_darwin_hidden_vulkan_surface" time="3.68483" status="run">
+		<properties/>
+		<system-out>sandbox_extension_issue_file_to_process failed for ${BUILD}/native: 1 (Operation not permitted)
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_identity" classname="darwin_dxmt_identity" time="12.925" status="run">
+		<properties/>
+		<system-out>OK: display, SetupAPI, registry and DXGI identity agree
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_self_share" classname="darwin_dxmt_self_share" time="3.9463" status="run">
+		<properties/>
+		<system-out>OK: keyed shared textures reopened on their own device, read back and released
+</system-out>
+	</testcase>
+	<testcase name="darwin_d3d_compile" classname="darwin_d3d_compile" time="3.66535" status="run">
+		<properties/>
+		<system-out>OK: System32 d3dcompiler_47 compiles vs_5_0 and ps_5_0 to DXBC and reports errors
+</system-out>
+	</testcase>
+	<testcase name="darwin_d3d_compile_local" classname="darwin_d3d_compile_local" time="3.71917" status="run">
+		<properties/>
+		<system-out>OK: System32 d3dcompiler_47 compiles vs_5_0 and ps_5_0 to DXBC and reports errors
+</system-out>
+	</testcase>
+	<testcase name="darwin_nt_file" classname="darwin_nt_file" time="4.13257" status="run">
+		<properties/>
+		<system-out>OK: NT file natives exported, opened, queried, renamed, truncated and deleted; anonymous impersonation; sections opened by NT name
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_keyed_x64" classname="darwin_dxmt_keyed_x64" time="5.316" status="run">
+		<properties/>
+		<system-out>OK: keyed mutex two-thread wait, two-process handoff, timeout and abandonment
+</system-out>
+	</testcase>
+	<testcase name="darwin_socket_catalog_x64" classname="darwin_socket_catalog_x64" time="4.9193" status="run">
+		<properties/>
+		<system-out>OK: SPI sizing, catalog, filtering and error output
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_keyed_x32" classname="darwin_dxmt_keyed_x32" time="6.22864" status="run">
+		<properties/>
+		<system-out>OK: keyed mutex two-thread wait, two-process handoff, timeout and abandonment
+</system-out>
+	</testcase>
+	<testcase name="darwin_socket_catalog_x32" classname="darwin_socket_catalog_x32" time="3.8347" status="run">
+		<properties/>
+		<system-out>OK: SPI sizing, catalog, filtering and error output
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_shared" classname="darwin_dxmt_shared" time="5.06216" status="run">
+		<properties/>
+		<system-out>OK: DXMT legacy and NT shared textures, inheritance and DuplicateHandle across processes with pixel readback
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_shared_keyed" classname="darwin_dxmt_shared_keyed" time="4.15389" status="run">
+		<properties/>
+		<system-out>OK: DXMT keyed shared texture synchronized across processes with pixel readback
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_device10" classname="darwin_dxmt_device10" time="13.1015" status="run">
+		<properties/>
+		<system-out>OK: D3D10 and D3D10.1 hardware devices, clear/copy/map and invalid SDK rejection
+</system-out>
+	</testcase>
+	<testcase name="darwin_dcomp_local" classname="darwin_dcomp_local" time="8.33601" status="run">
+		<properties/>
+		<system-out>DirectComposition local: screen pixels, atomic/retained commit, scale, clips, alpha, detach, resize and device event passed
+</system-out>
+	</testcase>
+	<testcase name="darwin_dcomp_foreign" classname="darwin_dcomp_foreign" time="7.71796" status="run">
+		<properties/>
+		<system-out>DirectComposition foreign: screen pixels, atomic/retained commit, scale, clips, alpha, detach, resize and device event passed
+</system-out>
+	</testcase>
+	<testcase name="darwin_dcomp_local-hidpi" classname="darwin_dcomp_local-hidpi" time="8.75955" status="run">
+		<properties/>
+		<system-out>DirectComposition local: screen pixels, atomic/retained commit, scale, clips, alpha, detach, resize and device event passed
+</system-out>
+	</testcase>
+	<testcase name="darwin_dcomp_foreign-hidpi" classname="darwin_dcomp_foreign-hidpi" time="8.06319" status="run">
+		<properties/>
+		<system-out>DirectComposition foreign: screen pixels, atomic/retained commit, scale, clips, alpha, detach, resize and device event passed
+</system-out>
+	</testcase>
+	<testcase name="darwin_dcomp_popup" classname="darwin_dcomp_popup" time="7.59718" status="run">
+		<properties/>
+		<system-out>DirectComposition local: screen pixels, atomic/retained commit, scale, clips, alpha, detach, resize and device event passed
+</system-out>
+	</testcase>
+	<testcase name="darwin_dcomp_popup-hidpi" classname="darwin_dcomp_popup-hidpi" time="7.52027" status="run">
+		<properties/>
+		<system-out>DirectComposition local: screen pixels, atomic/retained commit, scale, clips, alpha, detach, resize and device event passed
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_device" classname="darwin_dxmt_device" time="3.68955" status="run">
+		<properties/>
+		<system-out>OK: DXMT D3D11 hardware device, immediate context and vertex buffer
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_pool" classname="darwin_dxmt_pool" time="3.68984" status="run">
+		<properties/>
+		<system-out>OK
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_pacing" classname="darwin_dxmt_pacing" time="5.04866" status="fail">
+		<failure message="Failed"/>
+		<properties/>
+		<system-out>Traceback (most recent call last):
+  File "${REPO}/native/platform/darwin/tests/run_dxmt.py", line 162, in &lt;module&gt;
+    sys.exit(main())
+             ~~~~^^
+  File "${REPO}/native/platform/darwin/tests/run_dxmt.py", line 155, in main
+    raise RuntimeError(f"minimum-duration presents were not paced: {text}")
+RuntimeError: minimum-duration presents were not paced: 16 37252845
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_triangle" classname="darwin_dxmt_triangle" time="4.06064" status="run">
+		<properties/>
+		<system-out>triangle matches the reference: 20000 interior pixels, 43486 clear pixels, 2050 edge pixels skipped, worst error 1
+corner pixel (26, 26, 77, 255), centre pixel (63, 65, 127, 255)
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_window" classname="darwin_dxmt_window" time="29.1613" status="run">
+		<properties/>
+		<system-out>last: 256x256 IOSurface and Cocoa screen capture match the GPU readback
+resized: 320x200 IOSurface and Cocoa screen capture match the GPU readback
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_deferred" classname="darwin_dxmt_deferred" time="4.06821" status="run">
+		<properties/>
+		<system-out>triangle matches the reference: 20000 interior pixels, 43486 clear pixels, 2050 edge pixels skipped, worst error 1
+corner pixel (26, 26, 77, 255), centre pixel (63, 65, 127, 255)
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_geometry" classname="darwin_dxmt_geometry" time="3.88322" status="run">
+		<properties/>
+		<system-out>triangle matches the reference: 4802 interior pixels, 59704 clear pixels, 1030 edge pixels skipped, worst error 1
+corner pixel (26, 26, 77, 255), centre pixel (63, 66, 126, 255)
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_tessellation" classname="darwin_dxmt_tessellation" time="3.83887" status="run">
+		<properties/>
+		<system-out>triangle matches the reference: 4802 interior pixels, 59704 clear pixels, 1030 edge pixels skipped, worst error 1
+corner pixel (26, 26, 77, 255), centre pixel (63, 66, 126, 255)
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_textured" classname="darwin_dxmt_textured" time="3.85557" status="run">
+		<properties/>
+		<system-out>textured scene matches the reference: 62043 pixels checked (19911 inside a quad), 3493 edge or texel boundary pixels skipped, worst error 1
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_msaa" classname="darwin_dxmt_msaa" time="3.96272" status="run">
+		<properties/>
+		<system-out>multisampled triangle matches the reference: 63486 interior and exterior pixels exact, 409 partly covered edge pixels
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_compute" classname="darwin_dxmt_compute" time="3.78818" status="run">
+		<properties/>
+		<system-out>DXMT compute dispatch: all 256 values match
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_features" classname="darwin_dxmt_features" time="3.88385" status="fail">
+		<failure message="Failed"/>
+		<properties/>
+		<system-out>DXMT features: exit 1, 'FAIL query data 00000001'
+info:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1
+info:  Using feature level D3D_FEATURE_LEVEL_11_0
+
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_fullscreen" classname="darwin_dxmt_fullscreen" time="5.17662" status="run">
+		<properties/>
+		<system-out>DXMT fullscreen 1778x1130 and return to window passed
+</system-out>
+	</testcase>
+	<testcase name="darwin_dxmt_present_rate" classname="darwin_dxmt_present_rate" time="11.955" status="run">
+		<properties/>
+		<system-out>DXMT: 2000 timed presents, 6.1 presents/s
+</system-out>
+	</testcase>
+	<testcase name="darwin_unix_call" classname="darwin_unix_call" time="0.348356" status="run">
+		<properties/>
+		<system-out>PE -&gt; x86_64 unixlib: GS, native stack, GPRs, XMM6-15, repeated calls and invalid handles/codes passed; 1466 interrupts, 1 scheduler yields outside native calls
+</system-out>
+	</testcase>
+	<testcase name="darwin_unix_call_parallel" classname="darwin_unix_call_parallel" time="0.462053" status="run">
+		<properties/>
+		<system-out>PE -&gt; x86_64 unixlib: GS, native stack, GPRs, XMM6-15, repeated calls and invalid handles/codes passed; 157 interrupts, 0 scheduler yields outside native calls
+concurrent pthread unix calls use distinct TSD, stacks and channels
+</system-out>
+	</testcase>
+	<testcase name="darwin_compat_contract" classname="darwin_compat_contract" time="0.396893" status="run">
+		<properties/>
+		<system-out>darwin compat contract passed
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_dock_policy" classname="native_darwin_dock_policy" time="0.0030575" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_host_launch" classname="native_darwin_host_launch" time="0.00325567" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_foreground" classname="native_darwin_foreground" time="0.010321" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_cocoa_policy" classname="native_darwin_cocoa_policy" time="0.329169" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_cocoa_hidden_surface" classname="native_darwin_cocoa_hidden_surface" time="0.129982" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_cocoa_input" classname="native_darwin_cocoa_input" time="0.131988" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_reexec" classname="native_darwin_reexec" time="0.149281" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_runtime" classname="native_darwin_runtime" time="0.10851" status="fail">
+		<failure message="Failed"/>
+		<properties/>
+		<system-out>host TSC is not the guest's monotonic nanosecond counter
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_system_api" classname="native_darwin_system_api" time="3.64705" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_cursor_dpi" classname="native_darwin_cursor_dpi" time="3.64852" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_gdi_presenter" classname="native_darwin_gdi_presenter" time="0.0624556" status="run">
+		<properties/>
+		<system-out>Metal GDI stride, BGRX, opacity, incremental update and bounded buffering passed
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_apps" classname="native_darwin_apps" time="0.123961" status="run">
+		<properties/>
+		<system-out>..raven-apps: skipping ${TEMP_PATH} Menu/Programs/Example.lnk: not an MS-SHLLINK file
+......
+----------------------------------------------------------------------
+Ran 8 tests in 0.020s
+
+OK
+${TEMP_PATH}
+${TEMP_PATH}
+${TEMP_PATH}
+Removed ${TEMP_PATH}
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_app_compiler_x64" classname="native_darwin_app_compiler_x64" time="1.08041" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_sspi_ansi_x64" classname="native_darwin_sspi_ansi_x64" time="1.05582" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_socket_exclusive_x64" classname="native_darwin_socket_exclusive_x64" time="1.02365" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_processor_count_x64" classname="native_darwin_processor_count_x64" time="1.08495" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_appcontainer_stub_x64" classname="native_darwin_appcontainer_stub_x64" time="1.02251" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_app_compiler_x32" classname="native_darwin_app_compiler_x32" time="1.25661" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_sspi_ansi_x32" classname="native_darwin_sspi_ansi_x32" time="1.27085" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_socket_exclusive_x32" classname="native_darwin_socket_exclusive_x32" time="1.27622" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_processor_count_x32" classname="native_darwin_processor_count_x32" time="1.25736" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_appcontainer_stub_x32" classname="native_darwin_appcontainer_stub_x32" time="1.26174" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_installer_widl" classname="native_darwin_installer_widl" time="0.0381248" status="notrun">
+		<skipped message="SKIP_RETURN_CODE=77"/>
+		<properties/>
+		<system-out>WIDL unavailable
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_teardown_wait_x64" classname="native_darwin_teardown_wait_x64" time="4.35231" status="run">
+		<properties/>
+		<system-out>sandbox_extension_issue_file_to_process failed for ${BUILD}/native: 1 (Operation not permitted)
+raven: native entry timed out at 0x0
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_teardown_multi_x64" classname="native_darwin_teardown_multi_x64" time="4.3464" status="run">
+		<properties/>
+		<system-out>sandbox_extension_issue_file_to_process failed for ${BUILD}/native: 1 (Operation not permitted)
+raven: native entry timed out at 0x0
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_process_creation_x64" classname="native_darwin_process_creation_x64" time="2.0958" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_teardown_wait_x32" classname="native_darwin_teardown_wait_x32" time="4.68634" status="run">
+		<properties/>
+		<system-out>sandbox_extension_issue_file_to_process failed for ${BUILD}/native: 1 (Operation not permitted)
+raven: native entry timed out at 0x0
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_teardown_multi_x32" classname="native_darwin_teardown_multi_x32" time="4.77872" status="run">
+		<properties/>
+		<system-out>sandbox_extension_issue_file_to_process failed for ${BUILD}/native: 1 (Operation not permitted)
+raven: native entry timed out at 0x0
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_process_creation_x32" classname="native_darwin_process_creation_x32" time="2.62558" status="run">
+		<properties/>
+		<system-out>Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_desktop_dpi_x64" classname="native_darwin_desktop_dpi_x64" time="3.99231" status="run">
+		<properties/>
+		<system-out>sandbox_extension_issue_file_to_process failed for ${BUILD}/native: 1 (Operation not permitted)
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_desktop_dpi_x32" classname="native_darwin_desktop_dpi_x32" time="1.73981" status="run">
+		<properties/>
+		<system-out>sandbox_extension_issue_file_to_process failed for ${BUILD}/native: 1 (Operation not permitted)
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_parallel_input" classname="native_darwin_parallel_input" time="1.07762" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_parallel_input_x32" classname="native_darwin_parallel_input_x32" time="1.32837" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="darwin_x87sidecar_correctness" classname="darwin_x87sidecar_correctness" time="0.06168" status="fail">
+		<failure message="Failed"/>
+		<properties/>
+		<system-out>Traceback (most recent call last):
+  File "${REPO}/scripts/test-x87sidecar.py", line 72, in &lt;module&gt;
+    main()
+    ~~~~^^
+  File "${REPO}/scripts/test-x87sidecar.py", line 40, in main
+    baseline = run(raven, fixture, "")
+  File "${REPO}/scripts/test-x87sidecar.py", line 29, in run
+    raise RuntimeError(f"guest failed: {process.returncode}, stdout={out!r}\n{text}")
+RuntimeError: guest failed: 1, stdout=b''
+raven: cannot open PE file
+
+</system-out>
+	</testcase>
+	<testcase name="darwin_x87sidecar_fallback" classname="darwin_x87sidecar_fallback" time="0.0493426" status="fail">
+		<failure message="Failed"/>
+		<properties/>
+		<system-out>Traceback (most recent call last):
+  File "${REPO}/scripts/test-x87sidecar.py", line 72, in &lt;module&gt;
+    main()
+    ~~~~^^
+  File "${REPO}/scripts/test-x87sidecar.py", line 40, in main
+    baseline = run(raven, fixture, "")
+  File "${REPO}/scripts/test-x87sidecar.py", line 29, in run
+    raise RuntimeError(f"guest failed: {process.returncode}, stdout={out!r}\n{text}")
+RuntimeError: guest failed: 1, stdout=b''
+raven: cannot open PE file
+
+</system-out>
+	</testcase>
+	<testcase name="darwin_x87sidecar_x64" classname="darwin_x87sidecar_x64" time="0.0496077" status="fail">
+		<failure message="Failed"/>
+		<properties/>
+		<system-out>Traceback (most recent call last):
+  File "${REPO}/scripts/test-x87sidecar.py", line 72, in &lt;module&gt;
+    main()
+    ~~~~^^
+  File "${REPO}/scripts/test-x87sidecar.py", line 40, in main
+    baseline = run(raven, fixture, "")
+  File "${REPO}/scripts/test-x87sidecar.py", line 29, in run
+    raise RuntimeError(f"guest failed: {process.returncode}, stdout={out!r}\n{text}")
+RuntimeError: guest failed: 1, stdout=b''
+raven: cannot open PE file
+
+</system-out>
+	</testcase>
+	<testcase name="darwin_x87sidecar_child" classname="darwin_x87sidecar_child" time="0.0494711" status="fail">
+		<failure message="Failed"/>
+		<properties/>
+		<system-out>Traceback (most recent call last):
+  File "${REPO}/scripts/test-x87sidecar.py", line 72, in &lt;module&gt;
+    main()
+    ~~~~^^
+  File "${REPO}/scripts/test-x87sidecar.py", line 40, in main
+    baseline = run(raven, fixture, "")
+  File "${REPO}/scripts/test-x87sidecar.py", line 29, in run
+    raise RuntimeError(f"guest failed: {process.returncode}, stdout={out!r}\n{text}")
+RuntimeError: guest failed: 1, stdout=b''
+raven: cannot open PE file
+
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_teardown_ps_rows" classname="native_darwin_teardown_ps_rows" time="0.025864" status="run">
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_dxmt_drawable_pool" classname="native_darwin_dxmt_drawable_pool" time="0.703585" status="run">
+		<properties/>
+		<system-out>128 live views, lazy growth/reuse, 3x pool recycling, busy-state protection and retirement PASS
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_fd_budget" classname="native_darwin_fd_budget" time="0.0391587" status="run">
+		<properties/>
+		<system-out>files_errno=24 pipe_errno=24 fd_live=256
+scenario=0 soft=4096 hard=9223372036854775807 fd_baseline=3
+files_errno=0 pipe_errno=0 fd_live=431
+files_errno=0 pipe_errno=0 fd_live=431
+files_errno=0 pipe_errno=0 fd_live=431
+scenario=1 soft=256 hard=256 fd_baseline=3
+files_errno=24 pipe_errno=24 fd_live=256
+files_errno=24 pipe_errno=24 fd_live=256
+files_errno=24 pipe_errno=24 fd_live=256
+scenario=2 soft=1024 hard=1024 fd_baseline=3
+files_errno=0 pipe_errno=0 fd_live=431
+files_errno=0 pipe_errno=0 fd_live=431
+files_errno=0 pipe_errno=0 fd_live=431
+scenario=3 soft=8192 hard=9223372036854775807 fd_baseline=3
+files_errno=0 pipe_errno=0 fd_live=431
+files_errno=0 pipe_errno=0 fd_live=431
+files_errno=0 pipe_errno=0 fd_live=431
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_adapter_protocol" classname="native_darwin_adapter_protocol" time="0.408894" status="run">
+		<properties/>
+		<system-out>raven-bootstrap: unixlib adapter protocol mismatch (expected 5); rebuild raven-dxmt.dylib
+raven-bootstrap: unixlib adapter protocol mismatch (expected 5); rebuild raven-dxmt.dylib
+missing and v4 adapter versions rejected before init; matching adapter loaded
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_watch_lifetime" classname="native_darwin_watch_lifetime" time="0.0191207" status="run">
+		<properties/>
+		<system-out>watch rounds=1000 fd_baseline=7 fd_peak=9 fd_final=7
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_rosetta_runner" classname="native_darwin_rosetta_runner" time="0.0759383" status="run">
+		<properties/>
+		<system-out>..
+----------------------------------------------------------------------
+Ran 2 tests in 0.001s
+
+OK
+Rosetta execution unavailable
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_fd_budget_low_hard" classname="native_darwin_fd_budget_low_hard" time="0.00334337" status="notrun">
+		<skipped message="SKIP_RETURN_CODE=77"/>
+		<properties/>
+		<system-out></system-out>
+	</testcase>
+	<testcase name="native_darwin_fd_budget_startup" classname="native_darwin_fd_budget_startup" time="0.0385142" status="run">
+		<properties/>
+		<system-out>built raven startup raised soft limit 256 -&gt; 4096; hard limit unchanged
+</system-out>
+	</testcase>
+	<testcase name="native_darwin_dxmt_slot_state" classname="native_darwin_dxmt_slot_state" time="0.00319392" status="run">
+		<properties/>
+		<system-out>host release and import/forward sequence and retirement transitions PASS
+</system-out>
+	</testcase>
+</testsuite>

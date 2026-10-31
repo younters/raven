@@ -20,7 +20,7 @@ int main(int argc, char **argv)
 		const char *root = std::getenv("RAVEN_FEX_MODULE_ROOT");
 		if (!root || !*root || !std::filesystem::exists(std::string(root) + "/xtajit64.dll")) {
 			std::cerr << "SKIP: provision RAVEN_FEX_MODULE_ROOT/xtajit64.dll\n";
-			return 77;
+			return std::getenv("RAVEN_FEX_REQUIRED") ? 1 : 77;
 		}
 		std::ifstream input(argv[1], std::ios::binary);
 		std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
@@ -96,6 +96,17 @@ int main(int argc, char **argv)
 			loaded.data()[image.entry] = 0x0f; loaded.data()[image.entry + 1] = 0x0b;
 		} else if (mode == "internal") {
 			// Tested in an isolated child: a host BRK must never become a guest exception.
+		} else if (mode == "debug-print") {
+			const uint8_t code[]{0xb8, 1, 0, 0, 0, 0xcd, 0x2d, 0xcc, 0xc3};
+			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
+		} else if (mode == "unaligned") {
+			const uint8_t code[]{0xb8, 42, 0, 0, 0, 0x48, 0x89, 0x44, 0x24, 0xf4,
+				0x48, 0x8b, 0x44, 0x24, 0xf4, 0xc3};
+			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
+		} else if (mode == "nt-service") {
+			// mov r10,rcx; mov eax,1234h; syscall; ret
+			const uint8_t code[]{0x49, 0x89, 0xca, 0xb8, 0x34, 0x12, 0, 0, 0x0f, 0x05, 0xc3};
+			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
 		} else if (mode == "syscall") {
 			const uint8_t code[]{0xb8, 0x34, 0x12, 0, 0, 0x0f, 0x05, 0x48, 0x83, 0xc0, 5, 0xc3};
 			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
@@ -108,7 +119,7 @@ int main(int argc, char **argv)
 		} else if (mode == "breakpoint") {
 			loaded.data()[image.entry] = 0xcc;
 			loaded.data()[image.entry + 1] = 0xc3;
-		} else check(mode == "entry" || mode == "lifetime" || mode == "served-malformed", "unknown mode");
+		} else check(mode == "entry" || mode == "lifetime" || mode == "served-malformed" || mode == "teb-switch", "unknown mode");
 		raven::LoadedImage *images[]{&loaded};
 		if (mode == "lifetime") {
 			auto second_rejected = [&] {
@@ -130,6 +141,29 @@ int main(int argc, char **argv)
 			return 0;
 		}
 		raven::FexProcess process(images, root);
+		if (mode == "teb-switch") {
+			const auto code = process.map_memory(16384, PROT_READ | PROT_WRITE | PROT_EXEC, 0);
+			const uint8_t load[] = {0x65, 0x48, 0x8b, 0x04, 0x25, 0x30, 0, 0, 0, 0xc3};
+			process.write_memory(code, load);
+			uint64_t tebs[2];
+			for (auto &teb : tebs) {
+				teb = process.map_memory(16384, PROT_READ | PROT_WRITE, 0);
+				process.write_memory(teb + 0x30, {reinterpret_cast<const uint8_t *>(&teb), 8});
+				const auto peb = process.map_memory(16384, PROT_READ | PROT_WRITE, 0);
+				process.write_memory(teb + 0x60, {reinterpret_cast<const uint8_t *>(&peb), 8});
+			}
+			for (unsigned i = 0; i < 100; ++i) {
+				auto context = process.context();
+				context.registers.gs_base = tebs[i % 2];
+				process.set_context(context);
+				const auto result = process.call(code, {}, std::chrono::milliseconds(1000));
+				check(result.stop == raven::NativeStop::returned && result.value == tebs[i % 2],
+					"worker retained previous guest TEB");
+			}
+			std::cout << "PASS: alternating guest TEB on one resident worker\n";
+			return 0;
+		}
+		if (mode == "debug-print") process.add_api_trap(loaded.base() + image.entry + 32, 0);
 		if (mode == "wait-unwind") {
 			process.set_execution_wait([](auto, auto) { throw std::runtime_error("wait sentinel"); });
 			bool caught = false;
@@ -158,6 +192,54 @@ int main(int argc, char **argv)
 		}
 		if (mode == "internal") asm volatile("brk #0");
 		auto result = process.call(loaded.base() + image.entry, {}, std::chrono::milliseconds(mode == "timeout" ? 20 : 5000));
+		if (mode == "debug-print") {
+			check(result.stop == raven::NativeStop::fault && result.signal == SIGSEGV && result.signal_code == 0x80 && result.value == 1,
+				"INT 2D did not normalize canonical debug print");
+			process.complete_debug_print(result.instruction);
+			result = process.resume();
+			check(result.stop == raven::NativeStop::returned && result.value == 0, "debug print did not return");
+			std::cout << "PASS: canonical INT 2D completion\n";
+			return 0;
+		}
+		if (mode == "nt-service") {
+			check(result.stop == raven::NativeStop::syscall && result.value == 0x1234, "NT syscall number lost");
+			bool rejected = false;
+			try { process.enter_nt_service(result.instruction, 0x1235); }
+			catch (const std::runtime_error &) { rejected = true; }
+			check(rejected, "NT service accepted wrong captured number");
+			auto reject = [&](uint64_t instruction) {
+				bool failed = false;
+				try { process.enter_nt_service(instruction, 0x1234); }
+				catch (const std::runtime_error &) { failed = true; }
+				check(failed, "NT service accepted invalid boundary");
+			};
+			reject(result.instruction + 1);
+			const auto page = result.instruction & ~uint64_t(4095);
+			process.protect_image(page, 4096, PROT_READ | PROT_WRITE);
+			reject(result.instruction); // readable but not executable
+			const uint8_t nop = 0x90, ret = 0xc3;
+			process.write_memory(result.instruction, {&nop, 1});
+			process.protect_image(page, 4096, PROT_READ | PROT_EXEC);
+			reject(result.instruction); // syscall without its third (ret) byte
+			process.protect_image(page, 4096, PROT_READ | PROT_WRITE);
+			process.write_memory(result.instruction, {&ret, 1});
+			process.protect_image(page, 4096, PROT_READ | PROT_EXEC);
+			const auto saved = process.context();
+			const auto boundary = process.map_memory(32768, PROT_READ | PROT_WRITE | PROT_EXEC, 0) + 16384;
+			const uint8_t syscall_ret[]{0x0f, 0x05, 0xc3};
+			process.write_memory(boundary - 2, syscall_ret);
+			process.protect_memory(boundary, 16384, PROT_NONE);
+			auto crossing = saved;
+			crossing.registers.rip = boundary;
+			process.set_context(crossing);
+			reject(boundary); // syscall bytes readable/executable, ret page inaccessible
+			process.set_context(saved);
+			process.enter_nt_service(result.instruction, 0x1234);
+			check(process.context().registers.orig_rax == uint64_t(-1), "NT service still marked syscall");
+			check(process.api_arguments(1)[0] == process.context().registers.r10, "NT argument not restored");
+			process.return_api(42);
+			result = process.resume();
+		}
 		if (mode == "selfmodify") {
 			check(result.stop == raven::NativeStop::returned && result.value == 1, "first code result mismatch");
 			const auto address = loaded.base() + image.entry;

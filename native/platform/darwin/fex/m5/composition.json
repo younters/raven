@@ -1,0 +1,70 @@
+{
+  "m4_head": "9b0ca6df16542f53a24eab3b65fda4160af2f1cb",
+  "m5": {
+    "pass": true,
+    "patches": {
+      "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
+      "0002-raven-host-frontend.patch": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da",
+      "0003-raven-host-build-option.patch": "b10f70cb16189b544afc3337b2e7c9e8b5bfad2b7f6963aec2b3767a78225d14",
+      "0004-raven-dispatch-resume.patch": "512b17d8f4fb5eb122bafdd1089c5112d7d8961bdcbde79fa19febfac226b7fc",
+      "0005-native-temporary-jit-guards.patch": "d71afcb2dd831501a9681b4621ab7fd18639ae2498bb8cadf38aaa6446801d6c",
+      "0006-raven-precise-fault.patch": "ce560ecbf0ec7658b25f806f83fae55dac8b0e287b99ee0e76d24e1f16aedcea",
+      "0007-raven-x87-context.patch": "bb3f981b875ce568911ab811971693ecbe4f319880085e6b7f80b555ad423633",
+      "0008-raven-divide-and-synchronous-faults.patch": "1aa6f41b73c1a5ca082411a552fa4cf30334a2b41b5197e9e8c8e24fc87c853c",
+      "0009-raven-doorbell-stop.patch": "ac41d37a32f07deba437002373f4628d1f12d65e3d3a7d48cf98c303b0c5449e",
+      "0010-raven-shared-data-and-return-stack.patch": "f91729012073e54bac788909509080ea0395fd7819414fc9cfdda07a6ff668de",
+      "0011-raven-gate-callret-repair.patch": "e279bfb28511db4c4fa35abfaccea508e184a1297230764d343e1d0565d0459a",
+      "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657",
+      "0017-raven-unaligned-tso.patch": "58626f13198f13301b743896c59fa3bbc23b6ff3aba37ae72654d33b8c6a2dac"
+    },
+    "errors": []
+  },
+  "m4_committed": {
+    "pass": true,
+    "patches": {
+      "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
+      "0002-raven-host-frontend.patch": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da",
+      "0003-raven-host-build-option.patch": "b10f70cb16189b544afc3337b2e7c9e8b5bfad2b7f6963aec2b3767a78225d14",
+      "0004-raven-dispatch-resume.patch": "512b17d8f4fb5eb122bafdd1089c5112d7d8961bdcbde79fa19febfac226b7fc",
+      "0005-native-temporary-jit-guards.patch": "d71afcb2dd831501a9681b4621ab7fd18639ae2498bb8cadf38aaa6446801d6c",
+      "0006-raven-precise-fault.patch": "ce560ecbf0ec7658b25f806f83fae55dac8b0e287b99ee0e76d24e1f16aedcea",
+      "0007-raven-x87-context.patch": "bb3f981b875ce568911ab811971693ecbe4f319880085e6b7f80b555ad423633",
+      "0008-raven-divide-and-synchronous-faults.patch": "1aa6f41b73c1a5ca082411a552fa4cf30334a2b41b5197e9e8c8e24fc87c853c",
+      "0009-raven-doorbell-stop.patch": "ac41d37a32f07deba437002373f4628d1f12d65e3d3a7d48cf98c303b0c5449e",
+      "0010-raven-shared-data-and-return-stack.patch": "f91729012073e54bac788909509080ea0395fd7819414fc9cfdda07a6ff668de",
+      "0011-raven-gate-callret-repair.patch": "e279bfb28511db4c4fa35abfaccea508e184a1297230764d343e1d0565d0459a",
+      "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657",
+      "0013-raven-wow64-host.patch": "725144fa05016e97bcc1bc4ec7a88dd6c30053fe3b4a8bc9afc55c31acfdb41b",
+      "0014-raven-wow64-interrupt.patch": "147637376b17a90678113cb9ef420b8076aa750601dfb917047dc76f5a642161",
+      "0015-raven-wow64-doorbell.patch": "3160a1065f03848cef9c276c94a6f368d46e82315dcbd71254031df0fb191246",
+      "0016-wow64-host-boundary-validation.patch": "3a96568d9e9a7a279ace94f16023499be6a4b366ba9a5f95959252240db6874c",
+      "0017-raven-unaligned-tso.patch": "58626f13198f13301b743896c59fa3bbc23b6ff3aba37ae72654d33b8c6a2dac"
+    },
+    "errors": []
+  },
+  "m4_working_tree": {
+    "pass": false,
+    "patches": {
+      "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
+      "0002-raven-host-frontend.patch": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da",
+      "0003-raven-host-build-option.patch": "b10f70cb16189b544afc3337b2e7c9e8b5bfad2b7f6963aec2b3767a78225d14",
+      "0004-raven-dispatch-resume.patch": "512b17d8f4fb5eb122bafdd1089c5112d7d8961bdcbde79fa19febfac226b7fc",
+      "0005-native-temporary-jit-guards.patch": "d71afcb2dd831501a9681b4621ab7fd18639ae2498bb8cadf38aaa6446801d6c",
+      "0006-raven-precise-fault.patch": "ce560ecbf0ec7658b25f806f83fae55dac8b0e287b99ee0e76d24e1f16aedcea",
+      "0007-raven-x87-context.patch": "bb3f981b875ce568911ab811971693ecbe4f319880085e6b7f80b555ad423633",
+      "0008-raven-divide-and-synchronous-faults.patch": "1aa6f41b73c1a5ca082411a552fa4cf30334a2b41b5197e9e8c8e24fc87c853c",
+      "0009-raven-doorbell-stop.patch": "ac41d37a32f07deba437002373f4628d1f12d65e3d3a7d48cf98c303b0c5449e",
+      "0010-raven-shared-data-and-return-stack.patch": "f91729012073e54bac788909509080ea0395fd7819414fc9cfdda07a6ff668de",
+      "0011-raven-gate-callret-repair.patch": "e279bfb28511db4c4fa35abfaccea508e184a1297230764d343e1d0565d0459a",
+      "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657",
+      "0013-raven-wow64-host.patch": "725144fa05016e97bcc1bc4ec7a88dd6c30053fe3b4a8bc9afc55c31acfdb41b",
+      "0014-raven-wow64-interrupt.patch": "147637376b17a90678113cb9ef420b8076aa750601dfb917047dc76f5a642161",
+      "0015-raven-wow64-doorbell.patch": "3160a1065f03848cef9c276c94a6f368d46e82315dcbd71254031df0fb191246",
+      "0016-wow64-host-boundary-validation.patch": "35862f93f4434291209a32980790983d7512831e53529e5a7077b47bd7fd2146",
+      "0017-raven-unaligned-tso.patch": "58626f13198f13301b743896c59fa3bbc23b6ff3aba37ae72654d33b8c6a2dac"
+    },
+    "errors": [
+      "error: patch failed: Source/Windows/ARM64EC/Module.cpp:665\nerror: Source/Windows/ARM64EC/Module.cpp: patch does not apply\n"
+    ]
+  }
+}

@@ -38,6 +38,10 @@ class Contract(unittest.TestCase):
         pins = verify_patch_pins()
         header = (REPO / 'native/platform/darwin/fex/modhost/module_contract.h').read_text()
         self.assertIn(f'0x{pins["raven_process_init_rva"]:x}', header)
+        self.assertEqual(pins['raven_wow64_process_init_rva'], 0x7850)
+        self.assertEqual(pins['raven_wow64_process_init_instruction'], 0xf81f0ffe)
+        self.assertIn(f'wow64_process_init_rva = 0x{pins["raven_wow64_process_init_rva"]:x}', header)
+        self.assertIn(f'wow64_process_init_instruction = 0x{pins["raven_wow64_process_init_instruction"]:x}', header)
 
     def test_module_rejects_changed_bytes(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -76,6 +80,14 @@ class Contract(unittest.TestCase):
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 77)
             self.assertIn('SKIP: provision xtajit64.dll', result.stdout)
+
+    def test_missing_wow64_module_fails_required_lane(self):
+        with tempfile.TemporaryDirectory() as temp:
+            result = subprocess.run([sys.executable, REPO / 'scripts/test-fex-wow64.py',
+                                    '--modules', temp, '--raven', '/unused', '--fixture', '/unused'],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn('FAIL: provision', result.stdout)
 
     def test_build_requires_explicit_root(self):
         env = dict(os.environ)

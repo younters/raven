@@ -31,7 +31,10 @@ def main(argv=None):
         return 77
     pins = verify_patch_pins() if not args.substrate_only and not args.tier0_gap else None
     if pins is not None:
-        verify_module_pin(args.modules / "xtajit64.dll", pins)
+        try:
+            verify_module_pin(args.modules / "xtajit64.dll", pins)
+        except (RuntimeError, OSError) as error:
+            parser.error(str(error))
     results = []
     with tempfile.TemporaryDirectory(prefix='raven-modhost-test-') as temp:
         source = REPO / 'native/platform/darwin/fex/modhost'

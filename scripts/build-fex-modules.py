@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
-from fex_modhost_contract import verify_patch_pins, verify_module_pin
+from fex_modhost_contract import verify_patch_pins, verify_module_pin, verify_wow64_module_pin
 
 PIN = '370c63057fc9fc826b58fe15d59930876df55b5f'
 URL = 'https://github.com/dbc-hbin/FEX-darwin.git'
@@ -137,6 +137,8 @@ def build(root, raven_host=False, build_id=None, clean=False):
             raise RuntimeError('artifact checksum mismatch: ' + name)
         if raven_host and name == 'xtajit64.dll':
             verify_module_pin(src, contract)
+        if raven_host and name == 'xtajit.dll':
+            verify_wow64_module_pin(src, contract)
         shutil.copyfile(src, root / name)
     pins = dict(source_commit=PIN, source_archive_sha256=hashlib.sha256(subprocess.check_output(
         ['git', '-C', str(source), 'archive', '--format=tar', PIN])).hexdigest(),

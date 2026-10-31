@@ -1,6 +1,18 @@
 # macOS adjustments to targets native/CMakeLists.txt defines, applied after it so that file stays as upstream wrote it.
 
-option(RAVEN_FEX_MODHOST "Build standalone experimental FEX module-host tests" OFF)
+set(_raven_fex_default OFF)
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+    set(_raven_fex_default ON)
+endif()
+option(RAVEN_FEX_MODHOST "Build the FEX execution backend and module-host tests" ${_raven_fex_default})
+set(RAVEN_FEX_MODULE_ROOT "$ENV{RAVEN_FEX_MODULE_ROOT}" CACHE PATH "Provisioned FEX modules (optional at build time)")
+if(NOT RAVEN_FEX_MODULE_ROOT)
+    get_filename_component(_components "${PROJECT_SOURCE_DIR}/../raven-components/fex-modules" ABSOLUTE)
+    if(EXISTS "${_components}/xtajit64.dll")
+        set(RAVEN_FEX_MODULE_ROOT "${_components}" CACHE PATH "Provisioned FEX modules" FORCE)
+    endif()
+endif()
+configure_file(${RAVEN_DARWIN_DIR}/fex/module_config.h.in ${CMAKE_CURRENT_BINARY_DIR}/fex-module-config.h @ONLY)
 if(RAVEN_FEX_MODHOST)
     add_subdirectory(${RAVEN_DARWIN_DIR}/fex/modhost ${CMAKE_CURRENT_BINARY_DIR}/fex-modhost)
 endif()
@@ -34,10 +46,12 @@ if(TARGET raven_cpu)
             ${RAVEN_DARWIN_DIR}/fex/modhost/abi.S ${RAVEN_DARWIN_DIR}/fex/modhost/context.S)
         set_source_files_properties(${RAVEN_DARWIN_DIR}/fex/fex_process.cpp PROPERTIES
             COMPILE_OPTIONS "-ffixed-x18;-ffp-contract=off;-UNDEBUG;-Wno-unused-function")
-        target_link_options(raven_cpu INTERFACE -Wl,-platform_version,macos,11.0,11.0)
+        target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/fex/module_root.cpp)
+        target_include_directories(raven_cpu PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
         target_compile_definitions(raven_cpu PUBLIC RAVEN_FEX_PROCESS=1)
         add_executable(fex_process_test ${RAVEN_DARWIN_DIR}/fex/fex_process_test.cpp)
         target_link_libraries(fex_process_test PRIVATE raven_cpu)
+        target_link_options(fex_process_test PRIVATE -Wl,-platform_version,macos,11.0,11.0)
         if(RAVEN_MINGW64)
             set(FEX_ENTRY_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/fex-entry.exe)
             add_custom_command(OUTPUT ${FEX_ENTRY_FIXTURE}
@@ -47,7 +61,7 @@ if(TARGET raven_cpu)
                 DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_cpu/entry.c VERBATIM)
             add_custom_target(fex_entry_fixture DEPENDS ${FEX_ENTRY_FIXTURE})
             add_dependencies(fex_process_test fex_entry_fixture)
-            foreach(contract entry syscall fault breakpoint divide ud2 timeout selfmodify lifetime served-malformed)
+            foreach(contract entry syscall nt-service fault breakpoint divide ud2 timeout selfmodify lifetime served-malformed)
                 add_test(NAME native_${contract}_fex COMMAND fex_process_test ${FEX_ENTRY_FIXTURE} ${contract})
                 set_tests_properties(native_${contract}_fex PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77
                     LABELS "fex;m2" ENVIRONMENT "RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")
@@ -113,14 +127,14 @@ if(TARGET raven_cpu)
         set(RAVEN_DARWIN_PARALLEL_BENCHMARK ${CMAKE_CURRENT_BINARY_DIR}/darwin-parallel-benchmark.exe)
         add_custom_command(OUTPUT ${RAVEN_DARWIN_PARALLEL_BENCHMARK}
             COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector
-                -Wl,--entry,raven_entry,--image-base,0x199a00000
+                -Wl,--entry,raven_entry,--image-base,0x10000000000,--no-insert-timestamp
                 -o ${RAVEN_DARWIN_PARALLEL_BENCHMARK} ${RAVEN_DARWIN_DIR}/parallel_benchmark.c -lkernel32
             DEPENDS ${RAVEN_DARWIN_DIR}/parallel_benchmark.c VERBATIM)
         add_custom_target(darwin_parallel_benchmark ALL DEPENDS ${RAVEN_DARWIN_PARALLEL_BENCHMARK})
         set(RAVEN_DARWIN_HANDOFF_BENCHMARK ${CMAKE_CURRENT_BINARY_DIR}/darwin-handoff-benchmark.exe)
         add_custom_command(OUTPUT ${RAVEN_DARWIN_HANDOFF_BENCHMARK}
             COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector
-                -Wl,--entry,raven_entry,--image-base,0x199a00000
+                -Wl,--entry,raven_entry,--image-base,0x10000000000,--no-insert-timestamp
                 -o ${RAVEN_DARWIN_HANDOFF_BENCHMARK} ${RAVEN_DARWIN_DIR}/handoff_benchmark.c -lkernel32
             DEPENDS ${RAVEN_DARWIN_DIR}/handoff_benchmark.c VERBATIM)
         add_custom_target(darwin_handoff_benchmark ALL DEPENDS ${RAVEN_DARWIN_HANDOFF_BENCHMARK})
@@ -552,6 +566,16 @@ if(TARGET native_cpu_test)
 endif()
 
 if(TARGET raven_cpu AND RAVEN_MINGW64)
+    set(THEME_API_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/darwin-theme-api.exe)
+    add_custom_command(OUTPUT ${THEME_API_FIXTURE}
+        COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector -Wl,--entry,raven_entry
+            -o ${THEME_API_FIXTURE} ${RAVEN_DARWIN_DIR}/tests/theme_api.c -luxtheme -lkernel32
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/theme_api.c VERBATIM)
+    add_custom_target(darwin_theme_api_fixture ALL DEPENDS ${THEME_API_FIXTURE})
+    add_test(NAME native_darwin_theme_api COMMAND raven --run-process --execution=native ${THEME_API_FIXTURE})
+    set_tests_properties(native_darwin_theme_api PROPERTIES TIMEOUT 20
+        PASS_REGULAR_EXPRESSION "Native entry returned 0 " LABELS "rosetta"
+        ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/darwin-theme-api-prefix")
     set(CURSOR_DPI_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-aware.exe)
     set(CURSOR_UNAWARE_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-unaware.exe)
     set(CURSOR_PM_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/cursor-dpi-per-monitor.exe)
@@ -890,15 +914,15 @@ if(RAVEN_FEX_MODHOST AND TARGET raven_cpu AND RAVEN_MINGW64)
     set(FEX_FIXED ${CMAKE_CURRENT_BINARY_DIR}/fex-fixed-low.exe)
     add_custom_command(OUTPUT ${FEX_FIXED}
         COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
-            -Wl,--entry,raven_entry,--image-base,0x400000,--no-insert-timestamp
-            -o ${FEX_FIXED} ${PROJECT_SOURCE_DIR}/testdata/native_cpu/entry.c
-        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_cpu/entry.c VERBATIM)
+            -Wl,--entry,raven_entry,--image-base,0x8000000000,--no-insert-timestamp
+            -o ${FEX_FIXED} ${RAVEN_DARWIN_DIR}/fex/fixed_client.c
+        DEPENDS ${RAVEN_DARWIN_DIR}/fex/fixed_client.c VERBATIM)
     add_custom_target(fex_placement_fixtures DEPENDS ${FEX_PLACEMENT} ${FEX_FIXED})
     add_test(NAME native_placement_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
         --raven $<TARGET_FILE:raven> --fixture ${FEX_PLACEMENT} --modules "${RAVEN_FEX_MODULE_ROOT}")
-    add_test(NAME native_fixed_image_conflict_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
-        --raven $<TARGET_FILE:raven> --fixture ${FEX_FIXED} --modules "${RAVEN_FEX_MODULE_ROOT}" --expect-placement-conflict)
-    set_tests_properties(native_placement_fex native_fixed_image_conflict_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;m2;placement")
+    add_test(NAME native_fixed_image_preferred_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+        --raven $<TARGET_FILE:raven> --fixture ${FEX_FIXED} --modules "${RAVEN_FEX_MODULE_ROOT}")
+    set_tests_properties(native_placement_fex native_fixed_image_preferred_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;m2;placement")
 endif()
 
 if(RAVEN_FEX_MODHOST AND TARGET kernel_seh_fixture)
@@ -1045,3 +1069,45 @@ if(RAVEN_FEX_MODHOST AND TARGET fex_process_test)
             LABELS "fex;m3;parallel" ENVIRONMENT "RAVEN_PARALLEL=1;RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")
     endforeach()
 endif()
+
+# x18 preservation is task-wide, selected from the main executable signature SDK.
+# Keep the Cocoa/Rosetta executable modern; only explicit FEX launches exec this sibling.
+if(RAVEN_FEX_MODHOST AND TARGET raven_cpu)
+    target_sources(raven PRIVATE ${RAVEN_DARWIN_DIR}/fex/launch.cpp)
+    get_target_property(_raven_sources raven SOURCES)
+    add_executable(raven-fex-host ${_raven_sources})
+    foreach(property LINK_LIBRARIES LINK_OPTIONS COMPILE_DEFINITIONS COMPILE_OPTIONS INCLUDE_DIRECTORIES
+            C_STANDARD C_STANDARD_REQUIRED C_EXTENSIONS CXX_STANDARD CXX_STANDARD_REQUIRED CXX_EXTENSIONS
+            OBJC_STANDARD OBJC_STANDARD_REQUIRED OBJC_EXTENSIONS OBJCXX_STANDARD OBJCXX_STANDARD_REQUIRED OBJCXX_EXTENSIONS)
+        get_target_property(value raven ${property})
+        if(NOT value STREQUAL "value-NOTFOUND")
+            set_property(TARGET raven-fex-host PROPERTY ${property} "${value}")
+        endif()
+    endforeach()
+    target_compile_definitions(raven-fex-host PRIVATE RAVEN_FEX_COMPANION_HOST=1)
+    target_link_options(raven-fex-host PRIVATE -Wl,-platform_version,macos,11.0,11.0)
+    add_dependencies(raven raven-fex-host)
+    # FEX fixtures used by registered tests must be available in a normal build.
+    foreach(fixture fex_entry_fixture kernel-ansi_fex_fixture kernel-file_fex_fixture kernel-threads_fex_fixture
+            kernel_seh_fex_fixture fex_placement_fixtures fex_write_av_fixture fex_review_fixtures fex_parallel_fixtures)
+        if(TARGET ${fixture})
+            add_dependencies(raven ${fixture})
+        endif()
+    endforeach()
+endif()
+if(RAVEN_FEX_MODHOST AND TARGET kernel-ansi_fex_fixture)
+    add_test(NAME native_fex_default_discovery COMMAND ${Python3_EXECUTABLE}
+        ${RAVEN_DARWIN_DIR}/fex/default_build_test.py $<TARGET_FILE:raven>
+        ${CMAKE_CURRENT_BINARY_DIR}/kernel-ansi-fex.exe "${RAVEN_FEX_MODULE_ROOT}")
+    set_tests_properties(native_fex_default_discovery PROPERTIES TIMEOUT 45 SKIP_RETURN_CODE 77 LABELS "fex;contract")
+endif()
+if(TARGET raven-fex-host)
+    add_test(NAME darwin_fex_launch COMMAND ${Python3_EXECUTABLE}
+        ${RAVEN_DARWIN_DIR}/fex/launch_test.py $<TARGET_FILE:raven>)
+    set_tests_properties(darwin_fex_launch PROPERTIES TIMEOUT 60 LABELS "fex;contract;darwin")
+    add_executable(darwin_fex_child_executable_test ${RAVEN_DARWIN_DIR}/fex/child_executable_test.cpp)
+    target_include_directories(darwin_fex_child_executable_test PRIVATE ${PROJECT_SOURCE_DIR}/native)
+    add_test(NAME darwin_fex_child_executable COMMAND darwin_fex_child_executable_test)
+    set_tests_properties(darwin_fex_child_executable PROPERTIES LABELS "fex;contract;darwin")
+endif()
+include(${RAVEN_DARWIN_DIR}/fex/parity.cmake)

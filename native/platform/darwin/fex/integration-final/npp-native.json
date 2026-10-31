@@ -1,0 +1,27 @@
+{
+  "engine": "native",
+  "command": [
+    "/Users/yount/.t3/worktrees/raven/t3-0304570a/build-integration/native/raven",
+    "--run-process",
+    "--execution=native",
+    "--timeout-ms=90000",
+    "--desktop=macos",
+    "--directory=/tmp/raven-review-npp/npp",
+    "/tmp/raven-review-npp/npp/notepad++.exe"
+  ],
+  "pid": 72878,
+  "fresh_prefix": "/tmp/raven-final-apps-verified/prefix-native",
+  "editor_ms": 5579.729667020729,
+  "window": {
+    "id": 12209,
+    "bounds": {
+      "X": 365,
+      "Height": 698,
+      "Y": 147,
+      "Width": 1092
+    }
+  },
+  "capture_returncode": 0,
+  "screenshot": "/tmp/raven-final-apps-verified/native.png",
+  "exit_after_cleanup": -15
+}

@@ -228,12 +228,18 @@ static int range_free(uint64_t address, uint64_t size)
 	}
 	if (end > RAVEN_LOW_END) {
 		const uint64_t high = address > RAVEN_LOW_END ? address : RAVEN_LOW_END;
-		// Above the reserve, the kernel decides: asked for the address without insisting, it gives it only when nothing is there.
-		void *probe = mmap((void *)high, end - high, PROT_NONE, MAP_PRIVATE | MAP_ANON, -1, 0);
-		if (probe == MAP_FAILED)
-			return 0;
-		munmap(probe, end - high);
-		if ((uint64_t)probe != high)
+		// Inspect the next VM region without allocating a probe. Under Rosetta,
+		// mmap/munmap can create translator storage in the very gap being tested.
+		mach_vm_address_t region = high;
+		mach_vm_size_t length = 0;
+		vm_region_basic_info_data_64_t info;
+		mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+		mach_port_t object = MACH_PORT_NULL;
+		const kern_return_t status = mach_vm_region(mach_task_self(), &region, &length,
+			VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object);
+		if (object != MACH_PORT_NULL)
+			mach_port_deallocate(mach_task_self(), object);
+		if (status != KERN_INVALID_ADDRESS && (status != KERN_SUCCESS || region < end))
 			return 0;
 	}
 	return 1;

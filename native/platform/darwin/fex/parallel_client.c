@@ -124,7 +124,7 @@ int raven_entry(void)
 	CHECK(SuspendThread(a) == 0);
 	static CONTEXT ctx;
 	ctx.ContextFlags = CONTEXT_ALL;
-	CHECK(!GetThreadContext(a, &ctx) && GetLastError() == ERROR_NOT_SUPPORTED);
+CHECK(!GetThreadContext(a, &ctx) && GetLastError() == ERROR_NOT_SUPPORTED);
 	CHECK(!SetThreadContext(a, &ctx) && GetLastError() == ERROR_NOT_SUPPORTED);
 	ctx.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
 	CHECK(GetThreadContext(a, &ctx) && ctx.Rip && ctx.Rsp);

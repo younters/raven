@@ -1,0 +1,44 @@
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -681,6 +681,9 @@ extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, ARM64_NT_CONTEXT *Native) {
+   auto *Thread = Area.ThreadState();
+   if (!Thread) return STATUS_NOT_SUPPORTED;
+   if (!CTX->IsAddressInCodeBuffer(Thread, Native->Pc) && !IsDispatcherAddress(Native->Pc)) {
++    if (Record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && RavenIsModuleCode(Native->Pc) &&
++        OvercommitTracker && OvercommitTracker->HandleAccessViolation(Record->ExceptionInformation[1]))
++      return STATUS_SUCCESS;
+     if (Record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && RavenIsModuleCode(Native->Pc) &&
+         FEX::Windows::JITGuardPage::HandleJITGuardPage(Thread,
+           reinterpret_cast<void*>(Record->ExceptionInformation[1]), Native->X,
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+index 50adf36..0d7fc50 100644
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -1341,3 +1341,15 @@ BOOLEAN BTCpu64IsProcessorFeaturePresent(UINT Feature) {
+ void UpdateProcessorInformation(SYSTEM_CPU_INFORMATION* Info) {
+   CPUFeatures->UpdateInformation(Info);
+ }
++
++#ifdef RAVEN_HOST
++// Qualification probes use the actual tracker and CRT allocator of this module.
++extern "C" uint64_t RavenTestOvercommit(uint64_t Address, uint64_t Size, uint64_t Value) {
++  OvercommitTracker->MarkRange(Address, Size);
++  *reinterpret_cast<volatile uint64_t*>(Address) = Value;
++  OvercommitTracker->UnmarkRange(Address, Size);
++  return *reinterpret_cast<volatile uint64_t*>(Address);
++}
++extern "C" void *RavenTestAllocate(uint64_t Size) { return malloc(Size); }
++extern "C" void RavenTestFree(void *Pointer) { free(Pointer); }
++#endif
+diff --git a/Source/Windows/ARM64EC/libarm64ecfex.def b/Source/Windows/ARM64EC/libarm64ecfex.def
+index 0034799..ae96daa 100644
+--- a/Source/Windows/ARM64EC/libarm64ecfex.def
++++ b/Source/Windows/ARM64EC/libarm64ecfex.def
+@@ -23,3 +23,6 @@ EXPORTS
+   UpdateProcessorInformation
+   RavenProcessInit
+   RavenHandleFault
++  RavenTestOvercommit
++  RavenTestAllocate
++  RavenTestFree

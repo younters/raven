@@ -1,0 +1,190 @@
+{
+  "build": "/tmp/raven-default-fex",
+  "build_command": "cmake --build /tmp/raven-default-fex -j8",
+  "reference_cache": "/Users/yount/Documents/Projects/raven/build-macos/CMakeCache.txt",
+  "registration": {
+    "off": 483,
+    "default": 606,
+    "delta": 123
+  },
+  "runs": [
+    {
+      "log": "/tmp/raven-default-fex-tests.log",
+      "count": 69,
+      "statuses": {
+        "Passed": 68,
+        "Failed": 1
+      },
+      "failed": [
+        "native_layout_failure_component"
+      ],
+      "summary": []
+    },
+    {
+      "log": "/tmp/raven-default-fex-tests-remainder.log",
+      "count": 536,
+      "statuses": {
+        "Skipped": 6,
+        "Passed": 513,
+        "Failed": 16,
+        "Disabled": 1
+      },
+      "failed": [
+        "native_kernel-file_fex",
+        "native_pipe_roundtrip_x32",
+        "native_shared_wait_guards_x32",
+        "native_parallel_lifecycle_x64",
+        "native_kernel_memory_x32_default_small",
+        "native_cmd",
+        "native_cmd_x32",
+        "native_bcrypt_x32",
+        "darwin_dxmt_identity",
+        "darwin_dxmt_self_share",
+        "native_orphan_3_x32",
+        "darwin_x87sidecar_correctness",
+        "darwin_x87sidecar_fallback",
+        "darwin_x87sidecar_x64",
+        "darwin_x87sidecar_child",
+        "native_kernel_file_persistence_fex"
+      ],
+      "summary": [
+        "97% tests passed, 16 tests failed out of 535"
+      ]
+    },
+    {
+      "log": "/tmp/raven-default-fex-final-area.log",
+      "count": 114,
+      "statuses": {
+        "Passed": 114
+      },
+      "failed": [],
+      "summary": [
+        "100% tests passed out of 114"
+      ]
+    },
+    {
+      "log": "/tmp/raven-default-fex-serial-recheck.log",
+      "count": 5,
+      "statuses": {
+        "Passed": 4,
+        "Failed": 1
+      },
+      "failed": [
+        "native_parallel_lifecycle_x64"
+      ],
+      "summary": [
+        "80% tests passed, 1 tests failed out of 5"
+      ]
+    },
+    {
+      "log": "/tmp/raven-default-fex-dxmt-recheck.log",
+      "count": 2,
+      "statuses": {
+        "Passed": 2
+      },
+      "failed": [],
+      "summary": [
+        "100% tests passed out of 2"
+      ]
+    },
+    {
+      "log": "/tmp/raven-default-fex-extra-recheck.log",
+      "count": 5,
+      "statuses": {
+        "Passed": 5
+      },
+      "failed": [],
+      "summary": [
+        "100% tests passed out of 5"
+      ]
+    },
+    {
+      "log": "/tmp/raven-default-fex-cmd-recheck.log",
+      "count": 2,
+      "statuses": {
+        "Failed": 2
+      },
+      "failed": [
+        "native_cmd_x32",
+        "native_cmd"
+      ],
+      "summary": [
+        "0% tests passed, 2 tests failed out of 2"
+      ]
+    }
+  ],
+  "latest_status_counts": {
+    "Skipped": 6,
+    "Passed": 595,
+    "Failed": 4,
+    "Disabled": 1
+  },
+  "remaining_failed": [
+    "native_layout_failure_component",
+    "native_parallel_lifecycle_x64",
+    "native_cmd",
+    "native_cmd_x32"
+  ],
+  "reference_lifecycle": {
+    "command": [
+      "/opt/homebrew/Frameworks/Python.framework/Versions/3.15/bin/python3.15",
+      "/Users/yount/.t3/worktrees/raven/t3-b2c77f0f/scripts/native-parallel-lifecycle.py",
+      "/Users/yount/Documents/Projects/raven/build-macos/native/raven",
+      "/tmp/raven-default-fex/native/parallel-lifecycle64.exe",
+      "--sample"
+    ],
+    "returncode": 1,
+    "stdout": "exit: expected exit 0\n",
+    "stderr": "fault: exit 5\nNative process exited with status 3221225477\nraven: unhandled exception c0000005 at 199801025 (parallel-lifecycle64.exe+1025)\n\n"
+  },
+  "apps": [
+    {
+      "engine": "native",
+      "pid": 96169,
+      "command": [
+        "/tmp/raven-default-fex/native/raven",
+        "--run-process",
+        "--execution=native",
+        "--timeout-ms=20000",
+        "--desktop=macos",
+        "/tmp/raven-default-fex-apps/npp/notepad++.exe"
+      ],
+      "alive_at_12s": true,
+      "returncode": 1,
+      "screenshot": "/tmp/raven-default-fex-apps/native.png",
+      "capture_returncode": 0,
+      "capture_stderr": ""
+    },
+    {
+      "engine": "fex",
+      "pid": 2579,
+      "command": [
+        "/tmp/raven-default-fex/native/raven",
+        "--run-process",
+        "--execution=fex",
+        "--timeout-ms=20000",
+        "--desktop=macos",
+        "/tmp/raven-default-fex-apps/npp/notepad++.exe"
+      ],
+      "alive_at_12s": false,
+      "returncode": 1,
+      "screenshot": "/tmp/raven-default-fex-apps/fex.png",
+      "capture_returncode": 0,
+      "capture_stderr": ""
+    }
+  ],
+  "app_recheck": [
+    {
+      "name": "native-recheck",
+      "returncode": 1,
+      "window_info": "{\"id\":10115,\"bounds\":{\"X\":365,\"Height\":698,\"Y\":147,\"Width\":1092}}",
+      "window_error": ""
+    },
+    {
+      "name": "reference",
+      "returncode": 1,
+      "window_info": "{\"id\":10129,\"bounds\":{\"X\":365,\"Height\":698,\"Y\":147,\"Width\":1092}}",
+      "window_error": ""
+    }
+  ]
+}

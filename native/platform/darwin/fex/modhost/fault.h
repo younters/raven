@@ -3,6 +3,7 @@
 #include "context.h"
 #include "signal_stack.h"
 #include <signal.h>
+#include <setjmp.h>
 #include <sys/ucontext.h>
 namespace RavenFault {
 struct Record {
@@ -23,9 +24,22 @@ void *entry = nullptr;
 // Fault dispatch must use the guest TEB of this host worker, including callbacks.
 thread_local void *execution_teb = nullptr;
 
+// Only active while emulating an alignment fault. A decoder memory access
+// may fault; restart dispatch with the original guest PC and an AV record.
+thread_local sigjmp_buf *alignment_recovery = nullptr;
+thread_local NativeContext alignment_original;
+thread_local uintptr_t alignment_fault_address;
+thread_local uint64_t alignment_fault_write;
 extern "C" void raven_signal_entry(int, siginfo_t *, void *);
 extern "C" void raven_fault_handler(int signal, siginfo_t *info, void *opaque) {
 	require_native_x18();
+	if (alignment_recovery && (signal == SIGSEGV || signal == SIGBUS)) {
+		alignment_fault_address = uintptr_t(info->si_addr);
+		alignment_fault_write = (static_cast<ucontext_t *>(opaque)->uc_mcontext->__es.__esr >> 6) & 1;
+		auto *recovery = alignment_recovery;
+		alignment_recovery = nullptr;
+		siglongjmp(*recovery, 1);
+	}
 	auto *uc = static_cast<ucontext_t *>(opaque);
 	auto &ss = uc->uc_mcontext->__ss;
 	auto &ns = uc->uc_mcontext->__ns;
@@ -42,14 +56,29 @@ extern "C" void raven_fault_handler(int signal, siginfo_t *info, void *opaque) {
 	native.fpcr = ns.__fpcr;
 	native.fpsr = ns.__fpsr;
 	Record record{};
-	record.code = signal == SIGTRAP ? 0x80000003 : signal == SIGILL ? 0xc000001d : 0xc0000005;
+	record.code = signal == SIGBUS && (uc->uc_mcontext->__es.__esr & 0x3f) == 0x21 ? 0x80000002 : signal == SIGTRAP ? 0x80000003 : signal == SIGILL ? 0xc000001d : 0xc0000005;
 	record.address = reinterpret_cast<void *>(native.pc);
 	record.count = (signal == SIGSEGV || signal == SIGBUS) ? 2 : 0;
 	record.information[0] = (uc->uc_mcontext->__es.__esr >> 6) & 1;
 	record.information[1] = uintptr_t(info->si_addr);
 	if (entry && RavenNT::active_thread) {
 		uint64_t args[8]{uintptr_t(&record), uintptr_t(&native)};
+		// FEX may backpatch acquire/release instructions while repairing an
+		// unaligned access. Signal delivery enters with the guest's JIT RX mode.
+		const auto previous_jit = NativeJit::protect(0);
+		sigjmp_buf recovery;
+		if (sigsetjmp(recovery, 1)) {
+			native = alignment_original;
+			record.code = 0xc0000005;
+			record.information[0] = alignment_fault_write;
+			record.information[1] = alignment_fault_address;
+		} else if (record.code == 0x80000002) {
+			alignment_original = native;
+			alignment_recovery = &recovery;
+		}
 		auto status = uint32_t(raven_ec_call(entry, args, execution_teb ? execution_teb : RavenNT::active_thread->teb.data()));
+		alignment_recovery = nullptr;
+		NativeJit::protect(previous_jit);
 		if (!status) {
 			for (unsigned i = 0; i < 29; ++i)
 				ss.__x[i] = native.x[i];
@@ -63,6 +92,13 @@ extern "C" void raven_fault_handler(int signal, siginfo_t *info, void *opaque) {
 			ns.__fpsr = native.fpsr;
 			return;
 		}
+	}
+	if (getenv("RAVEN_FEX_TRACE")) {
+		char detail[192];
+		const int length = snprintf(detail, sizeof(detail), "FEX native signal=%d code=%d esr=%x pc=%llx instruction=%x address=%llx entry=%p jit=%d\n",
+			signal, info->si_code, uc->uc_mcontext->__es.__esr, native.pc,
+			*reinterpret_cast<const uint32_t *>(native.pc), record.information[1], entry, NativeJit::write_protected);
+		write(2, detail, std::min<size_t>(length, sizeof(detail) - 1));
 	}
 	const char error[] = "unhandled FEX native or unsupported fault\n";
 	write(2, error, sizeof(error) - 1);

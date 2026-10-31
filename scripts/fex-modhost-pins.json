@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "xtajit64_sha256": "9f1dc47f38fb51df2ff41353410793aa5c69f988d56831037ce0f3db45db25aa",
-  "raven_process_init_rva": 26860,
+  "xtajit64_sha256": "703ee6a07b7f612941447272cccad9a8487b8dfa4e1e5c54d434fa643a6504bf",
+  "raven_process_init_rva": 27836,
   "patches": {
     "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
     "0002-raven-host-frontend.patch": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da",
@@ -14,6 +14,18 @@
     "0009-raven-doorbell-stop.patch": "ac41d37a32f07deba437002373f4628d1f12d65e3d3a7d48cf98c303b0c5449e",
     "0010-raven-shared-data-and-return-stack.patch": "f91729012073e54bac788909509080ea0395fd7819414fc9cfdda07a6ff668de",
     "0011-raven-gate-callret-repair.patch": "e279bfb28511db4c4fa35abfaccea508e184a1297230764d343e1d0565d0459a",
-    "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657"
-  }
+    "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657",
+    "0013-raven-wow64-host.patch": "725144fa05016e97bcc1bc4ec7a88dd6c30053fe3b4a8bc9afc55c31acfdb41b",
+    "0014-raven-wow64-interrupt.patch": "147637376b17a90678113cb9ef420b8076aa750601dfb917047dc76f5a642161",
+    "0015-raven-wow64-doorbell.patch": "3160a1065f03848cef9c276c94a6f368d46e82315dcbd71254031df0fb191246",
+    "0016-wow64-host-boundary-validation.patch": "8e3ae8ccaae4336cd5d045be4a465b280036e60f9474730c2b699bad22f6f326",
+    "0017-raven-unaligned-tso.patch": "082bdfea773ee87344a90d2c7e4bf7fddc233037236bac4b2afd6c45df0751d4",
+    "0018-raven-private-host-teb.patch": "3b7a4c854631feec3bda91339e5f5e60b790725b430935be837bab8f1bf12310",
+    "0019-raven-native-overcommit-repair.patch": "95cece5f367af30a4eff3ee9b1d57e90eb0bdde068d75d8adde5c527e58a50b4"
+  },
+  "xtajit_sha256": "b84bca9f2b7e8797c46c51729149c4c8dfeb35b5b230960635f5493929df45d9",
+  "raven_wow64_process_init_rva": 30800,
+  "raven_wow64_process_init_instruction": 4162785278,
+  "shared_patch12_xtajit_sha256": "5c785d47c43d8f2d0a444e82114ca731499b8a9e2ac408679b212db46c76bd6b",
+  "host_abi_version": 2
 }

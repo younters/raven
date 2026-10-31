@@ -25,3 +25,10 @@ def verify_module_pin(module, pins):
     if actual != pins['xtajit64_sha256']:
         raise RuntimeError(f'xtajit64.dll sha256 mismatch: expected {pins["xtajit64_sha256"]}, got {actual}')
     return actual
+
+
+def verify_wow64_module_pin(module, pins):
+    actual = sha(module)
+    if actual != pins['xtajit_sha256']:
+        raise RuntimeError(f'xtajit.dll sha256 mismatch: expected {pins["xtajit_sha256"]}, got {actual}')
+    return actual

@@ -3,6 +3,7 @@
 #define RAVEN_HOST_LOADER
 #include "pe_preflight.cpp"
 #include "raven_host.h"
+#include "raven_wow64_host.h"
 #include "abi.h"
 #include "crt.h"
 #include "sync.h"
@@ -141,6 +142,22 @@ void *resolve_native(const char *dll, const char *name) {
 		return p;
 	return RavenNT::resolve_unwind(name);
 }
+extern "C" void raven_capture_arm64_context();
+extern "C" void raven_arm64_chkstk();
+int32_t wow64_system_info(uint32_t klass, void *out, uint32_t length, uint32_t *written) {
+	auto status = RavenNT::system_info(klass, out, length, written);
+	if (!status && klass == 62) {
+		const uint64_t low = 0x10000, high = 0x7ffeffff;
+		memcpy(static_cast<uint8_t *>(out) + 32, &low, 8);
+		memcpy(static_cast<uint8_t *>(out) + 40, &high, 8);
+	}
+	return status;
+}
+int32_t wow64_unsupported() { return RavenNT::not_supported; }
+void wow64_restore_unsupported() { const char error[] = "unsupported native WoW64 restore\n"; write(2, error, sizeof(error) - 1); std::abort(); }
+bool wow64_module = false;
+uint64_t wow64_guest_base = 0;
+thread_local uint64_t wow64_teb = 0;
 NativeJit import_jit;
 std::mutex adapter_mutex;
 std::map<std::pair<std::string, std::string>, void *> adapter_cache;
@@ -151,9 +168,14 @@ void *resolve(const char *dll, const char *name) {
 	if (found != adapter_cache.end())
 		return found->second;
 	void *adapter = nullptr;
-	if (!strcmp(dll, "ntdll.dll") && !strcmp(name, "RtlCaptureContext"))
+	if (wow64_module && !strcmp(name, "NtQuerySystemInformation")) adapter = native_adapter(import_jit, reinterpret_cast<void *>(&wow64_system_info));
+	else if (wow64_module && !strcmp(name, "RtlCaptureContext")) adapter = reinterpret_cast<void *>(&raven_capture_arm64_context);
+	else if (wow64_module && !strcmp(name, "__chkstk")) adapter = reinterpret_cast<void *>(&raven_arm64_chkstk);
+	else if (wow64_module && !strcmp(name, "RtlRestoreContext")) adapter = native_adapter(import_jit, reinterpret_cast<void *>(&wow64_restore_unsupported));
+	else if (wow64_module && (!strcmp(name, "NtContinue") || !strcmp(name, "RtlWow64GetThreadContext") || !strcmp(name, "RtlWow64SetThreadContext") || !strcmp(name, "RtlWow64SuspendThread"))) adapter = native_adapter(import_jit, reinterpret_cast<void *>(&wow64_unsupported));
+	else if (!wow64_module && !strcmp(dll, "ntdll.dll") && !strcmp(name, "RtlCaptureContext"))
 		adapter = reinterpret_cast<void *>(&RavenNT::raven_capture_ec_context);
-	else if (!strcmp(dll, "ntdll.dll") && !strcmp(name, "RtlRestoreContext"))
+	else if (!wow64_module && !strcmp(dll, "ntdll.dll") && !strcmp(name, "RtlRestoreContext"))
 		adapter = reinterpret_cast<void *>(&RavenNT::raven_restore_ec_context);
 	else {
 		unsigned stack = 0;
@@ -174,6 +196,20 @@ void *resolve(const char *dll, const char *name) {
 }
 std::unique_ptr<PEView> mapped_image;
 std::unique_ptr<RavenNT::ProcessEnvironment> process_environment;
+// A host-created pthread can enter allocator helpers before ThreadInit or after
+// ThreadTerm. Fixed TLS storage keeps this callback allocation- and lock-free.
+static void *private_teb()
+{
+	if (RavenNT::active_thread) return RavenNT::active_thread->teb.data();
+	alignas(16) static thread_local std::array<uint8_t, 0x3000> fallback{};
+	auto *self = fallback.data();
+	memcpy(self + 0x30, &self, sizeof(self));
+	auto identity = uintptr_t(pthread_self());
+	memcpy(self + 0x48, &identity, sizeof(identity));
+	void *peb = RavenNT::active_process ? RavenNT::active_process->peb.data() : nullptr;
+	memcpy(self + 0x60, &peb, sizeof(peb));
+	return self;
+}
 std::unique_ptr<RavenNT::ThreadEnvironment> thread_environment;
 void inspect_image(Bytes image, size_t opt) {
 	mapped_image = std::make_unique<PEView>(PEView{image, opt});
@@ -186,6 +222,13 @@ void inspect_image(Bytes image, size_t opt) {
 	RavenNT::pseudo_handle = RavenNT::current_handle;
 	process_environment->put(0x10, image.data);
 	mapped_image->install_tls(*thread_environment);
+	if (wow64_module) {
+		auto *entry = mapped_image->export_address("RavenWow64ProcessInit");
+		if (!entry || uintptr_t(entry) != uintptr_t(image.data) + RavenContract::wow64_process_init_rva ||
+			image.get<uint32_t>(RavenContract::wow64_process_init_rva) != RavenContract::wow64_process_init_instruction)
+			throw std::runtime_error("WoW64 module does not match the pinned Raven host contract");
+		return;
+	}
 	auto *entry = mapped_image->export_address("RavenProcessInit");
 	if (!entry || uintptr_t(entry) != uintptr_t(image.data) + RavenContract::process_init_rva ||
 		!mapped_image->ec_code(RavenContract::process_init_rva) ||
@@ -296,6 +339,7 @@ int32_t unix_call(uint64_t, uint32_t, void *) {
 	return RavenNT::not_supported;
 }
 int32_t exception_callback(void *opaque, void *packet, void *) {
+	RavenFault::alignment_recovery = nullptr;
 	require_native_x18();
 	auto *record = static_cast<RavenFault::Record *>(opaque);
 	auto *context = static_cast<uint8_t *>(packet);
@@ -397,8 +441,66 @@ uint64_t invoke_nested(void *packet) {
 		std::abort();
 	return nested_result;
 }
+void initialize_wow64_packet(RavenNT::ThreadEnvironment &environment)
+{
+	auto *packet = environment.context.data();
+	uint32_t flags = 0x1003f, eflags = 0x202, cs = 0x23, ds = 0x2b;
+	memcpy(packet, &flags, 4); memcpy(packet + 0xc0, &eflags, 4);
+	memcpy(packet + 0xbc, &cs, 4);
+	for (auto offset : {0x8c, 0x94, 0x98, 0xc8}) memcpy(packet + offset, &ds, 4);
+	const uint32_t fs = 0x53;
+	memcpy(packet + 0x90, &fs, 4);
+	uint16_t fcw = 0x27f; uint32_t mxcsr = 0x1f80;
+	memcpy(packet + 0xcc, &fcw, 2); memcpy(packet + 0xe4, &mxcsr, 4);
+}
+void initialize_wow64_image(Bytes image, size_t opt, uint64_t (*dispatch)(uint64_t, void *), int32_t (*exception)(void *, void *, void *))
+{
+	PEView view{image, opt};
+	static RavenWow64HostV1 host{};
+	host.size = sizeof(host); host.version = 1;
+	auto &common = host.common;
+	common.size = sizeof(common); common.version = 2;
+	common.guest32_base = wow64_guest_base;
+	common.shared_data = user_shared_data.data();
+	auto callback = [&](auto fn) { return native_adapter(callback_jit, reinterpret_cast<void *>(fn)); };
+	common.dispatch = reinterpret_cast<decltype(common.dispatch)>(callback(dispatch));
+	common.exception = reinterpret_cast<decltype(common.exception)>(callback(exception));
+	common.unix_call = reinterpret_cast<decltype(common.unix_call)>(callback(unix_call));
+	common.private_teb = reinterpret_cast<decltype(common.private_teb)>(callback(private_teb));
+	common.cpu_area = reinterpret_cast<decltype(common.cpu_area)>(callback(+[](void *) -> void * { return RavenNT::active_thread->context.data(); }));
+	common.log = reinterpret_cast<decltype(common.log)>(callback(host_log));
+	common.jit_write_protect = reinterpret_cast<decltype(common.jit_write_protect)>(callback(jit_protect));
+	common.allocate_native_jit = reinterpret_cast<decltype(common.allocate_native_jit)>(callback(native_jit));
+	common.memory_event = reinterpret_cast<decltype(common.memory_event)>(callback(memory_event));
+	host.teb32 = reinterpret_cast<decltype(host.teb32)>(callback(+[](void *) -> uint64_t { return wow64_teb; }));
+	for (unsigned i = 0; i < image.get<uint16_t>(opt - 18); ++i) {
+		auto section = opt + image.get<uint16_t>(opt - 4) + i * 40;
+		if (!(image.get<uint32_t>(section + 36) & 0x20000000)) continue;
+		auto rva = image.get<uint32_t>(section + 12), n = image.get<uint32_t>(section + 8);
+		if (rva % 16384) throw std::runtime_error("WoW64 native code is not 16K aligned");
+		sys_icache_invalidate(image.data + rva, n);
+		if (mprotect(image.data + rva, (n + 16383) & ~size_t(16383), PROT_READ | PROT_EXEC)) throw std::runtime_error("WoW64 code protection failed");
+	}
+	uint64_t args[8]{uintptr_t(image.data), 1, 0};
+	if (!raven_ec_call(image.data + image.get<uint32_t>(opt + 16), args, thread_environment->teb.data())) throw std::runtime_error("WoW64 DllMain rejected attach");
+	args[0] = uintptr_t(&host);
+	common.version = 1;
+	if (uint32_t(raven_ec_call(view.export_address("RavenWow64ProcessInit"), args, thread_environment->teb.data())) != 0xc000000d)
+		throw std::runtime_error("FEX host ABI v2 contract failed: accepted v1 WoW64 host");
+	common.version = 2;
+	common.size -= sizeof(void *);
+	if (uint32_t(raven_ec_call(view.export_address("RavenWow64ProcessInit"), args, thread_environment->teb.data())) != 0xc000000d)
+		throw std::runtime_error("FEX host ABI v2 contract failed: accepted truncated WoW64 host");
+	common.size = sizeof(common);
+	if (raven_ec_call(view.export_address("RavenWow64ProcessInit"), args, thread_environment->teb.data())) throw std::runtime_error("FEX WoW64 host ABI v2 registration failed; rebuild pinned modules");
+	std::cout << "PASS: FEX host ABI v2 rejects v1 and truncated host tables\n";
+	memset(args, 0, sizeof(args));
+	raven_ec_call(view.export_address("BTCpuThreadInit"), args, thread_environment->teb.data());
+	initialize_wow64_packet(*thread_environment);
+}
 void initialize_image(Bytes image, size_t opt, uint64_t (*dispatch)(uint64_t, void *) = guest_dispatch,
 	int32_t (*exception)(void *, void *, void *) = exception_callback) {
+	if (wow64_module) { initialize_wow64_image(image, opt, dispatch, exception); return; }
 	PEView view{image, opt};
 	auto &process = *process_environment;
 	RavenVM::code_event =
@@ -425,9 +527,9 @@ void initialize_image(Bytes image, size_t opt, uint64_t (*dispatch)(uint64_t, vo
 	set_slot(24, view.export_address("RetToEntryThunk"));
 	for (auto offset : {28, 32, 36})
 		set_slot(offset, reinterpret_cast<void *>(&raven_check_ec_call));
-	static RavenHostV1 host{};
+	static RavenHostV2 host{};
 	host.size = sizeof(host);
-	host.version = 1;
+	host.version = 2;
 	host.shared_data = user_shared_data.data();
 	auto callback = [&](auto fn) {
 		auto *adapter = native_adapter(callback_jit, reinterpret_cast<void *>(fn));
@@ -437,6 +539,7 @@ void initialize_image(Bytes image, size_t opt, uint64_t (*dispatch)(uint64_t, vo
 	host.dispatch = reinterpret_cast<decltype(host.dispatch)>(callback(dispatch));
 	host.unix_call = reinterpret_cast<decltype(host.unix_call)>(callback(unix_call));
 	host.exception = reinterpret_cast<decltype(host.exception)>(callback(exception));
+	host.private_teb = reinterpret_cast<decltype(host.private_teb)>(callback(private_teb));
 	host.cpu_area = reinterpret_cast<decltype(host.cpu_area)>(callback(cpu_area));
 	host.log = reinterpret_cast<decltype(host.log)>(callback(host_log));
 	host.jit_write_protect =
@@ -470,9 +573,18 @@ void initialize_image(Bytes image, size_t opt, uint64_t (*dispatch)(uint64_t, vo
 		std::cout << "PASS: native PE DllMain attach\n" << std::flush;
 	}
 	args[0] = uintptr_t(&host);
+	host.version = 1;
+	if (uint32_t(raven_ec_call(view.export_address("RavenProcessInit"), args, teb)) != 0xc000000d)
+		throw std::runtime_error("FEX host ABI v2 contract failed: accepted v1 x64 host");
+	host.version = 2;
+	host.size -= sizeof(void *);
+	if (uint32_t(raven_ec_call(view.export_address("RavenProcessInit"), args, teb)) != 0xc000000d)
+		throw std::runtime_error("FEX host ABI v2 contract failed: accepted truncated x64 host");
+	host.size = sizeof(host);
 	auto status = uint32_t(raven_ec_call(view.export_address("RavenProcessInit"), args, teb));
 	if (status)
-		throw std::runtime_error("RavenProcessInit returned " + std::to_string(status));
+		throw std::runtime_error("FEX host ABI v2 registration failed; rebuild pinned modules: " + std::to_string(status));
+	std::cout << "PASS: FEX host ABI v2 rejects v1 and truncated host tables\n";
 	std::cout << "PASS: RavenProcessInit\n" << std::flush;
 	memset(args, 0, sizeof(args));
 	status = uint32_t(raven_ec_call(view.export_address("ThreadInit"), args, teb));
@@ -498,7 +610,7 @@ void verify_host_callret_fault() {
 	record.information[1] = guard;
 	RavenFault::NativeContext native{};
 	native.pc = uintptr_t(&host_log); // Native Mach-O code, outside the translator.
-	native.x[17] = 0x12345678;
+	native.x[17] = native.x[25] = 0x12345678;
 	const auto before = native;
 	uint64_t args[8]{uintptr_t(&record), uintptr_t(&native)};
 	const auto status = uint32_t(raven_ec_call(mapped_image->export_address("RavenHandleFault"), args,

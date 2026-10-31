@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="(empty)"
+	tests="1"
+	failures="0"
+	disabled="0"
+	skipped="0"
+	hostname=""
+	time="1"
+	timestamp="2026-10-30T19:28:12"
+	>
+	<testcase name="native_fixed_image_preferred_fex" classname="native_fixed_image_preferred_fex" time="1.64564" status="run">
+		<properties>
+			<property name="cmake_labels" value="fex;m2;placement"/>
+		</properties>
+		<system-out>raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+raven: no guest address available for PE module
+machine=0x8664 sections=9 image_size=4325376 DIR64_relocations=19188
+CHPE native RavenProcessInit RVA=6b4c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: RavenProcessInit
+PASS: ThreadInit
+Native entry returned 0 (process initialization not implemented)
+</system-out>
+	</testcase>
+</testsuite>

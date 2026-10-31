@@ -105,6 +105,14 @@ def stop(marker):
 
 
 def main():
+    global EXECUTION
+    EXECUTION = "native"
+    for argument in list(sys.argv[1:]):
+        if argument.startswith("--execution="):
+            EXECUTION = argument.split("=", 1)[1]
+            sys.argv.remove(argument)
+    if EXECUTION not in ("native", "fex"):
+        raise SystemExit("--execution must be native or fex")
     raven, testdata, chrome, classicube, dxvk, work = (Path(value).resolve() for value in sys.argv[1:7])
     repeats = int(sys.argv[7]) if len(sys.argv) > 7 else 3
     selected = set(sys.argv[8:])
@@ -179,7 +187,7 @@ def main():
                     marker = f"RAVEN_BENCH_RUN={name}-{runtime}-{index}-{os.getpid()}"
                     key, value = marker.split("=", 1)
                     if runtime == "raven":
-                        command = [str(raven), "--run-process", "--execution=native", "--timeout-ms=600000", "--desktop=wayland", str(program)]
+                        command = [str(raven), "--run-process", "--execution=" + EXECUTION, "--timeout-ms=600000", "--desktop=wayland", str(program)]
                         if arguments:
                             command += ["--"] + arguments
                         env = raven_env | {key: value}
@@ -201,7 +209,7 @@ def main():
                             break
                         time.sleep(0.05)
                     cpu, memory = usage(marked(marker))
-                    measurements.append(dict(workload=name, runtime=runtime, trial=index, warmup=index == 0,
+                    measurements.append(dict(workload=name, runtime=runtime, execution=EXECUTION if runtime == "raven" else None, trial=index, warmup=index == 0,
                                              window_seconds=shown, cpu=cpu, rss_mib=memory, result=measured))
                     stop(marker)
                     process.wait(timeout=30)

@@ -110,3 +110,74 @@ _raven_restore_ec_context:
 	ldr x16, [x13, #0xf8]
 	ldr x0, [x13, #0x80]
 	br x16
+
+// Windows ARM64 context capture for the native WoW64 frontend. This entry is
+// called directly from Windows code, before any Darwin import adapter frame.
+.p2align 2
+.globl _raven_capture_arm64_context
+_raven_capture_arm64_context:
+	stp x0, x1, [x0, #8]
+	stp x2, x3, [x0, #24]
+	stp x4, x5, [x0, #40]
+	stp x6, x7, [x0, #56]
+	stp x8, x9, [x0, #72]
+	stp x10, x11, [x0, #88]
+	stp x12, x13, [x0, #104]
+	stp x14, x15, [x0, #120]
+	stp x16, x17, [x0, #136]
+	stp x18, x19, [x0, #152]
+	stp x20, x21, [x0, #168]
+	stp x22, x23, [x0, #184]
+	stp x24, x25, [x0, #200]
+	stp x26, x27, [x0, #216]
+	stp x28, x29, [x0, #232]
+	str x30, [x0, #248]
+	mov x16, sp
+	str x16, [x0, #256]
+	str x30, [x0, #264]
+	mov w16, #7
+	movk w16, #0x40, lsl #16
+	str w16, [x0]
+	mrs x16, nzcv
+	str w16, [x0, #4]
+	stp q0, q1, [x0, #272]
+	stp q2, q3, [x0, #304]
+	stp q4, q5, [x0, #336]
+	stp q6, q7, [x0, #368]
+	stp q8, q9, [x0, #400]
+	stp q10, q11, [x0, #432]
+	stp q12, q13, [x0, #464]
+	stp q14, q15, [x0, #496]
+	stp q16, q17, [x0, #528]
+	stp q18, q19, [x0, #560]
+	stp q20, q21, [x0, #592]
+	stp q22, q23, [x0, #624]
+	stp q24, q25, [x0, #656]
+	stp q26, q27, [x0, #688]
+	stp q28, q29, [x0, #720]
+	stp q30, q31, [x0, #752]
+	mrs x16, fpcr
+	str w16, [x0, #784]
+	mrs x16, fpsr
+	str w16, [x0, #788]
+	ldp x16, x17, [x0, #136]
+	ret
+
+// ARM64 Windows __chkstk takes the frame size in 16-byte units in x15.
+// Probe before the caller adjusts SP, preserving all ordinary argument registers.
+.p2align 2
+.globl _raven_arm64_chkstk
+_raven_arm64_chkstk:
+	lsl x16, x15, #4
+	mov x17, sp
+1:
+	cmp x16, #4096
+	b.lo 2f
+	sub x17, x17, #4096
+	ldr xzr, [x17]
+	sub x16, x16, #4096
+	b 1b
+2:
+	sub x17, x17, x16
+	ldr xzr, [x17]
+	ret

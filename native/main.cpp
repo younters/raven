@@ -14,6 +14,7 @@
 #include "nt/providers.h"
 #include "nt/paths.h"
 #include "nt/launch.h"
+#include "nt/runtime_executable.h"
 #include "nt/actctx.h"
 #include "nt/elevation.h"
 #include "nt/restart.h"
@@ -149,6 +150,9 @@ static void show_fault(int signal)
 
 int main(int argc, char **argv)
 {
+#ifdef RAVEN_FEX_PROCESS
+	raven::launch_fex_host(argc, argv);
+#endif
 #ifdef __APPLE__
 	if (const int error = raven_darwin::prepare_fd_budget())
 		std::fprintf(stderr, "raven: descriptor budget unchanged (errno=%d)\n", error);
@@ -308,13 +312,21 @@ int main(int argc, char **argv)
 		if (bind_imports || run_modules || run_process) {
 			raven::ModuleSet modules;
 #ifdef RAVEN_FEX_PROCESS
-			if (use_fex) modules.set_address_space(raven::fex_address_available, 0x10000000000ULL);
+			if (use_fex) modules.set_address_space(raven::fex_reserve_image_address, 0x10000000000ULL);
 #endif
 			raven::PEModule *entry = nullptr;
 			for (int i = (run_modules || run_process) ? first_file : 2; i < last_file; ++i) {
 				auto bytes = read_file(argv[i]);
 				if (!entry && run_process)
 					raven::widen_il_only_image(bytes);
+#ifdef RAVEN_FEX_PROCESS
+				if (use_fex && !entry && !raven::PEImage(bytes).is_64) {
+					const auto limit = raven::wow64_user_limit(raven::PEImage(bytes).characteristics);
+					modules.set_address_space([limit](uint64_t address, uint64_t size) {
+						return address >= 65536 && size && address < limit && size <= limit - address;
+					}, 0x10000000ULL);
+				}
+#endif
 				auto &module = modules.add(std::filesystem::path(argv[i]).filename().string(), std::move(bytes));
 				if (!entry) {
 					entry = &module;
@@ -398,8 +410,8 @@ int main(int argc, char **argv)
 										// Setup is quiet: only a failure says anything, on standard error.
 										if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
 											::dup2(quiet, 1);
-										const std::string self = std::filesystem::read_symlink("/proc/self/exe").string(), path = program.string();
-										::execl(self.c_str(), self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
+										const std::string self = raven::child_runtime_executable(std::filesystem::read_symlink("/proc/self/exe")).string(), path = program.string();
+										::execl(self.c_str(), self.c_str(), "--run-process", use_fex ? "--execution=fex" : "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
 											server, static_cast<char *>(nullptr));
 										::_exit(127);
 									}
@@ -776,12 +788,12 @@ int main(int argc, char **argv)
 		const auto imports = image.imports();
 		if (run_entry) {
 #ifdef RAVEN_NATIVE_CPU
-			raven::LoadedImage loaded(image, fex_entry && image.directories[5].size ? 0x10000000000ULL : image.image_base);
+			raven::LoadedImage loaded(image, fex_entry && image.is_64 && image.directories[5].size ? 0x10000000000ULL : image.image_base);
 			const auto bootstrap = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "raven-bootstrap";
 #ifdef RAVEN_FEX_PROCESS
 			if (fex_entry) {
-				const char *root = std::getenv("RAVEN_FEX_MODULE_ROOT");
-				return native_result(raven::run_fex_entry(image, loaded, root ? root : ""));
+				const auto root = raven::discover_fex_module_root();
+				return native_result(raven::run_fex_entry(image, loaded, root));
 			}
 #else
 			if (fex_entry) throw std::runtime_error("FEX requires a RAVEN_FEX_MODHOST build");

@@ -1,0 +1,366 @@
+{
+  "initial_source": "c60a06b",
+  "baseline_source": "051344d306ef7dba5e1da1454f69049cbb9a1adc",
+  "full_suite": {
+    "name": "(empty)",
+    "tests": "727",
+    "failures": "28",
+    "disabled": "1",
+    "skipped": "6",
+    "hostname": "",
+    "time": "281",
+    "timestamp": "2026-10-31T03:27:20"
+  },
+  "baseline": {
+    "name": "(empty)",
+    "tests": "28",
+    "failures": "19",
+    "disabled": "0",
+    "skipped": "0",
+    "hostname": "",
+    "time": "75",
+    "timestamp": "2026-10-31T03:32:01"
+  },
+  "final_targeted": {
+    "name": "(empty)",
+    "tests": "209",
+    "failures": "19",
+    "disabled": "0",
+    "skipped": "0",
+    "hostname": "",
+    "time": "117",
+    "timestamp": "2026-10-31T03:43:14"
+  },
+  "failures": [
+    {
+      "test": "darwin_dcomp_foreign",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n",
+      "baseline_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n",
+      "final_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n"
+    },
+    {
+      "test": "darwin_dcomp_foreign-hidpi",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n",
+      "baseline_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n",
+      "final_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n"
+    },
+    {
+      "test": "darwin_dcomp_local",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -5 before stage 1\n",
+      "baseline_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -5 before stage 1\n",
+      "final_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -5 before stage 1\n"
+    },
+    {
+      "test": "darwin_dcomp_local-hidpi",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -5 before stage 1\n",
+      "baseline_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n",
+      "final_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -5 before stage 1\n"
+    },
+    {
+      "test": "darwin_dcomp_popup",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -5 before stage 1\n",
+      "baseline_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -5 before stage 1\n",
+      "final_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n"
+    },
+    {
+      "test": "darwin_dcomp_popup-hidpi",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -5 before stage 1\n",
+      "baseline_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -5 before stage 1\n",
+      "final_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n"
+    },
+    {
+      "test": "darwin_dxmt_device10",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "DXMT device10: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_0\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_1\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_0\n\n",
+      "baseline_output": "DXMT device10: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_0\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_1\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_0\n\n",
+      "final_output": "DXMT device10: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_0\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_1\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_0\n\n"
+    },
+    {
+      "test": "darwin_dxmt_fullscreen",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "DXMT fullscreen: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n",
+      "baseline_output": "DXMT fullscreen: exit -6, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\nobjc[50947]: thread is not initializing this class!\n\n",
+      "final_output": "DXMT fullscreen: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n"
+    },
+    {
+      "test": "darwin_dxmt_pacing",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "DXMT pacing: exit -11, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n",
+      "baseline_output": "DXMT pacing: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n",
+      "final_output": "DXMT pacing: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n"
+    },
+    {
+      "test": "darwin_dxmt_present_rate",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "DXMT present_rate: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n",
+      "baseline_output": "DXMT present_rate: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n",
+      "final_output": "DXMT present_rate: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n"
+    },
+    {
+      "test": "darwin_dxmt_window",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "DXMT presentation: fixture exited -5 before window.txt\n",
+      "baseline_output": "DXMT presentation: fixture exited -5 before window.txt\n",
+      "final_output": "DXMT presentation: fixture exited -5 before window.txt\n"
+    },
+    {
+      "test": "darwin_x87sidecar_child",
+      "classification": "Environmental: intermittent",
+      "reason": "Passes baseline, serial branch replay, and final recheck.",
+      "full_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/scripts/test-x87sidecar.py\", line 72, in <module>\n    main()\n    ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/scripts/test-x87sidecar.py\", line 40, in main\n    baseline = run(raven, fixture, \"\")\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/scripts/test-x87sidecar.py\", line 29, in run\n    raise RuntimeError(f\"guest failed: {process.returncode}, stdout={out!r}\\n{text}\")\nRuntimeError: guest failed: 1, stdout=b'\\x00\\x00\\x00\\x00\\x80\\x84^A\\x8e\\xcfL\\x00\\x00\\x00\\x00\\x00\\x80\\x96\\x98\\x00\\x00\\x00\\x00\\x00'\nraven: guest agent killed by signal 9\nraven: native entry timed out at 0x0\nraven: guest agent killed by signal 9\n\n",
+      "baseline_output": "bit-identical checksum 415e848000000000; stock=0.430765s hooked=0.018640s speedup=23.11x\n",
+      "final_output": "bit-identical checksum 415e848000000000; stock=0.443725s hooked=0.017914s speedup=24.77x\n"
+    },
+    {
+      "test": "native_cmd_x32",
+      "classification": "Environmental: build configuration",
+      "reason": "Unoptimized runtime timeout; passes after matching baseline RelWithDebInfo.",
+      "full_output": "raven: native entry timed out at 0x0\n",
+      "baseline_output": "Native entry returned 0 (process initialization not implemented)\n",
+      "final_output": "Native entry returned 0 (process initialization not implemented)\n"
+    },
+    {
+      "test": "native_darwin_cocoa_input",
+      "classification": "Environmental: intermittent",
+      "reason": "Passes baseline, serial branch replay, and final recheck.",
+      "full_output": "poll immediately revoked posted keyboard focus\n",
+      "baseline_output": "",
+      "final_output": ""
+    },
+    {
+      "test": "native_darwin_desktop_dpi_x32",
+      "classification": "Environmental: build configuration",
+      "reason": "Unoptimized runtime timeout; passes after matching baseline RelWithDebInfo.",
+      "full_output": "raven: native entry timed out at 0x0\n",
+      "baseline_output": "Native entry returned 0 (process initialization not implemented)\n",
+      "final_output": "Native entry returned 0 (process initialization not implemented)\n"
+    },
+    {
+      "test": "native_dwrite",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "Native entry returned 20 (process initialization not implemented)\n",
+      "baseline_output": "Native entry returned 20 (process initialization not implemented)\n",
+      "final_output": "Native entry returned 20 (process initialization not implemented)\n"
+    },
+    {
+      "test": "native_handle_channel_contract",
+      "classification": "Regression: fixed",
+      "reason": "Obsolete PE-width preflight rejected synthetic IPC child; removed; final test passes.",
+      "full_output": "cannot start final-transfer child\n",
+      "baseline_output": "handle channel contract passed\n",
+      "final_output": "handle channel contract passed\n"
+    },
+    {
+      "test": "native_parallel_lifecycle_x64",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "exit: expected exit 0\nfault: exit 5\nNative process exited with status 3221225477\nraven: unhandled exception c0000005 at 199801025 (parallel-lifecycle64.exe+1025)\n\n",
+      "baseline_output": "exit: expected exit 0\nfault: exit 5\nNative process exited with status 3221225477\nraven: unhandled exception c0000005 at 199801025 (parallel-lifecycle64.exe+1025)\n\n",
+      "final_output": "exit: expected exit 0\nfault: exit 5\nNative process exited with status 3221225477\nraven: unhandled exception c0000005 at 199801025 (parallel-lifecycle64.exe+1025)\n\n"
+    },
+    {
+      "test": "native_parity_context_native",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "FAIL: expected verified zero entry return, host exit=122\nNative entry returned 122 (process initialization not implemented)\n",
+      "baseline_output": "FAIL: expected verified zero entry return, host exit=122\nNative entry returned 122 (process initialization not implemented)\n",
+      "final_output": "FAIL: expected verified zero entry return, host exit=122\nNative entry returned 122 (process initialization not implemented)\n"
+    },
+    {
+      "test": "native_pipe_roundtrip_x32",
+      "classification": "Environmental: build configuration",
+      "reason": "Unoptimized runtime timeout; passes after matching baseline RelWithDebInfo.",
+      "full_output": "raven: native entry timed out at 0x0\n",
+      "baseline_output": "rounds=10000\nmedian_us=153\np99_us=222\n",
+      "final_output": "rounds=10000\nmedian_us=156\np99_us=287\n"
+    },
+    {
+      "test": "native_rpc_auth_x64",
+      "classification": "Environmental: component mismatch",
+      "reason": "Private RTL faults; passes using baseline RTL component.",
+      "full_output": "raven: unhandled exception c0000005 at 1d8023237 (rpcrt4.dll+23237)\nNative process exited with status 3221225477\n",
+      "baseline_output": "Native entry returned 0 (process initialization not implemented)\n",
+      "final_output": "Native entry returned 0 (process initialization not implemented)\n"
+    },
+    {
+      "test": "native_thread_snapshot_x32",
+      "classification": "Environmental: build configuration",
+      "reason": "Unoptimized runtime timeout; passes after matching baseline RelWithDebInfo.",
+      "full_output": "raven: native entry timed out at 0x0\n",
+      "baseline_output": "Native entry returned 0 (process initialization not implemented)\n",
+      "final_output": "Native entry returned 0 (process initialization not implemented)\n"
+    },
+    {
+      "test": "native_twinapi_x32",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "raven: unimplemented native x86 API QISearch\nraven: unimplemented native process API at 0x70401c31\n",
+      "baseline_output": "raven: unimplemented native x86 API QISearch\nraven: unimplemented native process API at 0x70401c31\n",
+      "final_output": "raven: unimplemented native x86 API QISearch\nraven: unimplemented native process API at 0x70401c31\n"
+    },
+    {
+      "test": "native_twinapi_x64",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "raven: unimplemented native API QISearch\nraven: unimplemented native process API at 0x6fff00151c3f\n",
+      "baseline_output": "raven: unimplemented native API QISearch\nraven: unimplemented native process API at 0x6fff00151c3f\n",
+      "final_output": "raven: unimplemented native API QISearch\nraven: unimplemented native process API at 0x6fff00151c3f\n"
+    },
+    {
+      "test": "native_x86_dwrite",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "Native entry returned 20 (process initialization not implemented)\n",
+      "baseline_output": "Native entry returned 20 (process initialization not implemented)\n",
+      "final_output": "Native entry returned 20 (process initialization not implemented)\n"
+    },
+    {
+      "test": "native_x86_registry",
+      "classification": "Environmental: build configuration",
+      "reason": "Unoptimized runtime timeout; passes after matching baseline RelWithDebInfo.",
+      "full_output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/scripts/native-x86-registry.py\", line 36, in <module>\n    main()\n    ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/scripts/native-x86-registry.py\", line 21, in main\n    run(raven, reader, prefix, expected=11)\n    ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-0304570a/scripts/native-x86-registry.py\", line 11, in run\n    result = subprocess.run([str(raven), \"--run-process\", \"--execution=native\", str(program)],\n                            capture_output=True, text=True, timeout=20, env=env)\n  File \"/opt/homebrew/Cellar/python@3.15/3.15.1/Frameworks/Python.framework/Versions/3.15/lib/python3.15/subprocess.py\", line 671, in run\n    stdout, stderr = process.communicate(input, timeout=timeout)\n                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.15/3.15.1/Frameworks/Python.framework/Versions/3.15/lib/python3.15/subprocess.py\", line 1395, in communicate\n    stdout, stderr = self._communicate(input, endtime, timeout)\n                     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.15/3.15.1/Frameworks/Python.framework/Versions/3.15/lib/python3.15/subprocess.py\", line 2424, in _communicate\n    self._check_timeout(endtime, orig_timeout, stdout, stderr,\n    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                        skip_check_and_raise=True)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/opt/homebrew/Cellar/python@3.15/3.15.1/Frameworks/Python.framework/Versions/3.15/lib/python3.15/subprocess.py\", line 1434, in _check_timeout\n    raise TimeoutExpired(\n    ...<2 lines>...\n            stderr=b''.join(stderr_seq) if stderr_seq else None)\nsubprocess.TimeoutExpired: Command '['/Users/yount/.t3/worktrees/raven/t3-0304570a/build-integration/native/raven', '--run-process', '--execution=native', '/Users/yount/.t3/worktrees/raven/t3-0304570a/build-integration/native/x86-registry-2.exe']' timed out after 20 seconds\n",
+      "baseline_output": "Registry values written by one PE32 process persisted on disk and were read by a fresh process\n",
+      "final_output": "Registry values written by one PE32 process persisted on disk and were read by a fresh process\n"
+    },
+    {
+      "test": "native_xmllite_x32",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "Native entry returned 111 (process initialization not implemented)\n",
+      "baseline_output": "Native entry returned 111 (process initialization not implemented)\n",
+      "final_output": "Native entry returned 111 (process initialization not implemented)\n"
+    },
+    {
+      "test": "native_xmllite_x64",
+      "classification": "Pre-existing",
+      "reason": "Fails on current macos and in final matched-build recheck.",
+      "full_output": "Native entry returned 111 (process initialization not implemented)\n",
+      "baseline_output": "Native entry returned 111 (process initialization not implemented)\n",
+      "final_output": "Native entry returned 111 (process initialization not implemented)\n"
+    }
+  ],
+  "registration_ms_initial": {
+    "native_fresh_prefix_x32_native": 20404.2,
+    "native_fresh_prefix_x32_fex": 23562.0,
+    "native_fresh_prefix_x64_native": 16929.9,
+    "native_fresh_prefix_x64_fex": 20054.6
+  },
+  "registration_ms_final": {
+    "native_fresh_prefix_x32_native": 3627.7,
+    "native_fresh_prefix_x32_fex": 3616.2,
+    "native_fresh_prefix_x64_native": 3411.4,
+    "native_fresh_prefix_x64_fex": 3404.7
+  },
+  "disk": {
+    "initial_free_gib": 23,
+    "minimum_observed_free_gib": 14,
+    "final_free_gib": 15,
+    "enospc": false
+  },
+  "modules": {
+    "version": 1,
+    "xtajit64_sha256": "5e27b800b748faf531bd22400b4460f7ef38fe47648b1a54e36cabb85f4de70d",
+    "raven_process_init_rva": 27836,
+    "patches": {
+      "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
+      "0002-raven-host-frontend.patch": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da",
+      "0003-raven-host-build-option.patch": "b10f70cb16189b544afc3337b2e7c9e8b5bfad2b7f6963aec2b3767a78225d14",
+      "0004-raven-dispatch-resume.patch": "512b17d8f4fb5eb122bafdd1089c5112d7d8961bdcbde79fa19febfac226b7fc",
+      "0005-native-temporary-jit-guards.patch": "d71afcb2dd831501a9681b4621ab7fd18639ae2498bb8cadf38aaa6446801d6c",
+      "0006-raven-precise-fault.patch": "ce560ecbf0ec7658b25f806f83fae55dac8b0e287b99ee0e76d24e1f16aedcea",
+      "0007-raven-x87-context.patch": "bb3f981b875ce568911ab811971693ecbe4f319880085e6b7f80b555ad423633",
+      "0008-raven-divide-and-synchronous-faults.patch": "1aa6f41b73c1a5ca082411a552fa4cf30334a2b41b5197e9e8c8e24fc87c853c",
+      "0009-raven-doorbell-stop.patch": "ac41d37a32f07deba437002373f4628d1f12d65e3d3a7d48cf98c303b0c5449e",
+      "0010-raven-shared-data-and-return-stack.patch": "f91729012073e54bac788909509080ea0395fd7819414fc9cfdda07a6ff668de",
+      "0011-raven-gate-callret-repair.patch": "e279bfb28511db4c4fa35abfaccea508e184a1297230764d343e1d0565d0459a",
+      "0012-raven-reconstruct-architectural-flags.patch": "ec197724c73609ec68848477ea240e00d781c9b81fe9db151c67a1b0ec402657",
+      "0013-raven-wow64-host.patch": "725144fa05016e97bcc1bc4ec7a88dd6c30053fe3b4a8bc9afc55c31acfdb41b",
+      "0014-raven-wow64-interrupt.patch": "147637376b17a90678113cb9ef420b8076aa750601dfb917047dc76f5a642161",
+      "0015-raven-wow64-doorbell.patch": "3160a1065f03848cef9c276c94a6f368d46e82315dcbd71254031df0fb191246",
+      "0016-wow64-host-boundary-validation.patch": "8e3ae8ccaae4336cd5d045be4a465b280036e60f9474730c2b699bad22f6f326",
+      "0017-raven-unaligned-tso.patch": "082bdfea773ee87344a90d2c7e4bf7fddc233037236bac4b2afd6c45df0751d4",
+      "0018-raven-private-host-teb.patch": "3b7a4c854631feec3bda91339e5f5e60b790725b430935be837bab8f1bf12310",
+      "0019-raven-native-overcommit-repair.patch": "3ce991b3f7fd453e966e835c6be2905be9e4658a19d49536f3aa051b09e38883"
+    },
+    "xtajit_sha256": "b84bca9f2b7e8797c46c51729149c4c8dfeb35b5b230960635f5493929df45d9",
+    "raven_wow64_process_init_rva": 30800,
+    "raven_wow64_process_init_instruction": 4162785278,
+    "shared_patch12_xtajit_sha256": "5c785d47c43d8f2d0a444e82114ca731499b8a9e2ac408679b212db46c76bd6b",
+    "host_abi_version": 2
+  },
+  "raven_sha256": "a8db63c21fbb37a06cb957674db39b23b32b136c16ad132af772d6d22642daa7",
+  "npp": {
+    "native": {
+      "engine": "native",
+      "command": [
+        "/Users/yount/.t3/worktrees/raven/t3-0304570a/build-integration/native/raven",
+        "--run-process",
+        "--execution=native",
+        "--timeout-ms=90000",
+        "--desktop=macos",
+        "--directory=/tmp/raven-review-npp/npp",
+        "/tmp/raven-review-npp/npp/notepad++.exe"
+      ],
+      "pid": 72878,
+      "fresh_prefix": "/tmp/raven-final-apps-verified/prefix-native",
+      "editor_ms": 5579.729667020729,
+      "window": {
+        "id": 12209,
+        "bounds": {
+          "X": 365,
+          "Height": 698,
+          "Y": 147,
+          "Width": 1092
+        }
+      },
+      "capture_returncode": 0,
+      "screenshot": "/tmp/raven-final-apps-verified/native.png",
+      "exit_after_cleanup": -15
+    },
+    "fex": {
+      "engine": "fex",
+      "command": [
+        "/Users/yount/.t3/worktrees/raven/t3-0304570a/build-integration/native/raven",
+        "--run-process",
+        "--execution=fex",
+        "--timeout-ms=90000",
+        "--desktop=macos",
+        "--directory=/tmp/raven-review-npp/npp",
+        "/tmp/raven-review-npp/npp/notepad++.exe"
+      ],
+      "pid": 72967,
+      "fresh_prefix": "/tmp/raven-final-apps-verified/prefix-fex",
+      "editor_ms": 6112.158374977298,
+      "window": {
+        "id": 12229,
+        "bounds": {
+          "X": 367,
+          "Height": 692,
+          "Y": 149,
+          "Width": 1088
+        }
+      },
+      "capture_returncode": 0,
+      "screenshot": "/tmp/raven-final-apps-verified/fex.png",
+      "exit_after_cleanup": -15
+    }
+  }
+}
