@@ -4,6 +4,7 @@
 #endif
 #include "child_process.h"
 #include "console.h"
+#include "../pe/module_set.h"
 
 #include "elevation.h"
 #include "text.h"
@@ -133,6 +134,11 @@ void ProcessObject::terminate(uint32_t exit)
 
 std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &error)
 {
+#ifdef __APPLE__
+	auto child_bytes = ModuleBytes::map(launch.image);
+	if (!child_bytes) { error = 2; return nullptr; }
+	const bool child_is_64 = PEImage(*child_bytes).is_64;
+#endif
 	// The child may write to the terminal too, moving the cursor where this process cannot follow it.
 	TerminalConsole::instance().mark_stale();
 	char self[4096];
@@ -145,7 +151,7 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 	// What the parent was started with, such as the window system and the time budget, applies to its children.
 	std::vector<std::string> arguments{self, "--run-process",
 #ifdef __APPLE__
-		raven_darwin::child_execution_argument()
+		raven_darwin::child_execution_argument(child_is_64)
 #else
 		"--execution=native"
 #endif

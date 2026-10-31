@@ -339,12 +339,22 @@ NativeResult FexProcess::resume()
 		state->active = false;
 	NativeResult result{last_stop.kind, last_stop.value, last_stop.rip,
 		last_stop.kind == NativeStop::exception ? SIGSEGV : 0};
+	state->thread.debug_print_fault = false;
 	if (last_stop.kind == NativeStop::exception) {
 		auto &record = last_stop.exception;
 		// INT 2D debug-print handling is restricted to the canonical provider body.
-		if (context().registers.rax == 1 && has_protection(result.instruction, 4, PROT_READ | PROT_EXEC) &&
-			read_memory(result.instruction, 4) == std::vector<uint8_t>{0xcd, 0x2d, 0xcc, 0xc3})
+		if (!state->traps.empty() && result.value == 0x80000003 && record.flags == 0 &&
+			record.count == 1 && record.information[0] == 1 && context().registers.rax == 1 &&
+			result.instruction >= 2 && !state->traps.contains(result.instruction - 2) && has_protection(result.instruction - 2, 4, PROT_READ | PROT_EXEC) &&
+			read_memory(result.instruction - 2, 4) == std::vector<uint8_t>{0xcd, 0x2d, 0xcc, 0xc3}) {
+			// FEX reports INT 2D after its two-byte instruction. Normalize only
+			// the canonical service that the provider can complete as a fault.
+			auto saved = context();
+			result.instruction -= 2;
+			saved.registers.rip = result.instruction;
+			set_context(saved);
 			state->thread.debug_print_fault = true;
+		}
 		result.exception_flags = record.flags;
 		if (record.count > 15) throw std::runtime_error("FEX exception information exceeds packet");
 		result.exception_information.assign(record.information, record.information + record.count);
@@ -469,9 +479,8 @@ bool fex_address_available(uint64_t address, uint64_t size)
 }
 bool fex_image_address_available(uint64_t address, uint64_t size)
 {
-	// Module initialization/dyld can claim low preferred bases after the loader's
-	// preflight. Keep relocatable images in the dedicated high image arena.
-	return address >= 0x10000000000ULL && fex_address_available(address, size);
+	// Preferred bases are valid at any free address; only fallback uses the high arena.
+	return fex_address_available(address, size);
 }
 bool FexProcess::memory_available(uint64_t address, size_t size) const { return fex_address_available(address, size); }
 std::vector<uint8_t> FexProcess::read_memory(uint64_t address, size_t size) const

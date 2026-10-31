@@ -3,6 +3,7 @@
 #include "context.h"
 #include "signal_stack.h"
 #include <signal.h>
+#include <setjmp.h>
 #include <sys/ucontext.h>
 namespace RavenFault {
 struct Record {
@@ -23,9 +24,22 @@ void *entry = nullptr;
 // Fault dispatch must use the guest TEB of this host worker, including callbacks.
 thread_local void *execution_teb = nullptr;
 
+// Only active while emulating an alignment fault. A decoder memory access
+// may fault; restart dispatch with the original guest PC and an AV record.
+thread_local sigjmp_buf *alignment_recovery = nullptr;
+thread_local NativeContext alignment_original;
+thread_local uintptr_t alignment_fault_address;
+thread_local uint64_t alignment_fault_write;
 extern "C" void raven_signal_entry(int, siginfo_t *, void *);
 extern "C" void raven_fault_handler(int signal, siginfo_t *info, void *opaque) {
 	require_native_x18();
+	if (alignment_recovery && (signal == SIGSEGV || signal == SIGBUS)) {
+		alignment_fault_address = uintptr_t(info->si_addr);
+		alignment_fault_write = (static_cast<ucontext_t *>(opaque)->uc_mcontext->__es.__esr >> 6) & 1;
+		auto *recovery = alignment_recovery;
+		alignment_recovery = nullptr;
+		siglongjmp(*recovery, 1);
+	}
 	auto *uc = static_cast<ucontext_t *>(opaque);
 	auto &ss = uc->uc_mcontext->__ss;
 	auto &ns = uc->uc_mcontext->__ns;
@@ -52,7 +66,18 @@ extern "C" void raven_fault_handler(int signal, siginfo_t *info, void *opaque) {
 		// FEX may backpatch acquire/release instructions while repairing an
 		// unaligned access. Signal delivery enters with the guest's JIT RX mode.
 		const auto previous_jit = NativeJit::protect(0);
+		sigjmp_buf recovery;
+		if (sigsetjmp(recovery, 1)) {
+			native = alignment_original;
+			record.code = 0xc0000005;
+			record.information[0] = alignment_fault_write;
+			record.information[1] = alignment_fault_address;
+		} else if (record.code == 0x80000002) {
+			alignment_original = native;
+			alignment_recovery = &recovery;
+		}
 		auto status = uint32_t(raven_ec_call(entry, args, execution_teb ? execution_teb : RavenNT::active_thread->teb.data()));
+		alignment_recovery = nullptr;
 		NativeJit::protect(previous_jit);
 		if (!status) {
 			for (unsigned i = 0; i < 29; ++i)

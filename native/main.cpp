@@ -399,7 +399,7 @@ int main(int argc, char **argv)
 										if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
 											::dup2(quiet, 1);
 										const std::string self = std::filesystem::read_symlink("/proc/self/exe").string(), path = program.string();
-										::execl(self.c_str(), self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
+										::execl(self.c_str(), self.c_str(), "--run-process", use_fex ? "--execution=fex" : "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
 											server, static_cast<char *>(nullptr));
 										::_exit(127);
 									}

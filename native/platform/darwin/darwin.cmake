@@ -872,14 +872,14 @@ if(RAVEN_FEX_MODHOST AND TARGET raven_cpu AND RAVEN_MINGW64)
     add_custom_command(OUTPUT ${FEX_FIXED}
         COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
             -Wl,--entry,raven_entry,--image-base,0x400000,--no-insert-timestamp
-            -o ${FEX_FIXED} ${PROJECT_SOURCE_DIR}/testdata/native_cpu/entry.c
-        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_cpu/entry.c VERBATIM)
+            -o ${FEX_FIXED} ${RAVEN_DARWIN_DIR}/fex/fixed_client.c
+        DEPENDS ${RAVEN_DARWIN_DIR}/fex/fixed_client.c VERBATIM)
     add_custom_target(fex_placement_fixtures DEPENDS ${FEX_PLACEMENT} ${FEX_FIXED})
     add_test(NAME native_placement_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
         --raven $<TARGET_FILE:raven> --fixture ${FEX_PLACEMENT} --modules "${RAVEN_FEX_MODULE_ROOT}")
-    add_test(NAME native_fixed_image_conflict_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
-        --raven $<TARGET_FILE:raven> --fixture ${FEX_FIXED} --modules "${RAVEN_FEX_MODULE_ROOT}" --expect-placement-conflict)
-    set_tests_properties(native_placement_fex native_fixed_image_conflict_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;m2;placement")
+    add_test(NAME native_fixed_image_preferred_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+        --raven $<TARGET_FILE:raven> --fixture ${FEX_FIXED} --modules "${RAVEN_FEX_MODULE_ROOT}")
+    set_tests_properties(native_placement_fex native_fixed_image_preferred_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;m2;placement")
 endif()
 
 if(RAVEN_FEX_MODHOST AND TARGET kernel_seh_fixture)

@@ -96,6 +96,9 @@ int main(int argc, char **argv)
 			loaded.data()[image.entry] = 0x0f; loaded.data()[image.entry + 1] = 0x0b;
 		} else if (mode == "internal") {
 			// Tested in an isolated child: a host BRK must never become a guest exception.
+		} else if (mode == "debug-print") {
+			const uint8_t code[]{0xb8, 1, 0, 0, 0, 0xcd, 0x2d, 0xcc, 0xc3};
+			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
 		} else if (mode == "unaligned") {
 			const uint8_t code[]{0xb8, 42, 0, 0, 0, 0x48, 0x89, 0x44, 0x24, 0xf4,
 				0x48, 0x8b, 0x44, 0x24, 0xf4, 0xc3};
@@ -138,6 +141,7 @@ int main(int argc, char **argv)
 			return 0;
 		}
 		raven::FexProcess process(images, root);
+		if (mode == "debug-print") process.add_api_trap(loaded.base() + image.entry + 32, 0);
 		if (mode == "wait-unwind") {
 			process.set_execution_wait([](auto, auto) { throw std::runtime_error("wait sentinel"); });
 			bool caught = false;
@@ -166,6 +170,15 @@ int main(int argc, char **argv)
 		}
 		if (mode == "internal") asm volatile("brk #0");
 		auto result = process.call(loaded.base() + image.entry, {}, std::chrono::milliseconds(mode == "timeout" ? 20 : 5000));
+		if (mode == "debug-print") {
+			check(result.stop == raven::NativeStop::fault && result.signal == SIGSEGV && result.signal_code == SI_KERNEL && result.value == 1,
+				"INT 2D did not normalize canonical debug print");
+			process.complete_debug_print(result.instruction);
+			result = process.resume();
+			check(result.stop == raven::NativeStop::returned && result.value == 0, "debug print did not return");
+			std::cout << "PASS: canonical INT 2D completion\n";
+			return 0;
+		}
 		if (mode == "nt-service") {
 			check(result.stop == raven::NativeStop::syscall && result.value == 0x1234, "NT syscall number lost");
 			bool rejected = false;
