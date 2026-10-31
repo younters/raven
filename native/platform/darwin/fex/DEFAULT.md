@@ -88,8 +88,10 @@ pre-existing failures that are outside this change:
 `native_layout_failure_component`, `native_cmd_x32`, and
 `native_parallel_lifecycle_x64`. The lifecycle fault also reproduced with the
 reference OFF executable against the same fixture and script. The earlier
-`native_cmd` timeout requires a serial recheck against this build; it passes on
-current `macos` (`build-macos`). Initial parallel-run failures and
+`native_cmd` timeout did not reproduce in the locked serial recheck: this build
+passes in 53.75 seconds. It also passes on current `macos` (`build-macos`), so
+treat the earlier timeout as intermittent rather than a reproduced regression.
+Initial parallel-run failures and
 all recheck counts remain in [default-build-evidence.json](default-build-evidence.json).
 Raw build/test logs are `/tmp/raven-default-fex-*.log`.
 
@@ -128,3 +130,27 @@ SDK. No inheritance policy was changed here. The separate NT-service commit is
 also minimal and must be reconciled with M5's independent enter_nt_service work.
 The path contract and launch integration contract cover sibling selection,
 all three FEX modes, native isolation, a missing companion, and symlink-loop failure.
+
+## Review requalification (2026-10-30)
+
+The default configure (cached option removed) and normal `-j8` build pass.
+The companion uses Objective-C++20; direct checks of the default option stanza
+also select OFF for Apple x86_64 and non-Apple arm64.
+All CTest invocations used `/tmp/raven-ctest-lock.sh`, serially:
+
+- FEX label: **116 passed, no skips or failures**, including NT-service,
+  default discovery with unset/empty overrides, and both new contracts.
+- Darwin/Cocoa/Rosetta area plus native kernel/loader and `native_cmd`:
+  **127 passed, 3 skipped, 0 failed** (130 selected). Skips are authorized
+  capture, installer WIDL, and fd-budget low-hard. Both new contracts also
+  passed in this area run. `native_cmd` passed in **53.75 seconds**.
+
+A fresh copy of `raven-fixtures/npp` in `/tmp/raven-review-npp/npp` launched
+under Rosetta with a private prefix. The window capture at 15 seconds was
+visually inspected: the Notepad++ editor, menus, toolbar, new tab, editing area,
+and status bar are visible. Capture: `/tmp/raven-review-npp/editor.png`.
+The process ended at its configured 25-second deadline (exit 1); this is an
+editor-visibility check, not an application exit-success assertion.
+[review-validation.json](review-validation.json) records commands, counts,
+logs and capture evidence. The earlier broad-suite qualification above remains
+historical; this review did not rerun or claim a green entire suite.
