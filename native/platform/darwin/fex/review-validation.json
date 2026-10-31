@@ -1,0 +1,82 @@
+{
+  "date": "2026-10-30",
+  "tested_code_head": "d5e78eb2f275e031d20f437cc90d7df3d4995452",
+  "build": {
+    "directory": "/tmp/raven-default-fex",
+    "configure_default": "RAVEN_FEX_MODHOST=ON after removing cached option",
+    "parallelism": 8,
+    "result": "passed",
+    "logs": [
+      "/tmp/raven-review-configure.log",
+      "/tmp/raven-review-default-configure.log",
+      "/tmp/raven-review-build.log",
+      "/tmp/raven-review-final-build.log"
+    ],
+    "default_gate_checks": [
+      "Apple arm64 ON",
+      "Apple x86_64 OFF",
+      "non-Apple arm64 OFF"
+    ],
+    "commands": [
+      "cmake -S . -B /tmp/raven-default-fex -U RAVEN_FEX_MODHOST",
+      "cmake --build /tmp/raven-default-fex -j8"
+    ]
+  },
+  "ctest_lock": "/tmp/raven-ctest-lock.sh",
+  "runs": [
+    {
+      "name": "fex",
+      "selected": 116,
+      "passed": 116,
+      "skipped": [],
+      "failed": 0,
+      "junit": "/tmp/raven-review-fex.xml",
+      "log": "/tmp/raven-review-fex.log",
+      "parallelism": 1,
+      "command": "/tmp/raven-ctest-lock.sh fex-review-qualification ctest --test-dir /tmp/raven-default-fex -L fex -j1 --output-on-failure --output-junit /tmp/raven-review-fex.xml"
+    },
+    {
+      "name": "area",
+      "selected": 130,
+      "passed": 127,
+      "skipped": [
+        "native_darwin_capture_authorized",
+        "native_darwin_installer_widl",
+        "native_darwin_fd_budget_low_hard"
+      ],
+      "failed": 0,
+      "junit": "/tmp/raven-review-area.xml",
+      "log": "/tmp/raven-review-area.log",
+      "parallelism": 1,
+      "command": "/tmp/raven-ctest-lock.sh fex-review-darwin-rosetta ctest --test-dir /tmp/raven-default-fex -R '(darwin|cocoa|rosetta|^native_cmd$|^native_(cpu_contracts|x86_contracts|kernel_(files|ansi|threads|seh)|kernel_file_persistence|exception_contract|loader_contract|dynamic_loader_contract)$)' -j1 --output-on-failure --output-junit /tmp/raven-review-area.xml"
+    }
+  ],
+  "native_cmd": {
+    "result": "passed",
+    "seconds": 53.75,
+    "assessment": "Earlier timeout did not reproduce under serial lock; intermittent, not a reproduced regression."
+  },
+  "notepad_rosetta": {
+    "command": [
+      "/tmp/raven-default-fex/native/raven",
+      "--run-process",
+      "--execution=native",
+      "--timeout-ms=25000",
+      "--desktop=macos",
+      "/tmp/raven-review-npp/npp/notepad++.exe"
+    ],
+    "returncode": 1,
+    "window": "{\"id\":10731,\"bounds\":{\"X\":365,\"Height\":698,\"Y\":147,\"Width\":1092}}",
+    "error": "",
+    "source": "/Users/yount/Documents/Projects/raven-fixtures/npp",
+    "copy": "/tmp/raven-review-npp/npp",
+    "capture": "/tmp/raven-review-npp/editor.png",
+    "visual_check": "Editor visible: menus, toolbar, new 1 tab, editing area, status bar.",
+    "deadline_ms": 25000
+  },
+  "known_baseline_failures": [
+    "native_layout_failure_component",
+    "native_cmd_x32",
+    "native_parallel_lifecycle_x64"
+  ]
+}

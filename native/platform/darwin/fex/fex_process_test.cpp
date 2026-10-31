@@ -96,6 +96,9 @@ int main(int argc, char **argv)
 			loaded.data()[image.entry] = 0x0f; loaded.data()[image.entry + 1] = 0x0b;
 		} else if (mode == "internal") {
 			// Tested in an isolated child: a host BRK must never become a guest exception.
+		} else if (mode == "nt-service") {
+			const uint8_t code[]{0x49, 0xc7, 0xc2, 37, 0, 0, 0, 0xb9, 99, 0, 0, 0, 0xb8, 0x34, 0x12, 0, 0, 0x0f, 0x05, 0xc3};
+			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
 		} else if (mode == "syscall") {
 			const uint8_t code[]{0xb8, 0x34, 0x12, 0, 0, 0x0f, 0x05, 0x48, 0x83, 0xc0, 5, 0xc3};
 			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
@@ -195,6 +198,20 @@ int main(int argc, char **argv)
 			check(process.context().registers.rip == loaded.base() + image.entry, "UD2 RIP imprecise");
 			std::cout << "PASS: UD2 precise illegal instruction\n";
 			return 0;
+		} else if (mode == "nt-service") {
+			check(result.stop == raven::NativeStop::syscall && result.value == 0x1234, "NT service stop lost number");
+			const auto instruction = result.instruction;
+			for (auto [rip, number] : {std::pair{instruction + 1, 0x1234u}, std::pair{instruction, 0x1235u}}) {
+				bool rejected = false;
+				try { process.enter_nt_service(rip, number); }
+				catch (const std::runtime_error &) { rejected = true; }
+				check(rejected, "mismatched NT service accepted");
+			}
+			process.enter_nt_service(instruction, 0x1234);
+			check(process.api_arguments(1)[0] == 37, "NT service did not restore RCX from R10");
+			check(process.context().registers.orig_rax == uint64_t(-1), "NT service remained pending");
+			process.return_api(42);
+			result = process.resume();
 		} else if (mode == "syscall") {
 			check(result.stop == raven::NativeStop::syscall && result.value == 0x1234, "syscall stop lost number");
 			auto context = process.context();

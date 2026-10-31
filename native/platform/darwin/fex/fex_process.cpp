@@ -336,6 +336,8 @@ NativeResult FexProcess::resume()
 		std::cerr << "FEX stop rip=" << std::hex << last_stop.rip << " address=" << last_stop.exception.information[1] << std::dec << "\n";
 	if (last_stop.kind == NativeStop::returned)
 		state->active = false;
+	state->thread.awaiting_syscall = last_stop.kind == NativeStop::syscall;
+	state->thread.context.registers.orig_rax = last_stop.value;
 	NativeResult result{last_stop.kind, last_stop.value, last_stop.rip,
 		last_stop.kind == NativeStop::exception ? SIGSEGV : 0};
 	if (last_stop.kind == NativeStop::exception) {
@@ -385,6 +387,7 @@ NativeContext FexProcess::context() const
 		&r.r8, &r.r9, &r.r10, &r.r11, &r.r12, &r.r13, &r.r14, &r.r15, &r.rip};
 	for (size_t i = 0; i < 17; ++i)
 		*registers[i] = packet_word(p, 0x78 + i * 8);
+	r.orig_rax = state->thread.awaiting_syscall ? state->thread.context.registers.orig_rax : uint64_t(-1);
 	r.gs_base = state->teb;
 	r.eflags = *reinterpret_cast<uint32_t *>(p + 0x44);
 	result.xstate.assign(p + 0x100, p + 0x300);
@@ -613,22 +616,23 @@ std::array<uint64_t, 4> FexProcess::api_float_arguments() const
 void FexProcess::enter_nt_service(uint64_t instruction, uint32_t number)
 {
 	state->require_owner();
-	if (!state->active || state->thread.awaiting_api || last_stop.kind != NativeStop::syscall ||
-		last_stop.value != number || last_stop.rip != instruction || instruction < 2)
-		throw std::runtime_error("FEX has no matching pending NT service");
+	if (!state->active || state->thread.awaiting_api || !state->thread.awaiting_syscall)
+		throw std::runtime_error("FEX process is not at a pending syscall service");
 	auto saved = context();
-	const auto executable = [&](uint64_t address) {
-		const auto page = state->pages.find(address & ~uint64_t(4095));
-		return page != state->pages.end() && (page->second & PROT_EXEC);
-	};
-	if (saved.registers.rip != instruction || !executable(instruction - 2) || !executable(instruction) ||
+	bool executable = instruction >= 2 && instruction < UINT64_MAX;
+	if (executable) for (uint64_t at = instruction - 2; at <= instruction; ++at) {
+		const auto page = state->pages.find(at & ~uint64_t(4095));
+		executable = executable && page != state->pages.end() && (page->second & PROT_EXEC);
+	}
+	if (saved.registers.rip != instruction || saved.registers.orig_rax != number || !executable ||
 		read_memory(instruction - 2, 3) != std::vector<uint8_t>{0x0f, 0x05, 0xc3})
-		throw std::runtime_error("FEX NT service boundary does not match captured syscall");
+		throw std::runtime_error("FEX NT service boundary does not match the captured syscall");
 	saved.registers.rcx = saved.registers.r10;
+	saved.registers.orig_rax = uint64_t(-1);
 	set_context(saved);
+	state->thread.awaiting_syscall = false;
 	state->thread.awaiting_api = true;
 }
-
 void FexProcess::return_api(uint64_t value)
 {
 	if (state->thread.translated_words && callback_depth() == state->thread.translated_depth) { state->thread.translated_result = value; return; }
