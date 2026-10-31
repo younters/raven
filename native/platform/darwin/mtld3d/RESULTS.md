@@ -1,189 +1,259 @@
-# mtld3d FEX bring-up, 2026-10-31
+# mtld3d on FEX: x64 and WoW64
 
-**Incomplete: no working D3D9 rendering backend is claimed.** This branch adds
-private arm64 provisioning, opt-in x64 unix discovery and backend-neutral PE
-fixtures. Cocoa presentation and WoW64 address translation remain unimplemented.
-Do not promote these artifacts to shared components as a qualified backend.
+Qualified on 2026-10-31, Apple M4 Pro, macOS 27.2. Both PE widths render the
+D3D9 clear/triangle fixture, present 60 frames to a Cocoa window, and pass GPU
+readback checks. This supersedes the earlier incomplete bring-up report.
+The implementation is opt-in and uses private artifacts under
+`/tmp/raven-mtld3d`; no shared component or Rosetta graphics default was changed.
+The branch was rebased onto `macos` at `fec1709d` (including the thread-context
+and Mullion merges).
 
-## Upstream check
+## Upstream findings
 
-`git fetch origin` completed; origin/main was `3cd4ca60`. Its tracked tree has
-no mtld3d/FEX/ARM64 implementation. GitHub issue searches in mirkobrombin/raven
-returned zero mtld3d and ARM64EC matches; the 24 WoW64 matches concerned general
-runtime work, with no matching graphics integration identified.
+`git fetch origin` completed again before qualification; `origin/main` remains
+`3cd4ca605cb98e56ff4ff6179441d32dba9ed33d`. Its tracked tree has no mtld3d/FEX
+integration. GitHub searches of mirkobrombin/raven's open PRs/issues returned no
+mtld3d or ARM64EC matches. The open WoW64 PR match was
+[PR 99](https://github.com/mirkobrombin/raven/pull/99), concerning UCRT MinGW
+installer builds, not this graphics bridge. Earlier broader issue searches
+also found no matching integration.
 
-[mtld3d v0.15.1](https://github.com/athei/mtld3d/tree/v0.15.1), commit
-`9919759fa7c03362deac1b985db6d93de9e33ecf`, already supports arm64 unix libraries,
-ARM64X PE libraries and i386 PE callers under Wine WoW64. Raven can use the x64
-PE pair without rebuilding it as ARM64EC. The release archive checksum matched
-the previous investigation at `aa920cfb`.
+[mtld3d v0.15.1](https://github.com/athei/mtld3d/tree/v0.15.1), pinned to
+`9919759fa7c03362deac1b985db6d93de9e33ecf`, already supplies arm64 unix libraries,
+ARM64X PE libraries, and i386 PE callers for Wine WoW64. Raven uses the released
+x86_64/i386 Wine PE pairs, not an ARM64EC rebuild. Upstream's two 22-entry unix
+arrays use identical handlers because its wire structs already have fixed
+8-byte alignment and u64 address fields. Raven's biased WoW64 window still
+requires address translation.
 
-[CodeWeavers' arm64 announcement](https://www.codeweavers.com/blog/mjohnson/2026/7/31/crossover-preview-the-right-to-bear-arm64-on-mac)
-describes FEX integration but explicitly excludes D3DMetal from that preview.
-Wine's WoW64 unix-table convention is relevant; neither it nor an arm64 binary
-supplies Raven's missing Cocoa objects or biased-address conversion.
+[CodeWeavers' arm64 preview](https://www.codeweavers.com/blog/mjohnson/2026/7/31/crossover-preview-the-right-to-bear-arm64-on-mac)
+describes FEX integration but excludes D3DMetal from that preview. Wine's WoW64
+unix-table convention supplies the dispatch model, not Raven's HWND transport
+or guest-window translation. The previous `aa920cfb` investigation correctly
+identified these integration gaps.
 
-## Implemented boundary
+## Design
 
-The FEX loader distinguishes the requested unix-library basename and count;
-mtld3d is pinned to 22 entries, DXMT retains its 132/146-entry validation and
-adapter wrapping. Handles are cached by requested path, rather than treating
-all loads as handle 1. Unknown library/count pairs and mismatched metadata are
-rejected. Native libraries remain retained for asynchronous callbacks.
+### Unix dispatch and guest addresses
 
-An application-local `d3d9.dll` and `mtld3d.dll` may opt into x64 discovery using
-`RAVEN_MTLD3D_ARM64_ROOT=/tmp/raven-mtld3d`. No default DLL routing or Rosetta
-adapter changes were made. The native mtld3d table is deliberately not passed
-to DXMT's ordinal-specific wrappers. This is a loader experiment, not usable
-window presentation.
+The loader caches handles by library path and validates the selected table
+against private metadata. mtld3d has 22 entries; DXMT retains its 132/146
+layouts; the merged Mullion selection and its bounded table validation remain
+available. mtld3d never goes through DXMT's ordinal-specific wrappers. Libraries
+and adapter state stay loaded for native encoder/GPU callbacks.
 
-## Presentation design still needed
+PE64 continues through the existing syscall gate. PE32 gets an ntdll **data**
+export containing a 32-bit gate address. Its stdcall gate uses `int 2e` and
+`ret 16`; the bridge decodes `handle:u64, ordinal:u32, args:u32` from the guest
+stack, checks readable stack/header memory, then adds the WoW64 window base to
+the argument address. Class 1001 unix-library discovery writes a 64-bit library
+handle but a 32-bit `ReturnLength`. The guest's suspend doorbell and EAX/EIP
+packet offsets are preserved across calls and scheduler yields.
 
-The existing DXMT `macdrv_functions` returns a record whose client pointer is
-an HWND and whose metal-view pointer is a RavenDXMTLayer wrapper. mtld3d
-messages these as real NSViews and inspects their window/screen hierarchy,
-retains/reparents them, installs observers, and uses an actual CAMetalLayer.
-Same-process execution solves pointer reachability, but does not make those
-wrapper objects interchangeable. Publishing the existing table to mtld3d
-would be unsafe.
+No native pointer is obtained by reinterpreting an arbitrary PE32 C struct.
+The released PE producer already widens each pointer-bearing wire field and
+pads its packet to the shared ABI. The native port translates those **guest
+memory** fields when dereferenced:
 
-The next implementation must expose retained Cocoa client views associated
-with Raven HWNDs, schedule attachment and removal on AppKit's main thread,
-and preserve host surface lifetime/resize/foreign-window routing. Alternatively
-port mtld3d attachment and presentation to Raven's IOSurface transport. Do not
-silently replace the process-global table while DXMT callbacks may retain it.
-A shared superset table must preserve DXMT behavior or the libraries need
-explicitly separated resolver hooks.
+| Boundary | Translation |
+|---|---|
+| Logger, config, shader tokens/semantics, cursor pixels, arrays | Nonzero 32-bit guest address → window base + offset |
+| Encoder packets, metadata, draw records, operation arrays, buffers, counters | Translate nested/retained addresses on the native consumer, including worker threads |
+| Completion queue and page/lease nodes | Translate on native reads; subtract the base when publishing a guest-linked node |
+| Metal objects, encoder handles, scalar IDs and HWNDs | Preserve full u64 values; never truncate or bias opaque handles |
+| PE64 and null addresses | Identity mapping |
 
-## WoW64 design still needed
+`raven_address` unit tests cover nulls, both 32-bit limits, reverse publication,
+native addresses above 4 GiB, and x64 identity. Shared compile-time layout
+assertions remain in effect. The integration test exercises actual shader
+translation, guest vertex data, asynchronous encoder/completion traffic, and
+GPU writes into guest-readable memory in both widths.
 
-Upstream's native and wow64 arrays contain identical 22 handlers. Its structs
-use 8-byte-aligned u64 pointer/handle wire fields even in PE32. Width conversion
-is therefore already done by the PE producer. **Address conversion is not.**
-Raven's WoW64 guest uses a biased memory window (`State::host`), unlike Wine's
-identity-address convention.
+The x86 runtime now services unix discovery before its normal NtQueryVirtualMemory
+handler and pumps the same native event/presentation services as x64. Patch
+**0027** repairs an independent startup blocker: WoW64's Raven fault gate now
+passes JIT-origin datatype-misalignment faults to FEX's existing unaligned TSO
+handler. Native/Mach-O faults remain outside that repair boundary. Its private
+build ID is `mtld3d-0027`; x64 xtajit64.dll is unchanged.
 
-A correct implementation must:
+### Presentation
 
-1. Supply a PE32 dispatcher gate and decode its stack arguments, including the
-   full 64-bit unix-library handle. Discover class 1001 and write the ntdll
-   dispatcher using the guest pointer width; the current constructor writes 8
-   bytes and must not be reused unchanged for PE32.
-2. Validate and translate the parameter block plus each guest-address field.
-   Preserve opaque Metal handles and native record handles at their full width;
-   do not apply the guest bias to them. Sign/zero extension of scalar values
-   must follow each pinned field's type.
-3. Translate nested encoder-wire address ranges and persistent pointers, not
-   just the outer structs: logger strings, resource backing storage, readback
-   destinations, commands, completion mailboxes, and attachment atomic sinks.
-4. Preserve asynchronous storage lifetime and prevent queued GPU/encoder work
-   from using guest buffers after release. Native-returned addresses exposed
-   to PE32 require guest-visible mappings or opaque indirection; truncation is
-   invalid. Test high host addresses, nulls, range overflow, retained buffers,
-   destruction and simultaneous x64/x86 use before rendering qualification.
+The existing Wine-style macdrv table returns DXMT wrapper objects; mtld3d
+expects real Cocoa views and a CAMetalLayer. Handing it those wrappers is not
+ABI-compatible. The small native source port replaces attachment/retirement
+and drawable presentation with explicit Raven entry points.
 
-The existing WoW64 rejection remains. No FEX patch was added; reserved patch
-numbers 0027–0030 were not consumed. Merely calling the upstream wow64 table
-would dereference incorrect addresses in this runtime.
+`presentation.m` reuses DXMT's IOSurface pool, slot state machine, retirement
+acknowledgements and command-buffer completion publication by including the
+existing implementation. A CAMetalLayer subclass supplies its pooled textures.
+The host's existing `DarwinDXMTPresentation` imports those IOSurfaces and sends
+them through the established HWND/CAMetalLayer path. Drawable size and pixel
+format changes update the pool. mtld3d's classes and macdrv symbol are renamed,
+so they cannot replace DXMT's classes/table in the same process. The adapter
+checks Raven's shared protocol version. No duplicate Cocoa compositor was added.
 
-## Build and native probe
+Qualified scope is ordinary SDR window rendering. Wine's attachment registry,
+HDR/display migration, software cursor overlay, occlusion tracking, and exact
+vsync/display-time callbacks are not implemented by this adapter. The port uses
+the shader present route, scale 1 and unthrottled fallback; the test explicitly
+requests immediate presentation. Shader-cache path translation is also absent.
+These limitations are reported by mtld3d and are not general game-compatibility
+or frame-pacing claims.
 
-Built mtld3d with Rust 1.99, `cargo build --release --locked -j8`, from the
-pinned source's unix workspace. Its release profile includes debug information.
-No Wine SDK is needed for the unix-only build. Native artifact is arm64 Mach-O.
-The helper `build_arm64.py` reproduces those steps using a clean copy of tracked
-source inputs and writes hashes; it was syntax-checked, not independently
-reproduced end to end in this run.
+### Runtime prerequisites
 
-```
+The released PE DLLs use `vcruntime140.dll`; no msvcp140 dependency was needed
+for these fixtures. Private application-local copies satisfy normal Raven DLL
+loading. The x64 copy came from an existing local Steam redist; the x86 copy was
+extracted from Microsoft's `https://aka.ms/vc14/vc_redist.x86.exe`. Both are
+hashed in the evidence manifest. Raven's existing `redist_fixtures` and
+`redist32_fixtures` were built, and `x86_ucrt_component` supplies the required
+32-bit API-set/UCRT implementation. No system installation was performed.
+
+Startup additionally needed `VirtualAlloc2FromApp` aligned unconstrained
+reservations, width-correct `GetCursorInfo`, and x86 routing of the Rtl vectored
+handler aliases to Raven's existing UCRT implementation. Non-default address
+bounds/unsupported extended allocation parameters fail explicitly. Focused
+PE32/PE64 tests cover these allocation and cursor contracts.
+
+snmalloc reserves 256 GiB on x64. FEX now represents reserved PROT_NONE pages
+implicitly by region, storing explicit page protections only where needed.
+The regression test reserves that range, commits/decommits a 16 KiB interval,
+checks 4 KiB neighbour preservation, then releases it without per-reserved-page
+allocation or traversal.
+
+## Rendering evidence
+
+`run_fixture.py` creates a fresh prefix and refuses stale run directories.
+It requires exit zero and `window.txt == OK`, then checks the first and last
+256×256 RGBA GPU readbacks. Triangle-edge pixels are excluded; interiors and
+backgrounds are checked exactly, including alpha. Asynchronous shader
+compilation is disabled to make the first-frame oracle deterministic.
+
+| FEX fixture | Frames presented | Checked pixels per readback | Triangle samples | Mismatches, first / last |
+|---|---:|---:|---:|---:|
+| x64 | 60 | 63,042 | 20,402 | 0 / 0 |
+| WoW64 x86 | 60 | 63,042 | 20,402 | 0 / 0 |
+
+Both widths have byte-identical readbacks:
+
+- first: `8b625261408d722c12c93765fb288199c89ccfca4d8b3e10641beea61ee918d0`
+- last: `60c308dc165b893e8d374f8df9fccbd89bc65538a1a654d42c29fe1e8c212f9d`
+
+Final logs, raw data, PNGs, screencaptures and binary hashes are in
+`/tmp/raven-mtld3d/final32/` and `/tmp/raven-mtld3d/final64/`.
+The screen was unlocked; both screencaptures show the foreground red triangle.
+Readbacks establish GPU correctness independently of the screen state.
+[qualification.json](qualification.json) records the compact evidence and hashes.
+
+The independently downloaded, unmodified Microsoft
+[Direct3D Tutorial 02: Vertices](https://github.com/microsoft/DirectX-SDK-Samples/tree/07e3eaa10e7dd026ec9d95fe326db2d5c4227e1b/C%2B%2B/Direct3D/Tutorials/Tut02_Vertices)
+(MIT) was built as PE32 with MinGW's static C++/GCC runtime. It creates a device,
+uses a vertex buffer, and presents its interpolated colored triangle in a Cocoa
+window. `/tmp/raven-mtld3d/demo/screen.png` records it. The original sample has an
+infinite message/render loop, so the run ends at the configured 15-second
+Raven timeout; no successful application exit is claimed. This is an external
+sample, not qualification of a full game.
+
+### Rosetta
+
+A separate run using the stock **x86_64** mtld3d.so under `--execution=native`
+also passed the same two offscreen readbacks. Window attachment explicitly
+failed with `this Wine publishes no macdrv_functions table`. Thus offscreen
+rendering is usable there, but window presentation is **not** integrated.
+Present returning success alone is insufficient evidence. The arm64 port is
+FEX-only, and Rosetta's agent, graphics transport and default selection are
+unchanged. Logs/readbacks: `/tmp/raven-mtld3d/rosetta/`.
+
+## Reproduce privately
+
+Use RelWithDebInfo and copy FONT_HASHES, PNG_LIBRARY_RELEASE,
+PNG_PNG_INCLUDE_DIR, all RAVEN_*_COMPONENT*, RAVEN_DXMT_* and RAVEN_SQLITE_*
+settings from the established build cache. The private configured build is
+`/tmp/raven-mtld3d/build`; `configure-args.txt` records the initial copied paths.
+Configure FEX on, and select the private module root after building patch 0027:
+
+```sh
+python3 scripts/build-fex-modules.py --root /tmp/raven-mtld3d/fex-private \
+  --raven-host --build-only --build-id mtld3d-0027
 python3 native/platform/darwin/mtld3d/build_arm64.py \
-  --source /tmp/raven-mtld3d/src --destination /tmp/raven-mtld3d-new
-clang -arch arm64 -O2 -Wall -Wextra \
-  native/platform/darwin/mtld3d/compatibility_probe.m \
-  -framework Foundation -framework Metal -o /tmp/raven-mtld3d/compatibility-probe
-/tmp/raven-mtld3d/compatibility-probe /tmp/raven-mtld3d/mtld3d.so
+  --source /tmp/raven-mtld3d/upstream-clean \
+  --destination /tmp/raven-mtld3d/new-overlay
+cmake --build /tmp/raven-mtld3d/build --target raven x86_ucrt_component \
+  darwin_mtld3d32_fixture darwin_mtld3d64_fixture \
+  darwin_mtld3d_runtime32_fixture darwin_mtld3d_runtime64_fixture \
+  redist_fixtures redist32_fixtures -j8
 ```
 
-Actual native probe output (exit 0 means the expected attachment failure):
+The native builder requires a clean source checkout at the pin, copies its
+tracked inputs, applies `patches/0001-raven-iosurface-wow64.patch`, and builds
+Rust release with debug information plus the arm64 adapter. A complete clean
+provisioning run passed in `/tmp/raven-mtld3d/provisioned`; its manifest captures
+commands, source/patch hashes, compiler and native artifact hashes. It preserves
+a disk reserve and never writes back to the input checkout.
 
+Stage the release's `wine/i386-windows/{d3d9,mtld3d}.dll` and x86 vcruntime into
+`ROOT/pe32`, and the corresponding `x86_64-windows` pair/runtime into `ROOT/pe64`.
+The release archive SHA-256 is
+`115d9089323b20010738d2b4835e79e6652d41690c4b360141e8b0433faff972`.
+The application-local DLLs opt in; no system D3D9 default changes.
+
+```sh
+RAVEN_MTLD3D_ARM64_ROOT=/tmp/raven-mtld3d /tmp/raven-ctest-lock.sh mtld3d \
+  ctest --test-dir /tmp/raven-mtld3d/build --output-on-failure \
+  -R '^darwin_mtld3d(32|64)_fex$'
+python3 native/platform/darwin/mtld3d/run_fixture.py \
+  --raven /tmp/raven-mtld3d/build/native/raven \
+  --fixture /tmp/raven-mtld3d/build/native/raven-mtld3d32.exe --width 32 \
+  --modules /tmp/raven-mtld3d/fex-private --artifacts /tmp/raven-mtld3d \
+  --output /tmp/raven-mtld3d/new-evidence32 --capture
 ```
-native/wow64: 22 non-null entries, identical handlers
-GetDeviceInfo: status=00000000 device=Apple M4 Pro registry=4294968444 caps=0000009f
-AttachMetalLayer without macdrv_functions: status=c0000001 view=0 layer=0
-```
 
-This is not a PE fixture, GPU readback, or screen-presentation result. No claim
-that a locked screen prevented verification is made. Rosetta remains unusable
-for mtld3d presentation through this path: its separate x86_64 process cannot
-message the arm64 host's Cocoa objects, as the earlier investigation explains.
+Use a new output directory and substitute width/fixture 64 for x64. Rendering
+ctests skip only when the private artifact root is not selected. Every ctest
+invocation in qualification used the shared lock wrapper. No debugger was
+attached, no shared components were modified, and nothing was pushed.
 
-Raven configuration is `/tmp/raven-mtld3d/build`, RelWithDebInfo, FEX modhost
-on, using the requested shared FEX module root read-only. Requested component,
-DXMT, SQLite, PNG and font cache entries were copied from build-macos; exact
-arguments are in `/tmp/raven-mtld3d/configure-args.txt`. Builds use `-j8`.
+## Regression results
 
-## Private artifacts
+All fixture targets were built explicitly with `-j8`, including the existing
+D3D9/redist targets, all DXMT fixtures, the native pool/slot tests, and the
+window-info helper. Final D3D9 ctests passed in both widths (22.55 seconds for
+the pair and prefix cleanup). The native clean provisioner, Rust address tests,
+PE32/PE64 runtime contracts, sparse reservation contract, WoW64 unaligned-store
+contract and existing WoW64 access-violation recovery check all passed.
 
-Full hashes, including both PE widths, are in `/tmp/raven-mtld3d/artifacts.json`.
+DXMT results across the locked batch and focused rechecks:
+
+| Engine | Completed passing DXMT checks | Remaining check |
+|---|---:|---|
+| Rosetta (`native`) | 21 / 21 | none |
+| FEX | 20 / 21 | `features` rejected before graphics: fixed PE preferred base unavailable, no relocation table |
+
+The initial batch had four failures: two missing `dxmt-window-info` helper
+executions and two pre-graphics placement collisions (`msaa`, `features`).
+After explicitly building the helper, both window tests passed, including
+presentation/resize verification. `msaa` passed its focused recheck;
+`features` again hit the same placement rejection. This is the already tracked
+fixed-base placement issue under concurrent work, not a successful graphics
+test and not suppressed here. No shader/pixel regression was observed in the
+checks that entered graphics. Native DXMT pool and slot-state tests also passed.
+The full first batch was 91/95 including cleanup; the evidence manifest keeps
+all attempts, not only passing rechecks.
+
+Logs: `/tmp/raven-mtld3d/dxmt-regressions.log`, `dxmt-window-recheck.log`,
+`dxmt-placement-recheck.log`, and `final-fixtures.log`.
+
+## Private artifact SHA-256
 
 | Artifact | SHA-256 |
-| --- | --- |
-| mtld3d.so, locally built arm64 | 48a49d9e97b8da7cf8fc94882dd0456e772c964319ba8bc449fe7a19eea96ab5 |
-| unix-call-count | f14b4987904bcb5814e4459a057ed4d20f58a633152288a761214dcd28780b56 |
-| upstream mtld3d.tar.xz | 115d9089323b20010738d2b4835e79e6652d41690c4b360141e8b0433faff972 |
+|---|---|
+| `mtld3d.so` (arm64, clean provision) | `dda5d5a9b36e83e8f56087ee292fb02c98130e3f44b2f94c5341a2d8768028b2` |
+| `raven-mtld3d.dylib` (arm64) | `9e9a2a1e73a6bab934157004b36450a95e738b3ee5401b351eddd4fc72bf90c2` |
+| `fex-private/xtajit.dll` (patch 0027) | `a4dcb4a01c3ea03b360a71c8412c31fafb404bd5ae83142844e6a9f067695e70` |
+| `fex-private/xtajit64.dll` (unchanged) | `73d4d781cd705ace3c6c298c9b3d19dece1f0a9aa2e1960dbef9bf8646b5c2a2` |
 
-No debugger, shared-component writes, or push. Disk checks remained above
-8 GiB (lowest observed so far 11 GiB). No third-party demo was attempted before
-the fixture and presentation boundary were qualified.
-
-## Runtime qualification results
-
-Raven and `x86_d3d9_fixture` built successfully. Explicitly built
-`darwin_mtld3d32_fixture`, `darwin_mtld3d64_fixture`,
-`darwin_dxmt_triangle_fixture`, and `darwin_dxmt_compute_fixture` with `-j8`.
-The D3D9 workload now registers a Unicode window class, matching the working
-Darwin fixtures, and reports registration/window errors. Its clear, triangle,
-present and readback assertions are unchanged. The original ANSI fixture
-failed window creation before DLL loading on this host.
-
-The supplied shared FEX root changed relative to this checkout's pin and
-initially failed `CHPE RavenProcessInit target/RVA does not match pinned contract`.
-Archived `FEX-darwin/build/local/m1d-0019/dlls` binaries matched **both exact
-SHA-256 pins in scripts/fex-modhost-pins.json**. Copied only those two binaries
-to `/tmp/raven-mtld3d/fex-modules` and selected them with RAVEN_FEX_MODULE_ROOT
-for the final runs. No contract check was disabled and no shared file changed.
-
-Final results:
-
-- DXMT Rosetta triangle and compute: **2/2 pass**, including pixel/value checks.
-- DXMT FEX triangle and compute with private matching modules: **2/2 pass**.
-- D3D9 x64: guest ran, then `FAIL d3d9.dll 0000007e` (module not found).
-  Supplying the PE DLL pair explicitly diagnoses `missing PE module: vcruntime140.dll`.
-- D3D9 x86: guest ran, then `FAIL d3d9.dll 0000007e`. No WoW64 unix call reached.
-- One x64 retry was needed for the known non-relocatable-image address collision.
-- No successful GPU readback or screenshot exists. Neither clear, triangle nor
-  present is established; no real D3D9 application was attempted.
-
-CTest commands (the initial batch also ran four automatic prefix cleanup tests,
-while the FEX recheck ran two):
-
-```
-RAVEN_PREFIX_SETUP=1 /tmp/raven-ctest-lock.sh mtld3d-dxmt-regression \
-  ctest --test-dir /tmp/raven-mtld3d/build -j1 \
-  -R '^darwin_dxmt_(triangle|compute)(_fex)?$' --output-on-failure \
-  --output-junit /tmp/raven-mtld3d/dxmt-regression.xml
-RAVEN_PREFIX_SETUP=1 RAVEN_FEX_MODULE_ROOT=/tmp/raven-mtld3d/fex-modules \
-  /tmp/raven-ctest-lock.sh mtld3d-dxmt-fex-recheck \
-  ctest --test-dir /tmp/raven-mtld3d/build -j1 \
-  -R '^darwin_dxmt_(triangle|compute)_fex$' --output-on-failure \
-  --output-junit /tmp/raven-mtld3d/dxmt-fex-recheck.xml
-```
-
-Raw evidence is private: `probe.log`, `fixture64.log`, `import64.log`,
-`fixture32.log`, `prefix{32,64}/drive_c/window.txt`, the two CTest logs/XML,
-and build/configuration logs, all under `/tmp/raven-mtld3d`.
-
-Remaining implementation is substantial: provision/qualify the PE runtime
-dependencies, integrate real Cocoa presentation, implement recursive/asynchronous
-WoW64 address translation, then rerun strict readback and screen tests. This
-branch is a starting point for that work, not completion of the requested task.
+PE DLL, fixture, runtime, source patch and screenshot hashes are in
+[qualification.json](qualification.json); native rebuild provenance is also
+`/tmp/raven-mtld3d/provisioned/artifacts.json`. Disk free remained above 8 GiB
+(about 10 GiB at final verification).

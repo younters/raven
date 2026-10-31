@@ -1,0 +1,466 @@
+{
+  "date": "2026-10-31",
+  "source_code_head": "8527b7eb5fb8ca037125d4978c9800c5cc2d61ab",
+  "macos_base": "fec1709d6b7880d9e256da1e31b47359d088a617",
+  "mtld3d_source": "9919759fa7c03362deac1b985db6d93de9e33ecf",
+  "private_root": "/tmp/raven-mtld3d",
+  "native_build": {
+    "source": "9919759fa7c03362deac1b985db6d93de9e33ecf",
+    "command": [
+      "cargo",
+      "build",
+      "--manifest-path",
+      "/private/tmp/raven-mtld3d/provisioned/src/unix/Cargo.toml",
+      "-p",
+      "mtld3d-unix",
+      "--release",
+      "--locked",
+      "-j8"
+    ],
+    "adapter_command": [
+      "clang",
+      "-arch",
+      "arm64",
+      "-dynamiclib",
+      "-O2",
+      "-g",
+      "-fblocks",
+      "/private/tmp/raven-mtld3d/provisioned/adapter/mtld3d/presentation.m",
+      "-framework",
+      "Foundation",
+      "-framework",
+      "Metal",
+      "-framework",
+      "IOSurface",
+      "-framework",
+      "QuartzCore",
+      "-o",
+      "/private/tmp/raven-mtld3d/provisioned/raven-mtld3d.dylib"
+    ],
+    "patch_sha256": "a2008075193399c9414a3790ca71a15f571cda96580b4b6e85a76ada8f6e93f5",
+    "adapter_sources": {
+      "mtld3d/presentation.m": "33f60985aba370a5d638a6665cf5e07f356b077ddf26a9dc5d6e563438522a20",
+      "dxmt/presentation.m": "cd99d68bf4232f9ab0592f030e5976e23da79f14941aca7f0e8b4259ba26a19a",
+      "guest/protocol.h": "a4836f2a09429d13ef4795f27de5b51cc7d6eeb1711b5871e2a279a5aa8e7a4f"
+    },
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "files": {
+      "mtld3d.so": "dda5d5a9b36e83e8f56087ee292fb02c98130e3f44b2f94c5341a2d8768028b2",
+      "raven-mtld3d.dylib": "9e9a2a1e73a6bab934157004b36450a95e738b3ee5401b351eddd4fc72bf90c2",
+      "unix-call-count": "f14b4987904bcb5814e4459a057ed4d20f58a633152288a761214dcd28780b56",
+      "LICENSE": "34218a98a2bc21b4624a0bd755d47d5fd0f4478090a3139cc1da887849dccb27"
+    }
+  },
+  "fex_build_id": "mtld3d-0027",
+  "fex_modules": {
+    "xtajit.dll": "a4dcb4a01c3ea03b360a71c8412c31fafb404bd5ae83142844e6a9f067695e70",
+    "xtajit64.dll": "73d4d781cd705ace3c6c298c9b3d19dece1f0a9aa2e1960dbef9bf8646b5c2a2"
+  },
+  "runs": {
+    "32": {
+      "width": 32,
+      "engine": "fex",
+      "exit_code": 0,
+      "command": [
+        "/private/tmp/raven-mtld3d/build/native/raven",
+        "--run-process",
+        "--execution=fex",
+        "--timeout-ms=45000",
+        "--desktop=macos",
+        "/private/tmp/raven-mtld3d/final32/app/window.exe",
+        "/private/tmp/raven-mtld3d/final32/app/mtld3d.dll",
+        "/private/tmp/raven-mtld3d/final32/app/d3d9.dll"
+      ],
+      "frames": {
+        "first": {
+          "checked": 63042,
+          "triangle": 20402,
+          "mismatches": 0,
+          "sha256": "8b625261408d722c12c93765fb288199c89ccfca4d8b3e10641beea61ee918d0"
+        },
+        "last": {
+          "checked": 63042,
+          "triangle": 20402,
+          "mismatches": 0,
+          "sha256": "60c308dc165b893e8d374f8df9fccbd89bc65538a1a654d42c29fe1e8c212f9d"
+        }
+      },
+      "artifacts": {
+        "window.exe": "f2b4d77e3a74fbdd92b5a0b3df468c0ac5de7f0767753e9dde92391af4fca0c5",
+        "d3d9.dll": "87f6c8d92319ba47313326c58c0ad7313920d86fd6dad7f46385ff0c49b0f706",
+        "mtld3d.dll": "418ca64b528b4e6b85c02f0f119bc1f5750798892078a45f3718858b83ee55fe",
+        "vcruntime140.dll": "2fa6efc053203460a23d3a25158f227d895d2dadc63acc1a372da97c3a4281c3",
+        "mtld3d.so": "dda5d5a9b36e83e8f56087ee292fb02c98130e3f44b2f94c5341a2d8768028b2",
+        "raven-mtld3d.dylib": "9e9a2a1e73a6bab934157004b36450a95e738b3ee5401b351eddd4fc72bf90c2",
+        "xtajit.dll": "a4dcb4a01c3ea03b360a71c8412c31fafb404bd5ae83142844e6a9f067695e70"
+      },
+      "evidence": {
+        "/tmp/raven-mtld3d/final32/run.log": "cfbecbed0b6b7cbf534dc157827468f20940354909b9170b044d6ebccc3fa259",
+        "/tmp/raven-mtld3d/final32/readback_first.png": "7db4af026298ab8a77b13f39c80cb5041cdfbbfb1e267707657ea7da9bd3c1d7",
+        "/tmp/raven-mtld3d/final32/readback_last.png": "d2ba3d72d251d32e8c71cf9e0734a2df9d1bef72dcd4c4a79625f11dd5ae27c3",
+        "/tmp/raven-mtld3d/final32/screen.png": "8a05309643d620c8767d601ff29e3f6042a08cf4bdb28939834b4b5a87634245"
+      }
+    },
+    "64": {
+      "width": 64,
+      "engine": "fex",
+      "exit_code": 0,
+      "command": [
+        "/private/tmp/raven-mtld3d/build/native/raven",
+        "--run-process",
+        "--execution=fex",
+        "--timeout-ms=45000",
+        "--desktop=macos",
+        "/private/tmp/raven-mtld3d/final64/app/window.exe",
+        "/private/tmp/raven-mtld3d/final64/app/mtld3d.dll",
+        "/private/tmp/raven-mtld3d/final64/app/d3d9.dll"
+      ],
+      "frames": {
+        "first": {
+          "checked": 63042,
+          "triangle": 20402,
+          "mismatches": 0,
+          "sha256": "8b625261408d722c12c93765fb288199c89ccfca4d8b3e10641beea61ee918d0"
+        },
+        "last": {
+          "checked": 63042,
+          "triangle": 20402,
+          "mismatches": 0,
+          "sha256": "60c308dc165b893e8d374f8df9fccbd89bc65538a1a654d42c29fe1e8c212f9d"
+        }
+      },
+      "artifacts": {
+        "window.exe": "61f2c4cf800b83141b84a995e1607a221de506023aad8fe261d4dc7f8e2ed7f8",
+        "d3d9.dll": "8a8d1f4f9fcf5fbae155ff1ce5341b3a2bdf14c7f427cae808e033a70324d7bb",
+        "mtld3d.dll": "cb4d7c6e94ce348e12ad6c3c8e33818db1fd6409b42fd35b6cae991b04d7f31e",
+        "vcruntime140.dll": "7f6d96ae6d9324ce0675d13a89d7bdc26e14a7301e79494ad42c5c30d1eb0596",
+        "mtld3d.so": "dda5d5a9b36e83e8f56087ee292fb02c98130e3f44b2f94c5341a2d8768028b2",
+        "raven-mtld3d.dylib": "9e9a2a1e73a6bab934157004b36450a95e738b3ee5401b351eddd4fc72bf90c2",
+        "xtajit64.dll": "73d4d781cd705ace3c6c298c9b3d19dece1f0a9aa2e1960dbef9bf8646b5c2a2"
+      },
+      "evidence": {
+        "/tmp/raven-mtld3d/final64/run.log": "993a05654897c3b2dbbe94c14cbaae6b717c42ed7716a77c7a00f4f94104362b",
+        "/tmp/raven-mtld3d/final64/readback_first.png": "7db4af026298ab8a77b13f39c80cb5041cdfbbfb1e267707657ea7da9bd3c1d7",
+        "/tmp/raven-mtld3d/final64/readback_last.png": "d2ba3d72d251d32e8c71cf9e0734a2df9d1bef72dcd4c4a79625f11dd5ae27c3",
+        "/tmp/raven-mtld3d/final64/screen.png": "0fd148cb7b42eba75fd924a60d100f9cfc9a821caf8232695b4203469195f32c"
+      }
+    }
+  },
+  "rosetta": {
+    "window_presentation": false,
+    "reason": "stock x86_64 mtld3d.so reports no macdrv_functions table",
+    "readback": {
+      "first": {
+        "checked": 63042,
+        "triangle": 20402,
+        "mismatches": 0,
+        "sha256": "8b625261408d722c12c93765fb288199c89ccfca4d8b3e10641beea61ee918d0"
+      },
+      "last": {
+        "checked": 63042,
+        "triangle": 20402,
+        "mismatches": 0,
+        "sha256": "60c308dc165b893e8d374f8df9fccbd89bc65538a1a654d42c29fe1e8c212f9d"
+      }
+    }
+  },
+  "demo": {
+    "source_commit": "07e3eaa10e7dd026ec9d95fe326db2d5c4227e1b",
+    "license": "MIT",
+    "width": 32,
+    "window_rendering": true,
+    "exit": "15 second test timeout; original infinite loop",
+    "files": {
+      "demo/Vertices.cpp": "eafd032bbe86e1269b7756341998438badf56aeeca10fad190cbf48f2ff67731",
+      "demo/Vertices.exe": "ed0d8bab31eb8c0a283eebb46df1eec7270478d17fa99ef2ddce491f67199cfb",
+      "demo/LICENSE": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+      "demo/screen.png": "8d39b1686e38db2a0d1528b328ef35521fb6ddc527962a66cb50da8796153594"
+    }
+  },
+  "regressions": {
+    "logs": {
+      "/tmp/raven-mtld3d/dxmt-regressions.log": "ed7f9a5d1235632d7397b4de117d707a04f77b92782a7624974722415b7e63d9",
+      "/tmp/raven-mtld3d/dxmt-window-recheck.log": "240e64d3e790b0eb29a6c98310b5e67b8df72cb47194fba950e9968efdece7bf",
+      "/tmp/raven-mtld3d/dxmt-placement-recheck.log": "f52dd1c8cc3776857a3256eb248386f67ef15664f9347ba064b69cc48993837f",
+      "/tmp/raven-mtld3d/final-fixtures.log": "5295192c2e077013b6032ade260233ad7bbcac940d9301698dcbe68675d32932"
+    },
+    "attempts": {
+      "dxmt-regressions.log": [
+        {
+          "test": "native_sparse-reservation_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_identity",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_self_share",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_keyed_x64",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_keyed_x32",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_shared",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_shared_keyed",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_device10",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_device",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_pool",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_pacing",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_triangle",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_window",
+          "status": "***Failed"
+        },
+        {
+          "test": "darwin_dxmt_deferred",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_geometry",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_tessellation",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_textured",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_msaa",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_compute",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_features",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_fullscreen",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_present_rate",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_window_fex",
+          "status": "***Failed"
+        },
+        {
+          "test": "darwin_dxmt_keyed_x64_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_keyed_x32_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_identity_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_self_share_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_shared_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_shared_keyed_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_device10_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_device_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_pool_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_pacing_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_triangle_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_deferred_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_geometry_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_tessellation_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_textured_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_msaa_fex",
+          "status": "***Failed"
+        },
+        {
+          "test": "darwin_dxmt_compute_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_features_fex",
+          "status": "***Failed"
+        },
+        {
+          "test": "darwin_dxmt_fullscreen_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_present_rate_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "native_darwin_dxmt_drawable_pool",
+          "status": "Passed"
+        },
+        {
+          "test": "native_darwin_dxmt_slot_state",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_mtld3d_runtime32_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_mtld3d_runtime64_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "native_wow64_unaligned_fex",
+          "status": "Passed"
+        }
+      ],
+      "dxmt-window-recheck.log": [
+        {
+          "test": "darwin_dxmt_window",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_window_fex",
+          "status": "Passed"
+        }
+      ],
+      "dxmt-placement-recheck.log": [
+        {
+          "test": "darwin_dxmt_msaa_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_dxmt_features_fex",
+          "status": "***Failed"
+        }
+      ],
+      "final-fixtures.log": [
+        {
+          "test": "darwin_mtld3d32_fex",
+          "status": "Passed"
+        },
+        {
+          "test": "darwin_mtld3d64_fex",
+          "status": "Passed"
+        }
+      ]
+    },
+    "latest_outcomes": {
+      "native_sparse-reservation_fex": "Passed",
+      "darwin_dxmt_identity": "Passed",
+      "darwin_dxmt_self_share": "Passed",
+      "darwin_dxmt_keyed_x64": "Passed",
+      "darwin_dxmt_keyed_x32": "Passed",
+      "darwin_dxmt_shared": "Passed",
+      "darwin_dxmt_shared_keyed": "Passed",
+      "darwin_dxmt_device10": "Passed",
+      "darwin_dxmt_device": "Passed",
+      "darwin_dxmt_pool": "Passed",
+      "darwin_dxmt_pacing": "Passed",
+      "darwin_dxmt_triangle": "Passed",
+      "darwin_dxmt_window": "Passed",
+      "darwin_dxmt_deferred": "Passed",
+      "darwin_dxmt_geometry": "Passed",
+      "darwin_dxmt_tessellation": "Passed",
+      "darwin_dxmt_textured": "Passed",
+      "darwin_dxmt_msaa": "Passed",
+      "darwin_dxmt_compute": "Passed",
+      "darwin_dxmt_features": "Passed",
+      "darwin_dxmt_fullscreen": "Passed",
+      "darwin_dxmt_present_rate": "Passed",
+      "darwin_dxmt_window_fex": "Passed",
+      "darwin_dxmt_keyed_x64_fex": "Passed",
+      "darwin_dxmt_keyed_x32_fex": "Passed",
+      "darwin_dxmt_identity_fex": "Passed",
+      "darwin_dxmt_self_share_fex": "Passed",
+      "darwin_dxmt_shared_fex": "Passed",
+      "darwin_dxmt_shared_keyed_fex": "Passed",
+      "darwin_dxmt_device10_fex": "Passed",
+      "darwin_dxmt_device_fex": "Passed",
+      "darwin_dxmt_pool_fex": "Passed",
+      "darwin_dxmt_pacing_fex": "Passed",
+      "darwin_dxmt_triangle_fex": "Passed",
+      "darwin_dxmt_deferred_fex": "Passed",
+      "darwin_dxmt_geometry_fex": "Passed",
+      "darwin_dxmt_tessellation_fex": "Passed",
+      "darwin_dxmt_textured_fex": "Passed",
+      "darwin_dxmt_msaa_fex": "Passed",
+      "darwin_dxmt_compute_fex": "Passed",
+      "darwin_dxmt_features_fex": "***Failed",
+      "darwin_dxmt_fullscreen_fex": "Passed",
+      "darwin_dxmt_present_rate_fex": "Passed",
+      "native_darwin_dxmt_drawable_pool": "Passed",
+      "native_darwin_dxmt_slot_state": "Passed",
+      "darwin_mtld3d_runtime32_fex": "Passed",
+      "darwin_mtld3d_runtime64_fex": "Passed",
+      "native_wow64_unaligned_fex": "Passed",
+      "darwin_mtld3d32_fex": "Passed",
+      "darwin_mtld3d64_fex": "Passed"
+    }
+  }
+}
