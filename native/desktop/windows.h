@@ -255,7 +255,7 @@ private:
 	std::map<uint64_t,uint64_t> hosted_windows;
 	// Whether a window of the root carries a driver's surface: its host window must survive a resize.
 	bool hosts_surface(uint64_t root) const;
-	std::optional<HostSurface> place_hosted(uint64_t window);
+	std::optional<HostSurface> place_hosted(uint64_t window, bool paint = true);
 	void place_host_surface(uint64_t root);
 	// Whether nothing has been drawn into the window's client area yet: its surface still holds only zeros or what erasing it left,
 	// or there is none.

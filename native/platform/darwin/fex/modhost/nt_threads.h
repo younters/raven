@@ -36,6 +36,9 @@ void *thread_start(void *opaque) {
 	auto h = start->handle;
 	self_handle = h;
 	auto c = h->control;
+	// Publish the identity from the worker before it can call NtTerminateThread.
+	// pthread_create may start us before it stores its output in the parent.
+	c->pthread = pthread_self();
 	pthread_threadid_np(nullptr, &c->tid);
 	c->environment = std::make_unique<ThreadEnvironment>(*active_process);
 	active_thread = c->environment.get();
@@ -82,7 +85,8 @@ int32_t create_thread(void **out, uint32_t access, ObjectAttributes *attributes,
 		pthread_attr_destroy(&attr);
 		return invalid_parameter;
 	}
-	int error = pthread_create(&h->control->pthread, &attr, thread_start, start.get());
+	pthread_t created;
+	int error = pthread_create(&created, &attr, thread_start, start.get());
 	pthread_attr_destroy(&attr);
 	if (error)
 		return os_error(error);

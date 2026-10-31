@@ -327,7 +327,7 @@ std::optional<HostSurface> NativeWindows::host_surface(uint64_t handle,bool hidd
 	}
 	if (!objects.window(handle)) return std::nullopt;
 	hosted_windows[handle]=root;
-	auto surface=place_hosted(handle);
+	auto surface=place_hosted(handle,false);
 	if (!surface) hosted_windows.erase(handle);
 	return surface;
 }
@@ -338,7 +338,7 @@ bool NativeWindows::hosts_surface(uint64_t root) const
 	return false;
 }
 
-std::optional<HostSurface> NativeWindows::place_hosted(uint64_t handle)
+std::optional<HostSurface> NativeWindows::place_hosted(uint64_t handle,bool paint)
 {
 	const auto root=objects.window_root(handle);
 	const auto *top=objects.window(root);
@@ -346,9 +346,10 @@ std::optional<HostSurface> NativeWindows::place_hosted(uint64_t handle)
 	if (!top || !window) return std::nullopt;
 	hosted_windows[handle]=root;
 	// GPU drawing supplies the client pixels itself, so it cannot wait for WM_PAINT.
-	try { if (objects.window_visible(handle)) present(root,true); } catch (...) { return std::nullopt; }
+	try { if (paint && objects.window_visible(handle)) present(root,true); } catch (...) { return std::nullopt; }
 	top=objects.window(root);
-	if (!top) return std::nullopt;
+	window=objects.window(handle);
+	if (!top || !window) return std::nullopt;
 	// Window positions are on the screen, children's included, so the client origin inside the frame the host window shows is the
 	// window's position less the frame's.
 	return presentation.host_surface(root,handle,window->x-top->outer.left,window->y-top->outer.top,uint32_t(std::max(window->width,1)),
@@ -361,7 +362,9 @@ void NativeWindows::place_host_surface(uint64_t root)
 	std::vector<uint64_t> placed;
 	for (const auto &[window,last] : hosted_windows)
 		if (last==root || objects.window_root(window)==root) placed.push_back(window);
-	for (const auto window:placed) place_hosted(window);
+	// present() calls us after painting the root. Placing its GPU children must
+	// not paint it again and recurse through present -> place_host_surface.
+	for (const auto window:placed) place_hosted(window,false);
 }
 
 std::optional<std::pair<uint32_t,uint32_t>> NativeWindows::client_size(uint64_t handle)
