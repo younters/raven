@@ -65,6 +65,8 @@ for w in windows where (w[kCGWindowOwnerPID as String] as? Int) == pid && (w[kCG
                             window = subprocess.check_output([str(probe), str(proc.pid)], text=True).strip()
                             if window and 'class=Scintilla child=1' in log.read_text():
                                 item['startup_ms'] = (time.perf_counter() - start) * 1000
+                                # Capture after painting; this delay is outside the measured latency.
+                                time.sleep(1)
                                 shot = a.output.parent / f'npp-startup-{int(parallel)}-{backend}-{index}.png'
                                 capture = subprocess.run(['/usr/sbin/screencapture', '-x', '-l', window, str(shot)])
                                 if capture.returncode:
