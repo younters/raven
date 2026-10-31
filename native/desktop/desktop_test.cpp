@@ -87,6 +87,21 @@ int main(int argc, char **argv)
             presentation.release_host_surface = [&](uint64_t window) { check(window == child, "released the wrong hosted window"); ++released; };
             windows.set_presentation(presentation);
             check(windows.host_surface(child, true).has_value(), "cannot host child surface");
+            // Once a hosted child is visible, painting its root must place the
+            // child without recursively painting that root again.
+            unsigned paints = 0;
+            presentation.present = [&](uint64_t root, std::string_view, uint32_t, uint32_t, std::span<const uint8_t>) {
+                check(root == parent && ++paints <= 2, "hosted surface recursively repainted its root");
+            };
+            windows.set_presentation(presentation);
+            for (auto handle : {parent, child}) {
+                auto *window = hosted.window(handle);
+                window->visible = true;
+                window->width = window->height = 16;
+                window->outer = {0, 0, 16, 16};
+            }
+            check(windows.host_surface(child).has_value() && paints == 1, "visible hosted surface did not paint once");
+            check(windows.host_surface(child).has_value() && paints == 2, "hosted root repaint did not complete once");
             const uint64_t args[] = {child};
             check(process.call(modules.resolve({"user32.dll", "DestroyWindow", 0, false, 0}), args, std::chrono::seconds(1)).stop == raven::NativeStop::api,
                 "child destruction did not trap");
