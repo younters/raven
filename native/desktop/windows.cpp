@@ -1797,6 +1797,13 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 		process.unmap_memory(scratch); scratch=0;
 		if (!objects.window(handle)) return 0;
 		if (created==UINT64_MAX) { reject_tree(handle);return 0; }
+		if (std::getenv("RAVEN_TRACE_WINDOW_CREATE")) {
+			const auto *created_class = objects.window_class(class_atom);
+			if (created_class) {
+				std::string class_name(created_class->name.begin(), created_class->name.end());
+				std::cerr << "raven: created window class=" << class_name << " child=" << child << "\n";
+			}
+		}
 		auto *window=objects.window(handle);
 		if (!(window->style & 0xc0000000U)) {
 			window->need_size=true;

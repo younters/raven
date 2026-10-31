@@ -11,6 +11,7 @@ import tempfile
 from fex_modhost_contract import verify_patch_pins, verify_module_pin
 
 parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--require-modules', action='store_true')
 parser.add_argument('--raven', type=Path, required=True)
 parser.add_argument('--fixture', type=Path, required=True)
 parser.add_argument('--modules')
@@ -25,9 +26,12 @@ module_value = args.modules or os.environ.get('RAVEN_FEX_MODULE_ROOT')
 root = Path(module_value) if module_value else None
 if args.backend == 'fex':
     if root is None or not (root / 'xtajit64.dll').is_file():
-        print('SKIP: provision RAVEN_FEX_MODULE_ROOT/xtajit64.dll', flush=True)
-        sys.exit(77)
-    verify_module_pin(root / 'xtajit64.dll', verify_patch_pins())
+        print(('FAIL' if args.require_modules else 'SKIP') + ': provision RAVEN_FEX_MODULE_ROOT/xtajit64.dll', flush=True)
+        sys.exit(1 if args.require_modules else 77)
+    try:
+        verify_module_pin(root / 'xtajit64.dll', verify_patch_pins())
+    except (RuntimeError, OSError) as error:
+        parser.error(str(error))
 if args.check_persistence:
     if args.prefix is None:
         parser.error('--check-persistence requires --prefix')

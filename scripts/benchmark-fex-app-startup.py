@@ -16,16 +16,19 @@ p.add_argument('--raven', type=Path, required=True)
 p.add_argument('--fixture', type=Path, required=True, help='Portable Notepad++ directory (copied per launch)')
 p.add_argument('--modules', type=Path, required=True)
 p.add_argument('--output', type=Path, required=True)
-p.add_argument('--samples', type=int, default=3)
+p.add_argument('--samples', type=int, default=6)
 p.add_argument('--timeout', type=float, default=45)
 a = p.parse_args()
-if a.samples < 2:
-    p.error('at least two samples required')
+if a.samples < 5 or a.samples % 2:
+    p.error('at least six samples in balanced pairs required')
 a.output.parent.mkdir(parents=True, exist_ok=True)
-result = dict(scope='process launch to first CGWindow title containing Notepad++; includes 50ms polling and probe overhead',
+repo = Path(__file__).resolve().parents[1]
+if subprocess.check_output(['git', '-C', str(repo), 'status', '--porcelain']):
+    p.error('benchmark requires a clean source tree')
+result = dict(source_head=subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip(), scope='one excluded warmup per engine/mode; balanced ABBA; launch to process-owned Notepad++ window plus successfully created Scintilla child; 50ms polling',
               raven_sha256=hashlib.sha256(a.raven.read_bytes()).hexdigest(),
               module_sha256=hashlib.sha256((a.modules / 'xtajit64.dll').read_bytes()).hexdigest(), samples=[])
-with tempfile.TemporaryDirectory(prefix='raven-m5-startup-', dir='/tmp') as temp:
+with tempfile.TemporaryDirectory(prefix='raven-m5-startup-') as temp:
     root = Path(temp)
     source = root / 'windows.swift'
     source.write_text('''import CoreGraphics
@@ -41,11 +44,11 @@ for w in windows where (w[kCGWindowOwnerPID as String] as? Int) == pid && (w[kCG
     probe = root / 'windows'
     subprocess.run(['swiftc', str(source), '-o', str(probe)], check=True)
     for parallel in (False, True):
-        for index in range(a.samples):
+        for index in range(-1, a.samples):
             for backend in (('native', 'fex') if index % 2 == 0 else ('fex', 'native')):
                 case = root / f'{parallel}-{index}-{backend}'
                 subprocess.run(['cp', '-cR', str(a.fixture), str(case)], check=True)
-                env = dict(os.environ, RAVEN_PREFIX=str(case / 'prefix'), RAVEN_FEX_MODULE_ROOT=str(a.modules))
+                env = dict(os.environ, RAVEN_PREFIX=str(case / 'prefix'), RAVEN_FEX_MODULE_ROOT=str(a.modules), RAVEN_TRACE_WINDOW_CREATE='1')
                 for key in ('RAVEN_TRACE_API', 'RAVEN_TRACE_FAULT', 'RAVEN_FEX_TRACE', 'RAVEN_PARALLEL'):
                     env.pop(key, None)
                 if parallel:
@@ -60,7 +63,7 @@ for w in windows where (w[kCGWindowOwnerPID as String] as? Int) == pid && (w[kCG
                     try:
                         while proc.poll() is None and time.perf_counter() - start < a.timeout:
                             window = subprocess.check_output([str(probe), str(proc.pid)], text=True).strip()
-                            if window:
+                            if window and 'class=Scintilla child=1' in log.read_text():
                                 item['startup_ms'] = (time.perf_counter() - start) * 1000
                                 shot = a.output.parent / f'npp-startup-{int(parallel)}-{backend}-{index}.png'
                                 capture = subprocess.run(['/usr/sbin/screencapture', '-x', '-l', window, str(shot)])
@@ -82,13 +85,16 @@ for w in windows where (w[kCGWindowOwnerPID as String] as? Int) == pid && (w[kCG
                             os.killpg(proc.pid, signal.SIGKILL)
                             proc.wait()
                     item['returncode_after_cleanup'] = proc.returncode
-                result['samples'].append(item)
+                if index >= 0:
+                    result['samples'].append(item)
                 a.output.write_text(json.dumps(result, indent=2) + '\n')
                 print(item, flush=True)
 result['medians_ms'] = {}
+result['ranges_ms'] = {}
 for parallel in (False, True):
     for backend in ('native', 'fex'):
         items = [x for x in result['samples'] if x['parallel'] == parallel and x['backend'] == backend]
+        result['ranges_ms'][f'{backend}/{int(parallel)}'] = [min(x['startup_ms'] for x in items), max(x['startup_ms'] for x in items)] if all('startup_ms' in x for x in items) else None
         result['medians_ms'][f'{backend}/{int(parallel)}'] = (statistics.median(x['startup_ms'] for x in items)
             if all('startup_ms' in x for x in items) else None)
 a.output.write_text(json.dumps(result, indent=2) + '\n')
