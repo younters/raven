@@ -1177,6 +1177,7 @@ if(RAVEN_MULLION_ROOT AND RAVEN_MINGW64)
             DEPENDS ${PROJECT_SOURCE_DIR}/testdata/d3d12/${workload}.c ${PROJECT_SOURCE_DIR}/testdata/d3d12/tri5_shaders.h
             VERBATIM)
         add_custom_target(mullion_${workload}_fixture DEPENDS "${_fixture}")
+        add_dependencies(raven mullion_${workload}_fixture)
         foreach(engine native fex)
             add_test(NAME darwin_mullion_${workload}_${engine}
                 COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/mullion/run.py
@@ -1221,3 +1222,28 @@ target_link_libraries(prefix_copy_test PRIVATE raven_cpu)
 target_include_directories(prefix_copy_test PRIVATE ${PROJECT_SOURCE_DIR}/native)
 target_compile_options(prefix_copy_test PRIVATE -UNDEBUG)
 add_test(NAME native_prefix_copy COMMAND prefix_copy_test)
+if(RAVEN_MINGW64)
+    set(_crt_locale "${CMAKE_CURRENT_BINARY_DIR}/crt-locale.exe")
+    add_custom_command(OUTPUT "${_crt_locale}"
+        COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector
+            -Wl,--entry,entry,--no-insert-timestamp -o "${_crt_locale}"
+            ${RAVEN_DARWIN_DIR}/mullion/crt_locale.c -lkernel32 -lgcc
+        DEPENDS ${RAVEN_DARWIN_DIR}/mullion/crt_locale.c VERBATIM)
+    add_custom_target(darwin_crt_locale_fixture DEPENDS "${_crt_locale}")
+    add_dependencies(raven darwin_crt_locale_fixture)
+    foreach(engine native fex)
+        add_test(NAME darwin_crt_locale_${engine} COMMAND raven --run-process --execution=${engine} "${_crt_locale}")
+        set_tests_properties(darwin_crt_locale_${engine} PROPERTIES TIMEOUT 60)
+    endforeach()
+endif()
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+    set(_buffer_test "${CMAKE_CURRENT_BINARY_DIR}/dxmt-buffer-registry-test")
+    add_custom_command(OUTPUT "${_buffer_test}"
+        COMMAND /usr/bin/clang -arch arm64 -O2 -fblocks
+            ${RAVEN_DARWIN_DIR}/dxmt/buffer_registry_test.m
+            -framework Foundation -framework Metal -o "${_buffer_test}"
+        DEPENDS ${RAVEN_DARWIN_DIR}/dxmt/buffer_registry_test.m ${RAVEN_DARWIN_DIR}/dxmt/unix_adapter.m VERBATIM)
+    add_custom_target(darwin_dxmt_buffer_registry_fixture ALL DEPENDS "${_buffer_test}")
+    add_test(NAME darwin_dxmt_buffer_registry COMMAND "${_buffer_test}")
+endif()

@@ -246,6 +246,7 @@ static void *mac_layer(void *view) { return view; }
 static void mac_release_view(void *view) { uint64_t args = (uint64_t)view; release_view(&args); }
 static void mac_main(dispatch_block_t block)
 {
+	if (!block) return;
 	if ([NSThread isMainThread]) block();
 	else dispatch_sync(dispatch_get_main_queue(), block);
 }
@@ -262,6 +263,9 @@ __attribute__((visibility("default"))) const struct {
 	void (*main)(dispatch_block_t);
 } macdrv_functions = {mac_init, mac_data, mac_release_data, mac_window,
 	mac_device, mac_release_device, mac_view, mac_layer, mac_release_view, mac_main};
+_Static_assert(sizeof(macdrv_functions) == 10 * sizeof(void *), "pinned macdrv table size");
+_Static_assert(__builtin_offsetof(__typeof__(macdrv_functions), view) == 6 * sizeof(void *), "pinned macdrv view slot");
+_Static_assert(__builtin_offsetof(__typeof__(macdrv_functions), main) == 9 * sizeof(void *), "pinned macdrv main slot");
 #endif
 
 static int32_t set_props(void *args)
@@ -437,10 +441,8 @@ void raven_dxmt_wrap_presentation(void **table)
 	table[67] = next_drawable;
 	table[70] = set_props;
 	table[71] = get_props;
-#if !defined(__aarch64__)
 	table[72] = create_view;
 	table[73] = release_view;
-#endif
 	table[93] = set_colorspace;
 	table[97] = get_edr;
 	table[101] = display_setting;
