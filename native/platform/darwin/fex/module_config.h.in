@@ -1,3 +1,4 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #define RAVEN_FEX_DEFAULT_MODULE_ROOT R"raven(@RAVEN_FEX_MODULE_ROOT@)raven"
+#define RAVEN_DXMT_DEFAULT_ARM64_ROOT R"raven(@RAVEN_DXMT_ARM64_ROOT@)raven"

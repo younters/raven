@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "fex_process.h"
 #include "guest_window.h"
+#include "fex-module-config.h"
 #define RAVEN_FEX_EMBEDDED
 #include "modhost/native_host.cpp"
 #include <pthread.h>
@@ -819,7 +820,8 @@ uint64_t FexProcess::load_unix_library(const std::string &, uint32_t count)
 	if (wow64_module || (count != 132 && count != 146)) throw std::runtime_error("unsupported FEX unix table");
 	if (!unix_libraries.empty()) return 1;
 	const char *root = getenv("RAVEN_DXMT_ARM64_ROOT");
-	if (!root) throw std::runtime_error("set RAVEN_DXMT_ARM64_ROOT to the matching private arm64 overlay");
+	if (!root || !*root) root = RAVEN_DXMT_DEFAULT_ARM64_ROOT;
+	if (!*root) throw std::runtime_error("set RAVEN_DXMT_ARM64_ROOT, or configure it at build time, to the arm64 DXMT overlay");
 	uint32_t overlay_count = 0;
 	std::ifstream metadata(std::string(root) + "/unix-call-count");
 	if (!(metadata >> overlay_count) || overlay_count != count)
