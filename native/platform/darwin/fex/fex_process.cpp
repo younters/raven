@@ -17,6 +17,10 @@ namespace {
 // mapping through static teardown; the OS releases it at host-process exit.
 Mapping *const module_mapping = new Mapping{MAP_FAILED, 0};
 bool module_claimed = false;
+struct PendingImages {
+	std::map<uint64_t, size_t> ranges;
+	~PendingImages() { for (auto [base, size] : ranges) munmap(reinterpret_cast<void *>(base), size); }
+} pending_images;
 bool selected_fex = false;
 thread_local void *guest_teb = nullptr;
 thread_local sigjmp_buf stop_frame;
@@ -232,7 +236,10 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 	for (auto *image : images) {
 		const auto n = (image->data().size() + 16383) & ~size_t(16383);
 		mach_vm_address_t base = image->base();
-		if (mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS)
+		auto reserved = pending_images.ranges.find(base);
+		if (reserved != pending_images.ranges.end() && reserved->second == n)
+			pending_images.ranges.erase(reserved);
+		else if (mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS)
 			throw std::runtime_error("FEX guest image reservation conflict at " + std::to_string(image->base()));
 		state->image_reservations.emplace(base, n);
 	}
@@ -489,10 +496,17 @@ bool fex_address_available(uint64_t address, uint64_t size)
 	}
 	return status == KERN_INVALID_ADDRESS || (status == KERN_SUCCESS && base >= address + size);
 }
-bool fex_image_address_available(uint64_t address, uint64_t size)
+bool fex_reserve_image_address(uint64_t address, uint64_t size)
 {
-	// Preferred bases are valid at any free address; only fallback uses the high arena.
-	return fex_address_available(address, size);
+	// Loader preflight must claim the range immediately: even host allocation
+	// during PE preparation can otherwise occupy a free preferred base.
+	const auto n = (size + 16383) & ~uint64_t(16383);
+	if (auto it = pending_images.ranges.find(address); it != pending_images.ranges.end())
+		return it->second == n;
+	mach_vm_address_t base = address;
+	if (mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS) return false;
+	pending_images.ranges.emplace(address, n);
+	return true;
 }
 bool FexProcess::memory_available(uint64_t address, size_t size) const { return fex_address_available(address, size); }
 std::vector<uint8_t> FexProcess::read_memory(uint64_t address, size_t size) const

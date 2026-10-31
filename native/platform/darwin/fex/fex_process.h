@@ -90,6 +90,6 @@ private:
 void select_fex_execution(bool enabled);
 bool fex_execution_selected();
 bool fex_address_available(uint64_t address, uint64_t size);
-bool fex_image_address_available(uint64_t address, uint64_t size);
+bool fex_reserve_image_address(uint64_t address, uint64_t size);
 NativeResult run_fex_entry(const PEImage &image, LoadedImage &loaded, const std::string &root);
 }
