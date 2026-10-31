@@ -10,6 +10,8 @@
 #ifdef __APPLE__
 #include <raven_darwin_fonts.h>
 #include <copyfile.h>
+#include <unistd.h>
+#include <sys/stat.h>
 #endif
 
 namespace raven {
@@ -60,12 +62,26 @@ void NativePrefix::place_runtime_components(const std::filesystem::path &runtime
 				continue;
 			const auto destination = windows / folder / name;
 #ifdef __APPLE__
-			// COPYFILE_CLONE uses APFS clonefile where available and falls back to a
-			// data copy on other volumes. Prefixes remain independently writable.
-			if (std::filesystem::exists(destination, error) &&
-				std::filesystem::last_write_time(destination, error) >= std::filesystem::last_write_time(from, error) && !error)
-				continue;
-			copyfile(from.c_str(), destination.c_str(), nullptr, COPYFILE_DATA | COPYFILE_STAT | COPYFILE_CLONE);
+            // Publish only a complete copy; the old destination survives failures.
+            if (std::filesystem::exists(destination) &&
+                std::filesystem::file_size(destination) == std::filesystem::file_size(from) &&
+                std::filesystem::last_write_time(destination) == std::filesystem::last_write_time(from))
+                continue;
+            auto pattern = destination.string() + ".tmp.XXXXXX";
+            std::vector<char> temporary(pattern.begin(), pattern.end()); temporary.push_back(0);
+            const int fd = mkstemp(temporary.data());
+            if (fd < 0) throw std::system_error(errno, std::generic_category(), "prefix temporary file");
+            close(fd);
+            try {
+                if (copyfile(from.c_str(), temporary.data(), nullptr, COPYFILE_DATA | COPYFILE_STAT | COPYFILE_CLONE))
+                    throw std::system_error(errno, std::generic_category(), "prefix copy " + from.string());
+                std::filesystem::permissions(temporary.data(), std::filesystem::perms::owner_write,
+                    std::filesystem::perm_options::add);
+                std::filesystem::rename(temporary.data(), destination);
+            } catch (...) {
+                unlink(temporary.data());
+                throw;
+            }
 #else
 			std::filesystem::copy_file(from, destination, std::filesystem::copy_options::update_existing, error);
 #endif
