@@ -62,3 +62,34 @@ Reproduction follows M5.md using a fresh private root and build id. Final
 qualification results and application screenshots are recorded separately.
 
 The upstream shared-clock descriptor special case also maps a WoW64 window view; otherwise initialization writes through an unmapped relocated guest address.
+
+## Allocator identity and fixture setup
+
+Module-private TLS also requires a matching allocator ownership identity.
+Rpmalloc's Windows `get_thread_id()` used raw NtCurrentTeb, so after TLS moved
+to private storage its owner comparisons still used changing guest TEBs. This
+sent same-worker frees into its cross-thread freelist and hung native allocator
+CAS retries during windowscodecs registration. Patch 0018 force-includes a
+Raven-only header in the rpmalloc translation unit, routing that identity query
+to `RavenPrivateTEB()` and the explicit host callback. The pinned rpmalloc
+submodule itself remains unmodified. Separate workers still have distinct
+identities and real cross-worker frees retain the existing remote-free path.
+Both frontend ThreadTerm paths call DeinitCRTThread, which calls
+rpmalloc_thread_finalize, before the private host environment is released.
+The other direct NtCurrentTeb uses are execution CPU-area/GS/exception state
+or process initialization (including the CRT's initial environment snapshot),
+where entry uses the private host TEB before guest simulation.
+
+Ordinary fixture runs use `RAVEN_PREFIX_SETUP=1`. They test execution contracts
+with short deadlines and should not repeatedly charge all eight COM registration
+processes against a tiny fixture's outer timeout. Four normal CTest registration
+checks explicitly unset that variable and run serially, for both engines and
+both target widths; they require the registration stamp and report elapsed
+setup-plus-fixture time. Prefix preparation registers both component widths in
+each case. Notepad++ also uses real fresh setup under both engines.
+
+Final verification provisions the new upstream RTL privately with
+`scripts/provision-rtl.py --output /tmp/raven-integ-components/rtl` and selects
+that DLL in the build cache. The copied reference option originally selected
+the older shared ReactOS RTL; early diagnostics used it, and the unchanged
+build-macos comparison still uses it. The shared component is never replaced.

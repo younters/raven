@@ -112,3 +112,51 @@ if(TARGET fex_wow64_boundary_test)
             PASS_REGULAR_EXPRESSION "FEX host ABI v2 rejects v1 and truncated host tables")
     endforeach()
 endif()
+if(RAVEN_FEX_MODHOST)
+    foreach(width 32 64)
+        set(compiler ${RAVEN_MINGW${width}})
+        if(compiler)
+            set(entry raven_entry)
+            if(width EQUAL 32)
+                set(entry _raven_entry)
+            endif()
+            set(fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-jit-stress${width}.exe)
+            add_custom_command(OUTPUT ${fixture}
+                COMMAND ${compiler} -O1 -nostdlib -fno-stack-protector -fno-builtin -mno-stack-arg-probe
+                    -Wl,--entry,${entry},--no-insert-timestamp -o ${fixture}
+                    ${RAVEN_DARWIN_DIR}/fex/jit_stress_client.c -lkernel32
+                DEPENDS ${RAVEN_DARWIN_DIR}/fex/jit_stress_client.c VERBATIM)
+            add_custom_target(fex_jit_stress${width}_fixture DEPENDS ${fixture})
+            add_dependencies(raven fex_jit_stress${width}_fixture)
+            foreach(engine native fex)
+                foreach(parallel 0 1)
+                    add_test(NAME native_jit_stress_x${width}_${engine}_${parallel} COMMAND ${Python3_EXECUTABLE}
+                        ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py --require-modules --backend ${engine}
+                        --raven $<TARGET_FILE:raven> --fixture ${fixture} --modules "${RAVEN_FEX_MODULE_ROOT}" --timeout-ms 60000)
+                    set_tests_properties(native_jit_stress_x${width}_${engine}_${parallel} PROPERTIES TIMEOUT 75
+                        LABELS "engine-parity;jit;stress")
+                    if(parallel)
+                        set_tests_properties(native_jit_stress_x${width}_${engine}_${parallel} PROPERTIES ENVIRONMENT "RAVEN_PARALLEL=1")
+                    else()
+                        set_tests_properties(native_jit_stress_x${width}_${engine}_${parallel} PROPERTIES ENVIRONMENT_MODIFICATION "RAVEN_PARALLEL=unset:")
+                    endif()
+                endforeach()
+            endforeach()
+        endif()
+    endforeach()
+endif()
+if(TARGET kernel-ansi_fex_fixture)
+    foreach(width 32 64)
+        set(fixture ${CMAKE_CURRENT_BINARY_DIR}/kernel-ansi-fex.exe)
+        if(width EQUAL 32)
+            set(fixture ${CMAKE_BINARY_DIR}/native/kernel-ansi-fex32.exe)
+        endif()
+        foreach(engine native fex)
+            add_test(NAME native_fresh_prefix_x${width}_${engine} COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/scripts/test-fex-prefix.py $<TARGET_FILE:raven>
+                ${fixture} "${RAVEN_FEX_MODULE_ROOT}" ${engine} ${width})
+            set_tests_properties(native_fresh_prefix_x${width}_${engine} PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE
+                LABELS "engine-parity;process;registration")
+        endforeach()
+    endforeach()
+endif()

@@ -34,6 +34,35 @@ index a0283e6..2eeb62e 100644
  #endif
  
  void ProcessTerm(HANDLE Handle, BOOL After, NTSTATUS Status) {}
+diff --git a/Source/Windows/CMakeLists.txt b/Source/Windows/CMakeLists.txt
+index 6e13834..fa7a27c 100644
+--- a/Source/Windows/CMakeLists.txt
++++ b/Source/Windows/CMakeLists.txt
+@@ -1,6 +1,7 @@
+ option(RAVEN_HOST "Experimental Raven native host frontend" OFF)
+ if(RAVEN_HOST)
+   add_compile_definitions(RAVEN_HOST)
++  target_compile_options(rpmalloc PRIVATE -include "${CMAKE_CURRENT_SOURCE_DIR}/Common/RavenAllocatorTEB.h")
+ endif()
+ function(build_implib name)
+   set(name_ex ${name}_ex)
+diff --git a/Source/Windows/Common/Allocator.cpp b/Source/Windows/Common/Allocator.cpp
+index 9461e3a..e0fbd1d 100644
+--- a/Source/Windows/Common/Allocator.cpp
++++ b/Source/Windows/Common/Allocator.cpp
+@@ -16,6 +16,12 @@
+ #include <winnt.h>
+ #include <wine/debug.h>
+ 
++#ifdef RAVEN_HOST
++extern "C" void *RavenPrivateTEB() {
++  return RavenHost ? reinterpret_cast<void*>(RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->private_teb), 0, 0, 0)) : NtCurrentTeb();
++}
++#endif
++
+ namespace FEX::Windows::Allocator {
+ void SetupHooks(HMODULE ntdll) {
+   FEXCore::Allocator::HookPtrs Ptrs {};
 diff --git a/Source/Windows/Common/Priv.h b/Source/Windows/Common/Priv.h
 index ea702b4..52b5fcf 100644
 --- a/Source/Windows/Common/Priv.h
@@ -55,6 +84,22 @@ index ea702b4..52b5fcf 100644
    return reinterpret_cast<__TEB*>(NtCurrentTeb());
  }
  
+diff --git a/Source/Windows/Common/RavenAllocatorTEB.h b/Source/Windows/Common/RavenAllocatorTEB.h
+new file mode 100644
+index 0000000..1c6b49e
+--- /dev/null
++++ b/Source/Windows/Common/RavenAllocatorTEB.h
+@@ -0,0 +1,10 @@
++// SPDX-License-Identifier: MIT
++#pragma once
++#include <windows.h>
++// rpmalloc's ownership identity must match its host-private dynamic TLS.
++// Include Windows first, then redirect only the allocator translation unit.
++#ifdef __cplusplus
++extern "C"
++#endif
++void *RavenPrivateTEB(void);
++#define NtCurrentTeb RavenPrivateTEB
 diff --git a/Source/Windows/Common/RavenHost.h b/Source/Windows/Common/RavenHost.h
 index d23fd74..4380d95 100644
 --- a/Source/Windows/Common/RavenHost.h
