@@ -171,7 +171,7 @@ int main(int argc, char **argv)
 		if (mode == "internal") asm volatile("brk #0");
 		auto result = process.call(loaded.base() + image.entry, {}, std::chrono::milliseconds(mode == "timeout" ? 20 : 5000));
 		if (mode == "debug-print") {
-			check(result.stop == raven::NativeStop::fault && result.signal == SIGSEGV && result.signal_code == SI_KERNEL && result.value == 1,
+			check(result.stop == raven::NativeStop::fault && result.signal == SIGSEGV && result.signal_code == 0x80 && result.value == 1,
 				"INT 2D did not normalize canonical debug print");
 			process.complete_debug_print(result.instruction);
 			result = process.resume();
