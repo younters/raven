@@ -73,7 +73,7 @@ void NativePrefix::place_runtime_components(const std::filesystem::path &runtime
             if (fd < 0) throw std::system_error(errno, std::generic_category(), "prefix temporary file");
             close(fd);
             try {
-                if (copyfile(from.c_str(), temporary.data(), nullptr, COPYFILE_DATA | COPYFILE_STAT | COPYFILE_CLONE))
+                if (copyfile(from.c_str(), temporary.data(), nullptr, COPYFILE_DATA | COPYFILE_STAT | COPYFILE_CLONE | COPYFILE_UNLINK))
                     throw std::system_error(errno, std::generic_category(), "prefix copy " + from.string());
                 std::filesystem::permissions(temporary.data(), std::filesystem::perms::owner_write,
                     std::filesystem::perm_options::add);
