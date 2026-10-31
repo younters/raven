@@ -17,8 +17,8 @@ parser.add_argument('--parallel', action='store_true')
 args = parser.parse_args()
 root = Path(args.modules)
 if not args.modules or not (root / 'xtajit.dll').is_file():
-    print('SKIP: provision RAVEN_FEX_MODULE_ROOT/xtajit.dll')
-    sys.exit(77)
+    print('FAIL: provision RAVEN_FEX_MODULE_ROOT/xtajit.dll')
+    sys.exit(1)
 verify_wow64_module_pin(root / 'xtajit.dll', verify_patch_pins())
 with tempfile.TemporaryDirectory(prefix='raven-m4-') as prefix:
     env = dict(os.environ, RAVEN_FEX_MODULE_ROOT=str(root), RAVEN_PREFIX=prefix)

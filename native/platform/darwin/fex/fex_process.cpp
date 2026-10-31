@@ -106,6 +106,7 @@ struct FexWorker {
 				if (wow64_module) {
 					raven_ec_call(mapped_image->export_address("BTCpuThreadInit"), args, environment->teb.data());
 					initialize_wow64_packet(*environment);
+					// FEX InternalThreadState::CurrentFrame is const and points to BaseFrameState.
 					interrupt = reinterpret_cast<uint32_t *>(raven_ec_call(mapped_image->export_address("RavenWow64Doorbell"), args, environment->teb.data()));
 					if (!interrupt) throw std::runtime_error("FEX WoW64 needs a suspend doorbell; rebuild the module");
 				}
@@ -208,6 +209,7 @@ struct FexProcess::State {
 	NativeContext initial;
 	std::function<void()> resume_hook;
 	uint64_t teb = 0;
+	uint64_t user_limit = 0x7fff0000ULL;
 	uint64_t stack_top = 0;
 	std::function<void()> unix_pump;
 	std::chrono::milliseconds budget{5000}, slice{0};
@@ -242,6 +244,13 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 	state->mode = mode;
 	wow64_module = mode == NativeMode::x86;
 	if (wow64_module) {
+		// The executable, not its DLLs, selects the WoW64 user range.
+		for (auto *image : images) {
+			const Bytes data{image->data().data(), image->data().size()};
+			const auto pe = data.get<uint32_t>(0x3c);
+			const auto flags = data.get<uint16_t>(pe + 22);
+			if (!(flags & 0x2000)) { state->user_limit = wow64_user_limit(flags); break; }
+		}
 		state->window = std::make_unique<FexGuestWindow>();
 		wow64_guest_base = state->window->base();
 	}
@@ -258,7 +267,7 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 	// separate native code cache uses MAP_JIT. Never replace an existing host mapping.
 	for (auto *image : images) map_image(*image);
 	state->stack = wow64_module ? reinterpret_cast<void *>(state->host(map_memory(state->stack_size, PROT_READ | PROT_WRITE, 0))) : mmap(nullptr, state->stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-	state->gate = wow64_module ? reinterpret_cast<void *>(state->host(map_memory(16384, PROT_READ | PROT_WRITE, 0))) : mmap(nullptr, 16384, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	state->gate = wow64_module ? reinterpret_cast<void *>(state->host(map_memory(16384, PROT_READ | PROT_WRITE | PROT_EXEC, 0))) : mmap(nullptr, 16384, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (state->stack == MAP_FAILED || state->gate == MAP_FAILED)
 		throw std::runtime_error("FEX guest stack/gate allocation failed");
 	// mov r10,rax; mov eax,completion; syscall; ud2
@@ -268,7 +277,7 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 		memcpy(state->gate, gate32, sizeof(gate32));
 	} else memcpy(state->gate, gate, sizeof(gate));
 	uint64_t args[8]{uintptr_t(state->gate), 16384, 0x3000, 0x40, 1, 0};
-	notify_memory("NotifyMemoryAlloc", args, 4);
+	if (!wow64_module) notify_memory("NotifyMemoryAlloc", args, 4);
 	state->stack_top = state->guest(state->stack) + state->stack_size;
 	state->thread.stack_top = state->stack_top;
 	for (uint64_t at = state->guest(state->stack); at < state->stack_top; at += 4096) state->pages[at] = PROT_READ | PROT_WRITE;
@@ -292,7 +301,7 @@ NativeResult FexProcess::call(uint64_t address, std::span<const uint64_t> argume
 		auto saved = context();
 		auto &r = saved.registers;
 		r.rip = uint32_t(address);
-		r.rsp = (state->thread.stack_top - (arguments.size() + 1) * 4) & ~uint64_t(15);
+		r.rsp = ((state->thread.stack_top - arguments.size() * 4) & ~uint64_t(15)) - 4;
 		std::vector<uint8_t> stack((arguments.size() + 1) * 4);
 		const uint32_t gate = uint32_t(return_gate()); memcpy(stack.data(), &gate, 4);
 		for (size_t i = 0; i < arguments.size(); ++i) { const uint32_t word = uint32_t(arguments[i]); memcpy(stack.data() + 4 + i * 4, &word, 4); }
@@ -528,7 +537,7 @@ bool fex_address_available(uint64_t address, uint64_t size)
 	return status == KERN_INVALID_ADDRESS || (status == KERN_SUCCESS && base >= address + size);
 }
 bool FexProcess::memory_available(uint64_t address, size_t size) const { if (state->window) {
-		if (address < 65536 || address >= FexGuestWindow::size || size > FexGuestWindow::size - address) return false;
+		if (!size || address < 65536 || address >= state->user_limit || size > state->user_limit - address) return false;
 		for (auto [base, region] : state->regions) if (address < base + region.size && base < address + size) return false;
 		return true;
 	} return fex_address_available(address, size); }
@@ -568,7 +577,7 @@ uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 	}
 	const auto n = (size + 16383) & ~size_t(16383);
 	if (state->window) {
-		if (!address) for (address = 0x10000; address < 0x7ffe0000 && !memory_available(address, n); address += 65536) {}
+		if (!address) for (address = 0x10000; address < state->user_limit && !memory_available(address, n); address += 65536) {}
 		if (!memory_available(address, n) || address % 16384) throw std::runtime_error("WoW64 guest allocation unavailable");
 		if (mprotect(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE)) throw std::runtime_error("WoW64 guest commit failed");
 	} else if (address) {
@@ -749,12 +758,14 @@ NativeResult FexProcess::callback(uint64_t address, std::span<const uint64_t> ar
 	if (!state->active || !state->thread.awaiting_api) throw std::runtime_error("FEX callback requires stopped API frame");
 	const auto outer = context();
 	state->thread.callbacks.push_back(outer);
-	const auto ceiling = state->thread.stack_top;
+	struct RestoreStackTop {
+		uint64_t &top;
+		uint64_t saved;
+		~RestoreStackTop() { top = saved; }
+	} restore{state->thread.stack_top, state->thread.stack_top};
 	state->thread.stack_top = outer.registers.rsp - 256;
 	state->active = false;
-	auto result = call(address, arguments, timeout);
-	state->thread.stack_top = ceiling;
-	return result;
+	return call(address, arguments, timeout);
 }
 NativeThreadState FexProcess::save_thread(bool snapshot) const
 {

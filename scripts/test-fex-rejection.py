@@ -16,8 +16,8 @@ value = a.modules or os.environ.get('RAVEN_FEX_MODULE_ROOT')
 root = Path(value) if value else None
 module = 'xtajit.dll' if a.wow64 else 'xtajit64.dll'
 if root is None or not (root / module).is_file():
-    print('SKIP: provision RAVEN_FEX_MODULE_ROOT/xtajit64.dll')
-    sys.exit(77)
+    print(f'{"FAIL" if a.wow64 else "SKIP"}: provision RAVEN_FEX_MODULE_ROOT/{module}')
+    sys.exit(1 if a.wow64 else 77)
 (verify_wow64_module_pin if a.wow64 else verify_module_pin)(root / module, verify_patch_pins())
 r = subprocess.run([a.host, a.fixture, 'internal'], env=dict(os.environ, RAVEN_FEX_MODULE_ROOT=str(root)),
                    capture_output=True, text=True, timeout=10)

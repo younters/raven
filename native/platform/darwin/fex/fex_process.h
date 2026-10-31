@@ -4,6 +4,12 @@
 
 namespace raven {
 
+// Exclusive user limit: reserve the last 64 KiB of the selected address range.
+constexpr uint64_t wow64_user_limit(uint16_t characteristics)
+{
+	return characteristics & 0x20 ? 0xffff0000ULL : 0x7fff0000ULL;
+}
+
 // Opt-in in-process x64/WoW64 engine behind the Darwin NativeProcess seam.
 // One module instance per host process. RAVEN_PARALLEL uses resident FEX workers;
 // the constructing thread retains controller and NT/API ownership.

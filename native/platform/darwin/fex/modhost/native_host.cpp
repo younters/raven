@@ -575,7 +575,7 @@ void verify_host_callret_fault() {
 	record.information[1] = guard;
 	RavenFault::NativeContext native{};
 	native.pc = uintptr_t(&host_log); // Native Mach-O code, outside the translator.
-	native.x[17] = 0x12345678;
+	native.x[17] = native.x[25] = 0x12345678;
 	const auto before = native;
 	uint64_t args[8]{uintptr_t(&record), uintptr_t(&native)};
 	const auto status = uint32_t(raven_ec_call(mapped_image->export_address("RavenHandleFault"), args,

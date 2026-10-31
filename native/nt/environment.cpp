@@ -1,5 +1,8 @@
 #include "environment.h"
 #include "nls.h"
+#ifdef RAVEN_FEX_PROCESS
+#include "platform/darwin/fex/fex_process.h"
+#endif
 #ifdef __APPLE__
 #include "platform/darwin/processor_count.h"
 #endif
@@ -29,6 +32,18 @@ static uint32_t value(NativeProcess &process, uint64_t address)
 	for (size_t index = 0; index < bytes.size(); ++index)
 		result |= uint32_t(bytes[index]) << (index * 8);
 	return result;
+}
+
+uint64_t NativeEnvironment::x86_user_limit() const
+{
+#ifdef RAVEN_FEX_PROCESS
+	if (fex_execution_selected()) {
+		const auto image = value(process, process_block + 8);
+		const auto pe = value(process, image + 0x3c);
+		return wow64_user_limit(uint16_t(value(process, image + pe + 20) >> 16));
+	}
+#endif
+	return 0x7fff0000ULL;
 }
 
 // KUSER_SHARED_DATA, the page Windows maps read-only at 0x7ffe0000 in every process: programs and installers read the version of

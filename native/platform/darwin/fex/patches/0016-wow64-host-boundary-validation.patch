@@ -11,7 +11,7 @@ diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
 +  const bool IsWine = !!GetProcAddress(NtDll, "wine_get_version");
 +#endif
    OvercommitTracker.emplace(IsWine);
- 
+
    FEX::Windows::Allocator::SetupHooks(NtDll);
 @@ -1141,7 +1145,7 @@
    if (WowHost || !Host || Host->size != sizeof(*Host) || Host->version != 1 || !Host->teb32) return STATUS_INVALID_PARAMETER;
@@ -22,13 +22,34 @@ diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
    WowHost = Host;
    RavenHost = &Host->common;
    BTCpuProcessInit();
-@@ -1156,6 +1160,13 @@
+@@ -1155,7 +1159,34 @@
+   CTX->ExecuteThread(TLS.ThreadState());
    Context::UnlockJITContext(TLS);
  }
++// JIT buffer overflow can fault in FEX's native compiler. Only executable
++// sections of this module may use that repair path; Mach-O host code may not.
++static bool RavenIsModuleCode(uint64_t PC) {
++  extern IMAGE_DOS_HEADER __ImageBase;
++  const auto Base = reinterpret_cast<uintptr_t>(&__ImageBase);
++  const auto NT = reinterpret_cast<const IMAGE_NT_HEADERS64*>(Base + __ImageBase.e_lfanew);
++  const auto Sections = IMAGE_FIRST_SECTION(NT);
++  for (unsigned I = 0; I < NT->FileHeader.NumberOfSections; ++I) {
++    const auto &S = Sections[I];
++    if ((S.Characteristics & IMAGE_SCN_MEM_EXECUTE) && PC >= Base + S.VirtualAddress &&
++        PC - Base - S.VirtualAddress < S.Misc.VirtualSize) return true;
++  }
++  return false;
++}
  extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, CONTEXT *Native) {
 +  const auto Thread = GetTLS().ThreadState();
 +  if (!Thread) return STATUS_NOT_SUPPORTED;
-+  if (Record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION && !IsAddressInJit(Native->Pc)) return STATUS_NOT_SUPPORTED;
++  if (!IsAddressInJit(Native->Pc)) {
++    if (Record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && RavenIsModuleCode(Native->Pc) &&
++        FEX::Windows::JITGuardPage::HandleJITGuardPage(Thread,
++          reinterpret_cast<void*>(Record->ExceptionInformation[1]), Native->X,
++          reinterpret_cast<__uint128_t*>(Native->V), &Native->Pc)) return STATUS_SUCCESS;
++    return STATUS_NOT_SUPPORTED;
++  }
 +  const bool Doorbell = IsAddressInJit(Native->Pc) && *reinterpret_cast<const uint32_t*>(Native->Pc) == (0xd4200000u | (0xcafeu << 5)) &&
 +                        Thread->CurrentFrame->SuspendDoorbell;
 +  if (Record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION &&
@@ -36,3 +57,39 @@ diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
    EXCEPTION_POINTERS Pointers {Record, Native};
    return BTCpuResetToConsistentStateImpl(&Pointers) ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED;
  }
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -659,11 +659,32 @@
+ } // namespace Exception
+
+ #ifdef RAVEN_HOST
++// JIT buffer overflow can fault in FEX's native compiler. Only executable
++// sections of this module may use that repair path; Mach-O host code may not.
++static bool RavenIsModuleCode(uint64_t PC) {
++  extern IMAGE_DOS_HEADER __ImageBase;
++  const auto Base = reinterpret_cast<uintptr_t>(&__ImageBase);
++  const auto NT = reinterpret_cast<const IMAGE_NT_HEADERS64*>(Base + __ImageBase.e_lfanew);
++  const auto Sections = IMAGE_FIRST_SECTION(NT);
++  for (unsigned I = 0; I < NT->FileHeader.NumberOfSections; ++I) {
++    const auto &S = Sections[I];
++    if ((S.Characteristics & IMAGE_SCN_MEM_EXECUTE) && PC >= Base + S.VirtualAddress &&
++        PC - Base - S.VirtualAddress < S.Misc.VirtualSize) return true;
++  }
++  return false;
++}
+ extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, ARM64_NT_CONTEXT *Native) {
+   if (!RavenHost || !Record || !Native) return STATUS_INVALID_PARAMETER;
+   const auto Area = GetCPUArea();
+   auto *Thread = Area.ThreadState();
+   if (!Thread) return STATUS_NOT_SUPPORTED;
++  if (!CTX->IsAddressInCodeBuffer(Thread, Native->Pc) && !IsDispatcherAddress(Native->Pc)) {
++    if (Record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && RavenIsModuleCode(Native->Pc) &&
++        FEX::Windows::JITGuardPage::HandleJITGuardPage(Thread,
++          reinterpret_cast<void*>(Record->ExceptionInformation[1]), Native->X,
++          reinterpret_cast<__uint128_t*>(Native->V), &Native->Pc)) return STATUS_SUCCESS;
++    return STATUS_NOT_SUPPORTED;
++  }
+   if (Record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+     const auto Address = Record->ExceptionInformation[1];
+     if (UserSharedDataBacking && Record->ExceptionInformation[0] == 0 &&

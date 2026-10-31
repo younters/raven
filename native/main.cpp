@@ -316,10 +316,12 @@ int main(int argc, char **argv)
 				if (!entry && run_process)
 					raven::widen_il_only_image(bytes);
 #ifdef RAVEN_FEX_PROCESS
-				if (use_fex && !entry && !raven::PEImage(bytes).is_64)
-					modules.set_address_space([](uint64_t address, uint64_t size) {
-						return address >= 65536 && address < 0x100000000ULL && size <= 0x100000000ULL - address;
+				if (use_fex && !entry && !raven::PEImage(bytes).is_64) {
+					const auto limit = raven::wow64_user_limit(raven::PEImage(bytes).characteristics);
+					modules.set_address_space([limit](uint64_t address, uint64_t size) {
+						return address >= 65536 && size && address < limit && size <= limit - address;
 					}, 0x10000000ULL);
+				}
 #endif
 				auto &module = modules.add(std::filesystem::path(argv[i]).filename().string(), std::move(bytes));
 				if (!entry) {

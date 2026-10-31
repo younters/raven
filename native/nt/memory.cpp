@@ -35,9 +35,6 @@ static void put(std::span<uint8_t> bytes, size_t at, uint64_t value, size_t widt
 		bytes[at+byte]=uint8_t(value>>(byte*8));
 }
 
-// x86 guests keep Windows' default 2 GiB user range so every allocation stays positive as a signed pointer.
-static constexpr uint64_t x86_user_limit = 0x7fff0000ULL;
-
 static bool range(uint64_t address, uint64_t size, uint64_t user_limit)
 {
 	return size && address<user_limit && size<=user_limit-address;
@@ -53,7 +50,7 @@ NativeMemory::NativeMemory(NativeProcess &process, NativeEnvironment &environmen
 {
 	previous_accounting=environment.set_memory_accounting(this);
 	if (process.mode()==NativeMode::x86) {
-		user_limit=x86_user_limit;
+		user_limit=environment.x86_user_limit();
 		next=floor=0x20000000ULL;
 	}
 #ifdef RAVEN_FEX_PROCESS

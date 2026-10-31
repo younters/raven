@@ -365,9 +365,9 @@ bool NativeX86System::dispatch(std::string_view name)
 #ifdef __APPLE__
 		const auto count = darwin::processor_count(true);
 		const auto mask = count == 32 ? ~0U : (1U << count) - 1;
-		const uint32_t fields[] = {0, 4096, 0x10000, 0x7ffeffff, mask, count, 586, 65536, 0x0a000006};
+		const uint32_t fields[] = {0, 4096, 0x10000, uint32_t(environment.x86_user_limit() - 1), mask, count, 586, 65536, 0x0a000006};
 #else
-		const uint32_t fields[] = {0, 4096, 0x10000, 0x7ffeffff, 0xf, 4, 586, 65536, 0x0a000006};
+		const uint32_t fields[] = {0, 4096, 0x10000, uint32_t(environment.x86_user_limit() - 1), 0xf, 4, 586, 65536, 0x0a000006};
 #endif
 		for (size_t index = 0; index < 9; ++index)
 			for (size_t byte = 0; byte < 4; ++byte)
