@@ -834,7 +834,7 @@ foreach(width 64 32)
             DEPENDS ${RAVEN_DARWIN_DIR}/tests/lsa_lookup.c VERBATIM)
         add_custom_target(darwin_lsa_lookup${width} ALL DEPENDS ${lsa_fixture})
         add_test(NAME native_darwin_lsa_lookup_x${width} COMMAND raven --run-process --execution=native ${lsa_fixture})
-        set_tests_properties(native_darwin_lsa_lookup_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "exited with status 0([^0-9]|$)")
+        set_tests_properties(native_darwin_lsa_lookup_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0")
     endif()
 endforeach()
 # Real process fixtures for the opt-in arm64 FEX host. These sources are unchanged;
@@ -982,4 +982,15 @@ if(RAVEN_FEX_MODHOST AND TARGET kernel_seh_fixture)
         endforeach()
     endforeach()
     add_custom_target(fex_review_fixtures DEPENDS ${review_outputs})
+endif()
+
+if(RAVEN_MINGW64)
+    set(thread_context_fixture ${CMAKE_CURRENT_BINARY_DIR}/thread-context.exe)
+    add_custom_command(OUTPUT ${thread_context_fixture}
+        COMMAND ${RAVEN_MINGW64} -nostdlib -O1 -fno-builtin -fno-stack-protector
+            -Wl,--entry,raven_entry -o ${thread_context_fixture} ${RAVEN_DARWIN_DIR}/tests/thread_context.c -lkernel32
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/thread_context.c VERBATIM)
+    add_custom_target(darwin_thread_context ALL DEPENDS ${thread_context_fixture})
+    add_test(NAME native_darwin_thread_context COMMAND raven --run-process --execution=native ${thread_context_fixture})
+    set_tests_properties(native_darwin_thread_context PROPERTIES TIMEOUT 30 ENVIRONMENT "RAVEN_PARALLEL=1" PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
 endif()
