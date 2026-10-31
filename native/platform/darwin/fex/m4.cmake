@@ -78,7 +78,7 @@ else()
 endif()
 set(M4_NTDLL_IMPORT ${CMAKE_BINARY_DIR}/native/fex-ntdll32.a)
 add_custom_command(OUTPUT ${M4_NTDLL_IMPORT}
-	COMMAND ${M4_DLLTOOL} -d ${CMAKE_CURRENT_LIST_DIR}/wow64_crt_ntdll.def -l ${M4_NTDLL_IMPORT}
+	COMMAND ${M4_DLLTOOL} -m i386 -d ${CMAKE_CURRENT_LIST_DIR}/wow64_crt_ntdll.def -l ${M4_NTDLL_IMPORT}
 	DEPENDS ${CMAKE_CURRENT_LIST_DIR}/wow64_crt_ntdll.def VERBATIM)
 add_custom_command(OUTPUT ${M4_ALIGN}
 	COMMAND ${RAVEN_MINGW32} -nostdlib -Wl,--entry,_raven_entry,--no-insert-timestamp
