@@ -58,8 +58,8 @@ with contextlib.ExitStack() as stack:
     print(result.stdout, end='')
     print(result.stderr, end='', file=sys.stderr)
     if args.expect_placement_conflict:
-        if result.returncode and 'PE preferred base conflicts with host mappings and image has no relocation table' in result.stderr:
-            print('PASS: non-relocatable low image rejected without replacing host mappings')
+        if result.returncode and 'PE preferred base is unavailable and image has no relocation table' in result.stderr:
+            print('PASS: unavailable fixed image rejected without replacing existing mappings')
             sys.exit(0)
         print('FAIL: expected a specific non-relocatable image conflict', file=sys.stderr)
         sys.exit(1)
