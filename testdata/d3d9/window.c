@@ -59,9 +59,9 @@ static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wparam, LPAR
 static void pump(void)
 {
 	MSG message;
-	while (PeekMessageA(&message, NULL, 0, 0, PM_REMOVE)) {
+	while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE)) {
 		TranslateMessage(&message);
-		DispatchMessageA(&message);
+		DispatchMessageW(&message);
 	}
 }
 
@@ -165,3 +165,6 @@ int raven_entry(void)
 	}
 	return 0;
 }
+
+// Keep a real relocation so FEX can place the fixture around host mappings.
+static int (*volatile const entry_relocation)(void) __attribute__((used)) = raven_entry;

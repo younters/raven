@@ -1191,5 +1191,20 @@ foreach(width 32 64)
                 -o ${_mtld3d_fixture} ${PROJECT_SOURCE_DIR}/testdata/d3d9/window.c -lkernel32 -luser32
             DEPENDS ${PROJECT_SOURCE_DIR}/testdata/d3d9/window.c VERBATIM)
         add_custom_target(darwin_mtld3d${width}_fixture DEPENDS ${_mtld3d_fixture})
+        if(RAVEN_FEX_MODHOST)
+            add_test(NAME darwin_mtld3d${width}_fex COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/mtld3d/run_fixture.py
+                --raven $<TARGET_FILE:raven> --fixture ${_mtld3d_fixture} --width ${width} --modules "${RAVEN_FEX_MODULE_ROOT}")
+            set_tests_properties(darwin_mtld3d${width}_fex PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 RESOURCE_LOCK raven_compositor)
+            set(_runtime_fixture ${CMAKE_CURRENT_BINARY_DIR}/raven-mtld3d-runtime${width}.exe)
+            add_custom_command(OUTPUT ${_runtime_fixture}
+                COMMAND ${RAVEN_MINGW${width}} -O2 -nostdlib -fno-stack-protector -fno-builtin
+                    -Wl,--entry,raven_entry,--no-insert-timestamp -o ${_runtime_fixture}
+                    ${PROJECT_SOURCE_DIR}/testdata/d3d9/runtime.c -lkernel32 -luser32
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/d3d9/runtime.c VERBATIM)
+            add_custom_target(darwin_mtld3d_runtime${width}_fixture DEPENDS ${_runtime_fixture})
+            add_test(NAME darwin_mtld3d_runtime${width}_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+                --raven $<TARGET_FILE:raven> --fixture ${_runtime_fixture} --modules "${RAVEN_FEX_MODULE_ROOT}")
+            set_tests_properties(darwin_mtld3d_runtime${width}_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+        endif()
     endif()
 endforeach()

@@ -56,7 +56,7 @@ DarwinUnixCalls::DarwinUnixCalls(NativeProcess &process, const ModuleSet &module
 		return;
 	const uint64_t gate = process.unix_call_gate();
 	// The provider's image is shared with the agent. This export is data, read through GetProcAddress by Wine's CRT startup.
-	std::memcpy(module.loaded.data().data() + module.exports.at(symbol->second).address, &gate, sizeof gate);
+	std::memcpy(module.loaded.data().data() + module.exports.at(symbol->second).address, &gate, process.mode() == NativeMode::x86 ? 4 : 8);
 }
 
 bool DarwinUnixCalls::dispatch(std::string_view name)
@@ -82,9 +82,9 @@ bool DarwinUnixCalls::dispatch(std::string_view name)
 	if (args[2] != 1000 && args[2] != 1001)
 		return false;
 	uint32_t status = 0xc0000135U; // STATUS_DLL_NOT_FOUND
-	if (args[0] != UINT64_MAX)
+	if (args[0] != UINT64_MAX && !(process.mode() == NativeMode::x86 && args[0] == UINT32_MAX))
 		status = 0xc0000008U;
-	else if (args[2] == 1001)
+	else if (args[2] == 1001 && process.mode() != NativeMode::x86)
 		status = 0xc00000bbU; // WoW64 is not implemented.
 	else if (args[4] < 8)
 		status = 0xc0000004U;
@@ -97,7 +97,7 @@ bool DarwinUnixCalls::dispatch(std::string_view name)
 		if (found != modules.all().end() && found->second->loaded.base() == args[1] && !root.empty()) {
 			try {
 				process.validate_write_memory(args[3], 8);
-				if (args[5]) process.validate_write_memory(args[5], 8);
+				if (args[5]) process.validate_write_memory(args[5], process.mode() == NativeMode::x86 ? 4 : 8);
 				auto handle = handles.find(args[1]);
 				if (handle == handles.end()) {
 					// The provisioner validates the pinned table layout. Release overlays
@@ -117,7 +117,7 @@ bool DarwinUnixCalls::dispatch(std::string_view name)
 				process.write_memory(args[3], {reinterpret_cast<const uint8_t *>(&handle->second), 8});
 				if (args[5]) {
 					const uint64_t size = 8;
-					process.write_memory(args[5], {reinterpret_cast<const uint8_t *>(&size), 8});
+					process.write_memory(args[5], {reinterpret_cast<const uint8_t *>(&size), process.mode() == NativeMode::x86 ? size_t(4) : size_t(8)});
 				}
 				status = 0;
 			} catch (const std::runtime_error &error) {
