@@ -595,13 +595,8 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 #ifdef RAVEN_FEX_PROCESS
 		if (!validate_fex_thread_context(call, *thread, threads.current_id())) return;
 #endif
-		if (thread->state == GuestThread::State::done) { call.fail(6); return; }
-		// A running remote thread has no stable snapshot. Require suspension,
-		// and never report success for register groups we do not populate.
-		if (thread->id != threads.current_id() && !thread->suspend_count) { call.fail(87); return; }
 		const auto &registers = thread->id == threads.current_id() ? call.process.context().registers : thread->snapshot.context.registers;
 		const uint32_t flags = call.load<uint32_t>(call[1] + 0x30);
-		if (!(flags & 0x100000) || (flags & ~0x100003u)) { call.fail(50); return; }
 		const auto put = [&](size_t at, uint64_t value) { call.store<uint64_t>(call[1] + at, value); };
 		if (flags & 0x1) {
 			call.store<uint16_t>(call[1] + 0x38, uint16_t(registers.cs));
@@ -634,14 +629,12 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(6);
 			return;
 		}
-		if (thread->state == GuestThread::State::done) { call.fail(6); return; }
 		if (thread->id == threads.current_id() || !thread->suspend_count) {
-			call.fail(87);
+			call.fail(5);
 			return;
 		}
 		auto registers = thread->snapshot.context.registers;
 		const uint32_t flags = call.load<uint32_t>(call[1] + 0x30);
-		if (!(flags & 0x100000) || (flags & ~0x100003u)) { call.fail(50); return; }
 		const auto get = [&](size_t at) { return call.load<uint64_t>(call[1] + at); };
 		if (flags & 0x1) {
 			// The flags a program may change: the status flags, direction and trap; the rest stay as the processor needs them.
