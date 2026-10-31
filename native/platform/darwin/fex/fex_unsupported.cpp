@@ -6,12 +6,6 @@ void FexProcess::set_teb(uint64_t base)
 	(void)base;
 	throw std::runtime_error("FEX set_teb is not implemented");
 }
-void FexProcess::enter_nt_service(uint64_t instruction, uint32_t number)
-{
-	(void)instruction;
-	(void)number;
-	throw std::runtime_error("FEX enter_nt_service is not implemented");
-}
 void FexProcess::complete_debug_print(uint64_t instruction)
 {
 	(void)instruction;
