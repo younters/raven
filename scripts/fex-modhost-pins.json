@@ -24,9 +24,10 @@
     "0019-raven-native-overcommit-repair.patch": "95cece5f367af30a4eff3ee9b1d57e90eb0bdde068d75d8adde5c527e58a50b4",
     "0021-raven-context-mxcsr-segments.patch": "6f196f33dcdbd48e3699fe34275e9e8111ce4c4cafd1b6154c38053a14366863",
     "0022-raven-conditional-loop-suspend.patch": "f9d985464f6d00f55b11517dcf3cd848f98b661d95d1de3b365454d855173c22",
-    "0023-raven-x87-stack-and-rounding.patch": "af1c9d2d1bc56217a005c8bd63208df121ab9a31a0ec46822fb3975b4c22aaba"
+    "0023-raven-x87-stack-and-rounding.patch": "af1c9d2d1bc56217a005c8bd63208df121ab9a31a0ec46822fb3975b4c22aaba",
+    "0027-raven-wow64-unaligned-tso.patch": "a16a1a03ce322e2621dc84d8c7c5a924b668e79f5f6afd8fd5289a621f3c3aa6"
   },
-  "xtajit_sha256": "fa763fdb468556bd329fb1c17d0c45cc6a84ababbe6889c56cde7b50b714d700",
+  "xtajit_sha256": "a4dcb4a01c3ea03b360a71c8412c31fafb404bd5ae83142844e6a9f067695e70",
   "raven_wow64_process_init_rva": 31132,
   "raven_wow64_process_init_instruction": 4162785278,
   "shared_patch12_xtajit_sha256": "5c785d47c43d8f2d0a444e82114ca731499b8a9e2ac408679b212db46c76bd6b",

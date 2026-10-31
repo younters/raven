@@ -1,0 +1,14 @@
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -1194,6 +1194,11 @@
+       (Record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || !RavenIsModuleCode(Native->Pc))) return STATUS_NOT_SUPPORTED;
+   const bool Doorbell = IsAddressInJit(Native->Pc) && *reinterpret_cast<const uint32_t*>(Native->Pc) == (0xd4200000u | (0xcafeu << 5)) &&
+                         Thread->CurrentFrame->SuspendDoorbell;
++  // Unaligned x86 loads/stores emitted with acquire/release semantics are
++  // ordinary guest JIT faults, not synthesized guest exceptions. Keep native
++  // module/Mach-O PCs rejected by the boundary gate above.
++  if (Record->ExceptionCode == EXCEPTION_DATATYPE_MISALIGNMENT &&
++      IsAddressInJit(Native->Pc) && Context::HandleUnalignedAccess(GetTLS(), Native)) return STATUS_SUCCESS;
+   if (Record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION &&
+       !Thread->CurrentFrame->SynchronousFaultData.FaultToTopAndGeneratedException && !Doorbell) return STATUS_NOT_SUPPORTED;
+   EXCEPTION_POINTERS Pointers {Record, Native};
