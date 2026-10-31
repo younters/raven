@@ -53,10 +53,19 @@ uint64_t process_dispatch(uint64_t number, void *packet)
 		const auto handle = packet_word(packet, 0xc8); // R10, preserved RCX
 		const auto ordinal = uint32_t(packet_word(packet, 0x88)); // EDX
 		const auto args = packet_word(packet, 0xb8); // R8
-		if (!handle || handle > unix_libraries.size()) return 0xc0000008u;
-		const auto &library = unix_libraries[handle - 1];
-		if (ordinal >= library.count) return 0xc000000du;
-		return uint32_t(library.table[ordinal](reinterpret_cast<void *>(args)));
+		uint64_t status = 0xc0000008u;
+		if (handle && handle <= unix_libraries.size()) {
+			const auto &library = unix_libraries[handle - 1];
+			status = ordinal < library.count ? uint32_t(library.table[ordinal](reinterpret_cast<void *>(args))) : 0xc000000du;
+		}
+		// BeginSimulation clears the suspend doorbell on reentry. A hot unix
+		// polling loop must not discard a scheduler interrupt on every call.
+		if (__atomic_load_n(RavenNT::active_thread->cpu.doorbell, __ATOMIC_ACQUIRE)) {
+			memcpy(static_cast<uint8_t *>(packet) + 0x78, &status, sizeof(status));
+			last_stop = {raven::NativeStop::timeout, 0, packet_word(packet, 0xf8), {}};
+			siglongjmp(stop_frame, 1);
+		}
+		return status;
 	}
 	auto rip = wow64_module ? *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(packet) + 0xb8) : packet_word(packet, 0xf8);
 	last_stop = {number == completion ? raven::NativeStop::returned : raven::NativeStop::syscall,
@@ -237,6 +246,7 @@ struct FexProcess::State {
 	uint64_t stack_top = 0;
 	std::function<void()> unix_pump;
 	std::chrono::milliseconds budget{5000}, slice{0};
+	std::chrono::steady_clock::time_point slice_started = std::chrono::steady_clock::now();
 	std::function<bool()> slice_wanted;
 	std::function<void()> slice_yield;
 	void *stack = MAP_FAILED, *gate = MAP_FAILED;
@@ -1066,13 +1076,27 @@ NativeResult FexProcess::resume(std::chrono::milliseconds timeout)
 	for (;;) {
 		const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
 		if (remaining.count() <= 0) return {NativeStop::timeout, 0, context().registers.rip, 0};
-		const bool slicing = !state->parallel && state->slice.count() > 0 && state->slice_wanted && state->slice_yield && state->slice_wanted();
+		// GPU callbacks publish native events even when no guest thread is runnable.
+		// Service them periodically while the current guest spins in GetData.
+		const bool slicing = !state->parallel && state->slice.count() > 0 && state->slice_wanted && state->slice_yield &&
+			(!unix_libraries.empty() || state->slice_wanted());
+		// Short API calls repeatedly return before the per-entry timer fires.
+		// Account for their accumulated wall time so GetTickCount/GetData loops
+		// cannot starve the worker which completes the pending GPU query.
+		if (slicing && std::chrono::steady_clock::now() - state->slice_started >= state->slice) {
+			state->slice_started = std::chrono::steady_clock::now();
+			state->slice_yield();
+			state->slice_started = std::chrono::steady_clock::now();
+			continue; // Recompute the deadline after another guest thread ran.
+		}
 		state->budget = slicing ? std::min(remaining, state->slice) : remaining;
 		auto result = resume();
 		if (state->parallel && result.stop == NativeStop::timeout && std::chrono::steady_clock::now() < deadline)
 			continue; // A remote suspend consumed this doorbell; resume the edited packet.
 		if (result.stop != NativeStop::timeout || !slicing || state->budget >= remaining) return result;
+		state->slice_started = std::chrono::steady_clock::now();
 		state->slice_yield();
+		state->slice_started = std::chrono::steady_clock::now();
 	}
 }
 void FexProcess::set_time_slicing(std::chrono::milliseconds slice, std::function<bool()> wanted, std::function<void()> yield)
