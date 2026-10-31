@@ -871,7 +871,7 @@ if(RAVEN_FEX_MODHOST AND TARGET raven_cpu AND RAVEN_MINGW64)
     set(FEX_FIXED ${CMAKE_CURRENT_BINARY_DIR}/fex-fixed-low.exe)
     add_custom_command(OUTPUT ${FEX_FIXED}
         COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
-            -Wl,--entry,raven_entry,--image-base,0x4000000000,--no-insert-timestamp
+            -Wl,--entry,raven_entry,--image-base,0x8000000000,--no-insert-timestamp
             -o ${FEX_FIXED} ${RAVEN_DARWIN_DIR}/fex/fixed_client.c
         DEPENDS ${RAVEN_DARWIN_DIR}/fex/fixed_client.c VERBATIM)
     add_custom_target(fex_placement_fixtures DEPENDS ${FEX_PLACEMENT} ${FEX_FIXED})
