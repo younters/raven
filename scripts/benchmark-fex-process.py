@@ -17,6 +17,8 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--build', type=Path, required=True, help='CMake build root')
 parser.add_argument('--modules', type=Path, required=True)
 parser.add_argument('--output', type=Path, required=True)
+parser.add_argument('--compute', type=Path, help='Optional verified process compute PE')
+parser.add_argument('--parallel', choices=('off', 'on'), default='off')
 parser.add_argument('--samples', type=int, default=5)
 args = parser.parse_args()
 if args.samples < 2:
@@ -28,13 +30,17 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 result = dict(timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat(),
               platform=platform.platform(), machine=platform.machine(),
+              parallel=args.parallel,
               scope='whole process wall time; isolated fresh prefix per launch; samples alternate backend order',
               source_head=subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip(),
               raven_sha256=sha(raven), module_sha256=sha(args.modules / 'xtajit64.dll'),
               benchmark_script_sha256=sha(Path(__file__)),
               source_diff_sha256=hashlib.sha256(subprocess.check_output(['git', '-C', str(repo), 'diff', 'HEAD', '--'])).hexdigest(), fixtures={})
-for name in ('kernel-ansi', 'kernel-file', 'kernel-threads', 'kernel-seh'):
-    fixture = args.build / 'native' / (name + '-fex.exe')
+fixtures = {name: args.build / 'native' / (name + '-fex.exe') for name in
+            ('kernel-ansi', 'kernel-file', 'kernel-threads', 'kernel-seh')}
+if args.compute:
+    fixtures['compute'] = args.compute
+for name, fixture in fixtures.items():
     record = dict(fixture=str(fixture), sha256=sha(fixture), native=[], fex=[])
     result['fixtures'][name] = record
     for sample in range(args.samples):
@@ -45,6 +51,8 @@ for name in ('kernel-ansi', 'kernel-file', 'kernel-threads', 'kernel-seh'):
                 env = dict(os.environ, RAVEN_PREFIX=prefix, RAVEN_FEX_MODULE_ROOT=str(args.modules))
                 for key in ('RAVEN_TRACE_API', 'RAVEN_TRACE_FAULT', 'RAVEN_FEX_TRACE', 'RAVEN_FEX_TRACE_MEMORY', 'RAVEN_PARALLEL'):
                     env.pop(key, None)
+                if args.parallel == 'on':
+                    env['RAVEN_PARALLEL'] = '1'
                 start = time.perf_counter_ns()
                 proc = subprocess.run(command, env=env, capture_output=True, text=True, timeout=25)
                 elapsed = (time.perf_counter_ns() - start) / 1e6
