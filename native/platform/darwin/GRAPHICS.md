@@ -371,3 +371,9 @@ must match the selected PE overlay. The existing Rosetta library path is unchang
 The arm64 adapter exports macdrv_functions and leaves table entries 72/73
 unwrapped so DXMT itself exercises that discovery path. Its view/layer wrapper
 uses Raven's existing IOSurface presentation methods, not a raw CAMetalLayer.
+
+Qualification and reproduction are recorded in
+[fex/DXMT-RESULTS.md](fex/DXMT-RESULTS.md). All 21 DXMT fixtures now have passing
+runs under each engine, with existing intermittent non-relocatable-image address
+collisions recorded separately. Steam reaches CEF and initializes ANGLE/D3D11;
+a login UI is not yet verified. The x64 native transport remains unchanged.
