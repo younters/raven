@@ -4,12 +4,12 @@
 
 namespace raven {
 
-// Opt-in in-process x64 engine behind the Darwin NativeProcess forwarding seam.
+// Opt-in in-process x64/WoW64 engine behind the Darwin NativeProcess seam.
 // One module instance per host process. RAVEN_PARALLEL uses resident FEX workers;
 // the constructing thread retains controller and NT/API ownership.
 class FexProcess {
 public:
-	FexProcess(std::span<LoadedImage *const> images, const std::string &module_root, uint64_t stack_reserve = 1024 * 1024);
+	FexProcess(std::span<LoadedImage *const> images, const std::string &module_root, uint64_t stack_reserve = 1024 * 1024, NativeMode mode = NativeMode::x64);
 	~FexProcess();
 	FexProcess(const FexProcess &) = delete;
 	FexProcess &operator=(const FexProcess &) = delete;

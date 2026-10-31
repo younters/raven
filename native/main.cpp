@@ -315,6 +315,12 @@ int main(int argc, char **argv)
 				auto bytes = read_file(argv[i]);
 				if (!entry && run_process)
 					raven::widen_il_only_image(bytes);
+#ifdef RAVEN_FEX_PROCESS
+				if (use_fex && !entry && !raven::PEImage(bytes).is_64)
+					modules.set_address_space([](uint64_t address, uint64_t size) {
+						return address >= 65536 && address < 0x100000000ULL && size <= 0x100000000ULL - address;
+					}, 0x10000000ULL);
+#endif
 				auto &module = modules.add(std::filesystem::path(argv[i]).filename().string(), std::move(bytes));
 				if (!entry) {
 					entry = &module;
@@ -752,7 +758,7 @@ int main(int argc, char **argv)
 		const auto imports = image.imports();
 		if (run_entry) {
 #ifdef RAVEN_NATIVE_CPU
-			raven::LoadedImage loaded(image, fex_entry && image.directories[5].size ? 0x10000000000ULL : image.image_base);
+			raven::LoadedImage loaded(image, fex_entry && image.is_64 && image.directories[5].size ? 0x10000000000ULL : image.image_base);
 			const auto bootstrap = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "raven-bootstrap";
 #ifdef RAVEN_FEX_PROCESS
 			if (fex_entry) {

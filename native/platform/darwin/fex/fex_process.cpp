@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "fex_process.h"
+#include "guest_window.h"
 #define RAVEN_FEX_EMBEDDED
 #include "modhost/native_host.cpp"
 #include <pthread.h>
@@ -35,15 +36,15 @@ uint64_t packet_word(void *packet, size_t offset)
 }
 uint64_t process_dispatch(uint64_t number, void *packet)
 {
-	auto rip = packet_word(packet, 0xf8);
+	auto rip = wow64_module ? *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(packet) + 0xb8) : packet_word(packet, 0xf8);
 	last_stop = {number == completion ? raven::NativeStop::returned : raven::NativeStop::syscall,
-		number == completion ? packet_word(packet, 0xc8) : number, rip, {}};
+		number == completion ? (wow64_module ? *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(packet) + 0xa8) : packet_word(packet, 0xc8)) : number, rip, {}};
 	siglongjmp(stop_frame, 1);
 }
 int32_t process_exception(void *opaque, void *packet, void *)
 {
 	auto &record = *static_cast<RavenFault::Record *>(opaque);
-	last_stop = {record.code == 0x102 ? raven::NativeStop::timeout : raven::NativeStop::exception, record.code, packet_word(packet, 0xf8), record};
+	last_stop = {record.code == 0x102 ? raven::NativeStop::timeout : raven::NativeStop::exception, record.code, (wow64_module ? *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(packet) + 0xb8) : packet_word(packet, 0xf8)), record};
 	siglongjmp(stop_frame, 1);
 }
 uint32_t guest_protection(int protection)
@@ -53,6 +54,8 @@ uint32_t guest_protection(int protection)
 }
 void notify_memory(const char *name, uint64_t *args, size_t after, const std::function<void()> &change = {})
 {
+	const std::string export_name = wow64_module ? std::string("BTCpu") + name : name;
+	name = export_name.c_str();
 	// The module's public notification protocol brackets its tracker mutex.
 	// New allocations are notified before publication to the guest. Protection
 	// and release operations also bracket the actual mapping change below.
@@ -88,6 +91,7 @@ struct FexWorker {
 	bool ready = false, requested = false, quit = false;
 	std::atomic<bool> stopped{true};
 	uint64_t teb = 0;
+	uint32_t *interrupt = nullptr;
 	int descriptor;
 	explicit FexWorker(int fd) : descriptor(fd) {
 		host = std::thread([this] {
@@ -97,8 +101,14 @@ struct FexWorker {
 				RavenNT::active_thread = environment.get();
 				mapped_image->install_tls(*environment);
 				uint64_t args[8]{};
-				if (raven_ec_call(mapped_image->export_address("ThreadInit"), args, environment->teb.data()))
+				if (!wow64_module && raven_ec_call(mapped_image->export_address("ThreadInit"), args, environment->teb.data()))
 					throw std::runtime_error("FEX worker ThreadInit failed");
+				if (wow64_module) {
+					raven_ec_call(mapped_image->export_address("BTCpuThreadInit"), args, environment->teb.data());
+					initialize_wow64_packet(*environment);
+					interrupt = reinterpret_cast<uint32_t *>(raven_ec_call(mapped_image->export_address("RavenWow64Doorbell"), args, environment->teb.data()));
+					if (!interrupt) throw std::runtime_error("FEX WoW64 needs a suspend doorbell; rebuild the module");
+				}
 				std::unique_lock lock(mutex);
 				ready = true;
 				wake.notify_all();
@@ -106,12 +116,13 @@ struct FexWorker {
 					wake.wait(lock, [this] { return requested || quit; });
 					if (quit) break;
 					requested = false;
-					guest_teb = teb ? reinterpret_cast<void *>(teb) : environment->teb.data();
+					wow64_teb = teb;
+					guest_teb = !wow64_module && teb ? reinterpret_cast<void *>(teb) : environment->teb.data();
 					RavenFault::execution_teb = guest_teb;
 					lock.unlock();
 					auto previous = NativeJit::protect(1);
 					if (!sigsetjmp(stop_frame, 1)) {
-						raven_ec_call(mapped_image->export_address("BeginSimulation"), args, guest_teb);
+						raven_ec_call(mapped_image->export_address(wow64_module ? "RavenWow64Run" : "BeginSimulation"), args, guest_teb);
 						std::abort();
 					}
 					asm volatile("mov x18,xzr");
@@ -128,7 +139,8 @@ struct FexWorker {
 				// terminating the pthread. Use its private TEB/identity for this call.
 				RavenFault::execution_teb = nullptr;
 				args[0] = uint64_t(-2);
-				if (raven_ec_call(mapped_image->export_address("ThreadTerm"), args, environment->teb.data()))
+				if (wow64_module) raven_ec_call(mapped_image->export_address("BTCpuThreadTerm"), args, environment->teb.data());
+				else if (raven_ec_call(mapped_image->export_address("ThreadTerm"), args, environment->teb.data()))
 					throw std::runtime_error("FEX worker ThreadTerm failed");
 			} catch (...) {
 				std::lock_guard lock(mutex);
@@ -145,7 +157,8 @@ struct FexWorker {
 	}
 	void pause() {
 		if (!stopped.load(std::memory_order_acquire)) {
-			__atomic_store_n(environment->cpu.doorbell, 1u, __ATOMIC_RELEASE);
+			if (wow64_module) __atomic_store_n(interrupt, 1u, __ATOMIC_RELEASE);
+			else __atomic_store_n(environment->cpu.doorbell, 1u, __ATOMIC_RELEASE);
 			std::unique_lock lock(mutex);
 			wake.wait(lock, [this] { return stopped.load(std::memory_order_acquire); });
 		}
@@ -167,6 +180,11 @@ struct FexWorker {
 	}
 };
 struct FexProcess::State {
+	NativeMode mode = NativeMode::x64;
+	std::unique_ptr<FexGuestWindow> window;
+	uint64_t host(uint64_t address, size_t size = 1) const { return window ? uintptr_t(window->host(address, size)) : address; }
+	uint64_t guest(const void *address) const { return uintptr_t(address) - (window ? window->base() : 0); }
+	uint32_t *interrupt = nullptr;
 	pthread_t owner = pthread_self();
 	bool parallel = std::getenv("RAVEN_PARALLEL") != nullptr;
 	int execution = -1;
@@ -184,7 +202,7 @@ struct FexProcess::State {
 	struct Region { size_t size; bool image; };
 	std::map<uint64_t, Region> regions;
 	std::map<uint64_t, int> pages;
-	std::set<uint64_t> traps;
+	std::map<uint64_t, uint32_t> traps;
 	std::vector<LoadedImage *> images;
 	NativeThreadState thread;
 	NativeContext initial;
@@ -206,9 +224,9 @@ struct FexProcess::State {
 		if (execution >= 0) ::close(execution);
 		faults.reset();
 		// Mapping is a simple scope owner; the vector entries are released here.
-		if (stack != MAP_FAILED) munmap(stack, stack_size);
-		if (gate != MAP_FAILED) munmap(gate, 16384);
-		for (auto [base, region] : regions) munmap(reinterpret_cast<void *>(base), region.size);
+		if (!window && stack != MAP_FAILED) munmap(stack, stack_size);
+		if (!window && gate != MAP_FAILED) munmap(gate, 16384);
+		if (!window) for (auto [base, region] : regions) munmap(reinterpret_cast<void *>(base), region.size);
 	}
 	void require_owner() const
 	{
@@ -216,16 +234,22 @@ struct FexProcess::State {
 			throw std::runtime_error("FEX process used from another host thread");
 	}
 };
-FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &root, uint64_t stack_reserve)
+FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &root, uint64_t stack_reserve, NativeMode mode)
 	: state(std::make_unique<State>())
 {
-	state->stack_size = (std::clamp<uint64_t>(stack_reserve, 256 * 1024, 64 * 1024 * 1024) + 16383) & ~uint64_t(16383);
 	if (module_claimed)
 		throw std::runtime_error("FEX module already claimed; a second FexProcess in this host is unsupported");
+	state->mode = mode;
+	wow64_module = mode == NativeMode::x86;
+	if (wow64_module) {
+		state->window = std::make_unique<FexGuestWindow>();
+		wow64_guest_base = state->window->base();
+	}
+	state->stack_size = (std::clamp<uint64_t>(stack_reserve, 256 * 1024, 64 * 1024 * 1024) + 16383) & ~uint64_t(16383);
 	if (root.empty())
 		throw std::runtime_error("FEX requires RAVEN_FEX_MODULE_ROOT");
 	module_claimed = true;
-	std::string path = root + "/xtajit64.dll";
+	std::string path = root + (wow64_module ? "/xtajit.dll" : "/xtajit64.dll");
 	char program[] = "raven-fex";
 	char *argv[]{program, path.data()};
 	if (map_module(2, argv, resolve, inspect_image, initialize_process, module_mapping))
@@ -233,19 +257,22 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 	// Guest x86 code is data to the arm64 host. Keep it non-executable; only FEX's
 	// separate native code cache uses MAP_JIT. Never replace an existing host mapping.
 	for (auto *image : images) map_image(*image);
-	state->stack = mmap(nullptr, state->stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-	state->gate = mmap(nullptr, 16384, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	state->stack = wow64_module ? reinterpret_cast<void *>(state->host(map_memory(state->stack_size, PROT_READ | PROT_WRITE, 0))) : mmap(nullptr, state->stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+	state->gate = wow64_module ? reinterpret_cast<void *>(state->host(map_memory(16384, PROT_READ | PROT_WRITE, 0))) : mmap(nullptr, 16384, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (state->stack == MAP_FAILED || state->gate == MAP_FAILED)
 		throw std::runtime_error("FEX guest stack/gate allocation failed");
 	// mov r10,rax; mov eax,completion; syscall; ud2
 	uint8_t gate[]{0x49, 0x89, 0xc2, 0xb8, 0xfe, 0xff, 0xff, 0x7f, 0x0f, 0x05, 0x0f, 0x0b};
-	memcpy(state->gate, gate, sizeof(gate));
+	if (wow64_module) {
+		const uint8_t gate32[]{0x89, 0xc2, 0xb8, 0xfe, 0xff, 0xff, 0x7f, 0xcd, 0x2e, 0x0f, 0x0b};
+		memcpy(state->gate, gate32, sizeof(gate32));
+	} else memcpy(state->gate, gate, sizeof(gate));
 	uint64_t args[8]{uintptr_t(state->gate), 16384, 0x3000, 0x40, 1, 0};
 	notify_memory("NotifyMemoryAlloc", args, 4);
-	state->stack_top = uintptr_t(state->stack) + state->stack_size;
+	state->stack_top = state->guest(state->stack) + state->stack_size;
 	state->thread.stack_top = state->stack_top;
-	for (uint64_t at = uintptr_t(state->stack); at < state->stack_top; at += 4096) state->pages[at] = PROT_READ | PROT_WRITE;
-	state->pages[uintptr_t(state->gate)] = PROT_READ | PROT_EXEC;
+	for (uint64_t at = state->guest(state->stack); at < state->stack_top; at += 4096) state->pages[at] = PROT_READ | PROT_WRITE;
+	state->pages[state->guest(state->gate)] = PROT_READ | PROT_EXEC;
 	if (state->parallel) {
 		state->execution = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
 		if (state->execution < 0) throw std::runtime_error("FEX execution eventfd failed");
@@ -261,6 +288,20 @@ NativeResult FexProcess::call(uint64_t address, std::span<const uint64_t> argume
 	state->require_owner();
 	if (state->active || arguments.size() > 128)
 		throw std::runtime_error("FEX entry requires an idle frame and at most 128 arguments");
+	if (wow64_module) {
+		auto saved = context();
+		auto &r = saved.registers;
+		r.rip = uint32_t(address);
+		r.rsp = (state->thread.stack_top - (arguments.size() + 1) * 4) & ~uint64_t(15);
+		std::vector<uint8_t> stack((arguments.size() + 1) * 4);
+		const uint32_t gate = uint32_t(return_gate()); memcpy(stack.data(), &gate, 4);
+		for (size_t i = 0; i < arguments.size(); ++i) { const uint32_t word = uint32_t(arguments[i]); memcpy(stack.data() + 4 + i * 4, &word, 4); }
+		write_memory(r.rsp, stack);
+		set_context(saved);
+		state->active = state->thread.active_call = true;
+		state->thread.awaiting_api = false;
+		return resume(state->budget);
+	}
 	auto *packet = state->environment()->context.data();
 	// Preserve ThreadInit's segment selectors and floating-point defaults.
 	memset(packet + 0x78, 0, 17 * 8);
@@ -292,7 +333,8 @@ NativeResult FexProcess::resume()
 		{
 			std::lock_guard lock(worker->mutex);
 			worker->teb = state->teb;
-			__atomic_store_n(worker->environment->cpu.doorbell, 0u, __ATOMIC_RELEASE);
+			if (wow64_module) __atomic_store_n(worker->interrupt, 0u, __ATOMIC_RELEASE);
+			else __atomic_store_n(worker->environment->cpu.doorbell, 0u, __ATOMIC_RELEASE);
 			worker->stopped.store(false, std::memory_order_release);
 			worker->requested = true;
 		}
@@ -314,21 +356,30 @@ NativeResult FexProcess::resume()
 		std::mutex timer_mutex;
 		std::condition_variable_any timer_wake;
 		auto *doorbell = state->environment()->cpu.doorbell;
+		if (wow64_module) {
+			uint64_t query[8]{};
+			state->interrupt = reinterpret_cast<uint32_t *>(raven_ec_call(mapped_image->export_address("RavenWow64Doorbell"), query, state->environment()->teb.data()));
+			if (!state->interrupt) throw std::runtime_error("FEX WoW64 needs a suspend doorbell; rebuild the module");
+		}
 		std::jthread timer([&](std::stop_token stop) {
 			std::unique_lock lock(timer_mutex);
 			timer_wake.wait_for(lock, stop, state->budget, [] { return false; });
-			if (!stop.stop_requested()) __atomic_store_n(doorbell, 1u, __ATOMIC_RELEASE);
+			if (!stop.stop_requested()) {
+				if (wow64_module) __atomic_store_n(state->interrupt, 1u, __ATOMIC_RELEASE);
+				else __atomic_store_n(doorbell, 1u, __ATOMIC_RELEASE);
+			}
 		});
 		uint64_t args[8]{};
 		auto previous = NativeJit::protect(1);
 		if (!sigsetjmp(stop_frame, 1)) {
-			raven_ec_call(mapped_image->export_address("BeginSimulation"), args, guest_teb ? guest_teb : state->environment()->teb.data());
+			raven_ec_call(mapped_image->export_address(wow64_module ? "RavenWow64Run" : "BeginSimulation"), args, wow64_module ? state->environment()->teb.data() : guest_teb ? guest_teb : state->environment()->teb.data());
 			std::abort();
 		}
 		timer.request_stop();
 		timer_wake.notify_all();
 		timer.join();
-		__atomic_store_n(doorbell, 0u, __ATOMIC_RELEASE);
+		if (wow64_module) __atomic_store_n(state->interrupt, 0u, __ATOMIC_RELEASE);
+		else __atomic_store_n(doorbell, 0u, __ATOMIC_RELEASE);
 		asm volatile("mov x18,xzr");
 		NativeJit::protect(previous);
 	}
@@ -384,6 +435,14 @@ NativeContext FexProcess::context() const
 	auto &r = result.registers;
 	r.orig_rax = state->thread.awaiting_syscall ? state->thread.context.registers.orig_rax : uint64_t(-1);
 	auto *p = state->environment()->context.data();
+	if (wow64_module) {
+		unsigned long long *registers[]{&r.rdi, &r.rsi, &r.rbx, &r.rdx, &r.rcx, &r.rax, &r.rbp, &r.rip};
+		for (size_t i = 0; i < 8; ++i) *registers[i] = *reinterpret_cast<uint32_t *>(p + 0x9c + i * 4);
+		r.rsp = *reinterpret_cast<uint32_t *>(p + 0xc4); r.eflags = *reinterpret_cast<uint32_t *>(p + 0xc0);
+		r.fs_base = state->teb;
+		result.xstate.assign(p + 0xcc, p + 0x2cc);
+		return result;
+	}
 	unsigned long long *registers[]{&r.rax, &r.rcx, &r.rdx, &r.rbx, &r.rsp, &r.rbp, &r.rsi, &r.rdi,
 		&r.r8, &r.r9, &r.r10, &r.r11, &r.r12, &r.r13, &r.r14, &r.r15, &r.rip};
 	for (size_t i = 0; i < 17; ++i)
@@ -398,6 +457,19 @@ void FexProcess::set_context(const NativeContext &value)
 	state->require_owner();
 	if (!stopped()) throw std::runtime_error("FEX context update requires a stopped worker");
 	const auto &r = value.registers;
+	if (wow64_module) {
+		auto *p = state->environment()->context.data();
+		const uint32_t regs[]{uint32_t(r.rdi), uint32_t(r.rsi), uint32_t(r.rbx), uint32_t(r.rdx), uint32_t(r.rcx), uint32_t(r.rax), uint32_t(r.rbp), uint32_t(r.rip)};
+		memcpy(p + 0x9c, regs, sizeof(regs));
+		const uint32_t sp = uint32_t(r.rsp), flags = uint32_t(r.eflags);
+		memcpy(p + 0xc4, &sp, 4); memcpy(p + 0xc0, &flags, 4);
+		if (!value.xstate.empty()) {
+			if (value.xstate.size() != 512) throw std::runtime_error("WoW64 requires a 512-byte FP packet");
+			memcpy(p + 0xcc, value.xstate.data(), 512);
+		}
+		state->teb = wow64_teb = r.fs_base;
+		return;
+	}
 	if (r.fs_base) throw std::runtime_error("FEX x64 FS base is unsupported");
 	if (r.gs_base) {
 		validate_write_memory(r.gs_base + 0x1788, 8);
@@ -426,11 +498,11 @@ void FexProcess::set_context(const NativeContext &value)
 }
 NativeResult run_fex_entry(const PEImage &image, LoadedImage &loaded, const std::string &root)
 {
-	if (!image.is_64 || (image.characteristics & 0x2000) || !image.imports().empty() ||
+	if ((image.characteristics & 0x2000) || !image.imports().empty() ||
 		image.directories[9].size || image.directories[13].size || image.directories[14].size)
-		throw std::runtime_error("FEX entry requires PE64 without imports, TLS, delayed imports or CLR");
+		throw std::runtime_error("FEX entry requires PE32/PE64 without imports, TLS, delayed imports or CLR");
 	LoadedImage *images[]{&loaded};
-	FexProcess process(images, root);
+	FexProcess process(images, root, image.stack_reserve, image.is_64 ? NativeMode::x64 : NativeMode::x86);
 	return process.call(loaded.base() + image.entry, {});
 }
 }
@@ -455,7 +527,11 @@ bool fex_address_available(uint64_t address, uint64_t size)
 	}
 	return status == KERN_INVALID_ADDRESS || (status == KERN_SUCCESS && base >= address + size);
 }
-bool FexProcess::memory_available(uint64_t address, size_t size) const { return fex_address_available(address, size); }
+bool FexProcess::memory_available(uint64_t address, size_t size) const { if (state->window) {
+		if (address < 65536 || address >= FexGuestWindow::size || size > FexGuestWindow::size - address) return false;
+		for (auto [base, region] : state->regions) if (address < base + region.size && base < address + size) return false;
+		return true;
+	} return fex_address_available(address, size); }
 std::vector<uint8_t> FexProcess::read_memory(uint64_t address, size_t size) const
 {
 	state->require_owner();
@@ -463,7 +539,7 @@ std::vector<uint8_t> FexProcess::read_memory(uint64_t address, size_t size) cons
 	for (auto at = address & ~uint64_t(4095); at < address + size; at += 4096)
 		if (!state->pages.contains(at) || !(state->pages.at(at) & PROT_READ))
 			throw std::runtime_error("FEX read exceeds readable guest memory at " + std::to_string(address));
-	auto *p = address >= 0x7ffe0000 && address + size <= 0x7ffe1000 ? user_shared_data.data() + address - 0x7ffe0000 : reinterpret_cast<const uint8_t *>(address);
+	auto *p = !state->window && address >= 0x7ffe0000 && address + size <= 0x7ffe1000 ? user_shared_data.data() + address - 0x7ffe0000 : reinterpret_cast<const uint8_t *>(state->host(address, size));
 	return {p, p + size};
 }
 void FexProcess::validate_write_memory(uint64_t address, size_t size) const
@@ -476,22 +552,26 @@ void FexProcess::validate_write_memory(uint64_t address, size_t size) const
 void FexProcess::write_memory(uint64_t address, std::span<const uint8_t> bytes)
 {
 	validate_write_memory(address, bytes.size());
-	auto *p = address >= 0x7ffe0000 && address + bytes.size() <= 0x7ffe1000 ? user_shared_data.data() + address - 0x7ffe0000 : reinterpret_cast<uint8_t *>(address);
+	auto *p = !state->window && address >= 0x7ffe0000 && address + bytes.size() <= 0x7ffe1000 ? user_shared_data.data() + address - 0x7ffe0000 : reinterpret_cast<uint8_t *>(state->host(address, bytes.size()));
 	memcpy(p, bytes.data(), bytes.size());
-	uint64_t args[8]{address, bytes.size()};
-	raven_ec_call(mapped_image->export_address("BTCpu64NotifyMemoryDirty"), args, state->environment()->teb.data());
+	uint64_t args[8]{state->host(address, bytes.size()), bytes.size()};
+	raven_ec_call(mapped_image->export_address(wow64_module ? "BTCpuNotifyMemoryDirty" : "BTCpu64NotifyMemoryDirty"), args, state->environment()->teb.data());
 }
 uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 {
 	state->require_owner();
 	if (!size || size > SIZE_MAX - 65536) throw std::runtime_error("FEX invalid allocation size");
-	if (address == 0x7ffe0000 && size == 4096) {
+	if (!state->window && address == 0x7ffe0000 && size == 4096) {
 		memset(user_shared_data.data(), 0, user_shared_data.size());
 		state->pages[address] = protection;
 		return address;
 	}
 	const auto n = (size + 16383) & ~size_t(16383);
-	if (address) {
+	if (state->window) {
+		if (!address) for (address = 0x10000; address < 0x7ffe0000 && !memory_available(address, n); address += 65536) {}
+		if (!memory_available(address, n) || address % 16384) throw std::runtime_error("WoW64 guest allocation unavailable");
+		if (mprotect(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE)) throw std::runtime_error("WoW64 guest commit failed");
+	} else if (address) {
 		mach_vm_address_t base = address;
 		if (address % 16384 || mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS)
 			throw std::runtime_error("FEX fixed allocation unavailable");
@@ -504,7 +584,7 @@ uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 		if (begin + n + 65536 > address + n) munmap(reinterpret_cast<void *>(address + n), begin + n + 65536 - address - n);
 	}
 	state->regions.emplace(address, State::Region{n, false});
-	uint64_t args[8]{address, n, 0x3000, guest_protection(protection), 0, 0};
+	uint64_t args[8]{state->host(address, n), n, 0x3000, guest_protection(protection), 0, 0};
 	notify_memory("NotifyMemoryAlloc", args, 4);
 	for (size_t at = 0; at < n; at += 4096) state->pages[address + at] = PROT_READ | PROT_WRITE;
 	protect_memory(address, n, protection);
@@ -516,10 +596,10 @@ void FexProcess::protect_memory(uint64_t address, size_t size, int protection)
 		throw std::runtime_error("FEX invalid protection range");
 	for (uint64_t at = address; at < address + size; at += 4096)
 		if (!state->pages.contains(at)) throw std::runtime_error("FEX protection range is unmapped");
-	uint64_t args[8]{address, size, guest_protection(protection)};
+	uint64_t args[8]{state->host(address, size), size, guest_protection(protection)};
 	notify_memory("NotifyMemoryProtect", args, 3, [&] {
 		for (uint64_t at = address; at < address + size; at += 4096) state->pages[at] = protection;
-		if (address == 0x7ffe0000 && size == 4096) return;
+		if (!state->window && address == 0x7ffe0000 && size == 4096) return;
 		// Tier 0: union the four logical protections of each real 16K page. Guest
 		// executable bytes remain host data; MAP_JIT owns native executable code.
 		for (auto page = address & ~uint64_t(16383); page < address + size; page += 16384) {
@@ -529,7 +609,7 @@ void FexProcess::protect_memory(uint64_t address, size_t size, int protection)
 				if (found != state->pages.end()) combined |= found->second;
 			}
 			combined = (combined & (PROT_READ | PROT_WRITE)) | (combined & PROT_EXEC ? PROT_READ : 0);
-			if (mprotect(reinterpret_cast<void *>(page), 16384, combined)) throw std::runtime_error("FEX host protection failed");
+			if (mprotect(reinterpret_cast<void *>(state->host(page, 16384)), 16384, combined)) throw std::runtime_error("FEX host protection failed");
 		}
 	});
 }
@@ -548,9 +628,12 @@ void FexProcess::unmap_memory(uint64_t address)
 	auto found = state->regions.find(address);
 	if (found == state->regions.end()) throw std::runtime_error("FEX allocation not found");
 	const auto n = found->second.size;
-	uint64_t args[8]{address, n, 0x8000};
+	uint64_t args[8]{state->host(address, n), n, 0x8000};
 	notify_memory("NotifyMemoryFree", args, 3, [&] {
-		if (munmap(reinterpret_cast<void *>(address), n)) throw std::runtime_error("FEX unmap failed");
+		if (state->window) {
+			void *p = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_NONE, MAP_FIXED | MAP_ANON | MAP_PRIVATE, -1, 0);
+			if (p == MAP_FAILED) throw std::runtime_error("WoW64 cannot restore reservation");
+		} else if (munmap(reinterpret_cast<void *>(address), n)) throw std::runtime_error("FEX unmap failed");
 	});
 	for (auto at = address; at < address + n; at += 4096) state->pages.erase(at);
 	state->regions.erase(found);
@@ -565,9 +648,9 @@ void FexProcess::map_image(LoadedImage &image)
 	const auto address = image.base();
 	const auto n = (image.data().size() + 16383) & ~size_t(16383);
 	mach_vm_address_t base = address;
-	if (mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS)
+	if ((state->window && !memory_available(address, n)) || (!state->window && mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS))
 		throw std::runtime_error("FEX guest image address conflict at " + std::to_string(address));
-	auto *p = mmap(reinterpret_cast<void *>(address), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, image.descriptor(), 0);
+	auto *p = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, image.descriptor(), 0);
 	if (p == MAP_FAILED) { munmap(reinterpret_cast<void *>(address), n); throw std::runtime_error("FEX shared image mapping failed"); }
 	state->regions.emplace(address, State::Region{n, true});
 	state->images.push_back(&image);
@@ -575,21 +658,21 @@ void FexProcess::map_image(LoadedImage &image)
 	for (const auto &mapping : image.mappings())
 		for (uint64_t at = mapping.address; at < mapping.address + mapping.size; at += 4096) state->pages[at] = mapping.protection;
 	// Register the view before changing protections; FEX tracks executable pages.
-	uint64_t args[8]{address, n, 0x3000, 0x40, 1, 0};
+	uint64_t args[8]{state->host(address, n), n, 0x3000, 0x40, 1, 0};
 	notify_memory("NotifyMemoryAlloc", args, 4);
 	for (size_t at = 0; at < n; at += 4096) protect_memory(address + at, 4096, state->pages.at(address + at));
 }
-std::pair<uint64_t, uint64_t> FexProcess::stack_bounds() const { return {uintptr_t(state->stack), state->stack_top}; }
-NativeMode FexProcess::mode() const { return NativeMode::x64; }
+std::pair<uint64_t, uint64_t> FexProcess::stack_bounds() const { return {state->guest(state->stack), state->stack_top}; }
+NativeMode FexProcess::mode() const { return state->mode; }
 bool FexProcess::active() const { return state->active; }
 bool FexProcess::stopped() const { return !state->parallel || state->workers.at(state->selected)->stopped.load(std::memory_order_acquire); }
 bool FexProcess::parallel() const { return state->parallel; }
-uint64_t FexProcess::return_gate() const { return uintptr_t(state->gate); }
+uint64_t FexProcess::return_gate() const { return state->guest(state->gate); }
 uint64_t FexProcess::unix_call_gate() const { return 0; } // No same-process unix-library gate in M2.
 void FexProcess::add_api_trap(uint64_t address, uint32_t callee_cleanup)
 {
-	if (callee_cleanup) throw std::runtime_error("FEX x64 API cannot use stdcall cleanup");
-	state->traps.insert(address);
+	if (state->mode == NativeMode::x64 && callee_cleanup) throw std::runtime_error("FEX x64 API cannot use stdcall cleanup");
+	state->traps.emplace(address, callee_cleanup);
 }
 size_t FexProcess::callback_depth() const { return state->thread.callbacks.size(); }
 NativeContext FexProcess::callback_origin(size_t index) const { return state->thread.callbacks.at(index); }
@@ -598,6 +681,12 @@ void FexProcess::set_resume_hook(std::function<void()> hook) { state->resume_hoo
 std::vector<uint64_t> FexProcess::api_arguments(size_t count) const
 {
 	if (state->thread.translated_words) return *state->thread.translated_words;
+	if (wow64_module) {
+		std::vector<uint64_t> words;
+		auto bytes = read_memory(context().registers.rsp + 4, count * 4);
+		for (size_t i = 0; i < count; ++i) { uint32_t word; memcpy(&word, bytes.data() + i * 4, 4); words.push_back(word); }
+		return words;
+	}
 	const auto r = context().registers;
 	std::vector<uint64_t> words;
 	for (size_t i = 0; i < count; ++i) {
@@ -618,6 +707,13 @@ void FexProcess::return_api(uint64_t value)
 	if (state->thread.translated_words && callback_depth() == state->thread.translated_depth) { state->thread.translated_result = value; return; }
 	if (!state->thread.awaiting_api) throw std::runtime_error("FEX has no pending API");
 	auto saved = context();
+	if (wow64_module) {
+		uint32_t target; auto bytes = read_memory(saved.registers.rsp, 4); memcpy(&target, bytes.data(), 4);
+		saved.registers.rsp += 4 + state->traps.at(saved.registers.rip - 1);
+		saved.registers.rip = target; saved.registers.rax = uint32_t(value);
+		saved.registers.rdx = uint32_t(value >> 32);
+		set_context(saved); state->thread.awaiting_api = false; return;
+	}
 	const auto bytes = read_memory(saved.registers.rsp, 8);
 	memcpy(&saved.registers.rip, bytes.data(), 8);
 	saved.registers.rsp += 8;
@@ -661,7 +757,8 @@ NativeThreadState FexProcess::save_thread(bool snapshot) const
 	if (saved.stopped) {
 		saved.context = context();
 	} else {
-		saved.context.registers.gs_base = state->teb;
+		if (wow64_module) saved.context.registers.fs_base = state->teb;
+		else saved.context.registers.gs_base = state->teb;
 	}
 	saved.active_call = state->active;
 	return saved;
@@ -670,7 +767,7 @@ void FexProcess::load_thread(const NativeThreadState &saved)
 {
 	if (state->parallel) state->selected = saved.task;
 	state->thread = saved;
-	state->teb = saved.context.registers.gs_base;
+	state->teb = wow64_teb = wow64_module ? saved.context.registers.fs_base : saved.context.registers.gs_base;
 	state->active = saved.active_call;
 	if (saved.stopped && !saved.context_in_task) set_context(saved.context);
 }
@@ -680,7 +777,8 @@ NativeThreadState FexProcess::new_thread(uint64_t stack_top, uint64_t teb)
 	thread.stack_top = stack_top;
 	if (state->parallel) thread.task = state->make_worker();
 	thread.context = state->initial;
-	thread.context.registers.gs_base = teb;
+	if (wow64_module) thread.context.registers.fs_base = teb;
+	else thread.context.registers.gs_base = teb;
 	return thread;
 }
 int FexProcess::execution_descriptor() const { return state->execution; }
@@ -792,8 +890,8 @@ uint64_t FexProcess::compare_exchange(uint64_t address, uint64_t expected, uint6
 	if (size != 4 && size != 8) throw std::runtime_error("FEX compare exchange width unsupported");
 	validate_write_memory(address, size);
 	if (address % size) throw std::runtime_error("FEX unaligned compare exchange unsupported");
-	if (size == 8) __atomic_compare_exchange_n(reinterpret_cast<uint64_t *>(address), &expected, desired, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
-	else if (size == 4) { uint32_t word = uint32_t(expected); __atomic_compare_exchange_n(reinterpret_cast<uint32_t *>(address), &word, uint32_t(desired), false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); expected = word; }
+	if (size == 8) __atomic_compare_exchange_n(reinterpret_cast<uint64_t *>(state->host(address, size)), &expected, desired, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+	else if (size == 4) { uint32_t word = uint32_t(expected); __atomic_compare_exchange_n(reinterpret_cast<uint32_t *>(state->host(address, size)), &word, uint32_t(desired), false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); expected = word; }
 	else throw std::runtime_error("FEX compare exchange width unsupported");
 	return expected;
 }
@@ -822,7 +920,7 @@ uint64_t FexProcess::map_shared(int descriptor, size_t size, uint64_t offset)
 	if (offset % 16384) throw std::runtime_error("FEX shared mapping offset must be host-page aligned");
 	const auto address = map_memory(size, PROT_READ | PROT_WRITE, 0);
 	const auto n = state->regions.at(address).size;
-	void *mapped = mmap(reinterpret_cast<void *>(address), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, descriptor, off_t(offset));
+	void *mapped = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, descriptor, off_t(offset));
 	if (mapped == MAP_FAILED) { unmap_memory(address); throw std::runtime_error("FEX shared descriptor mapping failed"); }
 	return address;
 }
@@ -853,13 +951,21 @@ void FexProcess::pause_thread(NativeThreadState &thread)
 	auto selected = state->selected;
 	auto teb = state->teb;
 	state->selected = thread.task;
-	state->teb = thread.context.registers.gs_base;
+	state->teb = wow64_module ? thread.context.registers.fs_base : thread.context.registers.gs_base;
 	state->workers.at(thread.task)->pause();
 	thread.context = context();
 	thread.stopped = true;
 	thread.context_in_task = false;
 	state->selected = selected;
 	state->teb = teb;
+}
+}
+
+namespace raven {
+void FexProcess::set_teb(uint64_t base)
+{
+	if (mode() != NativeMode::x86) throw std::runtime_error("FEX x64 set_teb is unsupported");
+	auto saved = context(); saved.registers.fs_base = base; set_context(saved);
 }
 }
 
