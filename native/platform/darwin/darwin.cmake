@@ -362,6 +362,33 @@ if(TARGET raven_cpu AND RAVEN_MINGW64 AND RAVEN_DXMT_ROOT)
         endif()
     endforeach()
     set_tests_properties(darwin_dxmt_device10 PROPERTIES RESOURCE_LOCK raven_compositor)
+    if(RAVEN_FEX_MODHOST)
+        add_test(NAME darwin_dxmt_window_fex COMMAND ${RAVEN_DXMT_IMAGE_PYTHON} ${RAVEN_DARWIN_DIR}/tests/run_present.py
+            $<TARGET_FILE:raven> ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-window.exe ${RAVEN_DXMT_ROOT}
+            ${CMAKE_CURRENT_BINARY_DIR}/dxmt-window-fex ${RAVEN_DXMT_WINDOW_INFO})
+        set_tests_properties(darwin_dxmt_window_fex PROPERTIES TIMEOUT 120 RESOURCE_LOCK raven_compositor
+            ENVIRONMENT "RAVEN_DXMT_TEST_ENGINE=fex")
+        foreach(width 64 32)
+            if(TARGET darwin_dxmt_keyed${width}_fixture)
+                add_test(NAME darwin_dxmt_keyed_x${width}_fex COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+                    $<TARGET_FILE:raven> ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-keyed${width}.exe ${RAVEN_DXMT_ROOT}
+                    ${CMAKE_CURRENT_BINARY_DIR}/dxmt-keyed${width}-fex keyed)
+                set_tests_properties(darwin_dxmt_keyed_x${width}_fex PROPERTIES TIMEOUT 120 ENVIRONMENT "RAVEN_DXMT_TEST_ENGINE=fex")
+            endif()
+        endforeach()
+        foreach(workload identity self_share shared shared_keyed device10 device pool pacing triangle deferred geometry tessellation textured msaa compute features fullscreen present_rate)
+            set(fixture_name "${workload}")
+            if(workload MATCHES "^(self_share|shared_keyed)$")
+                string(REPLACE "_" "-" fixture_name "${workload}")
+            endif()
+            add_test(NAME darwin_dxmt_${workload}_fex COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/tests/run_dxmt.py
+                $<TARGET_FILE:raven> ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-${fixture_name}.exe ${RAVEN_DXMT_ROOT}
+                ${CMAKE_CURRENT_BINARY_DIR}/dxmt-${workload}-fex ${workload})
+            set_tests_properties(darwin_dxmt_${workload}_fex PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
+                RESOURCE_LOCK raven_compositor ENVIRONMENT "RAVEN_DXMT_TEST_ENGINE=fex;RAVEN_DXGI_VENDOR=amd")
+        endforeach()
+    endif()
+
 endif()
 
 # These fixtures use PE DXVK and the host Vulkan bridge; no native WoW64 unix-call table is involved.

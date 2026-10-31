@@ -1,4 +1,7 @@
 #include "providers.h"
+#ifdef RAVEN_FEX_PROCESS
+#include "platform/darwin/fex/fex_process.h"
+#endif
 #include "child_process.h"
 #include "handle_channel.h"
 #include "section.h"
@@ -2539,6 +2542,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		bool published = false;
 	};
 	threads.add_service([served_block, calibration = std::make_shared<ClockCalibration>()] {
+#ifdef RAVEN_FEX_PROCESS
+		// FEX scales its guest RDTSC. A calibration from Darwin CNTVCT is not
+		// valid for that counter; keep QueryPerformanceCounter on the host API.
+		if (fex_execution_selected()) return;
+#endif
 		if (calibration->published || counter_ticks() - calibration->ticks < 2000000)
 			return;
 		const uint64_t counter = __rdtsc(), ticks = counter_ticks();

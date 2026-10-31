@@ -310,3 +310,70 @@ Provisioning was checked twice for idempotent verification; invalid SDK, in-tree
 were rejected without modifying their contents. The supplied build completed with `-j6`; Python compilation and `git diff --check`
 passed. Upstream runtime/bridge files and `cocoa.mm` have **zero changed lines**. No new D3D9/OpenGL rendering backend was enabled: those
 paths stopped at the measured capability gates. Defaults remain DXMT and MoltenVK. No Apple software was used or redistributed.
+
+## FEX same-process DXMT design (2026-10-31)
+
+This is an implementation plan, not a qualification claim. Keep Rosetta's
+x86_64 unix64 overlay and protocol-v5 transport unchanged. FEX needs a separate
+arm64 Mach-O winemetal built from the **same revision and table layout** as the
+x64 PE DLLs; an ARM64EC PE rebuild is not required. Provision privately under
+`/tmp/raven-dxmt-arm64` until runtime and rendering tests pass.
+
+The PE CRT obtains `__wine_unix_call_dispatcher` from ntdll and discovers its
+unix table through NtQueryVirtualMemory class 1000. Supply a guest x64 gate,
+not a Mach-O function pointer. Its Win64 RCX/RDX/R8 arguments are the opaque
+library handle, ordinal and shared-address-space argument block. FEX must
+recognize the gate and enter a native callback through its frontend boundary,
+which restores Darwin x18 and the native stack. The existing Raven host
+`unix_call` callback is currently a STATUS_NOT_SUPPORTED stub; the frontend's
+RavenInvoke boundary can carry the native call. Validate handle and ordinal
+against a retained library registry before calling the arm64 C table. Never
+execute an arm64 pointer as x64 code or use the Rosetta SysV assembly gate.
+The x64 structs use 64-bit pointers/handles and fixed-width scalar fields;
+WoW64 requires its separate table and pointer conversion and is out of scope
+for the initial x64 bridge. Native completion callbacks must enqueue events
+for Raven's controller rather than reenter emulated PE code.
+
+DXMT v0.80 and the source overlay already look up `macdrv_functions` with
+dlsym(RTLD_DEFAULT). Export the matching function table (nine entries in v0.80, ten in the source overlay) from an arm64
+Raven adapter loaded globally before winemetal. The table must supply retained
+window-data/view wrappers associated with Raven HWNDs, create/release Metal
+views and return their layer. This is a versioned private ABI, not Wine's
+entire window-data struct. See the definitions in winemetal_unix.c; athei's
+[arm64-patched Wine](https://github.com/athei/wine/tree/arm64-patched) is a
+reference, not a runtime dependency.
+
+Reuse the existing drawable/IOSurface pool and presentation wrappers so that
+local and foreign HWNDs retain the same routing, resize, retirement and
+composition semantics. In FEX the adapter and host share the control structure;
+copy_unix_port retains a local Mach send right instead of extracting it from
+the Rosetta task. The Cocoa presentation pump imports those surfaces into the
+existing host layer, alongside the existing CAMetalLayer window integration.
+The event queue and presentation pump must run during FEX execution/waits,
+not just at library load. A working device creation test alone cannot establish
+window presentation or Steam CEF support.
+
+Upstream check: fetched origin on 2026-10-31; origin/main was 7c9bc5fa.
+The GitHub issues/PR listing returned no matching Raven FEX/DXMT/arm64 titles
+in its latest 100 entries. DXMT [#75](https://github.com/3Shain/dxmt/pull/75)
+and [#76](https://github.com/3Shain/dxmt/pull/76) cover native arm64 builds;
+the locally pinned sources contain both a build-arm64ec.txt and an aarch64
+unix build condition. These do not implement Raven's missing runtime boundary.
+
+The initial implementation uses the existing frontend **syscall dispatch** hook,
+not FEXUnixLib's internal unix_call callback (which serves FEX's own helpers).
+A reserved service 0x7ffffffd moves RCX to R10 and preserves RDX/R8; the
+frontend stores the AMD64 context, enters RavenInvoke and reloads the returned
+RAX through BeginSimulation. Raven invokes the arm64 table synchronously from
+that native boundary. No FEX module patch is needed for this experiment.
+`RAVEN_DXMT_ARM64_ROOT` is mandatory for FEX loading and its unix-call-count
+must match the selected PE overlay. The existing Rosetta library path is unchanged.
+The arm64 adapter exports macdrv_functions and leaves table entries 72/73
+unwrapped so DXMT itself exercises that discovery path. Its view/layer wrapper
+uses Raven's existing IOSurface presentation methods, not a raw CAMetalLayer.
+
+Qualification and reproduction are recorded in
+[fex/DXMT-RESULTS.md](fex/DXMT-RESULTS.md). All 21 DXMT fixtures now have passing
+runs under each engine, with existing intermittent non-relocatable-image address
+collisions recorded separately. Steam reaches CEF and initializes ANGLE/D3D11;
+a login UI is not yet verified. The x64 native transport remains unchanged.

@@ -1,0 +1,436 @@
+{
+  "baseline": {
+    "total": 21,
+    "passed": 16,
+    "cases": [
+      {
+        "name": "darwin_dxmt_identity",
+        "seconds": "0.422808",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_self_share",
+        "seconds": "0.387823",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_keyed_x64",
+        "seconds": "0.649368",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_keyed_x32",
+        "seconds": "1.33596",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_shared",
+        "seconds": "1.31263",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_shared_keyed",
+        "seconds": "0.738393",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_device10",
+        "seconds": "0.578105",
+        "passed": false,
+        "failure": "\nDXMT device10: exit -5, 'missing'\ninfo:  Found config env: dxgi.customVendorId = 1002;dxgi.customDeviceId = 7340;dxgi.customDeviceDesc = AMD Radeon Pro 5300M\ninfo:  Found config env: dxgi.customVendorId = 1002;dxgi.customDeviceId = 7340;dxgi.customDeviceDesc = AMD Radeon Pro 5300M\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_0\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_1\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_0\n\n"
+      },
+      {
+        "name": "darwin_dxmt_device",
+        "seconds": "0.375657",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_pool",
+        "seconds": "0.287413",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_pacing",
+        "seconds": "0.91186",
+        "passed": false,
+        "failure": "\nDXMT pacing: exit -5, 'missing'\ninfo:  Found config env: dxgi.customVendorId = 1002;dxgi.customDeviceId = 7340;dxgi.customDeviceDesc = AMD Radeon Pro 5300M\ninfo:  Found config env: dxgi.customVendorId = 1002;dxgi.customDeviceId = 7340;dxgi.customDeviceDesc = AMD Radeon Pro 5300M\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n"
+      },
+      {
+        "name": "darwin_dxmt_triangle",
+        "seconds": "0.595608",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_window",
+        "seconds": "1.21276",
+        "passed": false,
+        "failure": "\nDXMT presentation: fixture exited -5 before window.txt\n"
+      },
+      {
+        "name": "darwin_dxmt_deferred",
+        "seconds": "0.594182",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_geometry",
+        "seconds": "0.543699",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_tessellation",
+        "seconds": "0.542909",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_textured",
+        "seconds": "0.50124",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_msaa",
+        "seconds": "0.625873",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_compute",
+        "seconds": "0.398711",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_features",
+        "seconds": "0.463185",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_fullscreen",
+        "seconds": "1.02737",
+        "passed": false,
+        "failure": "\nDXMT fullscreen: exit -5, 'missing'\ninfo:  Found config env: dxgi.customVendorId = 1002;dxgi.customDeviceId = 7340;dxgi.customDeviceDesc = AMD Radeon Pro 5300M\ninfo:  Found config env: dxgi.customVendorId = 1002;dxgi.customDeviceId = 7340;dxgi.customDeviceDesc = AMD Radeon Pro 5300M\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n"
+      },
+      {
+        "name": "darwin_dxmt_present_rate",
+        "seconds": "0.903888",
+        "passed": false,
+        "failure": "\nDXMT present_rate: exit -5, 'missing'\ninfo:  Found config env: dxgi.customVendorId = 1002;dxgi.customDeviceId = 7340;dxgi.customDeviceDesc = AMD Radeon Pro 5300M\ninfo:  Found config env: dxgi.customVendorId = 1002;dxgi.customDeviceId = 7340;dxgi.customDeviceDesc = AMD Radeon Pro 5300M\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n"
+      }
+    ]
+  },
+  "complete": {
+    "total": 50,
+    "passed": 46,
+    "cases": [
+      {
+        "name": "darwin_dxmt_identity",
+        "seconds": "0.941264",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_self_share",
+        "seconds": "0.670558",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_keyed_x64",
+        "seconds": "0.746116",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_keyed_x32",
+        "seconds": "1.53838",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_shared",
+        "seconds": "1.77341",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_shared_keyed",
+        "seconds": "0.944904",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_device10",
+        "seconds": "0.79853",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_device",
+        "seconds": "0.441254",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_pool",
+        "seconds": "0.357676",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_pacing",
+        "seconds": "1.86698",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_triangle",
+        "seconds": "0.74274",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_window",
+        "seconds": "25.3348",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_deferred",
+        "seconds": "0.578031",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_geometry",
+        "seconds": "0.527776",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_tessellation",
+        "seconds": "0.532714",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_textured",
+        "seconds": "0.477808",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_msaa",
+        "seconds": "0.600747",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_compute",
+        "seconds": "0.538958",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_features",
+        "seconds": "0.560591",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_fullscreen",
+        "seconds": "0.998475",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_present_rate",
+        "seconds": "2.0941",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_window_fex",
+        "seconds": "28.4979",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_keyed_x64_fex",
+        "seconds": "0.691364",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_keyed_x32_fex",
+        "seconds": "1.37571",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_identity_fex",
+        "seconds": "0.345919",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_self_share_fex",
+        "seconds": "0.812123",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_shared_fex",
+        "seconds": "2.33085",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_shared_keyed_fex",
+        "seconds": "1.30875",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_device10_fex",
+        "seconds": "7.32921",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_device_fex",
+        "seconds": "0.644533",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_pool_fex",
+        "seconds": "0.0804235",
+        "passed": false,
+        "failure": "\nDXMT pool: exit 1, 'missing'\nraven: PE preferred base is unavailable and image has no relocation table\n\n"
+      },
+      {
+        "name": "darwin_dxmt_pacing_fex",
+        "seconds": "5.49223",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_triangle_fex",
+        "seconds": "0.0807045",
+        "passed": false,
+        "failure": "\nDXMT triangle: exit 1, 'missing'\nraven: PE preferred base is unavailable and image has no relocation table\n\n"
+      },
+      {
+        "name": "darwin_dxmt_deferred_fex",
+        "seconds": "0.968472",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_geometry_fex",
+        "seconds": "0.954815",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_tessellation_fex",
+        "seconds": "0.94826",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_textured_fex",
+        "seconds": "0.927568",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_msaa_fex",
+        "seconds": "1.02685",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_compute_fex",
+        "seconds": "0.0803628",
+        "passed": false,
+        "failure": "\nDXMT compute: exit 1, 'missing'\nraven: PE preferred base is unavailable and image has no relocation table\n\n"
+      },
+      {
+        "name": "darwin_dxmt_features_fex",
+        "seconds": "0.837854",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_fullscreen_fex",
+        "seconds": "6.38344",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_present_rate_fex",
+        "seconds": "7.85275",
+        "passed": true
+      },
+      {
+        "name": "native_tls_slots_x32_fex_0",
+        "seconds": "0.703022",
+        "passed": true
+      },
+      {
+        "name": "native_tls_slots_x32_fex_1",
+        "seconds": "0.630017",
+        "passed": true
+      },
+      {
+        "name": "native_tls_slots_x64_fex_0",
+        "seconds": "0.409043",
+        "passed": true
+      },
+      {
+        "name": "native_tls_slots_x64_fex_1",
+        "seconds": "0.356508",
+        "passed": true
+      },
+      {
+        "name": "native_jit_stress_x32_fex_0",
+        "seconds": "0.600255",
+        "passed": true
+      },
+      {
+        "name": "native_jit_stress_x32_fex_1",
+        "seconds": "0.563197",
+        "passed": true
+      },
+      {
+        "name": "native_jit_stress_x64_fex_0",
+        "seconds": "0.288762",
+        "passed": true
+      },
+      {
+        "name": "native_jit_stress_x64_fex_1",
+        "seconds": "0.0628247",
+        "passed": false,
+        "failure": "\nraven: PE preferred base is unavailable and image has no relocation table\nFAIL: expected verified zero entry return, host exit=1\n"
+      }
+    ]
+  },
+  "complete-recheck": {
+    "total": 4,
+    "passed": 4,
+    "cases": [
+      {
+        "name": "darwin_dxmt_pool_fex",
+        "seconds": "0.274179",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_triangle_fex",
+        "seconds": "0.818593",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_compute_fex",
+        "seconds": "0.611853",
+        "passed": true
+      },
+      {
+        "name": "native_jit_stress_x64_fex_1",
+        "seconds": "0.314053",
+        "passed": true
+      }
+    ]
+  },
+  "features-parallel": {
+    "total": 1,
+    "passed": 1,
+    "cases": [
+      {
+        "name": "darwin_dxmt_features_fex",
+        "seconds": "0.787139",
+        "passed": true
+      }
+    ]
+  },
+  "slice": {
+    "total": 3,
+    "passed": 3,
+    "cases": [
+      {
+        "name": "darwin_dxmt_pool_fex",
+        "seconds": "0.272854",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_pacing_fex",
+        "seconds": "5.46097",
+        "passed": true
+      },
+      {
+        "name": "darwin_dxmt_features_fex",
+        "seconds": "0.722116",
+        "passed": true
+      }
+    ]
+  }
+}

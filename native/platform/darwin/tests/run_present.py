@@ -72,7 +72,7 @@ def main():
                         "RAVEN_DXMT_CAPTURE_DIRECTORY": str(work / "surfaces")}
     env.pop("RAVEN_D3D_DIRECTORY", None)
     with (work / "run.log").open("w") as log:
-        process = subprocess.Popen([str(raven), "--run-process", "--execution=native", "--timeout-ms=90000", "--desktop=macos",
+        process = subprocess.Popen([str(raven), "--run-process", "--execution=" + os.environ.get("RAVEN_DXMT_TEST_ENGINE", "native"), "--timeout-ms=90000", "--desktop=macos",
                                     str(workload)], stdout=log, stderr=log, env=env)
         try:
             wait_file(work / "prefix/drive_c/window.txt", process, time.monotonic() + 30)
