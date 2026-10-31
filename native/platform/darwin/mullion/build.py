@@ -31,7 +31,7 @@ def main():
     root.mkdir(parents=True)
     entries = (source / 'src/winemetal/unix/winemetal_unix.c').read_text().split('const void *__wine_unix_call_funcs[] = {')[1].split('};')[0]
     entries = [v.strip() for v in entries.split(',') if v.strip()]
-    if len(entries) != 197 or hashlib.sha256('\n'.join(entries[:132]).encode()).hexdigest() != '8095cdebf07b394c726339570d1cc1471c1694d9dc2e55141ba77a59ec2317c9':
+    if len(entries) != 197 or hashlib.sha256('\n'.join(entries).encode()).hexdigest() != 'b25daebc1a8c3f3da4504e4c5fd51a7d2bbf15f1f4a3843f91290093a746d624':
         p.error('unexpected unix table layout')
     here = Path(__file__).resolve().parent
     # Patch only the caller's private checkout, retaining the exact patch for provenance.
@@ -42,12 +42,12 @@ def main():
         dest = root / directory
         dest.mkdir()
         adapter = dest / 'raven-dxmt.dylib'
-        run('/usr/bin/clang', '-arch', arch, '-dynamiclib', '-O2', '-fblocks', here.parent / 'dxmt/unix_adapter.m', here.parent / 'dxmt/presentation.m', '-framework', 'Foundation', '-framework', 'Metal', '-framework', 'IOSurface', '-Wl,-install_name,@rpath/raven-dxmt.dylib', '-o', adapter)
+        run('/usr/bin/clang', '-arch', arch, '-dynamiclib', '-O2', '-fblocks', here.parent / 'dxmt/unix_adapter.m', here.parent / 'dxmt/presentation.m', here / 'unreachable.c', '-framework', 'Foundation', '-framework', 'Metal', '-framework', 'IOSurface', '-Wl,-install_name,@rpath/raven-dxmt.dylib', '-o', adapter)
         native = root / f'{arch}.ini'
         native.write_text(f"[binaries]\nc = ['/usr/bin/clang', '-arch', '{arch}']\ncpp = ['/usr/bin/clang++', '-arch', '{arch}']\n")
         build = root / f'build-{arch}'
-        run('meson', 'setup', build, source, '--cross-file', source / 'build-win64.txt', '--native-file', native, '--buildtype=debugoptimized', f'-Dnative_llvm_path={llvm}', f'-Dwine_build_path={a.wine}', f'-Draven_adapter={adapter}')
-        run('ninja', '-C', build, '-j8')
+        run('meson', 'setup', build, source, '--cross-file', source / 'build-win64.txt', '--native-file', native, '--buildtype=debugoptimized', f'-Draven_native_arch={arch}', f'-Dnative_llvm_path={llvm}', f'-Dwine_build_path={a.wine}', f'-Draven_adapter={adapter}')
+        run('ninja', '-C', build, '-j8', *([] if arch == 'arm64' else ['src/winemetal/unix/winemetal.so']))
         shutil.copy2(build / 'src/winemetal/unix/winemetal.so', dest / 'winemetal.so')
         run('install_name_tool', '-change', '@rpath/raven-dxmt.dylib', '@loader_path/raven-dxmt.dylib', dest / 'winemetal.so')
         run('codesign', '--force', '--sign', '-', dest / 'winemetal.so')

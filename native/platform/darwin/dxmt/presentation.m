@@ -456,8 +456,16 @@ static int32_t mullion_create_view(void *args)
     p[7] = legacy[2]; p[8] = legacy[3];
     return status;
 }
+static int32_t mullion_present_statistics(void *args)
+{
+    // IOSurface transport has no display timestamp callback. Leave statistics
+    // unreported rather than equating GPU completion with screen presentation.
+    (void)args;
+    return (int32_t)0xc00000bbU; // STATUS_NOT_SUPPORTED
+}
 void raven_mullion_wrap_presentation(void **table)
 {
+    table[175] = mullion_present_statistics;
     table[72] = mullion_create_view;
     table[73] = release_view;
 }
