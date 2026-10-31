@@ -432,7 +432,9 @@ void initialize_wow64_packet(RavenNT::ThreadEnvironment &environment)
 	uint32_t flags = 0x1003f, eflags = 0x202, cs = 0x23, ds = 0x2b;
 	memcpy(packet, &flags, 4); memcpy(packet + 0xc0, &eflags, 4);
 	memcpy(packet + 0xbc, &cs, 4);
-	for (auto offset : {0x8c, 0x90, 0x94, 0x98, 0xc8}) memcpy(packet + offset, &ds, 4);
+	for (auto offset : {0x8c, 0x94, 0x98, 0xc8}) memcpy(packet + offset, &ds, 4);
+	const uint32_t fs = 0x53;
+	memcpy(packet + 0x90, &fs, 4);
 	uint16_t fcw = 0x27f; uint32_t mxcsr = 0x1f80;
 	memcpy(packet + 0xcc, &fcw, 2); memcpy(packet + 0xe4, &mxcsr, 4);
 }
