@@ -1,0 +1,118 @@
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+index a0283e6..2eeb62e 100644
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -50,8 +50,8 @@ $end_info$
+ #include "DummyHandlers.h"
+ #include "Windows/Common/RavenHost.h"
+ #ifdef RAVEN_HOST
+-const RavenHostV1 *RavenHost {};
+-extern "C" NTSTATUS RavenProcessInit(const RavenHostV1 *Host);
++const RavenHostV2 *RavenHost {};
++extern "C" NTSTATUS RavenProcessInit(const RavenHostV2 *Host);
+ #endif
+ #include "BTInterface.h"
+ #include "Windows/Common/SHMStats.h"
+@@ -852,16 +852,16 @@ NTSTATUS ProcessInit() {
+ }
+ 
+ #ifdef RAVEN_HOST
+-extern "C" NTSTATUS RavenProcessInit(const RavenHostV1 *Host) {
+-  if (RavenHost || !Host || Host->size != sizeof(RavenHostV1) || Host->version != 1 || Host->flags ||
++extern "C" NTSTATUS RavenProcessInit(const RavenHostV2 *Host) {
++  if (RavenHost || !Host || Host->size != sizeof(RavenHostV2) || Host->version != 2 || Host->flags ||
+       (Host->guest32_base & 0xffffffffULL) || !Host->shared_data || !Host->dispatch || !Host->unix_call ||
+-      !Host->exception || !Host->cpu_area || !Host->log || !Host->jit_write_protect ||
++      !Host->exception || !Host->private_teb || !Host->cpu_area || !Host->log || !Host->jit_write_protect ||
+       !Host->allocate_native_jit || !Host->memory_event) return STATUS_INVALID_PARAMETER;
+   RavenHost = Host;
+   return ProcessInit();
+ }
+ #else
+-extern "C" NTSTATUS RavenProcessInit(const RavenHostV1 *) { return STATUS_NOT_SUPPORTED; }
++extern "C" NTSTATUS RavenProcessInit(const RavenHostV2 *) { return STATUS_NOT_SUPPORTED; }
+ #endif
+ 
+ void ProcessTerm(HANDLE Handle, BOOL After, NTSTATUS Status) {}
+diff --git a/Source/Windows/Common/Priv.h b/Source/Windows/Common/Priv.h
+index ea702b4..52b5fcf 100644
+--- a/Source/Windows/Common/Priv.h
++++ b/Source/Windows/Common/Priv.h
+@@ -3,8 +3,16 @@
+ 
+ #include <exception>
+ #include <winternl.h>
++#ifdef RAVEN_HOST
++#include "RavenHost.h"
++#endif
+ 
+ static inline __TEB* GetCurrentTEB() {
++#ifdef RAVEN_HOST
++  // Module WinAPI state (TLS, last-error and identity) belongs to the host
++  // worker. Direct NtCurrentTeb() in the execution frontend remains the guest.
++  if (RavenHost) return reinterpret_cast<__TEB*>(RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->private_teb), 0, 0, 0));
++#endif
+   return reinterpret_cast<__TEB*>(NtCurrentTeb());
+ }
+ 
+diff --git a/Source/Windows/Common/RavenHost.h b/Source/Windows/Common/RavenHost.h
+index d23fd74..4380d95 100644
+--- a/Source/Windows/Common/RavenHost.h
++++ b/Source/Windows/Common/RavenHost.h
+@@ -4,7 +4,7 @@
+ // Experimental v1: all callbacks are native arm64, non-variadic, <= 3 arguments.
+ // Context packets are the pinned FEX Windows ARM64/AMD64 contexts, NOT Darwin ucontext.
+ // No callback may throw across this boundary. Host retains table and backing storage.
+-struct RavenHostV1 {
++struct RavenHostV2 {
+   uint32_t size, version;
+   uint64_t flags; // must be zero (Tier 0, software TSO)
+   uint64_t guest32_base;
+@@ -17,10 +17,11 @@ struct RavenHostV1 {
+   uint32_t (*jit_write_protect)(uint32_t mode);
+   void *(*allocate_native_jit)(uint64_t size);
+   void (*memory_event)(uint64_t address, uint64_t size, uint64_t kind);
++  void *(*private_teb)(); // Preallocated per-host-worker TEB; never the guest TEB.
+ };
+ 
+ #ifdef RAVEN_HOST
+-extern const RavenHostV1 *RavenHost;
++extern const RavenHostV2 *RavenHost;
+ // Bypass ARM64EC indirect-call checking for Darwin callbacks, as UnixLib does.
+ // The caller uses ARM64EC; the destination uses the native arm64 register ABI.
+ static uint64_t __attribute__((naked)) RavenInvoke(uintptr_t, uint64_t, uint64_t, uint64_t) {
+diff --git a/Source/Windows/Common/RavenWow64Host.h b/Source/Windows/Common/RavenWow64Host.h
+index 4fbe307..0c48322 100644
+--- a/Source/Windows/Common/RavenWow64Host.h
++++ b/Source/Windows/Common/RavenWow64Host.h
+@@ -5,6 +5,6 @@
+ // separately negotiated interface. Native callbacks; no Wine CPU-area layout.
+ struct RavenWow64HostV1 {
+   uint32_t size, version;
+-  RavenHostV1 common;
++  RavenHostV2 common;
+   uint64_t (*teb32)(void *native_teb);
+ };
+diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
+index e7ac7b6..16ed3f2 100644
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -1,6 +1,6 @@
+ #ifdef RAVEN_HOST
+ #include "Windows/Common/RavenWow64Host.h"
+-const RavenHostV1 *RavenHost {};
++const RavenHostV2 *RavenHost {};
+ static const RavenWow64HostV1 *WowHost {};
+ #endif
+ // SPDX-License-Identifier: MIT
+@@ -1144,8 +1144,8 @@ void BTCpuUpdateProcessorInformation(SYSTEM_CPU_INFORMATION* Info) {
+ extern "C" NTSTATUS RavenWow64ProcessInit(const RavenWow64HostV1 *Host) {
+   if (WowHost || !Host || Host->size != sizeof(*Host) || Host->version != 1 || !Host->teb32) return STATUS_INVALID_PARAMETER;
+   const auto &H = Host->common;
+-  if (H.size != sizeof(H) || H.version != 1 || H.flags || !H.guest32_base || (H.guest32_base & 0xffffffffULL) ||
+-      !H.shared_data || !H.memory_event || !H.cpu_area || !H.dispatch || !H.exception || !H.jit_write_protect || !H.allocate_native_jit || !H.log || !H.unix_call) return STATUS_INVALID_PARAMETER;
++  if (H.size != sizeof(H) || H.version != 2 || H.flags || !H.guest32_base || (H.guest32_base & 0xffffffffULL) ||
++      !H.shared_data || !H.memory_event || !H.private_teb || !H.cpu_area || !H.dispatch || !H.exception || !H.jit_write_protect || !H.allocate_native_jit || !H.log || !H.unix_call) return STATUS_INVALID_PARAMETER;
+   WowHost = Host;
+   RavenHost = &Host->common;
+   BTCpuProcessInit();

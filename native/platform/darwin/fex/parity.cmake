@@ -67,3 +67,48 @@ if(RAVEN_FEX_MODHOST)
         endif()
     endforeach()
 endif()
+if(RAVEN_FEX_MODHOST)
+    foreach(width 32 64)
+        set(compiler ${RAVEN_MINGW${width}})
+        if(compiler)
+            set(entry raven_entry)
+            if(width EQUAL 32)
+                set(entry _raven_entry)
+            endif()
+            set(fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-tls-slots${width}.exe)
+            add_custom_command(OUTPUT ${fixture}
+                COMMAND ${compiler} -O1 -nostdlib -fno-stack-protector -fno-builtin -mno-stack-arg-probe
+                    -Wl,--entry,${entry},--no-insert-timestamp -o ${fixture}
+                    ${RAVEN_DARWIN_DIR}/fex/tls_slots_client.c -lkernel32
+                DEPENDS ${RAVEN_DARWIN_DIR}/fex/tls_slots_client.c VERBATIM)
+            add_custom_target(fex_tls_slots${width}_fixture DEPENDS ${fixture})
+            add_dependencies(raven fex_tls_slots${width}_fixture)
+            foreach(engine native fex)
+                foreach(parallel 0 1)
+                    add_test(NAME native_tls_slots_x${width}_${engine}_${parallel} COMMAND ${Python3_EXECUTABLE}
+                        ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py --require-modules --backend ${engine}
+                        --raven $<TARGET_FILE:raven> --fixture ${fixture} --modules "${RAVEN_FEX_MODULE_ROOT}" --timeout-ms 30000)
+                    set_tests_properties(native_tls_slots_x${width}_${engine}_${parallel} PROPERTIES TIMEOUT 45
+                        LABELS "engine-parity;tls")
+                    if(parallel)
+                        set_tests_properties(native_tls_slots_x${width}_${engine}_${parallel} PROPERTIES ENVIRONMENT "RAVEN_PARALLEL=1")
+                    else()
+                        set_tests_properties(native_tls_slots_x${width}_${engine}_${parallel} PROPERTIES ENVIRONMENT_MODIFICATION "RAVEN_PARALLEL=unset:")
+                    endif()
+                endforeach()
+            endforeach()
+        endif()
+    endforeach()
+endif()
+if(TARGET fex_wow64_boundary_test)
+    foreach(module wow64 x64)
+        set(dll xtajit64.dll)
+        if(module STREQUAL "wow64")
+            set(dll xtajit.dll)
+        endif()
+        add_test(NAME native_${module}_host_abi_mismatch_fex COMMAND fex_wow64_boundary_test
+            ${RAVEN_FEX_MODULE_ROOT}/${dll} ${module})
+        set_tests_properties(native_${module}_host_abi_mismatch_fex PROPERTIES TIMEOUT 15 LABELS "fex;contract;tls"
+            PASS_REGULAR_EXPRESSION "FEX host ABI v2 rejects v1 and truncated host tables")
+    endforeach()
+endif()

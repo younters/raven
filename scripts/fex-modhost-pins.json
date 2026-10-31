@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "xtajit64_sha256": "a5dba8b9a4442cebeadd3d1fdbb19d3b17a7042a205dcec4a24d34031289f9ab",
+  "xtajit64_sha256": "068cd3ec96a9d804ba58cb64104ce4effe0ece45a9efb2125ba7ff79ab9c641e",
   "raven_process_init_rva": 27700,
   "patches": {
     "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
@@ -19,10 +19,12 @@
     "0014-raven-wow64-interrupt.patch": "147637376b17a90678113cb9ef420b8076aa750601dfb917047dc76f5a642161",
     "0015-raven-wow64-doorbell.patch": "3160a1065f03848cef9c276c94a6f368d46e82315dcbd71254031df0fb191246",
     "0016-wow64-host-boundary-validation.patch": "8e3ae8ccaae4336cd5d045be4a465b280036e60f9474730c2b699bad22f6f326",
-    "0017-raven-unaligned-tso.patch": "082bdfea773ee87344a90d2c7e4bf7fddc233037236bac4b2afd6c45df0751d4"
+    "0017-raven-unaligned-tso.patch": "082bdfea773ee87344a90d2c7e4bf7fddc233037236bac4b2afd6c45df0751d4",
+    "0018-raven-private-host-teb.patch": "05c43a6c2e08812c45f428c3adc7811ab2fd0780a7fbe15c6d101ba1fa98f73f"
   },
-  "xtajit_sha256": "900ac1bceed999ce3d9ee1786c34a85de090c06da2ed0f824bc31e077125d6f4",
+  "xtajit_sha256": "de968f02e114d2100f28444426110e60b8639013c2dc9b5cb6d827ef89d8324f",
   "raven_wow64_process_init_rva": 30800,
   "raven_wow64_process_init_instruction": 4162785278,
-  "shared_patch12_xtajit_sha256": "5c785d47c43d8f2d0a444e82114ca731499b8a9e2ac408679b212db46c76bd6b"
+  "shared_patch12_xtajit_sha256": "5c785d47c43d8f2d0a444e82114ca731499b8a9e2ac408679b212db46c76bd6b",
+  "host_abi_version": 2
 }

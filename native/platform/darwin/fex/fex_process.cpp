@@ -311,7 +311,20 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 	state->initial = context();
 	state->faults = std::make_unique<RavenFault::Scope>(mapped_image->export_address("RavenHandleFault"));
 }
-FexProcess::~FexProcess() = default;
+FexProcess::~FexProcess()
+{
+	// Resident workers terminate their FEX thread before releasing private TLS.
+	state->workers.clear();
+	if (thread_environment) {
+		uint64_t args[8]{uint64_t(-2), 0};
+		RavenFault::execution_teb = nullptr;
+		raven_ec_call(mapped_image->export_address(wow64_module ? "BTCpuThreadTerm" : "ThreadTerm"),
+			args, thread_environment->teb.data());
+	}
+	state.reset();
+	RavenNT::active_thread = nullptr;
+	thread_environment.reset();
+}
 NativeResult FexProcess::call(uint64_t address, std::span<const uint64_t> arguments)
 {
 	state->require_owner();
@@ -1030,6 +1043,15 @@ uint64_t FexProcess::map_shared(int descriptor, size_t size, uint64_t offset, ui
 		void *mapped = mmap(user_shared_data.data(), user_shared_data.size(), PROT_READ | PROT_WRITE,
 			MAP_FIXED | MAP_SHARED, descriptor, off_t(offset));
 		if (mapped == MAP_FAILED) throw std::runtime_error("FEX shared user data mapping failed");
+		if (state->window) {
+			// WoW64 guest addresses resolve inside its relocated window. Keep
+			// that view on the same descriptor as the module mirror and clocks.
+			const auto address = map_memory(size, PROT_READ | PROT_WRITE, requested);
+			mapped = mmap(reinterpret_cast<void *>(state->host(address, size)),
+				state->regions.at(address).size, PROT_READ | PROT_WRITE,
+				MAP_FIXED | MAP_SHARED, descriptor, off_t(offset));
+			if (mapped == MAP_FAILED) throw std::runtime_error("WoW64 shared user data mapping failed");
+		}
 		state->pages[requested] = PROT_READ | PROT_WRITE;
 		return requested;
 	}
