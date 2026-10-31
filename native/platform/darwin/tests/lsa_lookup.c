@@ -1,6 +1,13 @@
 #include <windows.h>
 #include <ntsecapi.h>
 
+static int matches(LSA_UNICODE_STRING name, const WCHAR *text, USHORT count)
+{
+    if (!name.Buffer || name.Length != count * sizeof(WCHAR)) return 0;
+    for (USHORT i = 0; i < count; ++i) if (name.Buffer[i] != text[i]) return 0;
+    return 1;
+}
+
 int raven_entry(void)
 {
     SID_IDENTIFIER_AUTHORITY world = SECURITY_WORLD_SID_AUTHORITY;
@@ -32,11 +39,11 @@ int raven_entry(void)
     domains = 0; names = 0;
     if (LsaLookupSids(policy, 1, &admin, &domains, &names) || !domains || domains->Entries != 1 ||
         !domains->Domains || domains->Domains[0].Name.Length != 14 ||
-        lstrcmpW(domains->Domains[0].Name.Buffer, L"BUILTIN") || !IsValidSid(domains->Domains[0].Sid) ||
+        !matches(domains->Domains[0].Name, L"BUILTIN", 7) || !IsValidSid(domains->Domains[0].Sid) ||
         *GetSidSubAuthorityCount(domains->Domains[0].Sid) != 1 ||
         *GetSidSubAuthority(domains->Domains[0].Sid, 0) != SECURITY_BUILTIN_DOMAIN_RID ||
         !names || names[0].DomainIndex != 0 || names[0].Use != SidTypeAlias ||
-        names[0].Name.Length != 28 || lstrcmpW(names[0].Name.Buffer, L"Administrators")) return 5;
+        names[0].Name.Length != 28 || !matches(names[0].Name, L"Administrators", 14)) return 5;
     LsaFreeMemory(domains); LsaFreeMemory(names); FreeSid(admin);
     LsaClose(policy);
     return 0;
