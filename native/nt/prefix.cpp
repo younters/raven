@@ -9,6 +9,7 @@
 #include <string>
 #ifdef __APPLE__
 #include <raven_darwin_fonts.h>
+#include <copyfile.h>
 #endif
 
 namespace raven {
@@ -55,8 +56,19 @@ void NativePrefix::place_runtime_components(const std::filesystem::path &runtime
 		for (const auto name : runtime_components) {
 			std::error_code error;
 			const auto from = source / name;
-			if (std::filesystem::is_regular_file(from, error))
-				std::filesystem::copy_file(from, windows / folder / name, std::filesystem::copy_options::update_existing, error);
+			if (!std::filesystem::is_regular_file(from, error))
+				continue;
+			const auto destination = windows / folder / name;
+#ifdef __APPLE__
+			// COPYFILE_CLONE uses APFS clonefile where available and falls back to a
+			// data copy on other volumes. Prefixes remain independently writable.
+			if (std::filesystem::exists(destination, error) &&
+				std::filesystem::last_write_time(destination, error) >= std::filesystem::last_write_time(from, error) && !error)
+				continue;
+			copyfile(from.c_str(), destination.c_str(), nullptr, COPYFILE_DATA | COPYFILE_STAT | COPYFILE_CLONE);
+#else
+			std::filesystem::copy_file(from, destination, std::filesystem::copy_options::update_existing, error);
+#endif
 		}
 }
 
