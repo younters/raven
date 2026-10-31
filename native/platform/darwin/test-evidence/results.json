@@ -1,0 +1,308 @@
+{
+  "before": {
+    "baseline": 27638714368,
+    "minimum_free": 13553991680,
+    "peak_extra": 14084722688,
+    "exit": 8,
+    "largest_sampled_unlinked_raven_file_bytes": 51159040
+  },
+  "after": {
+    "baseline": 23439118336,
+    "minimum_free": 22337105920,
+    "peak_extra": 1102012416,
+    "exit": 8,
+    "suite": {
+      "name": "(empty)",
+      "tests": "1419",
+      "failures": "16",
+      "disabled": "1",
+      "skipped": "6",
+      "hostname": "",
+      "time": "108",
+      "timestamp": "2026-10-31T15:37:08"
+    },
+    "nonpassing": [
+      {
+        "name": "native_provider_contract",
+        "classname": "native_provider_contract",
+        "time": "3.38281",
+        "status": "fail",
+        "output": "provider placement fixture did not execute\n"
+      },
+      {
+        "name": "native_pipe_roundtrip_x32",
+        "classname": "native_pipe_roundtrip_x32",
+        "time": "5.5201",
+        "status": "fail",
+        "output": "raven: native entry timed out at 0x0\n"
+      },
+      {
+        "name": "native_vulkan_queued_extensions_x64",
+        "classname": "native_vulkan_queued_extensions_x64",
+        "time": "0",
+        "status": "disabled",
+        "output": "Disabled"
+      },
+      {
+        "name": "native_vulkan_descriptor_buffer_x64",
+        "classname": "native_vulkan_descriptor_buffer_x64",
+        "time": "0.406668",
+        "status": "notrun",
+        "output": "Native entry returned 3 (process initialization not implemented)\n"
+      },
+      {
+        "name": "native_vulkan_descriptor_buffer_x32",
+        "classname": "native_vulkan_descriptor_buffer_x32",
+        "time": "0.628924",
+        "status": "notrun",
+        "output": "Native entry returned 3 (process initialization not implemented)\n"
+      },
+      {
+        "name": "native_minesweeper_workflow",
+        "classname": "native_minesweeper_workflow",
+        "time": "0.00625088",
+        "status": "notrun",
+        "output": "SKIP: set RAVEN_MINESWEEPER to a user-supplied Minesweeper executable\n"
+      },
+      {
+        "name": "native_resource_contract",
+        "classname": "native_resource_contract",
+        "time": "3.76346",
+        "status": "fail",
+        "output": "compiled resource API workflow failed\n"
+      },
+      {
+        "name": "native_darwin_capture_authorized",
+        "classname": "native_darwin_capture_authorized",
+        "time": "0.0253877",
+        "status": "notrun",
+        "output": ""
+      },
+      {
+        "name": "darwin_dxmt_device10",
+        "classname": "darwin_dxmt_device10",
+        "time": "1.05506",
+        "status": "fail",
+        "output": "DXMT device10: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_0\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_1\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_10_0\n\n"
+      },
+      {
+        "name": "darwin_dcomp_local",
+        "classname": "darwin_dcomp_local",
+        "time": "0.752925",
+        "status": "fail",
+        "output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-929e07f6/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-929e07f6/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -5 before stage 1\n"
+      },
+      {
+        "name": "darwin_dcomp_foreign",
+        "classname": "darwin_dcomp_foreign",
+        "time": "1.89054",
+        "status": "fail",
+        "output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-929e07f6/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-929e07f6/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n"
+      },
+      {
+        "name": "darwin_dcomp_local-hidpi",
+        "classname": "darwin_dcomp_local-hidpi",
+        "time": "0.731556",
+        "status": "fail",
+        "output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-929e07f6/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-929e07f6/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -5 before stage 1\n"
+      },
+      {
+        "name": "darwin_dcomp_foreign-hidpi",
+        "classname": "darwin_dcomp_foreign-hidpi",
+        "time": "1.90867",
+        "status": "fail",
+        "output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-929e07f6/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-929e07f6/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n"
+      },
+      {
+        "name": "darwin_dcomp_popup",
+        "classname": "darwin_dcomp_popup",
+        "time": "9.30196",
+        "status": "fail",
+        "output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-929e07f6/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-929e07f6/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n"
+      },
+      {
+        "name": "darwin_dcomp_popup-hidpi",
+        "classname": "darwin_dcomp_popup-hidpi",
+        "time": "8.30719",
+        "status": "fail",
+        "output": "Traceback (most recent call last):\n  File \"/Users/yount/.t3/worktrees/raven/t3-929e07f6/native/platform/darwin/tests/run_dcomp.py\", line 188, in <module>\n    sys.exit(main())\n             ~~~~^^\n  File \"/Users/yount/.t3/worktrees/raven/t3-929e07f6/native/platform/darwin/tests/run_dcomp.py\", line 65, in main\n    raise RuntimeError(f'fixture exited {process.returncode} before stage {stage}')\nRuntimeError: fixture exited -11 before stage 1\n"
+      },
+      {
+        "name": "darwin_dxmt_pacing",
+        "classname": "darwin_dxmt_pacing",
+        "time": "0.99968",
+        "status": "fail",
+        "output": "DXMT pacing: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n"
+      },
+      {
+        "name": "darwin_dxmt_window",
+        "classname": "darwin_dxmt_window",
+        "time": "1.43289",
+        "status": "fail",
+        "output": "DXMT presentation: fixture exited -5 before window.txt\n"
+      },
+      {
+        "name": "darwin_dxmt_fullscreen",
+        "classname": "darwin_dxmt_fullscreen",
+        "time": "1.39683",
+        "status": "fail",
+        "output": "DXMT fullscreen: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n"
+      },
+      {
+        "name": "darwin_dxmt_present_rate",
+        "classname": "darwin_dxmt_present_rate",
+        "time": "1.28232",
+        "status": "fail",
+        "output": "DXMT present_rate: exit -5, 'missing'\ninfo:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1\ninfo:  Using feature level D3D_FEATURE_LEVEL_11_0\n\n"
+      },
+      {
+        "name": "native_darwin_installer_widl",
+        "classname": "native_darwin_installer_widl",
+        "time": "0.0340596",
+        "status": "notrun",
+        "output": "WIDL unavailable\n"
+      },
+      {
+        "name": "native_darwin_fd_budget_low_hard",
+        "classname": "native_darwin_fd_budget_low_hard",
+        "time": "0.00330133",
+        "status": "notrun",
+        "output": ""
+      },
+      {
+        "name": "native_parity_context_native",
+        "classname": "native_parity_context_native",
+        "time": "0.261472",
+        "status": "fail",
+        "output": "FAIL: expected verified zero entry return, host exit=122\nNative entry returned 122 (process initialization not implemented)\n"
+      },
+      {
+        "name": "fex_modhost_substrate",
+        "classname": "fex_modhost_substrate",
+        "time": "0.0522339",
+        "status": "fail",
+        "output": "unexpected exit -6 (expected 0)\n"
+      }
+    ],
+    "largest_sampled_unlinked_raven_file_bytes": 51159040
+  },
+  "priority": {
+    "baseline": 22696427520,
+    "minimum_free": 22608097280,
+    "peak_extra": 88330240,
+    "exit": 8,
+    "suite": {
+      "name": "(empty)",
+      "tests": "33",
+      "failures": "2",
+      "disabled": "0",
+      "skipped": "0",
+      "hostname": "",
+      "time": "32",
+      "timestamp": "2026-10-31T15:40:54"
+    },
+    "nonpassing": [
+      {
+        "name": "native_darwin_thread_context",
+        "classname": "native_darwin_thread_context",
+        "time": "0.215142",
+        "status": "fail",
+        "output": "Native entry returned 2 (process initialization not implemented)\n"
+      },
+      {
+        "name": "fex_modhost_execution",
+        "classname": "fex_modhost_execution",
+        "time": "0.0581815",
+        "status": "fail",
+        "output": "unexpected exit -6 (expected 0)\n"
+      }
+    ],
+    "largest_sampled_unlinked_raven_file_bytes": 17203200
+  },
+  "regress": {
+    "baseline": 22655926272,
+    "minimum_free": 22622978048,
+    "peak_extra": 32948224,
+    "exit": 0,
+    "suite": {
+      "name": "(empty)",
+      "tests": "10",
+      "failures": "0",
+      "disabled": "0",
+      "skipped": "0",
+      "hostname": "",
+      "time": "13",
+      "timestamp": "2026-10-31T15:42:30"
+    },
+    "nonpassing": [],
+    "largest_sampled_unlinked_raven_file_bytes": 8548352
+  },
+  "final": {
+    "baseline": 21015097344,
+    "minimum_free": 20697772032,
+    "peak_extra": 317325312,
+    "exit": 0,
+    "suite": {
+      "name": "(empty)",
+      "tests": "1419",
+      "failures": "0",
+      "disabled": "1",
+      "skipped": "6",
+      "hostname": "",
+      "time": "148",
+      "timestamp": "2026-10-31T15:43:56"
+    },
+    "tested_commit": "d0834a71",
+    "nonpassing": [
+      {
+        "name": "native_vulkan_queued_extensions_x64",
+        "classname": "native_vulkan_queued_extensions_x64",
+        "time": "0",
+        "status": "disabled",
+        "output": "Disabled"
+      },
+      {
+        "name": "native_vulkan_descriptor_buffer_x64",
+        "classname": "native_vulkan_descriptor_buffer_x64",
+        "time": "0.24298",
+        "status": "notrun",
+        "output": "Native entry returned 3 (process initialization not implemented)\n"
+      },
+      {
+        "name": "native_vulkan_descriptor_buffer_x32",
+        "classname": "native_vulkan_descriptor_buffer_x32",
+        "time": "0.528377",
+        "status": "notrun",
+        "output": "Native entry returned 3 (process initialization not implemented)\n"
+      },
+      {
+        "name": "native_minesweeper_workflow",
+        "classname": "native_minesweeper_workflow",
+        "time": "0.00695954",
+        "status": "notrun",
+        "output": "SKIP: set RAVEN_MINESWEEPER to a user-supplied Minesweeper executable\n"
+      },
+      {
+        "name": "native_darwin_capture_authorized",
+        "classname": "native_darwin_capture_authorized",
+        "time": "0.0334665",
+        "status": "notrun",
+        "output": ""
+      },
+      {
+        "name": "native_darwin_installer_widl",
+        "classname": "native_darwin_installer_widl",
+        "time": "0.0313847",
+        "status": "notrun",
+        "output": "WIDL unavailable\n"
+      },
+      {
+        "name": "native_darwin_fd_budget_low_hard",
+        "classname": "native_darwin_fd_budget_low_hard",
+        "time": "0.00278675",
+        "status": "notrun",
+        "output": ""
+      }
+    ]
+  }
+}
