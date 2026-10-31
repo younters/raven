@@ -1,0 +1,60 @@
+{
+  "focused": {
+    "tests": 478,
+    "failed": [
+      "native_context_groups32_fex",
+      "native_context_groups64_fex",
+      "darwin_mullion_device_native",
+      "darwin_mullion_device_fex",
+      "darwin_mullion_clear_native",
+      "darwin_mullion_clear_fex",
+      "darwin_mullion_draw_native",
+      "darwin_mullion_draw_fex",
+      "darwin_mullion_window12_native",
+      "darwin_mullion_window12_fex"
+    ],
+    "skipped": [],
+    "disabled": [],
+    "passed": 468
+  },
+  "recheck": {
+    "tests": 20,
+    "failed": [
+      "darwin_mullion_device_native",
+      "darwin_mullion_clear_native",
+      "darwin_mullion_draw_native",
+      "darwin_mullion_window12_native"
+    ],
+    "skipped": [],
+    "disabled": [],
+    "passed": 16
+  },
+  "full": {
+    "tests": 1502,
+    "failed": [
+      "darwin_mullion_device_native",
+      "darwin_mullion_clear_native",
+      "darwin_mullion_draw_native",
+      "darwin_mullion_window12_native"
+    ],
+    "skipped": [
+      "native_vulkan_descriptor_buffer_x64",
+      "native_vulkan_descriptor_buffer_x32",
+      "native_minesweeper_workflow",
+      "native_darwin_capture_authorized",
+      "native_darwin_installer_widl",
+      "native_darwin_fd_budget_low_hard"
+    ],
+    "disabled": [
+      "native_vulkan_queued_extensions_x64"
+    ],
+    "passed": 1491
+  },
+  "final-mullion": {
+    "tests": 16,
+    "passed": 16,
+    "failed": [],
+    "skipped": [],
+    "disabled": []
+  }
+}
