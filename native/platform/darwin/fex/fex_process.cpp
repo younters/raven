@@ -908,12 +908,12 @@ void FexProcess::map_image(LoadedImage &image)
 		throw std::runtime_error("FEX guest image address conflict at " + std::to_string(address));
 	auto *p = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, image.descriptor(), 0);
 	if (p == MAP_FAILED) {
+		state->image_reservations.erase(address);
 		if (state->window)
 			(void)mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_NONE,
 				MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
 		else
 			release_guest_range(address, n);
-		state->image_reservations.erase(address);
 		throw std::runtime_error("FEX shared image mapping failed");
 	}
 	state->image_reservations.erase(address);
@@ -1348,8 +1348,13 @@ void FexProcess::resume_context_thread(NativeThreadState &thread)
 	if (!state->parallel) return;
 	auto &worker = *state->workers.at(thread.task);
 	const auto caller = save_thread(true);
-	load_thread(thread);
-	set_context(thread.context);
+	try {
+		load_thread(thread);
+		set_context(thread.context);
+	} catch (...) {
+		load_thread(caller);
+		throw;
+	}
 	load_thread(caller);
     // A racing syscall/exception remains queued for scheduler dispatch, but its
     // authoritative packet must include the edit before the snapshot is discarded.

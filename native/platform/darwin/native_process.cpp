@@ -1635,7 +1635,7 @@ void NativeProcess::resume_context_thread(NativeThreadState &thread)
 	auto &child = *state->child;
 	const auto caller = child.selected;
 	child.select(thread.task);
-	{
+	try {
 		std::memcpy(&child.registers(), &thread.context.registers, sizeof thread.context.registers);
 		std::memcpy(child.thread().xstate, thread.context.xstate.data(), thread.context.xstate.size());
 		copy_x87_slots(child.thread().xstate, thread.context.xstate.data(), false);
@@ -1643,6 +1643,9 @@ void NativeProcess::resume_context_thread(NativeThreadState &thread)
         if (thread.context_pause_interrupt) child.resume(false);
         thread.stopped = false;
         thread.context_in_task = true;
+	} catch (...) {
+		child.select(caller);
+		throw;
 	}
 	child.select(caller);
 }
