@@ -1168,7 +1168,7 @@ if(RAVEN_MULLION_ROOT AND RAVEN_MINGW64)
             COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector -fno-builtin -minline-all-stringops -mno-stack-arg-probe
                 -Wl,--entry,entry,--no-insert-timestamp -o "${_fixture}"
                 ${PROJECT_SOURCE_DIR}/testdata/d3d12/${workload}.c -ld3d12 -ldxgi -ldxguid -lkernel32 -luser32 -lgcc
-            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/d3d12/${workload}.c
+            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/d3d12/${workload}.c ${PROJECT_SOURCE_DIR}/testdata/d3d12/tri5_shaders.h
             VERBATIM)
         add_custom_target(mullion_${workload}_fixture DEPENDS "${_fixture}")
         foreach(engine native fex)

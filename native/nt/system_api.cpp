@@ -1,5 +1,6 @@
 #ifdef __APPLE__
 #include "platform/darwin/processor_count.h"
+#include "platform/darwin/mullion/backend.h"
 #endif
 #include "kernel_context.h"
 #include "actctx.h"
@@ -228,6 +229,9 @@ std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_envi
 			add(from_utf8(std::string(text.substr(prefix.size(), equals - prefix.size()))), from_utf8(std::string(text.substr(equals + 1))));
 	}
 #ifdef __APPLE__
+	// The IOSurface adapter supports the Metal 3 presentation path.
+	if (mullion_selected() && !std::getenv("RAVEN_GUEST_MULLION_D3D12_METAL4"))
+		add(u"MULLION_D3D12_METAL4", u"0");
 	if (const auto gpu = darwin_dxgi::identity()) {
 		std::string config;
 		if (const char *existing = std::getenv("RAVEN_GUEST_DXMT_CONFIG")) config = existing;

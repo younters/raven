@@ -461,7 +461,9 @@ static int32_t mullion_present_statistics(void *args)
     // IOSurface transport has no display timestamp callback. Leave statistics
     // unreported rather than equating GPU completion with screen presentation.
     (void)args;
-    return (int32_t)0xc00000bbU; // STATUS_NOT_SUPPORTED
+    // The PE thunk asserts on nonzero status; this void bookkeeping call
+    // may omit observations, as it does for drawables never displayed.
+    return 0;
 }
 void raven_mullion_wrap_presentation(void **table)
 {
