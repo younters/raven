@@ -12,6 +12,9 @@
 #include <condition_variable>
 #include <sys/eventfd.h>
 #include <unistd.h>
+#include <dlfcn.h>
+#include <fstream>
+#include "../guest/protocol.h"
 
 namespace {
 // The frontend has no qualified detach/reinitialization protocol. Keep the PE
@@ -31,6 +34,12 @@ struct StopPacket {
 	RavenFault::Record exception;
 };
 thread_local StopPacket last_stop{};
+// Libraries and their callback state live until process exit, including GPU callbacks.
+struct UnixLibrary { void *image; int32_t (**table)(void *); uint32_t count; };
+std::vector<UnixLibrary> unix_libraries;
+int (*read_native_buffer)(uint64_t, void *, size_t) = nullptr;
+raven_control *const unix_control = new raven_control{};
+constexpr uint32_t unix_service = 0x7ffffffd;
 constexpr uint32_t completion = 0x7ffffffe;
 uint64_t packet_word(void *packet, size_t offset)
 {
@@ -40,6 +49,15 @@ uint64_t packet_word(void *packet, size_t offset)
 }
 uint64_t process_dispatch(uint64_t number, void *packet)
 {
+	if (!wow64_module && number == unix_service) {
+		const auto handle = packet_word(packet, 0xc8); // R10, preserved RCX
+		const auto ordinal = uint32_t(packet_word(packet, 0x88)); // EDX
+		const auto args = packet_word(packet, 0xb8); // R8
+		if (!handle || handle > unix_libraries.size()) return 0xc0000008u;
+		const auto &library = unix_libraries[handle - 1];
+		if (ordinal >= library.count) return 0xc000000du;
+		return uint32_t(library.table[ordinal](reinterpret_cast<void *>(args)));
+	}
 	auto rip = wow64_module ? *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(packet) + 0xb8) : packet_word(packet, 0xf8);
 	last_stop = {number == completion ? raven::NativeStop::returned : raven::NativeStop::syscall,
 		number == completion ? (wow64_module ? *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(packet) + 0xa8) : packet_word(packet, 0xc8)) : number, rip, {}};
@@ -294,7 +312,12 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 	if (wow64_module) {
 		const uint8_t gate32[]{0x89, 0xc2, 0xb8, 0xfe, 0xff, 0xff, 0x7f, 0xcd, 0x2e, 0x0f, 0x0b};
 		memcpy(state->gate, gate32, sizeof(gate32));
-	} else memcpy(state->gate, gate, sizeof(gate));
+	} else {
+		memcpy(state->gate, gate, sizeof(gate));
+		// Win64 unix dispatcher: mov r10,rcx; mov eax,unix_service; syscall; ret.
+		const uint8_t unix_gate[]{0x49,0x89,0xca,0xb8,0xfd,0xff,0xff,0x7f,0x0f,0x05,0xc3};
+		memcpy(static_cast<uint8_t *>(state->gate) + 64, unix_gate, sizeof(unix_gate));
+	}
 	uint64_t args[8]{uintptr_t(state->gate), 16384, 0x3000, 0x40, 1, 0};
 	if (wow64_module) protect_memory(state->guest(state->gate), 16384, PROT_READ | PROT_EXEC);
 	else notify_memory("NotifyMemoryAlloc", args, 4);
@@ -381,6 +404,7 @@ NativeResult FexProcess::resume()
 		throw std::runtime_error("FEX has no resumable call or awaits an API result");
 	state->thread.awaiting_syscall = state->thread.debug_print_fault = false;
 	if (state->resume_hook) state->resume_hook();
+	if (!unix_libraries.empty() && state->unix_pump) state->unix_pump();
 	if (state->parallel) {
 		auto *worker = state->workers.at(state->selected).get();
 		const auto deadline = std::chrono::steady_clock::now() + state->budget;
@@ -629,8 +653,13 @@ std::vector<uint8_t> FexProcess::read_memory(uint64_t address, size_t size) cons
 	state->require_owner();
 	if (address > UINT64_MAX - size) throw std::runtime_error("FEX read range overflow");
 	for (auto at = address & ~uint64_t(4095); at < address + size; at += 4096)
-		if (!state->pages.contains(at) || !(state->pages.at(at) & PROT_READ))
+		if (!state->pages.contains(at) || !(state->pages.at(at) & PROT_READ)) {
+			if (!state->window && read_native_buffer) {
+				std::vector<uint8_t> bytes(size);
+				if (read_native_buffer(address, bytes.data(), size)) return bytes;
+			}
 			throw std::runtime_error("FEX read exceeds readable guest memory at " + std::to_string(address));
+		}
 	auto *p = !state->window && address >= 0x7ffe0000 && address + size <= 0x7ffe1000 ? user_shared_data.data() + address - 0x7ffe0000 : reinterpret_cast<const uint8_t *>(state->host(address, size));
 	return {p, p + size};
 }
@@ -768,7 +797,40 @@ bool FexProcess::active() const { return state->active; }
 bool FexProcess::stopped() const { return !state->parallel || state->workers.at(state->selected)->stopped.load(std::memory_order_acquire); }
 bool FexProcess::parallel() const { return state->parallel; }
 uint64_t FexProcess::return_gate() const { return state->guest(state->gate); }
-uint64_t FexProcess::unix_call_gate() const { return 0; } // No same-process unix-library gate in M2.
+uint64_t FexProcess::unix_call_gate() const { return wow64_module ? 0 : state->guest(state->gate) + 64; }
+raven_control *FexProcess::darwin_control() const { return unix_control; }
+uint32_t FexProcess::copy_unix_port(uint32_t port) const
+{
+	return mach_port_mod_refs(mach_task_self(), port, MACH_PORT_RIGHT_SEND, 1) == KERN_SUCCESS ? port : 0;
+}
+uint64_t FexProcess::load_unix_library(const std::string &, uint32_t count)
+{
+	state->require_owner();
+	if (wow64_module || (count != 132 && count != 146)) throw std::runtime_error("unsupported FEX unix table");
+	if (!unix_libraries.empty()) return 1;
+	const char *root = getenv("RAVEN_DXMT_ARM64_ROOT");
+	if (!root) throw std::runtime_error("set RAVEN_DXMT_ARM64_ROOT to the matching private arm64 overlay");
+	uint32_t overlay_count = 0;
+	std::ifstream metadata(std::string(root) + "/unix-call-count");
+	if (!(metadata >> overlay_count) || overlay_count != count)
+		throw std::runtime_error("FEX DXMT PE/unix table count mismatch");
+	void *adapter = dlopen((std::string(root) + "/raven-dxmt.dylib").c_str(), RTLD_NOW | RTLD_GLOBAL);
+	if (!adapter) throw std::runtime_error(dlerror());
+	auto version = reinterpret_cast<uint32_t (*)()>(dlsym(adapter, "raven_unixlib_protocol_version"));
+	auto init = reinterpret_cast<void (*)(raven_control *)>(dlsym(adapter, "raven_unixlib_init"));
+	auto wrap = reinterpret_cast<void *(*)(void *, uint32_t)>(dlsym(adapter, "raven_unixlib_wrap_table"));
+	if (!version || version() != RAVEN_GUEST_VERSION || !init || !wrap) throw std::runtime_error("FEX DXMT adapter protocol mismatch");
+	void *image = dlopen((std::string(root) + "/winemetal.so").c_str(), RTLD_NOW | RTLD_LOCAL);
+	if (!image) throw std::runtime_error(dlerror());
+	void *table = dlsym(image, "__wine_unix_call_funcs");
+	if (!table) throw std::runtime_error("FEX DXMT table missing");
+	read_native_buffer = reinterpret_cast<decltype(read_native_buffer)>(dlsym(adapter, "raven_dxmt_read_memory"));
+	init(unix_control);
+	table = wrap(table, count);
+	if (!table) throw std::runtime_error("FEX DXMT table wrapping failed");
+	unix_libraries.push_back({image, reinterpret_cast<int32_t (**)(void *)>(table), count});
+	return unix_libraries.size();
+}
 void FexProcess::add_api_trap(uint64_t address, uint32_t callee_cleanup)
 {
 	if (state->mode == NativeMode::x64 && callee_cleanup) throw std::runtime_error("FEX x64 API cannot use stdcall cleanup");
@@ -922,7 +984,11 @@ void FexProcess::set_execution_wait(std::function<void(std::function<bool()>, st
 	state->execution_wait = std::move(wait);
 }
 void FexProcess::set_unix_pump(std::function<void()> pump) { state->unix_pump = std::move(pump); }
-void FexProcess::drain_unix_events(const std::function<void(uint64_t)> &) {}
+void FexProcess::drain_unix_events(const std::function<void(uint64_t)> &signal)
+{
+	for (auto &slot : unix_control->unix_events)
+		if (auto handle = __atomic_exchange_n(&slot, 0, __ATOMIC_ACQ_REL)) signal(handle);
+}
 uint64_t FexProcess::serving_teb() const { return 0; }
 bool FexProcess::serving() const { return false; }
 bool FexProcess::serving_queued() const { return false; }

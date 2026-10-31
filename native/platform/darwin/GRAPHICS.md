@@ -335,7 +335,7 @@ for the initial x64 bridge. Native completion callbacks must enqueue events
 for Raven's controller rather than reenter emulated PE code.
 
 DXMT v0.80 and the source overlay already look up `macdrv_functions` with
-dlsym(RTLD_DEFAULT). Export the matching nine-function table from an arm64
+dlsym(RTLD_DEFAULT). Export the matching function table (nine entries in v0.80, ten in the source overlay) from an arm64
 Raven adapter loaded globally before winemetal. The table must supply retained
 window-data/view wrappers associated with Raven HWNDs, create/release Metal
 views and return their layer. This is a versioned private ABI, not Wine's
@@ -359,3 +359,15 @@ in its latest 100 entries. DXMT [#75](https://github.com/3Shain/dxmt/pull/75)
 and [#76](https://github.com/3Shain/dxmt/pull/76) cover native arm64 builds;
 the locally pinned sources contain both a build-arm64ec.txt and an aarch64
 unix build condition. These do not implement Raven's missing runtime boundary.
+
+The initial implementation uses the existing frontend **syscall dispatch** hook,
+not FEXUnixLib's internal unix_call callback (which serves FEX's own helpers).
+A reserved service 0x7ffffffd moves RCX to R10 and preserves RDX/R8; the
+frontend stores the AMD64 context, enters RavenInvoke and reloads the returned
+RAX through BeginSimulation. Raven invokes the arm64 table synchronously from
+that native boundary. No FEX module patch is needed for this experiment.
+`RAVEN_DXMT_ARM64_ROOT` is mandatory for FEX loading and its unix-call-count
+must match the selected PE overlay. The existing Rosetta library path is unchanged.
+The arm64 adapter exports macdrv_functions and leaves table entries 72/73
+unwrapped so DXMT itself exercises that discovery path. Its view/layer wrapper
+uses Raven's existing IOSurface presentation methods, not a raw CAMetalLayer.

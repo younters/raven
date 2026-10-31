@@ -2,6 +2,8 @@
 #pragma once
 #include "cpu/native_cpu.h"
 
+struct raven_control;
+
 namespace raven {
 
 // Exclusive user limit: reserve the last 64 KiB of the selected address range.
@@ -53,6 +55,7 @@ public:
 	void complete_debug_print(uint64_t instruction);
 	uint64_t return_gate() const;
 	uint64_t unix_call_gate() const;
+	raven_control *darwin_control() const;
 	uint64_t load_unix_library(const std::string &path, uint32_t function_count);
 	void drain_unix_events(const std::function<void(uint64_t)> &signal);
 	uint32_t copy_unix_port(uint32_t guest_port) const;

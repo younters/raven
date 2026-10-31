@@ -2175,7 +2175,7 @@ void NativeProcess::drain_unix_events(const std::function<void(uint64_t)> &signa
 raven_control *NativeProcess::darwin_control() const
 {
 #ifdef RAVEN_FEX_PROCESS
-	if (fex) return nullptr;
+	if (fex) return fex->darwin_control();
 #endif
 	return state->child->control;
 }

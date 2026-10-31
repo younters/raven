@@ -220,6 +220,50 @@ static int32_t release_view(void *args)
 	return 0;
 }
 
+#if defined(__aarch64__)
+// DXMT's private macdrv ABI: four pointer fields, followed by ten callbacks
+// in the source overlay (the released v0.80 consumes the first nine).
+struct raven_macdrv_data { void *hwnd, *window, *view, *client; };
+static void mac_init(int force) { (void)force; }
+static struct raven_macdrv_data *mac_data(void *hwnd)
+{
+	struct raven_macdrv_data *data = calloc(1, sizeof(*data));
+	if (!data) abort();
+	data->hwnd = data->client = hwnd;
+	return data;
+}
+static void mac_release_data(struct raven_macdrv_data *data) { free(data); }
+static void *mac_window(void *hwnd, int required) { (void)hwnd; (void)required; return NULL; }
+static void *mac_device(void) { return (void *)MTLCreateSystemDefaultDevice(); }
+static void mac_release_device(void *device) { [(id)device release]; }
+static void *mac_view(void *hwnd, void *device)
+{
+	uint64_t args[4] = {(uint64_t)hwnd, (uint64_t)device, 0, 0};
+	create_view(args);
+	return (void *)args[2];
+}
+static void *mac_layer(void *view) { return view; }
+static void mac_release_view(void *view) { uint64_t args = (uint64_t)view; release_view(&args); }
+static void mac_main(dispatch_block_t block)
+{
+	if ([NSThread isMainThread]) block();
+	else dispatch_sync(dispatch_get_main_queue(), block);
+}
+__attribute__((visibility("default"))) const struct {
+	void (*init)(int);
+	struct raven_macdrv_data *(*get_data)(void *);
+	void (*release_data)(struct raven_macdrv_data *);
+	void *(*window)(void *, int);
+	void *(*device)(void);
+	void (*release_device)(void *);
+	void *(*view)(void *, void *);
+	void *(*layer)(void *);
+	void (*release_view)(void *);
+	void (*main)(dispatch_block_t);
+} macdrv_functions = {mac_init, mac_data, mac_release_data, mac_window,
+	mac_device, mac_release_device, mac_view, mac_layer, mac_release_view, mac_main};
+#endif
+
 static int32_t set_props(void *args)
 {
 	const uint64_t *p = args;
@@ -393,8 +437,10 @@ void raven_dxmt_wrap_presentation(void **table)
 	table[67] = next_drawable;
 	table[70] = set_props;
 	table[71] = get_props;
+#if !defined(__aarch64__)
 	table[72] = create_view;
 	table[73] = release_view;
+#endif
 	table[93] = set_colorspace;
 	table[97] = get_edr;
 	table[101] = display_setting;

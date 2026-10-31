@@ -1,17 +1,6 @@
 #include "fex_process.h"
 #include <stdexcept>
 namespace raven {
-uint64_t FexProcess::load_unix_library(const std::string &path, uint32_t function_count)
-{
-	(void)path;
-	(void)function_count;
-	throw std::runtime_error("FEX load_unix_library is not implemented");
-}
-uint32_t FexProcess::copy_unix_port(uint32_t guest_port) const
-{
-	(void)guest_port;
-	throw std::runtime_error("FEX copy_unix_port is not implemented");
-}
 void FexProcess::watch_write(uint64_t address)
 {
 	(void)address;
