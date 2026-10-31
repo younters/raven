@@ -1,0 +1,30 @@
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -688,6 +688,19 @@
+   }
+   return false;
+ }
++extern "C" void RavenGetYmmHigh(void *Buffer) {
++  alignas(16) __uint128_t Low[16], High[16];
++  CTX->ReconstructXMMRegisters(GetCPUArea().ThreadState(), Low, High);
++  memcpy(Buffer, High, sizeof(High));
++}
++extern "C" void RavenSetYmmHigh(const void *Buffer) {
++  auto *Thread = GetCPUArea().ThreadState();
++  alignas(16) __uint128_t Low[16], High[16];
++  CTX->ReconstructXMMRegisters(Thread, Low, High);
++  memcpy(High, Buffer, sizeof(High));
++  CTX->SetXMMRegistersFromState(Thread, Low, High);
++}
++
+ extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, ARM64_NT_CONTEXT *Native) {
+   if (!RavenHost || !Record || !Native) return STATUS_INVALID_PARAMETER;
+   const auto Area = GetCPUArea();
+--- a/Source/Windows/ARM64EC/libarm64ecfex.def
++++ b/Source/Windows/ARM64EC/libarm64ecfex.def
+@@ -26,3 +26,5 @@
+   RavenTestOvercommit
+   RavenTestAllocate
+   RavenTestFree
++  RavenGetYmmHigh
++  RavenSetYmmHigh
