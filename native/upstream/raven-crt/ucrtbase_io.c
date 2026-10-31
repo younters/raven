@@ -1456,3 +1456,29 @@ CRT uintptr_t _beginthreadex(void *security, unsigned stack, unsigned (__stdcall
 }
 
 CRT void _endthreadex(unsigned code) { ExitThread(code); }
+
+/* Locale-specific entry points used by statically linked libc++. Raven's
+ * locale implementation currently accepts only C/POSIX, as setlocale above. */
+CRT int _iswalpha_l(wint_t c, _locale_t locale) { return iswalpha(c); }
+CRT int _iswcntrl_l(wint_t c, _locale_t locale) { return iswcntrl(c); }
+CRT int _iswspace_l(wint_t c, _locale_t locale) { return iswspace(c); }
+CRT int _iswxdigit_l(wint_t c, _locale_t locale) { return iswxdigit(c); }
+CRT int _tolower_l(int c, _locale_t locale) { return tolower(c); }
+CRT int _toupper_l(int c, _locale_t locale) { return toupper(c); }
+CRT int _mbtowc_l(wchar_t *out, const char *in, size_t count, _locale_t locale) { return mbtowc(out, in, count); }
+CRT int _strcoll_l(const char *a, const char *b, _locale_t locale) { return strcoll(a, b); }
+CRT int _wcscoll_l(const wchar_t *a, const wchar_t *b, _locale_t locale) { return wcscoll(a, b); }
+CRT size_t _strxfrm_l(char *out, const char *in, size_t count, _locale_t locale) { return strxfrm(out, in, count); }
+CRT size_t _wcsxfrm_l(wchar_t *out, const wchar_t *in, size_t count, _locale_t locale) { return wcsxfrm(out, in, count); }
+CRT size_t _strftime_l(char *out, size_t count, const char *format, const void *time, _locale_t locale)
+{ return strftime(out, count, format, time); }
+CRT int wcrtomb_s(size_t *written, char *out, size_t capacity, wchar_t c, void *state)
+{
+    if (written) *written = (size_t)-1;
+    if (!out) { if (written) *written = 1; return 0; }
+    if (!capacity) { set_errno(34); return 34; }
+    size_t result = wcrtomb(out, c, state);
+    if (result == (size_t)-1) { *out = 0; return 42; }
+    if (written) *written = result;
+    return 0;
+}

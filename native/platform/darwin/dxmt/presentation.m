@@ -445,3 +445,29 @@ void raven_dxmt_wrap_presentation(void **table)
 	table[97] = get_edr;
 	table[101] = display_setting;
 }
+
+// Mullion's pinned view call inserts a 40-byte placement record after HWND.
+// Raven owns window placement; translate to the existing IOSurface view ABI.
+static int32_t mullion_create_view(void *args)
+{
+    uint64_t *p = args;
+    uint64_t legacy[4] = {p[0], p[6], 0, 0};
+    int32_t status = create_view(legacy);
+    p[7] = legacy[2]; p[8] = legacy[3];
+    return status;
+}
+static int32_t mullion_present_statistics(void *args)
+{
+    // IOSurface transport has no display timestamp callback. Leave statistics
+    // unreported rather than equating GPU completion with screen presentation.
+    (void)args;
+    // The PE thunk asserts on nonzero status; this void bookkeeping call
+    // may omit observations, as it does for drawables never displayed.
+    return 0;
+}
+void raven_mullion_wrap_presentation(void **table)
+{
+    table[175] = mullion_present_statistics;
+    table[72] = mullion_create_view;
+    table[73] = release_view;
+}

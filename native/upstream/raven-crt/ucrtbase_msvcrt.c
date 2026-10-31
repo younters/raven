@@ -20,6 +20,8 @@ CRT char **__argv;
 /* The command line, which the startup code of older programs reads straight from these variables. */
 CRT char *_acmdln;
 CRT wchar_t *_wcmdln;
+CRT char **__p__acmdln(void) { return &_acmdln; }
+CRT wchar_t **__p__wcmdln(void) { return &_wcmdln; }
 
 #ifdef __i386__
 /* The frame prologue the Microsoft compiler calls with the frame's handler in eax: it links an exception registration (the handler, a

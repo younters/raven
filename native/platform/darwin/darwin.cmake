@@ -1155,3 +1155,28 @@ if(TARGET raven-fex-host)
     set_tests_properties(darwin_fex_child_executable PROPERTIES LABELS "fex;contract;darwin")
 endif()
 include(${RAVEN_DARWIN_DIR}/fex/parity.cmake)
+
+set(RAVEN_MULLION_ROOT "" CACHE PATH "Private Mullion component root; select with RAVEN_D3D12_BACKEND=mullion")
+if(RAVEN_MULLION_ROOT)
+    set_property(TARGET raven_cpu APPEND PROPERTY COMPILE_DEFINITIONS RAVEN_MULLION_ROOT="${RAVEN_MULLION_ROOT}")
+endif()
+
+if(RAVEN_MULLION_ROOT AND RAVEN_MINGW64)
+    foreach(workload device clear draw window12)
+        set(_fixture "${CMAKE_CURRENT_BINARY_DIR}/mullion-${workload}.exe")
+        add_custom_command(OUTPUT "${_fixture}"
+            COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector -fno-builtin -minline-all-stringops -mno-stack-arg-probe
+                -Wl,--entry,entry,--no-insert-timestamp -o "${_fixture}"
+                ${PROJECT_SOURCE_DIR}/testdata/d3d12/${workload}.c -ld3d12 -ldxgi -ldxguid -lkernel32 -luser32 -lgcc
+            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/d3d12/${workload}.c ${PROJECT_SOURCE_DIR}/testdata/d3d12/tri5_shaders.h
+            VERBATIM)
+        add_custom_target(mullion_${workload}_fixture DEPENDS "${_fixture}")
+        foreach(engine native fex)
+            add_test(NAME darwin_mullion_${workload}_${engine}
+                COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/mullion/run.py
+                    $<TARGET_FILE:raven> "${_fixture}" ${RAVEN_MULLION_ROOT}
+                    ${CMAKE_CURRENT_BINARY_DIR}/mullion-${workload}-${engine} ${workload} ${engine})
+            set_tests_properties(darwin_mullion_${workload}_${engine} PROPERTIES TIMEOUT 100)
+        endforeach()
+    endforeach()
+endif()

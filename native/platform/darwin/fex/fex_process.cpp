@@ -1,3 +1,4 @@
+#include "../mullion/backend.h"
 // SPDX-License-Identifier: MIT
 #include "fex_process.h"
 #include "guest_window.h"
@@ -828,9 +829,10 @@ uint32_t FexProcess::copy_unix_port(uint32_t port) const
 uint64_t FexProcess::load_unix_library(const std::string &, uint32_t count)
 {
 	state->require_owner();
-	if (wow64_module || (count != 132 && count != 146)) throw std::runtime_error("unsupported FEX unix table");
+	if (wow64_module || (count == 0 || count > 4096)) throw std::runtime_error("unsupported FEX unix table");
 	if (!unix_libraries.empty()) return 1;
-	const char *root = getenv("RAVEN_DXMT_ARM64_ROOT");
+	const std::string selected_root = mullion_selected() ? (mullion_root() / "unix-arm64").string() : "";
+	const char *root = mullion_selected() ? selected_root.c_str() : getenv("RAVEN_DXMT_ARM64_ROOT");
 	if (!root || !*root) root = RAVEN_DXMT_DEFAULT_ARM64_ROOT;
 	if (!*root) throw std::runtime_error("set RAVEN_DXMT_ARM64_ROOT, or configure it at build time, to the arm64 DXMT overlay");
 	uint32_t overlay_count = 0;

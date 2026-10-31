@@ -1,0 +1,73 @@
+{
+  "graphics": [
+    {
+      "name": "darwin_mullion_device_native",
+      "seconds": "9.61556",
+      "passed": true
+    },
+    {
+      "name": "darwin_mullion_device_fex",
+      "seconds": "0.401762",
+      "passed": true
+    },
+    {
+      "name": "darwin_mullion_clear_native",
+      "seconds": "0.398796",
+      "passed": true
+    },
+    {
+      "name": "darwin_mullion_clear_fex",
+      "seconds": "0.647145",
+      "passed": true
+    },
+    {
+      "name": "darwin_mullion_draw_native",
+      "seconds": "0.60354",
+      "passed": true
+    },
+    {
+      "name": "darwin_mullion_draw_fex",
+      "seconds": "0.86921",
+      "passed": true
+    },
+    {
+      "name": "darwin_mullion_window12_native",
+      "seconds": "26.7568",
+      "passed": true
+    },
+    {
+      "name": "darwin_mullion_window12_fex",
+      "seconds": "28.1615",
+      "passed": true
+    }
+  ],
+  "crt_native": 0,
+  "crt_fex": 0,
+  "dxmt_default": [
+    {
+      "name": "darwin_dxmt_device",
+      "passed": true
+    },
+    {
+      "name": "darwin_dxmt_triangle",
+      "passed": true
+    },
+    {
+      "name": "darwin_dxmt_device_fex",
+      "passed": true
+    },
+    {
+      "name": "darwin_dxmt_triangle_fex",
+      "passed": true
+    }
+  ],
+  "resized_readback": {
+    "native": "pass, worst error 1",
+    "fex": "pass, worst error 1"
+  },
+  "hello_triangle": {
+    "native_exit": 3,
+    "fex_exit": 3,
+    "rendering_verified": false
+  }
+}

@@ -234,11 +234,14 @@ Committed evidence records below are small summaries; screenshots, prefixes and 
    resize and on-screen tests. Only then pin/provision Mesa GL. Native CGL/ANGLE cannot satisfy the requested desktop GL target.
 6. Revisit vkd3d with a qualified DXGI/driver combination and DXMT's released D3D12 status; require actual device/draw/readback,
    not an API-version inference. Do not add an Apple backend until its precise applicable license and guest ABI are resolved.
-7. D3D12: watch [Mullion](https://github.com/dttdrv/mullion) (pre-release, LGPL-2.1-or-later). It builds D3D12 on Metal over
-   DXMT's D3D10/11 core, DXBC converter and Metal bridge, and adds its own DXIL front end. Feature level 12_0+ needs macOS 26.4+.
-   It is 64-bit only, and it ships ARM64X/ARM64EC libraries, matching the FEX in-process route. If it keeps momentum, adopt it as
-   the D3D12 path alongside DXMT D3D11, sharing one arm64 Metal bridge in the host. Apple D3DMetal stays a reference point
-   (Mullion's own comparison: 28 vs 34 FPS in one title), not a planned backend.
+7. D3D12: experimental [Mullion qualification](mullion/RESULTS.md) now builds pinned x64 PE plus
+   x86_64/arm64 unix sides in private paths. Opt in per process with `RAVEN_D3D12_BACKEND=mullion`
+   and `RAVEN_MULLION_ROOT`; DXMT remains the default. Both engines pass device creation (reported
+   FL 12_2), clear/fence/readback and root-signature/PSO triangle checks. Both also present a window with verified captures. Accurate presentation statistics
+   and event-handle retention remain gates before general adoption. Use the matched Mullion DLL family,
+   not a lone d3d12.dll with DXMT's bridge. FEX uses x64 PE with arm64 unix code, not ARM64EC PE.
+   LGPL-2.1-or-later libraries stay separate; source pin, patches and private hashes are recorded.
+   Apple D3DMetal remains only a reference point, not a planned backend.
 8. OpenGL on macOS: bring Raven's GL bridge over. Today it needs EGL, and `HOST_OPENGL_FOUND` is empty on macOS, so the bridge is
    not built and WGL has no backend. Planned order:
    (a) Under FEX, guest and host share one arm64 process. Host an arm64 Mesa Zink (EGL/surfaceless) on KosmicKrisp or MoltenVK,
