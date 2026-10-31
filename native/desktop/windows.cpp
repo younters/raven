@@ -345,10 +345,8 @@ std::optional<HostSurface> NativeWindows::place_hosted(uint64_t handle)
 	const auto *window=objects.window(handle);
 	if (!top || !window) return std::nullopt;
 	hosted_windows[handle]=root;
-	// GPU drawing supplies the client pixels itself, so it cannot wait for WM_PAINT.
-	try { if (objects.window_visible(handle)) present(root,true); } catch (...) { return std::nullopt; }
-	top=objects.window(root);
-	if (!top) return std::nullopt;
+	// host_surface presents the root before its first placement. Subsequent
+	// placements come from present itself; presenting here recurses indefinitely.
 	// Window positions are on the screen, children's included, so the client origin inside the frame the host window shows is the
 	// window's position less the frame's.
 	return presentation.host_surface(root,handle,window->x-top->outer.left,window->y-top->outer.top,uint32_t(std::max(window->width,1)),
