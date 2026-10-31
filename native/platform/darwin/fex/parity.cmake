@@ -199,3 +199,25 @@ if(TARGET fex_wow64_boundary_test)
         --mode x64-reserved --expected-exit 138)
     set_tests_properties(native_reserved_write_rejection_fex PROPERTIES TIMEOUT 15 LABELS "fex;fault")
 endif()
+
+if(RAVEN_FEX_MODHOST)
+    foreach(width 32 64)
+        set(context_groups ${CMAKE_CURRENT_BINARY_DIR}/context-groups${width}.exe)
+        if(width EQUAL 32)
+            set(context_entry _raven_entry)
+        else()
+            set(context_entry raven_entry)
+        endif()
+        add_fex_parity_fixture(${context_groups} "${RAVEN_MINGW${width}}" ${context_entry}
+            ${RAVEN_DARWIN_DIR}/tests/context_groups.c)
+        add_custom_target(context_groups${width}_fixture DEPENDS ${context_groups})
+        foreach(backend native fex)
+            add_test(NAME native_context_groups${width}_${backend} COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py --raven $<TARGET_FILE:raven>
+                --require-modules --backend ${backend} --fixture ${context_groups}
+                --modules "${RAVEN_FEX_MODULE_ROOT}")
+            set_tests_properties(native_context_groups${width}_${backend} PROPERTIES TIMEOUT 30
+                ENVIRONMENT "RAVEN_PARALLEL=1" LABELS "engine-parity;context")
+        endforeach()
+    endforeach()
+endif()
