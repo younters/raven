@@ -101,6 +101,8 @@ std::string discover_fex_module_root();
 void select_fex_execution(bool enabled);
 bool fex_execution_selected();
 bool fex_address_available(uint64_t address, uint64_t size);
+// Transfer an already-owned Mach-O reservation to the PE loader.
+void fex_adopt_image_reservation(uint64_t address, uint64_t size);
 bool fex_reserve_image_address(uint64_t address, uint64_t size);
 NativeResult run_fex_entry(const PEImage &image, LoadedImage &loaded, const std::string &root);
 }

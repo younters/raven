@@ -6,6 +6,7 @@
 #include "modhost/native_host.cpp"
 #include <pthread.h>
 #include <mach/mach_vm.h>
+#include <libproc.h>
 #include <set>
 #include <map>
 #include <sys/mman.h>
@@ -642,6 +643,10 @@ bool fex_address_available(uint64_t address, uint64_t size)
 	}
 	return status == KERN_INVALID_ADDRESS || (status == KERN_SUCCESS && base >= address + size);
 }
+void fex_adopt_image_reservation(uint64_t address, uint64_t size)
+{
+	pending_images.ranges.emplace(address, size);
+}
 bool fex_reserve_image_address(uint64_t address, uint64_t size)
 {
 	// Loader preflight must claim the range immediately: even host allocation
@@ -650,7 +655,24 @@ bool fex_reserve_image_address(uint64_t address, uint64_t size)
 	if (auto it = pending_images.ranges.find(address); it != pending_images.ranges.end())
 		return it->second == n;
 	mach_vm_address_t base = address;
-	if (mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS) return false;
+	if (mach_vm_allocate(mach_task_self(), &base, n, VM_FLAGS_FIXED) != KERN_SUCCESS) {
+		if (std::getenv("RAVEN_FEX_TRACE_MEMORY")) {
+			mach_vm_address_t at = address;
+			mach_vm_size_t length = 0;
+			vm_region_extended_info_data_t info{};
+			mach_msg_type_number_t count = VM_REGION_EXTENDED_INFO_COUNT;
+			mach_port_t object = MACH_PORT_NULL;
+			const auto status = mach_vm_region(mach_task_self(), &at, &length, VM_REGION_EXTENDED_INFO,
+				reinterpret_cast<vm_region_info_t>(&info), &count, &object);
+			if (object) mach_port_deallocate(mach_task_self(), object);
+			char path[PROC_PIDPATHINFO_MAXSIZE]{};
+			proc_regionfilename(getpid(), at, path, sizeof(path));
+			std::cerr << "FEX collision requested=" << std::hex << address << "+" << n
+				<< " region=" << at << "+" << length << std::dec << " tag=" << info.user_tag
+				<< " protection=" << info.protection << " status=" << status << " path=" << path << "\n";
+		}
+		return false;
+	}
 	pending_images.ranges.emplace(address, n);
 	return true;
 }
