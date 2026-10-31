@@ -237,3 +237,19 @@ if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
             LABELS "engine-parity;memory")
     endforeach()
 endif()
+
+if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
+    set(loop_fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-loop-context.exe)
+    add_fex_parity_fixture(${loop_fixture} "${RAVEN_MINGW64}" raven_entry
+        ${RAVEN_DARWIN_DIR}/fex/loop_context_client.c)
+    add_custom_target(fex_loop_context_fixture DEPENDS ${loop_fixture})
+    add_dependencies(raven fex_loop_context_fixture)
+    foreach(engine native fex)
+        add_test(NAME native_loop_context_${engine} COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py --require-modules --backend ${engine}
+            --raven $<TARGET_FILE:raven> --fixture ${loop_fixture}
+            --modules "${RAVEN_FEX_MODULE_ROOT}" --timeout-ms 40000)
+        set_tests_properties(native_loop_context_${engine} PROPERTIES TIMEOUT 60
+            LABELS "engine-parity;context")
+    endforeach()
+endif()
