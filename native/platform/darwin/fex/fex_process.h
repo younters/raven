@@ -87,6 +87,8 @@ private:
 	struct State;
 	std::unique_ptr<State> state;
 };
+void launch_fex_host(int argc, char **argv);
+std::string discover_fex_module_root();
 void select_fex_execution(bool enabled);
 bool fex_execution_selected();
 bool fex_address_available(uint64_t address, uint64_t size);

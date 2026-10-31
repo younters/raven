@@ -149,6 +149,9 @@ static void show_fault(int signal)
 
 int main(int argc, char **argv)
 {
+#ifdef RAVEN_FEX_PROCESS
+	raven::launch_fex_host(argc, argv);
+#endif
 #ifdef __APPLE__
 	if (const int error = raven_darwin::prepare_fd_budget())
 		std::fprintf(stderr, "raven: descriptor budget unchanged (errno=%d)\n", error);
@@ -756,8 +759,8 @@ int main(int argc, char **argv)
 			const auto bootstrap = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "raven-bootstrap";
 #ifdef RAVEN_FEX_PROCESS
 			if (fex_entry) {
-				const char *root = std::getenv("RAVEN_FEX_MODULE_ROOT");
-				return native_result(raven::run_fex_entry(image, loaded, root ? root : ""));
+				const auto root = raven::discover_fex_module_root();
+				return native_result(raven::run_fex_entry(image, loaded, root));
 			}
 #else
 			if (fex_entry) throw std::runtime_error("FEX requires a RAVEN_FEX_MODHOST build");
