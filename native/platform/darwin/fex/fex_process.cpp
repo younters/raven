@@ -53,7 +53,10 @@ void release_guest_range(uint64_t address, size_t size)
 {
 	if (image_pool.contains(address, size)) {
 		if (mmap(reinterpret_cast<void *>(address), size, PROT_NONE,
-			MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0) == MAP_FAILED) std::abort();
+			MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0) == MAP_FAILED) {
+            std::cerr << "FEX failed to restore guest reservation at " << std::hex << address << std::dec << "\n";
+            return; // Retain the claim so a failed release cannot be reused.
+        }
 		image_pool.claims.erase(address);
 	} else munmap(reinterpret_cast<void *>(address), size);
 }
@@ -910,6 +913,7 @@ void FexProcess::map_image(LoadedImage &image)
 				MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0);
 		else
 			release_guest_range(address, n);
+		state->image_reservations.erase(address);
 		throw std::runtime_error("FEX shared image mapping failed");
 	}
 	state->image_reservations.erase(address);
