@@ -43,3 +43,57 @@ Targeted checks after image coalescing: 14/14 passed (7 tests + cleanup fixtures
 `/tmp/raven-chrome-targeted.log`. Final area/full suites are deferred until the
 multiblock repair. No FEX module changes yet; 0028 remains active pending repair.
 Agent scope: multiblock and SMC/W^X; reserved patch numbers 0040–0049.
+
+## Multiblock continuation: negative controls (2026-10-31)
+
+The supplied uncommitted 0040 is only the inverse of 0028: it enables
+multiblock without a snapshot repair. Do not qualify it as a correctness fix.
+The configured private root is `/tmp/raven-chrome-private-modules`, with
+`chrome-multiblock-negative-0040`; no shared component was modified.
+
+The supplied `multiblock_snapshot_client.c` was compiled with MinGW `-O2
+-nostartfiles -Wl,-e,raven_entry -lkernel32` and run through
+`scripts/test-fex-process.py`, with a 15-second timeout, against that root.
+It returned zero without a repair. A second experimental version inserted
+256 repetitions of nine arithmetic operations on EAX/ECX/EDX/EBX/ESI/EDI
+before its pointer checks, declaring all those registers clobbered. It also
+returned zero. That experimental change was reverted. Neither is a failing
+regression, and neither establishes that multiblock snapshots are correct.
+
+Inspection also ruled out the simple theory that branch instructions lack
+RIP metadata: `CanHaveSideEffects` already includes FLAGS_SETS_RIP and
+FLAGS_BLOCK_END. The prior Steam trace's snapshot at steamui.dll+0x3c005
+corresponds to `addl 0x18(%rsp), %edx`, not a guest branch. This remains an
+unresolved capture/reconstruction investigation, not a diagnosed root cause.
+
+One paired harness run was attempted with one sample, using an APFS-cloned
+private Chrome prefix. Another worktree was simultaneously running Raven
+processes. Rosetta produced a checked DOM result (1734.2 ms JS, 31.901 s
+process duration); the FEX lane was terminated without a DOM result when
+available disk reached 6.7 GiB. These measurements are **not a valid
+performance comparison**. Evidence: `/tmp/raven-mb-implementation-negative.json`
+and its adjacent logs. Removing this run's disposable prefix restored 9.1
+GiB. No new FEX modules were built, no Steam login was verified, and no
+invalidation optimization or gain is claimed by this continuation.
+
+Qualification of the supplied build (not a repaired multiblock build), all
+through `/tmp/raven-ctest-lock.sh`, with `RAVEN_PREFIX_SETUP=1`:
+
+- Area selection `-R 'fex|context|parity|steam|dxmt' -j4`: 560 tests,
+  eight failures, two skips, 120.46 seconds. Six failures were missing
+  context-groups/mtld3d-runtime fixture executables; these targets were built.
+  The other failures were DXMT features and the multiblock-disabled contract.
+- One full suite `-j4`: 1,597 registered, one disabled, 16 skipped,
+  six failures, 217.30 seconds. DXMT features and the newly built fixtures
+  passed. Four x87-sidecar tests lacked their fixture executables; those
+  targets were then built. Remaining failures were shared-infinite-wait x32
+  and the multiblock-disabled contract.
+- One serial `--rerun-failed -j1`: 11/12 passed including cleanup; only
+  `native_multiblock_disabled_fex` still failed, as expected for the supplied
+  negative-control DLL. No further reruns were made.
+
+Logs are `/tmp/raven-mb-implementation-{area,full,rerun}.log`.
+`git diff --check` passed. Final observed available disk was 11 GiB.
+The supplied uncommitted implementation files remain uncommitted and unchanged;
+this continuation commits only investigation/qualification notes. Both requested
+implementation goals and fresh Steam-login qualification remain outstanding.
