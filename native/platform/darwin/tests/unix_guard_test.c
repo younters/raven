@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 #include <sys/wait.h>
 static unsigned faults, after_raise;
 static void handler(int signal, siginfo_t *info, void *context) {
@@ -39,6 +40,14 @@ int main(void) {
         stack_t current; assert(!sigaltstack(0,&current)); assert(!(current.ss_flags&SS_ONSTACK));
     }
     assert(!after_raise && faults==300);
+    unsigned char source[256], destination[256];
+    for (unsigned i=0;i<256;++i) source[i]=(unsigned char)i;
+    for (unsigned offset=0;offset<16;++offset) for (unsigned count=0;count<130;++count) {
+        memset(destination,0xa5,sizeof destination);
+        assert(raven_unix_copy(destination+offset,source+17,count)==destination+offset);
+        for (unsigned i=0;i<256;++i)
+            assert(destination[i]==(i>=offset && i<offset+count ? source[i-offset+17] : 0xa5));
+    }
     assert(raven_unix_invoke(good,0,0,&contract,raven_unix_mapped_range)==17);
     // Same thread, after recovery: a real stack overflow must still reach altstack.
     pid_t child=fork(); assert(child>=0);

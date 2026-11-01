@@ -50,6 +50,18 @@ void *raven_unix_copy(void *destination, const void *source, size_t size)
     raven_unix_checked(source, size, 1, 0);
     volatile unsigned char *out = destination;
     const volatile unsigned char *in = source;
-    for (size_t i=0; i<size; ++i) out[i]=in[i];
+    // Volatile vector accesses keep fault PCs in this helper without turning
+    // large graphics uploads into a byte-at-a-time copy or a libc call.
+    typedef unsigned char vector16 __attribute__((vector_size(16), aligned(1), may_alias));
+    size_t i = 0;
+    for (; size - i >= 64; i += 64) {
+        *(volatile vector16 *)(out+i) = *(const volatile vector16 *)(in+i);
+        *(volatile vector16 *)(out+i+16) = *(const volatile vector16 *)(in+i+16);
+        *(volatile vector16 *)(out+i+32) = *(const volatile vector16 *)(in+i+32);
+        *(volatile vector16 *)(out+i+48) = *(const volatile vector16 *)(in+i+48);
+    }
+    for (; size - i >= 16; i += 16)
+        *(volatile vector16 *)(out+i) = *(const volatile vector16 *)(in+i);
+    for (; i<size; ++i) out[i]=in[i];
     return destination;
 }
