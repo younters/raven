@@ -1258,11 +1258,14 @@ if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64 AND RAVEN_MINGW32)
         set(cc ${RAVEN_MINGW${width}})
         set(pe ${CMAKE_CURRENT_BINARY_DIR}/unix-fault-${width}.exe)
         set(entry mainCRTStartup)
+        # Avoid dyld's randomized host-image range in this in-process fixture.
+        set(image_base 0x10000000000)
         if(width EQUAL 32)
             set(entry _mainCRTStartup)
+            set(image_base 0x400000)
         endif()
         add_custom_command(OUTPUT ${pe}
-            COMMAND ${cc} -O2 -nostdlib -fno-stack-protector -Wl,--entry,${entry}
+            COMMAND ${cc} -O2 -nostdlib -fno-stack-protector -Wl,--entry,${entry},--image-base,${image_base}
                 ${RAVEN_DARWIN_DIR}/tests/unix_fault_pe.c -o ${pe}
             DEPENDS ${RAVEN_DARWIN_DIR}/tests/unix_fault_pe.c VERBATIM)
         list(APPEND unix_fault_outputs ${pe})

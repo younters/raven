@@ -21,6 +21,9 @@ int main(int argc, char **argv) {
         std::ifstream input(argv[2], std::ios::binary);
         std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
         raven::PEImage image(bytes);
+        if (!x86 && std::string(argv[6]) == "fex")
+            require(raven::fex_reserve_image_address(image.image_base, image.image_size),
+                "cannot reserve unix-call fixture image before host allocations");
         raven::LoadedImage loaded(image, image.image_base);
         raven::LoadedImage *images[] = {&loaded};
         raven::NativeProcess process(images, argv[1], std::chrono::seconds(10), x86 ? raven::NativeMode::x86 : raven::NativeMode::x64);
