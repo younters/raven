@@ -18,5 +18,13 @@ int raven_entry(void)
 	if (!VirtualQuery(base + 4096, &info, sizeof(info)) || info.State != MEM_RESERVE) return 8;
 	if (!VirtualAlloc(base, 65536, MEM_COMMIT, PAGE_READWRITE)) return 9;
 	for (unsigned i = 0; i < 65536; ++i) if (base[i]) return 10;
-	return VirtualFree(base, 0, MEM_RELEASE) ? 0 : 11;
+    base[0]=11; base[4096]=22; base[8192]=33; base[12288]=44;
+    if (!VirtualFree(base+4096,4096,MEM_DECOMMIT)) return 12;
+    if (base[0]!=11 || base[8192]!=33 || base[12288]!=44) return 13;
+    if (!VirtualAlloc(base+4096,4096,MEM_COMMIT,PAGE_READONLY)) return 14;
+    if (base[4096]) return 15;
+    if (!VirtualQuery(base+4096,&info,sizeof info) || info.Protect!=PAGE_READONLY) return 16;
+    if (!VirtualProtect(base+4096,4096,PAGE_READWRITE,&old) || old!=PAGE_READONLY) return 17;
+    base[4096]=55;
+    return VirtualFree(base, 0, MEM_RELEASE) ? 0 : 11;
 }
