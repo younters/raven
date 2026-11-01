@@ -187,10 +187,27 @@ uint64_t process_dispatch(uint64_t number, void *packet)
 		number == completion ? (wow64_module ? *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(packet) + 0xa8) : packet_word(packet, 0xc8)) : number, rip, {}};
 	siglongjmp(stop_frame, 1);
 }
-int32_t process_exception(void *opaque, void *packet, void *)
+int32_t process_exception(void *opaque, void *packet, void *native_context)
 {
 	RavenFault::alignment_recovery = nullptr;
 	auto &record = *static_cast<RavenFault::Record *>(opaque);
+	if (!wow64_module && std::getenv("RAVEN_FEX_SNAPSHOT_TRACE")) {
+		struct Snapshot { uint64_t rip, r9, r10, r11, pc; };
+		static thread_local Snapshot ring[32]{};
+		static thread_local unsigned index=0;
+		auto *nc=static_cast<RavenFault::NativeContext *>(native_context);
+		ring[index++ % 32]={packet_word(packet,0xf8),packet_word(packet,0xc0),packet_word(packet,0xc8),packet_word(packet,0xd0),nc->pc};
+		if (record.code == 0xc0000005) {
+			for (unsigned n=0;n<32;++n) {
+				auto &v=ring[(index+n)%32];
+				fprintf(stderr,"SNAP rip=%llx r9=%llx r10=%llx r11=%llx pc=%llx\n",v.rip,v.r9,v.r10,v.r11,v.pc);
+			}
+			for(unsigned n=0;n<31;++n) fprintf(stderr,"HOST x%u=%llx\n",n,nc->x[n]);
+			char path[128]; snprintf(path,sizeof path,"/tmp/raven-chrome-fault-%d-%llx.bin",getpid(),nc->pc);
+			std::ofstream out(path,std::ios::binary);out.write(reinterpret_cast<char *>(nc->pc & ~uint64_t(4095)),4096);
+		}
+	}
+
 	last_stop = {record.code == 0x102 ? raven::NativeStop::timeout : raven::NativeStop::exception, record.code, (wow64_module ? *reinterpret_cast<uint32_t *>(static_cast<uint8_t *>(packet) + 0xb8) : packet_word(packet, 0xf8)), record};
 	siglongjmp(stop_frame, 1);
 }
