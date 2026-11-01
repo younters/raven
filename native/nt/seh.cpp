@@ -1007,7 +1007,7 @@ void register_exception_api(ApiRegistry &registry, KernelContext &context, Nativ
 	}
 	registry.add("RcConsolidateFrames", 0, [exceptions, &context](ApiCall &call) {
 		(void)call;
-		exceptions->finish_consolidation(context.process.context().registers.rax);
+		exceptions->finish_consolidation(context.process.registers().rax);
 	});
 	registry.add("RtlRestoreContext", 2, restore);
 	registry.add("NtContinue", 2, restore);

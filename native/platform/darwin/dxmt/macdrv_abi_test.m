@@ -3,12 +3,13 @@
 #include <assert.h>
 struct raven_control *raven_dxmt_control(void) { return NULL; }
 #include "presentation.m"
-static void fault(int signal) { raven_unix_recover(signal); _Exit(2); }
+static void fault(int signal, siginfo_t *info, void *context) { (void)info; if (raven_unix_recover(signal, context)) return; _Exit(2); }
 static int validate(uint32_t code, void *args, raven_unix_check_range check) { (void)code; (void)args; (void)check; return 1; }
 static void set_check(raven_unix_check_range check) { (void)check; }
 static int32_t invoke(void *block) { macdrv_functions.main((dispatch_block_t)block); return 0; }
 int main(void) {
-    signal(SIGSEGV, fault); signal(SIGBUS, fault);
+    struct sigaction action = {0}; action.sa_sigaction=fault; action.sa_flags=SA_SIGINFO;
+    sigaction(SIGSEGV,&action,NULL); sigaction(SIGBUS,&action,NULL);
     static const uint32_t sizes[] = {0};
     const struct raven_unix_contract contract = {1, 1, sizes, validate, set_check};
     const int32_t av = (int32_t)0xc0000005;

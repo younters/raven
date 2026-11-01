@@ -595,8 +595,15 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			NativeProcess &process;
 			NativeThreadState &snapshot;
 			bool active;
-			~ResumeContext() { if (active) { try { process.resume_context_thread(snapshot); } catch (...) {} } }
-            void finish() { if (active) { active=false; process.resume_context_thread(snapshot); } }
+			~ResumeContext() { finish(); }
+            void finish() noexcept {
+                if (!active) return;
+                try { process.resume_context_thread(snapshot); active=false; }
+                catch (const std::exception &e) {
+                    // A committed edit remains successful; make a parked worker diagnosable.
+                    std::fprintf(stderr, "raven: context worker resume failed: %s\n", e.what());
+                }
+            }
 		} resume_context{call.process, thread->snapshot, false};
 #endif
 		if (!self) call.process.pause_thread(thread->snapshot);
@@ -604,6 +611,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		resume_context.active = resume;
 #endif
 		auto packet = self ? call.process.context() : thread->snapshot.context;
+		auto debug = thread->debug_registers;
 		auto &r = packet.registers;
 		const auto original = r;
 		const auto word = [&](size_t offset, auto &value, size_t width) {
@@ -642,7 +650,6 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
             if (set) { r.ds=original.ds; r.es=original.es; r.fs=original.fs; r.gs=original.gs; }
 		}
 		if (flags & 0x10) {
-            auto debug = thread->debug_registers;
             for (size_t i=0;i<6;++i)
                 word((x86 ? 4 : 0x48)+i*(x86 ? 4 : 8), debug[i], x86 ? 4 : 8);
             // Register read-back only: neither engine currently arms breakpoints.
@@ -652,8 +659,9 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
                     const unsigned type=(debug[5]>>(16+i*4))&3, length=(debug[5]>>(18+i*4))&3;
                     if (type==2 || (!type && length) || (x86 && length==2)) { fail(87); return; }
                 }
-                debug[5] = (debug[5] & 0xffff0355u) | 0x400;
-                thread->debug_registers = debug;
+                for (unsigned i=0; i<4; ++i)
+                    if (debug[i] >= (x86 ? call.environment.x86_user_limit() : native_user_limit)) { fail(87); return; }
+                debug[5] &= 0xffff0755u;
             }
         }
 		if ((!x86 && (flags & 8)) || (x86 && (flags & 0x20))) {
@@ -702,6 +710,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		if (set) {
 			if (self) call.process.set_context(packet);
 			else { thread->snapshot.context = std::move(packet); thread->snapshot.context_in_task = false; }
+			thread->debug_registers = debug;
 		}
 #ifdef __APPLE__
         resume_context.finish();

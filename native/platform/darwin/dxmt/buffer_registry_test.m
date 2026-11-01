@@ -22,6 +22,8 @@ int main(void)
     unsigned char copy[16];
     assert(raven_dxmt_read_memory(address, copy, sizeof(copy)) && copy[15] == 42);
     assert(!raven_dxmt_read_memory(address + 1, copy, sizeof(copy)));
+    assert(!raven_dxmt_read_memory(address, (void *)1, 16));
+    assert(raven_dxmt_read_memory(address, copy, 16)); // lock and pool survived bad destination
     // allObjects returns an autoreleased array; drain it before the external release.
     [pool drain];
     pool = [[NSAutoreleasePool alloc] init];

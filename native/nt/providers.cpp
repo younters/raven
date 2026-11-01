@@ -2034,7 +2034,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 							const auto saved=process.context();
 							(void)saved;
 						}
-						const auto rip=process.context().registers.rip;
+						const auto rip=process.registers().rip;
 						for (const auto &[module_name,module]:modules.all())
 							if (rip>=module->loaded.base() && rip<module->loaded.base()+module->image.image_size)
 								std::cerr << ' ' << module_name << '+' << std::hex << rip-module->loaded.base() << std::dec;
@@ -2050,7 +2050,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 									return module_name+"+"+std::to_string(at-module->loaded.base());
 							return std::string("?");
 						};
-						const auto registers=process.context().registers;
+						const auto registers=process.registers();
 						std::cerr << "fault: signal " << result.signal << " at " << std::hex << result.instruction << " (" << describe(result.instruction) << ")"
 							<< " address=" << result.fault_address << " rax=" << registers.rax << " rbx=" << registers.rbx
 							<< " rcx=" << registers.rcx << " rdx=" << registers.rdx << " rsp=" << registers.rsp
@@ -2096,7 +2096,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 					}
 					return result;
 				}
-				const auto context=process.context().registers;
+				const auto context=process.registers();
 				const auto length=uint32_t(context.rdx);
 				if (length>512 || length>1024*1024-debug_bytes)
 					return result;
@@ -2153,7 +2153,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 						if (const auto text = describe_text(process, value); !text.empty())
 							std::cerr << " <" << text << '>';
 				// The caller shows which guest module and offset asked, which is what a diagnosis needs most.
-				const auto stack = process.read_memory(process.context().registers.rsp, 8);
+				const auto stack = process.read_memory(process.registers().rsp, 8);
 				uint64_t caller = 0;
 				std::memcpy(&caller, stack.data(), 8);
 				for (const auto &[module_name, module] : modules.all())
@@ -2179,7 +2179,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 							if (rip >= module->loaded.base() && rip < module->loaded.base() + module->image.image_size)
 								std::cerr << ' ' << module_name << '+' << std::hex << rip - module->loaded.base() << std::dec;
 						if (std::getenv("RAVEN_TRACE_STRINGS")) {
-							const auto registers = process.context().registers;
+							const auto registers = process.registers();
 							for (const auto value : {registers.rcx, registers.rdx, registers.r8, registers.r9})
 								if (const auto value_text = describe_text(process, value); !value_text.empty())
 									std::cerr << " <" << value_text << '>';
@@ -2297,7 +2297,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				}
 
 				for (const auto &[module_name, module] : modules.all()) {
-					const auto stack = process.read_memory(process.context().registers.rsp, 8);
+					const auto stack = process.read_memory(process.registers().rsp, 8);
 					uint64_t caller = 0;
 					std::memcpy(&caller, stack.data(), 8);
 					if (caller >= module->loaded.base() && caller < module->loaded.base() + module->image.image_size)

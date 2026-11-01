@@ -23,7 +23,7 @@ public:
 	FexProcess &operator=(const FexProcess &) = delete;
 	NativeResult call(uint64_t address, std::span<const uint64_t> arguments);
 	NativeResult resume();
-	NativeContext context() const;
+	NativeContext context(bool full = true) const;
 	void set_context(const NativeContext &context);
 	// NativeProcess forwarding surface. Unsupported capabilities fail explicitly.
 	NativeResult call(uint64_t address, std::span<const uint64_t> arguments, std::chrono::milliseconds timeout);
@@ -104,6 +104,7 @@ bool fex_execution_selected();
 bool fex_address_available(uint64_t address, uint64_t size);
 // Register the already-owned Mach-O pool before host startup.
 void fex_register_image_reservation(uint64_t address, uint64_t size);
+bool fex_image_pool_claimed(uint64_t address);
 bool fex_reserve_image_address(uint64_t address, uint64_t size);
 NativeResult run_fex_entry(const PEImage &image, LoadedImage &loaded, const std::string &root);
 }

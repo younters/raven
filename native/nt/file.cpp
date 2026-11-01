@@ -102,7 +102,7 @@ bool NativeObjectAPI::file_io(std::string_view name)
 		else {
 			if (args[3]) count(0);
 			if (std::chrono::steady_clock::now()>=deadline)
-				throw NativeResult{NativeStop::timeout,0,process.context().registers.rip,0};
+				throw NativeResult{NativeStop::timeout,0,process.registers().rip,0};
 			const auto bytes=process.read_memory(args[1],uint32_t(args[2]));
 			result=objects.write_file(args[0],bytes);
 			if (!result.status && args[3]) count(uint32_t(result.value));

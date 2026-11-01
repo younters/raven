@@ -1232,8 +1232,49 @@ void self_test() {
 }
 } // namespace
 #ifndef RAVEN_FEX_EMBEDDED
+static unsigned explicit_offers, explicit_resumed;
+static uint64_t accept_explicit_fault(void *, void *) { ++explicit_offers; return 0; }
+static int32_t explicit_fault(void *) { raise(SIGSEGV); ++explicit_resumed; return 0; }
+static uint64_t fault_during_dispatch(void *, void *) {
+    RavenFault::entry=nullptr;
+    asm volatile("mov x18, xzr" ::: "memory");
+    raise(SIGBUS);
+    return 1;
+}
+static int32_t host_fault(void *) {
+    asm volatile("ldr xzr, [%0]" :: "r"(uintptr_t(1)) : "memory");
+    return 0;
+}
+static int explicit_unix_fault() {
+    RavenNT::ProcessEnvironment process;
+    RavenNT::ThreadEnvironment thread(process);
+    RavenNT::active_thread=&thread;
+    RavenFault::Scope scope(reinterpret_cast<void *>(accept_explicit_fault));
+    const uint32_t sizes[]={0};
+    const raven_unix_contract contract{1,1,sizes,
+        +[](uint32_t,void *,raven_unix_check_range){return 1;},
+        +[](raven_unix_check_range){}};
+    auto result=raven_unix_invoke(explicit_fault,nullptr,0,&contract,raven_unix_mapped_range);
+    return uint32_t(result)==0xc0000005u && !explicit_offers && !explicit_resumed ? 0 : 1;
+}
+static int declined_unix_fault(bool nested) {
+    RavenNT::ProcessEnvironment process;
+    RavenNT::ThreadEnvironment thread(process);
+    RavenNT::active_thread=&thread;
+    RavenFault::Scope scope(reinterpret_cast<void *>(fault_during_dispatch));
+    if (!nested) RavenFault::entry=nullptr;
+    const uint32_t sizes[]={0};
+    const raven_unix_contract contract{1,1,sizes,
+        +[](uint32_t,void *,raven_unix_check_range){return 1;},
+        +[](raven_unix_check_range){}};
+    raven_unix_invoke(host_fault,nullptr,0,&contract,raven_unix_mapped_range);
+    return 0; // Old unrestricted/nested longjmp incorrectly reaches this line.
+}
 int main(int argc, char **argv) {
 	require_native_x18();
+    if (argc==2 && std::string(argv[1])=="--unix-explicit-fault") return explicit_unix_fault();
+    if (argc==2 && std::string(argv[1])=="--unix-host-fault") return declined_unix_fault(false);
+    if (argc==2 && std::string(argv[1])=="--unix-dispatch-fault") return declined_unix_fault(true);
 	if (argc == 2 && std::string(argv[1]) == "--tier0-second-fault")
 		return tier0_second_fault();
 	if (argc == 2 && std::string(argv[1]) == "--unsupported-unwind") {

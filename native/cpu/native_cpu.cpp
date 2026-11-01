@@ -766,6 +766,14 @@ void NativeProcess::install_seccomp()
 	state->seccomp = true;
 }
 
+user_regs_struct NativeProcess::registers() const
+{
+	state->require_stopped();
+	user_regs_struct result{};
+	trace(PTRACE_GETREGS, state->child->pid, &result);
+	return result;
+}
+
 NativeContext NativeProcess::context() const
 {
 	state->require_stopped();

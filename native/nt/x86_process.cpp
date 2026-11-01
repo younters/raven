@@ -1128,7 +1128,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				}
 				// The caller, as the module and offset the return address falls in.
 				try {
-					const auto stack = process.read_memory(process.context().registers.rsp, 4);
+					const auto stack = process.read_memory(process.registers().rsp, 4);
 					const uint64_t caller = uint64_t(stack[0]) | uint64_t(stack[1]) << 8 | uint64_t(stack[2]) << 16 | uint64_t(stack[3]) << 24;
 					for (const auto &[module_name, module] : modules.all())
 						if (caller >= module->loaded.base() && caller < module->loaded.base() + module->image.image_size)

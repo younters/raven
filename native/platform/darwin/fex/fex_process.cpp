@@ -5,6 +5,9 @@
 #include "unix_ranges.h"
 #include "../mtld3d/callbacks.h"
 #include "fex-module-config.h"
+#include <mach-o/loader.h>
+static bool raven_unix_fault_pc(uintptr_t pc);
+#define RAVEN_UNIX_PC_FILTER
 #define RAVEN_FEX_EMBEDDED
 #include "modhost/native_host.cpp"
 #include <pthread.h>
@@ -69,6 +72,19 @@ struct PendingImages {
 bool selected_fex = false;
 thread_local void *guest_teb = nullptr;
 thread_local sigjmp_buf stop_frame;
+// A guest stop may longjmp out of RavenHandleFault or a native unix callback.
+// Restore the enclosing host scope, rather than retaining abandoned handler frames.
+struct FaultDispatchState {
+    unsigned depth = RavenFault::dispatch_depth;
+    sigjmp_buf *alignment = RavenFault::alignment_recovery;
+    sigjmp_buf *unix_recovery = raven_unix_recovery;
+    void restore() const {
+        RavenFault::dispatch_depth = depth;
+        RavenFault::alignment_recovery = alignment;
+        raven_unix_recovery = unix_recovery;
+    }
+};
+
 struct StopPacket {
 	raven::NativeStop kind;
 	uint64_t value, rip;
@@ -78,6 +94,38 @@ thread_local StopPacket last_stop{};
 // Libraries and their callback state live until process exit, including GPU callbacks.
 struct UnixLibrary { std::string path; void *image; int32_t (**table)(void *); uint32_t count; const raven_unix_contract *contract; };
 std::vector<UnixLibrary> unix_libraries;
+struct UnixCodeRange { uintptr_t begin, end; };
+UnixCodeRange unix_code_ranges[512]{};
+std::atomic<unsigned> unix_code_count{0};
+void register_unix_code(void *function) {
+    Dl_info info{};
+    if (!dladdr(function, &info)) throw std::runtime_error("unix image identity unavailable");
+    auto *header = static_cast<const mach_header_64 *>(info.dli_fbase);
+    auto *command = reinterpret_cast<const load_command *>(header + 1);
+    uintptr_t preferred = 0;
+    for (unsigned i=0; i<header->ncmds; ++i) {
+        if (command->cmd == LC_SEGMENT_64) {
+            auto *segment = reinterpret_cast<const segment_command_64 *>(command);
+            if (!segment->fileoff && segment->filesize) preferred=segment->vmaddr;
+        }
+        command=reinterpret_cast<const load_command *>(reinterpret_cast<const char *>(command)+command->cmdsize);
+    }
+    command=reinterpret_cast<const load_command *>(header+1);
+    for (unsigned i=0; i<header->ncmds; ++i) {
+        if (command->cmd == LC_SEGMENT_64) {
+            auto *segment=reinterpret_cast<const segment_command_64 *>(command);
+            if (segment->initprot & VM_PROT_EXECUTE) {
+                auto n=unix_code_count.load();
+                if (n == 512) throw std::runtime_error("too many unix code ranges");
+                uintptr_t begin=uintptr_t(header)+segment->vmaddr-preferred;
+                unix_code_ranges[n]={begin,begin+segment->vmsize};
+                unix_code_count.store(n+1,std::memory_order_release);
+            }
+        }
+        command=reinterpret_cast<const load_command *>(reinterpret_cast<const char *>(command)+command->cmdsize);
+    }
+}
+
 // Native libraries and GPU callbacks retain this validator until process exit.
 UnixRanges &unix_ranges = *new UnixRanges;
 int unix_check_range(uint64_t address, uint64_t size, uint32_t write) { return unix_ranges.check(address, size, write); }
@@ -220,12 +268,14 @@ struct FexWorker {
 					guest_teb = !wow64_module && teb ? reinterpret_cast<void *>(teb) : environment->teb.data();
 					RavenFault::execution_teb = guest_teb;
 					lock.unlock();
+					FaultDispatchState dispatch_state;
 					auto previous = NativeJit::protect(1);
 					if (!sigsetjmp(stop_frame, 1)) {
 						raven_ec_call(mapped_image->export_address(wow64_module ? "RavenWow64Run" : "BeginSimulation"), args, guest_teb);
 						std::abort();
 					}
 					asm volatile("mov x18,xzr");
+                    dispatch_state.restore();
 					NativeJit::protect(previous);
 					lock.lock();
 					result = last_stop;
@@ -548,6 +598,7 @@ NativeResult FexProcess::resume()
 			}
 		});
 		uint64_t args[8]{};
+		FaultDispatchState dispatch_state;
 		auto previous = NativeJit::protect(1);
 		if (!sigsetjmp(stop_frame, 1)) {
 			raven_ec_call(mapped_image->export_address(wow64_module ? "RavenWow64Run" : "BeginSimulation"), args, wow64_module ? state->environment()->teb.data() : guest_teb ? guest_teb : state->environment()->teb.data());
@@ -559,6 +610,7 @@ NativeResult FexProcess::resume()
 		if (wow64_module) __atomic_store_n(state->interrupt, 0u, __ATOMIC_RELEASE);
 		else __atomic_store_n(doorbell, 0u, __ATOMIC_RELEASE);
 		asm volatile("mov x18,xzr");
+        dispatch_state.restore();
 		NativeJit::protect(previous);
 	}
 	if (std::getenv("RAVEN_FEX_TRACE"))
@@ -576,7 +628,7 @@ NativeResult FexProcess::resume()
 		auto &record = last_stop.exception;
 		// INT 2D debug-print handling is restricted to the canonical provider body.
 		if (!state->traps.empty() && result.value == 0x80000003 && record.flags == 0 &&
-			record.count == 1 && record.information[0] == 1 && context().registers.rax == 1 &&
+			record.count == 1 && record.information[0] == 1 && context(false).registers.rax == 1 &&
 			result.instruction >= 2 && !state->traps.contains(result.instruction - 2) && has_protection(result.instruction - 2, 4, PROT_READ | PROT_EXEC) &&
 			read_memory(result.instruction - 2, 4) == std::vector<uint8_t>{0xcd, 0x2d, 0xcc, 0xc3}) {
 			// FEX reports INT 2D after its two-byte instruction. Normalize only
@@ -630,7 +682,7 @@ NativeResult FexProcess::resume()
 	}
 	return result;
 }
-NativeContext FexProcess::context() const
+NativeContext FexProcess::context(bool full) const
 {
 	state->require_owner();
 	if (!stopped()) throw std::runtime_error("FEX context requires a stopped worker");
@@ -646,7 +698,7 @@ NativeContext FexProcess::context() const
 		r.gs = *reinterpret_cast<uint32_t *>(p+0x8c); r.fs = *reinterpret_cast<uint32_t *>(p+0x90);
 		r.es = *reinterpret_cast<uint32_t *>(p+0x94); r.ds = *reinterpret_cast<uint32_t *>(p+0x98);
 		r.cs = *reinterpret_cast<uint32_t *>(p+0xbc); r.ss = *reinterpret_cast<uint32_t *>(p+0xc8);
-		result.xstate.assign(p + 0xcc, p + 0x2cc);
+		if (full) result.xstate.assign(p + 0xcc, p + 0x2cc);
 		return result;
 	}
 	unsigned long long *registers[]{&r.rax, &r.rcx, &r.rdx, &r.rbx, &r.rsp, &r.rbp, &r.rsi, &r.rdi,
@@ -659,11 +711,14 @@ NativeContext FexProcess::context() const
 	r.cs = *reinterpret_cast<uint16_t *>(p+0x38); r.ds = *reinterpret_cast<uint16_t *>(p+0x3a);
 	r.es = *reinterpret_cast<uint16_t *>(p+0x3c); r.fs = *reinterpret_cast<uint16_t *>(p+0x3e);
 	r.gs = *reinterpret_cast<uint16_t *>(p+0x40); r.ss = *reinterpret_cast<uint16_t *>(p+0x42);
+	if (!full) return result;
 	result.xstate.assign(p + 0x100, p + 0x300);
 	// The public legacy CONTEXT packet has no YMM upper halves. Keep them in
 	// the internal XSAVE-shaped snapshot so cooperative threads cannot share
 	// the translator's otherwise persistent high-vector state.
 	result.xstate.resize(832);
+	const uint64_t xstate_bv = 7;
+	memcpy(result.xstate.data() + 512, &xstate_bv, 8);
 	uint64_t vector_args[8]{uintptr_t(result.xstate.data() + 576)};
 	raven_ec_call(mapped_image->export_address("RavenGetYmmHigh"), vector_args, state->environment()->teb.data());
 	return result;
@@ -673,6 +728,9 @@ void FexProcess::set_context(const NativeContext &value)
 	state->require_owner();
 	if (!stopped()) throw std::runtime_error("FEX context update requires a stopped worker");
 	const auto &r = value.registers;
+    if (!value.xstate.empty() && (wow64_module ? value.xstate.size()!=512 :
+        value.xstate.size()!=512 && value.xstate.size()!=832))
+        throw std::runtime_error("invalid FEX floating-point packet");
 	if (wow64_module) {
 		auto *p = state->environment()->context.data();
 		const uint32_t regs[]{uint32_t(r.rdi), uint32_t(r.rsi), uint32_t(r.rbx), uint32_t(r.rdx), uint32_t(r.rcx), uint32_t(r.rax), uint32_t(r.rbp), uint32_t(r.rip)};
@@ -715,11 +773,11 @@ void FexProcess::set_context(const NativeContext &value)
 	memcpy(p + 0x44, &flags, 4);
     const uint16_t segments[]{uint16_t(r.cs),uint16_t(r.ds),uint16_t(r.es),uint16_t(r.fs),uint16_t(r.gs),uint16_t(r.ss)};
     memcpy(p+0x38,segments,sizeof segments);
-	if (!value.xstate.empty()) { memcpy(p + 0x100, value.xstate.data(), 512); memcpy(p + 0x34, value.xstate.data()+24, 4); }
 	if (value.xstate.size() == 832) {
 		uint64_t vector_args[8]{uintptr_t(value.xstate.data() + 576)};
 		raven_ec_call(mapped_image->export_address("RavenSetYmmHigh"), vector_args, state->environment()->teb.data());
 	}
+	if (!value.xstate.empty()) { memcpy(p + 0x100, value.xstate.data(), 512); memcpy(p + 0x34, value.xstate.data()+24, 4); }
 }
 NativeResult run_fex_entry(const PEImage &image, LoadedImage &loaded, const std::string &root)
 {
@@ -760,6 +818,7 @@ void fex_register_image_reservation(uint64_t address, uint64_t size)
 	image_pool.base = address;
 	image_pool.size = size;
 }
+bool fex_image_pool_claimed(uint64_t address) { return image_pool.claims.contains(address); }
 bool fex_reserve_image_address(uint64_t address, uint64_t size)
 {
 	// Loader preflight must claim the range immediately: even host allocation
@@ -990,7 +1049,6 @@ uint64_t FexProcess::load_unix_library(const std::string &path, uint32_t count)
 		auto init = reinterpret_cast<void (*)(raven_control *)>(dlsym(adapter, "raven_mtld3d_init"));
 		auto version = reinterpret_cast<uint32_t (*)()>(dlsym(adapter, "raven_mtld3d_protocol_version"));
 		if (!init || !version || version() != RAVEN_GUEST_VERSION) throw std::runtime_error("mtld3d adapter protocol mismatch");
-		init(unix_control);
 		void *image = dlopen((std::string(root) + "/mtld3d.so").c_str(), RTLD_NOW | RTLD_LOCAL);
 		if (!image) throw std::runtime_error(dlerror());
 		std::unique_ptr<void, decltype(&dlclose)> image_guard(image, dlclose);
@@ -999,6 +1057,7 @@ uint64_t FexProcess::load_unix_library(const std::string &path, uint32_t count)
 		if (!contract || contract->version != RAVEN_UNIX_CONTRACT_VERSION || contract->count != count ||
 			!contract->argument_sizes || !contract->validate || !contract->set_memory_check)
 			throw std::runtime_error("FEX unixlib compiled contract/count mismatch; reprovision overlay");
+		init(unix_control);
 		contract->set_memory_check(unix_check_range);
 		auto table = reinterpret_cast<int32_t (**)(void *)>(dlsym(image, wow64_module ? "__wine_unix_call_wow64_funcs" : "__wine_unix_call_funcs"));
 		if (!table) throw std::runtime_error("FEX mtld3d table missing");
@@ -1012,6 +1071,9 @@ uint64_t FexProcess::load_unix_library(const std::string &path, uint32_t count)
 		auto set_base = reinterpret_cast<void (*)(uint64_t)>(dlsym(image, "raven_mtld3d_set_guest_base"));
 		if (!set_base) throw std::runtime_error("mtld3d address translator missing");
 		set_base(wow64_module ? wow64_guest_base : 0);
+		register_unix_code(reinterpret_cast<void *>(table[0]));
+		register_unix_code(reinterpret_cast<void *>(init));
+		if (void *copy=dlsym(image,"raven_unix_copy")) register_unix_code(copy);
 		unix_libraries.push_back({path, image, table, count, contract});
 		adapter_guard.release();
 		image_guard.release();
@@ -1048,6 +1110,9 @@ uint64_t FexProcess::load_unix_library(const std::string &path, uint32_t count)
 	init(unix_control);
 	table = wrap(table, count);
 	if (!table) throw std::runtime_error("FEX DXMT table wrapping failed");
+	register_unix_code(reinterpret_cast<void *>(reinterpret_cast<int32_t (**)(void *)>(table)[0]));
+	register_unix_code(reinterpret_cast<void *>(contract->validate));
+	if (void *copy=dlsym(image,"raven_unix_copy")) register_unix_code(copy);
 	unix_libraries.push_back({path, image, reinterpret_cast<int32_t (**)(void *)>(table), count, contract});
 	read_native_buffer = reinterpret_cast<decltype(read_native_buffer)>(dlsym(adapter, "raven_dxmt_read_memory"));
 	adapter_guard.release();
@@ -1061,18 +1126,18 @@ void FexProcess::add_api_trap(uint64_t address, uint32_t callee_cleanup)
 }
 size_t FexProcess::callback_depth() const { return state->thread.callbacks.size(); }
 NativeContext FexProcess::callback_origin(size_t index) const { return state->thread.callbacks.at(index); }
-uint64_t FexProcess::result_register() const { return context().registers.rax; }
+uint64_t FexProcess::result_register() const { return context(false).registers.rax; }
 void FexProcess::set_resume_hook(std::function<void()> hook) { state->resume_hook = std::move(hook); }
 std::vector<uint64_t> FexProcess::api_arguments(size_t count) const
 {
 	if (state->thread.translated_words) return *state->thread.translated_words;
 	if (wow64_module) {
 		std::vector<uint64_t> words;
-		auto bytes = read_memory(context().registers.rsp + 4, count * 4);
+		auto bytes = read_memory(context(false).registers.rsp + 4, count * 4);
 		for (size_t i = 0; i < count; ++i) { uint32_t word; memcpy(&word, bytes.data() + i * 4, 4); words.push_back(word); }
 		return words;
 	}
-	const auto r = context().registers;
+	const auto r = context(false).registers;
 	std::vector<uint64_t> words;
 	for (size_t i = 0; i < count; ++i) {
 		if (i < 4) { const uint64_t registers[]{r.rcx, r.rdx, r.r8, r.r9}; words.push_back(registers[i]); }
@@ -1288,7 +1353,7 @@ NativeResult FexProcess::resume(std::chrono::milliseconds timeout)
 	const auto deadline = std::chrono::steady_clock::now() + timeout;
 	for (;;) {
 		const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
-		if (remaining.count() <= 0) return {NativeStop::timeout, 0, context().registers.rip, 0};
+		if (remaining.count() <= 0) return {NativeStop::timeout, 0, context(false).registers.rip, 0};
 		// GPU callbacks publish native events even when no guest thread is runnable.
 		// Service them periodically while the current guest spins in GetData.
 		const bool slicing = !state->parallel && state->slice.count() > 0 && state->slice_wanted && state->slice_yield &&
@@ -1455,4 +1520,11 @@ void FexProcess::set_teb(uint64_t base)
 	if (mode() != NativeMode::x86) throw std::runtime_error("FEX x64 set_teb is unsupported");
 	auto saved = context(); saved.registers.fs_base = base; set_context(saved);
 }
+}
+
+static bool raven_unix_fault_pc(uintptr_t pc) {
+    const auto count=unix_code_count.load(std::memory_order_acquire);
+    for (unsigned i=0;i<count;++i)
+        if (pc>=unix_code_ranges[i].begin && pc<unix_code_ranges[i].end) return true;
+    return false;
 }

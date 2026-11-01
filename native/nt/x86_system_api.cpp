@@ -251,7 +251,7 @@ bool NativeX86System::dispatch(std::string_view name)
 	} else if (name == "GetCurrentThreadStackLimits") {
 		// The whole reservation, from the TEB: DeallocationStack (0xe0c) is its bottom, StackBase (4) its top; StackLimit (8) stands in
 		// for a bottom that was never recorded.
-		const uint64_t teb = process.context().registers.fs_base;
+		const uint64_t teb = process.registers().fs_base;
 		const auto word = [&](uint64_t offset) {
 			const auto bytes = process.read_memory(teb + offset, 4);
 			return uint32_t(bytes[0]) | uint32_t(bytes[1]) << 8 | uint32_t(bytes[2]) << 16 | uint32_t(bytes[3]) << 24;

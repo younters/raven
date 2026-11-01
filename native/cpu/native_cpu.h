@@ -79,6 +79,7 @@ public:
 	NativeResult callback(uint64_t address, std::span<const uint64_t> arguments, std::chrono::milliseconds timeout);
 	NativeResult resume(std::chrono::milliseconds timeout);
 	NativeContext context() const;
+	user_regs_struct registers() const;
 	void set_context(const NativeContext &context);
 	std::vector<uint8_t> read_memory(uint64_t address, size_t size) const;
 	void write_memory(uint64_t address, std::span<const uint8_t> bytes);

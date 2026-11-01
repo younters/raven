@@ -6,12 +6,15 @@
 #include <cstring>
 #include <sys/mman.h>
 #include <dlfcn.h>
+#include <spawn.h>
+#include <sys/wait.h>
+extern char **environ;
 
 struct Request { uint64_t gate, handle, args; uint32_t code; };
 struct Args { uint64_t pointer, length; uint32_t mode, observed; };
 static void require(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
 int main(int argc, char **argv) {
-    if (argc != 7) return 2;
+    if (argc != 7 && argc != 8) return 2;
     try {
         raven::select_fex_execution(std::string(argv[6]) == "fex");
         const bool x86 = std::string(argv[4]) == "32";
@@ -49,6 +52,17 @@ int main(int argc, char **argv) {
         const auto memory = process.map_memory(32768, PROT_READ | PROT_WRITE);
         process.protect_memory(memory + 16384, 16384, PROT_NONE);
         const auto data = memory + 256;
+        if (fake && std::string(argv[6])=="fex") {
+            const auto code=process.map_memory(16384,PROT_READ|PROT_WRITE|PROT_EXEC);
+            const uint8_t ud2[]={0x0f,0x0b,0xc3}; process.write_memory(code,ud2);
+            auto stop=process.call(code,{},std::chrono::seconds(5));
+            require(stop.stop==raven::NativeStop::exception && stop.value==0xc000001d,
+                "guest illegal instruction did not stop through exception dispatch");
+            auto context=process.context(); context.registers.rip+=2; process.set_context(context);
+            require(process.resume(std::chrono::seconds(5)).stop==raven::NativeStop::returned,
+                "guest exception could not resume");
+        }
+
         Request request{process.unix_call_gate(), handle, data, metal ? 8u : fake ? 0u : 10u};
         auto write = [&](uint64_t at, const auto &object) { process.write_memory(at, {reinterpret_cast<const uint8_t *>(&object), sizeof object}); };
         auto invoke = [&](uint64_t arguments, uint32_t code) {
@@ -69,13 +83,24 @@ int main(int argc, char **argv) {
             const uint64_t logger[5]{};
             process.write_memory(data, {reinterpret_cast<const uint8_t *>(logger), sizeof logger});
             require(invoke(data, 0) == 0, "mtld3d logger initialization failed");
-            // The logger must not replace Raven's signal handler. Release an
-            // invalid opaque native object to exercise a real native fault.
-            const uint64_t object = 1;
-            write(memory + 1024, object);
-            const uint64_t destroy[] = {0, memory + 1024, 1};
-            process.write_memory(data, {reinterpret_cast<const uint8_t *>(destroy), sizeof destroy});
-            require(invoke(data, 9) == av, "mtld3d native fault escaped after logger initialization");
+            if (argc == 8) {
+                // objc_release is outside the unix image. A declined fault there
+                // must terminate rather than skip foreign runtime lock frames.
+                const uint64_t object = 1;
+                write(memory + 1024, object);
+                const uint64_t destroy[] = {0, memory + 1024, 1};
+                process.write_memory(data, {reinterpret_cast<const uint8_t *>(destroy), sizeof destroy});
+                invoke(data, 9);
+                throw std::runtime_error("foreign objc_release fault was incorrectly recovered");
+            }
+            char *child_args[9]{};
+            for (unsigned i=0;i<7;++i) child_args[i]=argv[i];
+            child_args[7]=const_cast<char *>("--foreign-release");
+            pid_t child;
+            require(!posix_spawn(&child,argv[0],nullptr,nullptr,child_args,environ), "cannot spawn foreign-fault control");
+            int status=0;
+            require(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==139,
+                "foreign runtime fault did not terminate diagnostically");
         }
         require(invoke(1, code) == av, "bad top-level pointer was accepted");
         require(invoke(memory + 16384 - 8, code) == av, "partial argument block was accepted");
@@ -107,6 +132,8 @@ int main(int argc, char **argv) {
             require(invoke(data, 19) == av, "invalid shader output array was accepted");
         }
         if (fake) {
+            Args explicit_fault{0,0,2,0}; write(data,explicit_fault);
+            require(invoke(data,1)==av,"preflight raise resumed or retained stale guest-dispatch depth");
             Args fault{1, 1, 1, 0}; write(data, fault);
             require(invoke(data, 1) == av, "native fault was not contained");
             // Repeat recovery to catch a stale sigjmp frame or masked SIGSEGV.
