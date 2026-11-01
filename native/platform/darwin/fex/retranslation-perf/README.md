@@ -66,3 +66,36 @@ detail output. The parser compares page-attempt sums with timer totals and
 reports the coverage gap rather than treating partial records as complete.
 Large exit dumps should be replaced by bounded summaries before another causal
 Chrome measurement; the three-sample budget was not extended.
+
+## Shared-view and flush review follow-up
+
+Patch 0063 adds SharedIntervals separately from RWXIntervals. map_shared registers
+its host interval through RavenMarkSharedMemory in both x64 and WoW64 modules.
+An executable shared view reports byte validation regardless of whether that
+virtual view is RX. FEX's existing Darwin inline SMC guards check the bytes at
+execution and discard stale translations after writes through another alias or
+process. The property is removed on unmapping. It does not grant guest write
+permission or make the RX view eligible for RWX write-fault recovery. Ordinary
+private/image RX mappings retain the 0061 optimization.
+
+`native_alias_flush_x{32,64}_fex_{0,1}_{0,1}` covers local RW/RX aliases and a
+child writing the shared section, both with and without explicit flushes and in
+serial/parallel execution. It also covers real self/remote handles, invalid
+handles, and unmapped, overflowing and partially mapped flush ranges.
+
+`native_flush-only_fex` and its parallel variant deliberately mutate the loader's
+backing alias without a dirty/protection notification: execution must keep the
+old value before the flush and return the new value afterward. The guest API
+regression also requires an extra compilation after flushing unchanged private
+RX code through a real self handle. This checks the API forwarding itself;
+shared aliases alone would pass a return-value test using automatic validation.
+
+A remote ProcessObject handle preserves successful Win32/NT flush status. Raven's
+remote write_memory request already notifies the target; this does not add a
+standalone remote-flush RPC. Local FEX flushes intersect logical mapped pages
+before converting to host pointers, ignoring unmapped holes and overflow tails.
+
+The final review benchmark pair is FAILED and cannot be used for performance
+comparison. `review-benchmark-failed.json` retains the exit codes and missing FEX
+result; macOS power logs show the machine repeatedly sleeping during both lanes.
+See RESULTS.txt for complete qualification and remaining screenshot failures.

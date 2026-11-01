@@ -180,3 +180,103 @@ These were not rerun under the parent's once-per-test constraint. Their causes
 and baseline status were not established; no claim of a fully green selection.
 No full suite or Chrome benchmark was run for this fixture-only fix.
 Logs: /tmp/raven-retranslation-compiler-{diagnose,fix-build,x32-flush}.log.
+
+Shared-section and flush review follow-up (2026-11-01)
+----------------------------------------------------
+Implementation commit: aa1f113ebbf97132e95ed7436d0ace4dab639ac8.
+Private module build ID retranslation-shared-0063, root unchanged.
+
+A. Both signal-5 controls passed ONCE EACH on build-macos, through the CTest lock:
+  native_kernel_threads_x32_default: 1.78 s
+  native_jit_stress_x32_native_0:     0.75 s
+Before changing code, a matched serial control on build-retranslation passed both
+(1.87 s / 0.81 s). Thus the earlier signal-5 faults were not reproduced with
+matched settings; their root cause was not established. No claim that the new
+changes specifically fix those earlier faults. Both also passed in the final
+post-fix targeted checks and the -j8 full suite (2.24 s / 0.99 s in the latter).
+
+B. Valid remote ProcessObject handles now succeed for Win32 and NT flushes.
+Real self handles still forward locally, and invalid handles still fail with
+ERROR_INVALID_HANDLE / STATUS_INVALID_HANDLE. Local unmapped, overflowing and
+partially mapped ranges are clipped to actual mapped guest pages before any
+WoW64 host-pointer conversion; no arbitrary unmapped address is dereferenced.
+Remote writes already invoke the target's write_memory notification, so a
+standalone remote-flush transport was not added.
+
+Aliased and cross-process section writes were NOT correctly covered by the
+original RX-retention optimization: a different virtual address's write cannot
+be observed through the RX mapping's own permissions or dirty notifications.
+Patch 0063 registers shared mappings in a separate SharedIntervals tracker.
+QueryExecutableRange requests FEX's existing Darwin inline byte validation for
+executable shared views. Changed bytes discard the stale block before execution,
+including writes through an RW alias and ordinary stores from another process.
+Sharedness is cleared on free/unmap. It does not change logical protection,
+place RX pages in RWXIntervals, or enable write-fault recovery for an RX view.
+Private/image RX mappings keep their optimized behavior.
+
+Coverage:
+* Eight guest cases: x32/x64, explicit-flush/no-flush, serial/parallel. Each
+  maps one section RW and RX, modifies bytes through RW, executes through RX,
+  then has a child modify that section and executes again. Covers real self and
+  suspended-child handles, both flush APIs, invalid handles and arbitrary ranges.
+* Two backend flush-only cases: mutate the loader's backing alias directly,
+  with no protection/dirty notifications. The old translation must remain before
+  the explicit flush (negative control), and the new bytes must execute after.
+* Two guest API forwarding cases: unchanged private RX code must compile again
+  after FlushInstructionCache through OpenProcess(current pid). Without the
+  forwarding the count assertion fails. Expected code page: unique=1,
+  repeated=2, recompiled=1 (one rewrite plus one explicit unchanged-byte flush).
+
+The modules and entrypoint contracts were requalified by static disassembly:
+RavenProcessInit RVA 0x7070, first instruction 0xb40001c0;
+RavenWow64ProcessInit RVA 0x79cc, first instruction 0xf81f0ffe;
+multiblock-disable sequence RVA 0x6770, Config::Set at 0x18018ca94, still
+option 0 with string_view("0",1). Updated hashes/RVAs and retained negative tests.
+The module builder/auditor and native substrate self-test passed. No debugger.
+
+ONE post-fix targeted selection, through /tmp/raven-ctest-lock.sh, -j1 and
+RAVEN_PREFIX_SETUP=1: 38/38 passed including 19 cleanup fixtures, 9.01 s.
+Selection: alias_flush|flush-only|retranslation, the two signal-5 controls,
+selfmodify, compiler_x32, and the module/multiblock contracts.
+
+ONE full suite: RAVEN_PREFIX_SETUP=1, through the lock, -j8:
+1,617 registered, one disabled, 17 skipped, four failures, 118.04 s.
+All new regressions, both signal-5 controls, and compiler_x32 passed.
+Failures: darwin_dxmt_window, darwin_dxmt_window_fex (screencapture exit 1),
+darwin_dxmt_deferred_fex (pixel mismatch), darwin_mullion_window12_native.
+
+ONE serial --rerun-failed: 6/8 passed including four cleanup fixtures, 35.81 s.
+Deferred rendering and Mullion passed. Remaining failures:
+  darwin_dxmt_window:     screencapture -l 21187 returned exit 1
+  darwin_dxmt_window_fex: screencapture -l 21190 returned exit 1
+No further test reruns were made. No assertion of a fully green full suite.
+
+ONE final benchmark pair was attempted, after a clear coordination gate:
+pgrep -fl 'benchmark-chrome-fex|raven-chrome-perf|raven-steam-mb'.
+RAVEN_FEX_PERF=1; compile profiling was off for this pair.
+Rosetta produced a checked DOM (1333.2 ms) but exited -11; FEX exited 1 after
+entry timeouts with no checked DOM. This is NOT a valid performance comparison;
+no new FEX timing or speedup is claimed. No replacement pair was run.
+
+macOS pmset evidence overlaps the attempt, local time -0700:
+  02:55:01 Entering Sleep ('Maintenance Sleep')
+  02:55:15 DarkWake
+  02:55:20 Entering Sleep, 331 seconds
+  03:00:51 DarkWake
+  03:00:57 Entering Sleep, 48 seconds
+  03:01:45 DarkWake
+  03:01:51 Entering Sleep, 13 seconds
+  03:02:04 DarkWake
+  03:02:09 Entering Sleep, 255 seconds
+The harness native/FEX launch timestamps are 02:55:01 / 03:00:51 respectively;
+the timing attempt ran during repeated sleep/wake cycles. The precise cause of
+Rosetta's signal 11 and FEX's missing result was not isolated. In particular,
+sleep is evidence of invalid timing conditions, not proof of a code-level cause.
+
+Logs: /tmp/raven-retranslation-baseline-{kernel,jit}.log,
+/tmp/raven-retranslation-x32-diagnose.log,
+/tmp/raven-retranslation-review-{targeted,full,rerun,benchmark}.log,
+and /tmp/raven-retranslation-review-benchmark.{native,fex}-0.log.
+Failed-pair hashes and commands are retained in review-benchmark-failed.json.
+No Raven processes for this benchmark prefix remain. Free disk observed at
+handback: about 18 GiB. No shared component modification or push.
