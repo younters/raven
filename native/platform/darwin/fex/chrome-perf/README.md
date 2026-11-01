@@ -180,3 +180,53 @@ Qualification of the supplied enabled build (not a repair), all through
   removed by literal path after their process groups had stopped. Evidence
   logs, dumps and the anonymous control screenshot remain. Available disk
   stayed above 6 GiB; final observed free space was 17 GiB.
+
+## Multiblock root-cause search (2026-11-01, third continuation)
+
+**Not fixed; 0040 stays unpromoted.** No FEX patch was added, no module root was
+rebuilt with `build-fex-modules.py`, and Steam was not launched (it would only
+repeat the known failure). No benchmark gain is claimed.
+
+TSO/ordering lead. Raven's FEX base (FEX-2609.1) has no memory-op IR passes at all:
+only x87 stack optimisation, dead-flag elimination (DFE) and RA. So no load or store can
+be elided or reordered across multiblock boundaries; TSO choice does not
+depend on multiblock. libcef.dll has no `/volatileMetadata` (load-config
+offset 0x100 is zero), so the ForceTSO per-instruction override cannot disable
+TSO there. Both Steam faults are in one CEF function (caller
+`libcef.dll+0x34fbea0`), whose `this` was already freed. Two of two faulting launches hitting the same
+function argue against a random ordering race.
+
+`multiblock_atomic_client.c` (committed, coverage only): four workers run a
+`lock xadd` refcount loop with internal branches and plain publish/consume,
+ending in `sub; cmp $0; jne` (also tried `test`/`and`). The controller
+suspends them continuously. With 0040 it passed every run; >3,400 stops landed
+exactly on the back-edge `jne`, with ZF consistent with R8. It is not a reproducer.
+
+Headless Chrome (benchmark harness) also fails with multiblock: it timed out
+at 240 s with "Network service crashed", where single-block finished in ~47 s.
+Private one-sample bisects, built with `Darwin/build.py` into scratch outputs
+and then deleted (0040 tree otherwise):
+
+| variant | change | Chrome |
+|---|---|---|
+| A | no mid-multiblock doorbell checks (0022 CondJump + backward pending jump) | fail |
+| B | DFE local only: successors read FLAG_ALL, no FoldBranch | fail |
+| C | no call-return entry points (stop decoding at CALL) | pass once (117 s, one network crash) |
+| D | multiblock forced off inside FEXCore (same RVA as 0040) | pass (46.7 s) |
+| E | forward-only multiblock targets (call returns kept) | fail |
+
+So neither Raven's back-edge doorbell nor cross-block DFE is the cause.
+Call-return entries inside a multiblock (Raven's call-ret stack path, 0010/0011)
+remain the leading suspect, but C's repeat runs were invalid (below).
+
+**Harness became unusable.** After ~02:30 MST, control D failed on 5 of 5
+later runs (fresh clones, a reused prefix and `TZ=UTC`): the browser exits in 6–25 s,
+right after GPU init and before `MakeWindowAssociation`. The native engine still
+passed (1522 ms JS). The raven binary, fixture and modules were unchanged; the cause is
+unknown. Until the D control passes again, every Chrome result after that time
+(C2/C3, X, R0040, RD*, W*) is invalid. Logs: `/tmp/raven-mb3-scratch/`.
+
+Next steps: restore a passing D control first. Then repeat C at least 3 times; if it
+holds, minimise to CALL + return-entry + `ret` with the call-ret stack under
+suspension. An IR cross-block-use checker (variant X) was inconclusive: the
+module's CRT log file never appeared.
