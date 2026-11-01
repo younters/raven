@@ -2,6 +2,7 @@
 #include "system_exports.h"
 
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <system_error>
 #include <vector>
@@ -62,25 +63,40 @@ void NativePrefix::place_runtime_components(const std::filesystem::path &runtime
 				continue;
 			const auto destination = windows / folder / name;
 #ifdef __APPLE__
-            // Publish only a complete copy; the old destination survives failures.
-            if (std::filesystem::exists(destination) &&
-                std::filesystem::file_size(destination) == std::filesystem::file_size(from) &&
-                std::filesystem::last_write_time(destination) == std::filesystem::last_write_time(from))
-                continue;
+            // Sweep abandoned copies, then publish a complete replacement atomically.
+            const auto stem = destination.filename().string() + ".tmp.";
+            for (std::filesystem::directory_iterator it(destination.parent_path(), error), end;
+                 !error && it != end; it.increment(error)) {
+                if (it->path().filename().string().starts_with(stem) &&
+                    std::filesystem::last_write_time(it->path(), error) <
+                        std::filesystem::file_time_type::clock::now() - std::chrono::hours(24) && !error) {
+                    std::error_code ignored;
+                    std::filesystem::remove(it->path(), ignored);
+                }
+            }
+            error.clear();
+            const auto size = std::filesystem::file_size(destination, error);
+            if (!error && size == std::filesystem::file_size(from, error) && !error) {
+                const auto stamp = std::filesystem::last_write_time(destination, error);
+                if (!error && stamp == std::filesystem::last_write_time(from, error) && !error) continue;
+            }
             auto pattern = destination.string() + ".tmp.XXXXXX";
             std::vector<char> temporary(pattern.begin(), pattern.end()); temporary.push_back(0);
             const int fd = mkstemp(temporary.data());
-            if (fd < 0) throw std::system_error(errno, std::generic_category(), "prefix temporary file");
+            if (fd < 0) {
+                std::fprintf(stderr, "raven: prefix temporary file failed: %s\n", destination.c_str());
+                continue;
+            }
             close(fd);
-            try {
-                if (copyfile(from.c_str(), temporary.data(), nullptr, COPYFILE_DATA | COPYFILE_STAT | COPYFILE_CLONE | COPYFILE_UNLINK))
-                    throw std::system_error(errno, std::generic_category(), "prefix copy " + from.string());
-                std::filesystem::permissions(temporary.data(), std::filesystem::perms::owner_write,
-                    std::filesystem::perm_options::add);
-                std::filesystem::rename(temporary.data(), destination);
-            } catch (...) {
+            error.clear();
+            if (copyfile(from.c_str(), temporary.data(), nullptr, COPYFILE_DATA | COPYFILE_STAT | COPYFILE_CLONE | COPYFILE_UNLINK))
+                error = std::error_code(errno, std::generic_category());
+            if (!error) std::filesystem::permissions(temporary.data(), std::filesystem::perms::owner_write,
+                std::filesystem::perm_options::add, error);
+            if (!error) std::filesystem::rename(temporary.data(), destination, error);
+            if (error) {
                 unlink(temporary.data());
-                throw;
+                std::fprintf(stderr, "raven: prefix copy failed for %s: %s\n", destination.c_str(), error.message().c_str());
             }
 #else
 			std::filesystem::copy_file(from, destination, std::filesystem::copy_options::update_existing, error);

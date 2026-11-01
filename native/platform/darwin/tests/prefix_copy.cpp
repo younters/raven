@@ -26,14 +26,16 @@ int main() {
     assert(fs::file_size(copy)==17);
     fs::permissions(file,fs::perms::owner_write,fs::perm_options::add);
     std::ofstream(file)<<"third";
-    fs::permissions(file,fs::perms::none);
-    bool copy_failed=false;
-    try { prefix.place_runtime_components(source); } catch (const std::exception &) { copy_failed=true; }
-    assert(copy_failed && fs::file_size(copy)==17);
-    fs::permissions(file,fs::perms::owner_read|fs::perms::owner_write);
+    // Rename over a nonempty directory fails even for root, after copying.
     fs::remove(copy); fs::create_directory(copy);
-    bool failed=false;
-    try { prefix.place_runtime_components(source); } catch (const std::exception &) { failed=true; }
-    assert(failed);
+    std::ofstream(copy/"keep")<<"existing";
+    std::ofstream(copy.string()+".tmp.abandoned")<<"stale";
+    fs::last_write_time(copy.string()+".tmp.abandoned", fs::file_time_type::clock::now()-std::chrono::hours(48));
+    prefix.place_runtime_components(source);
+    assert(fs::is_regular_file(copy/"keep"));
+    assert(!fs::exists(copy.string()+".tmp.abandoned"));
+    fs::remove_all(copy);
+    prefix.place_runtime_components(source);
+    assert(fs::file_size(copy)==5);
     fs::remove_all(root);
 }
