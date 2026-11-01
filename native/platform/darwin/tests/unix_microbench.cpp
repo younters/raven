@@ -17,7 +17,7 @@ int main() {
   Args *args=(Args *)data; args->dst=data+64; args->src=data+128;
   ranges.set((uintptr_t)data,sizeof data,3); raven_unix_set_memory_check(check);
   for (auto function : {empty,copy}) {
-    for (unsigned sample=0;sample<7;++sample) {
+    for (unsigned sample=0;sample<3;++sample) {
       auto start=std::chrono::steady_clock::now();
       for (unsigned i=0;i<200000;++i) if(raven_unix_invoke(function,args,0,&contract,check)) return 1;
       double ns=std::chrono::duration<double,std::nano>(std::chrono::steady_clock::now()-start).count()/200000;

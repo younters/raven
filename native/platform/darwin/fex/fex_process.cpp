@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "../mullion/backend.h"
 #include "fex_process.h"
+#include "perf.h"
 #include "guest_window.h"
 #include "unix_ranges.h"
 #include "../mtld3d/callbacks.h"
@@ -200,6 +201,8 @@ uint32_t guest_protection(int protection)
 }
 void notify_memory(const char *name, uint64_t *args, size_t after, const std::function<void()> &change = {})
 {
+	static fex_perf::Counter perf{"notify_memory"};
+	fex_perf::Timer timer(perf);
 	const std::string export_name = wow64_module ? std::string("BTCpu") + name : name;
 	name = export_name.c_str();
 	// The module's public notification protocol brackets its tracker mutex.
@@ -686,6 +689,8 @@ NativeResult FexProcess::resume()
 }
 NativeContext FexProcess::context(bool full) const
 {
+	static fex_perf::Counter perf{"context"};
+	fex_perf::Timer timer(perf);
 	state->require_owner();
 	if (!stopped()) throw std::runtime_error("FEX context requires a stopped worker");
 	NativeContext result{};
@@ -857,6 +862,8 @@ bool FexProcess::memory_available(uint64_t address, size_t size) const { if (sta
 	} return fex_address_available(address, size); }
 std::vector<uint8_t> FexProcess::read_memory(uint64_t address, size_t size) const
 {
+	static fex_perf::Counter perf{"read_memory"};
+	fex_perf::Timer timer(perf);
 	state->require_owner();
 	if (address > UINT64_MAX - size) throw std::runtime_error("FEX read range overflow");
 	for (auto at = address & ~uint64_t(4095); at < address + size; at += 4096)
@@ -879,6 +886,8 @@ void FexProcess::validate_write_memory(uint64_t address, size_t size) const
 }
 void FexProcess::write_memory(uint64_t address, std::span<const uint8_t> bytes)
 {
+	static fex_perf::Counter perf{"write_memory"};
+	fex_perf::Timer timer(perf);
 	validate_write_memory(address, bytes.size());
 	auto *p = !state->window && address >= 0x7ffe0000 && address + bytes.size() <= 0x7ffe1000 ? user_shared_data.data() + address - 0x7ffe0000 : reinterpret_cast<uint8_t *>(state->host(address, bytes.size()));
 	memcpy(p, bytes.data(), bytes.size());
@@ -922,6 +931,8 @@ uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 }
 void FexProcess::protect_memory(uint64_t address, size_t size, int protection)
 {
+	static fex_perf::Counter perf{"protect_memory"};
+	fex_perf::Timer timer(perf);
 	if (!size || address % 4096 || size % 4096 || address > UINT64_MAX - size)
 		throw std::runtime_error("FEX invalid protection range");
 	if (!state->mapped_range(address, size)) throw std::runtime_error("FEX protection range is unmapped");
@@ -1236,6 +1247,8 @@ NativeResult FexProcess::callback(uint64_t address, std::span<const uint64_t> ar
 }
 NativeThreadState FexProcess::save_thread(bool snapshot) const
 {
+	static fex_perf::Counter perf{"save_thread"};
+	fex_perf::Timer timer(perf);
 	auto saved = state->thread;
 	saved.stopped = stopped();
 	saved.context_in_task = state->parallel && !snapshot;
