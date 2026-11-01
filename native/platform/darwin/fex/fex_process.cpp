@@ -72,6 +72,19 @@ struct PendingImages {
 bool selected_fex = false;
 thread_local void *guest_teb = nullptr;
 thread_local sigjmp_buf stop_frame;
+// A guest stop may longjmp out of RavenHandleFault or a native unix callback.
+// Restore the enclosing host scope, rather than retaining abandoned handler frames.
+struct FaultDispatchState {
+    unsigned depth = RavenFault::dispatch_depth;
+    sigjmp_buf *alignment = RavenFault::alignment_recovery;
+    sigjmp_buf *unix_recovery = raven_unix_recovery;
+    void restore() const {
+        RavenFault::dispatch_depth = depth;
+        RavenFault::alignment_recovery = alignment;
+        raven_unix_recovery = unix_recovery;
+    }
+};
+
 struct StopPacket {
 	raven::NativeStop kind;
 	uint64_t value, rip;
@@ -255,12 +268,14 @@ struct FexWorker {
 					guest_teb = !wow64_module && teb ? reinterpret_cast<void *>(teb) : environment->teb.data();
 					RavenFault::execution_teb = guest_teb;
 					lock.unlock();
+					FaultDispatchState dispatch_state;
 					auto previous = NativeJit::protect(1);
 					if (!sigsetjmp(stop_frame, 1)) {
 						raven_ec_call(mapped_image->export_address(wow64_module ? "RavenWow64Run" : "BeginSimulation"), args, guest_teb);
 						std::abort();
 					}
 					asm volatile("mov x18,xzr");
+                    dispatch_state.restore();
 					NativeJit::protect(previous);
 					lock.lock();
 					result = last_stop;
@@ -583,6 +598,7 @@ NativeResult FexProcess::resume()
 			}
 		});
 		uint64_t args[8]{};
+		FaultDispatchState dispatch_state;
 		auto previous = NativeJit::protect(1);
 		if (!sigsetjmp(stop_frame, 1)) {
 			raven_ec_call(mapped_image->export_address(wow64_module ? "RavenWow64Run" : "BeginSimulation"), args, wow64_module ? state->environment()->teb.data() : guest_teb ? guest_teb : state->environment()->teb.data());
@@ -594,6 +610,7 @@ NativeResult FexProcess::resume()
 		if (wow64_module) __atomic_store_n(state->interrupt, 0u, __ATOMIC_RELEASE);
 		else __atomic_store_n(doorbell, 0u, __ATOMIC_RELEASE);
 		asm volatile("mov x18,xzr");
+        dispatch_state.restore();
 		NativeJit::protect(previous);
 	}
 	if (std::getenv("RAVEN_FEX_TRACE"))

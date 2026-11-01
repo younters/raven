@@ -52,6 +52,17 @@ int main(int argc, char **argv) {
         const auto memory = process.map_memory(32768, PROT_READ | PROT_WRITE);
         process.protect_memory(memory + 16384, 16384, PROT_NONE);
         const auto data = memory + 256;
+        if (fake && std::string(argv[6])=="fex") {
+            const auto code=process.map_memory(16384,PROT_READ|PROT_WRITE|PROT_EXEC);
+            const uint8_t ud2[]={0x0f,0x0b,0xc3}; process.write_memory(code,ud2);
+            auto stop=process.call(code,{},std::chrono::seconds(5));
+            require(stop.stop==raven::NativeStop::exception && stop.value==0xc000001d,
+                "guest illegal instruction did not stop through exception dispatch");
+            auto context=process.context(); context.registers.rip+=2; process.set_context(context);
+            require(process.resume(std::chrono::seconds(5)).stop==raven::NativeStop::returned,
+                "guest exception could not resume");
+        }
+
         Request request{process.unix_call_gate(), handle, data, metal ? 8u : fake ? 0u : 10u};
         auto write = [&](uint64_t at, const auto &object) { process.write_memory(at, {reinterpret_cast<const uint8_t *>(&object), sizeof object}); };
         auto invoke = [&](uint64_t arguments, uint32_t code) {
@@ -121,6 +132,8 @@ int main(int argc, char **argv) {
             require(invoke(data, 19) == av, "invalid shader output array was accepted");
         }
         if (fake) {
+            Args explicit_fault{0,0,2,0}; write(data,explicit_fault);
+            require(invoke(data,1)==av,"preflight raise resumed or retained stale guest-dispatch depth");
             Args fault{1, 1, 1, 0}; write(data, fault);
             require(invoke(data, 1) == av, "native fault was not contained");
             // Repeat recovery to catch a stale sigjmp frame or masked SIGSEGV.

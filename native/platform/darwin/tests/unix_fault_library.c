@@ -1,6 +1,7 @@
 #include "../unix_memory.h"
 #include "../guest/protocol.h"
 #include <stdint.h>
+#include <signal.h>
 
 struct args { uint64_t pointer, length; uint32_t mode, observed; };
 static uint64_t base;
@@ -8,7 +9,8 @@ static uint64_t host(uint64_t address) { return base && address <= UINT32_MAX ? 
 static int32_t call(void *opaque) {
     struct args *p = opaque;
     // code 1 deliberately bypasses nested preflight, exercising the backstop.
-    if (p->mode) p->observed = *(volatile uint8_t *)(uintptr_t)host(p->pointer + p->length - 1);
+    if (p->mode == 2) { raise(SIGSEGV); p->observed = 99; }
+    else if (p->mode) p->observed = *(volatile uint8_t *)(uintptr_t)host(p->pointer + p->length - 1);
     else p->observed = 42;
     return 0;
 }
