@@ -36,7 +36,7 @@ def main():
         for engine in (('native', 'fex') if sample % 2 == 0 else ('fex', 'native')):
             profile = a.prefix / f'bench-profile-{engine}-{time.time_ns()}'
             command = [str(a.raven.resolve()), '--run-process', '--execution=' + engine,
-                       '--desktop=macos', '--timeout-ms=' + str(int(a.timeout * 1000)), str(chrome),
+                       '--timeout-ms=' + str(int(a.timeout * 1000)), '--desktop=macos', str(chrome), '--',
                        '--headless=new', '--no-sandbox', '--no-first-run', '--no-default-browser-check',
                        '--disable-background-networking', '--user-data-dir=Z:' + str(profile.resolve()),
                        '--dump-dom', 'file:///Z:' + str(page)]
