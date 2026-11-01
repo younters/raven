@@ -2,6 +2,7 @@
 """Check a native fault rejection in an isolated, provisioned engine process."""
 import argparse
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -25,6 +26,9 @@ r = subprocess.run([a.host, a.fixture, a.mode], env=dict(os.environ, RAVEN_FEX_M
                    capture_output=True, text=True, timeout=10)
 print(r.stdout, end='')
 print(r.stderr, end='', file=sys.stderr)
-if r.returncode != a.expected_exit or r.stderr != 'unhandled FEX native or unsupported fault\n':
+diagnostic = (rf'FEX native signal={a.expected_exit - 128} code=-?\d+ esr=[0-9a-f]+ '
+              r'pc=[0-9a-f]+ address=[0-9a-f]+ entry=(?:0x[0-9a-f]+|\(nil\)) jit=[01]\n'
+              r'unhandled FEX native or unsupported fault\n')
+if r.returncode != a.expected_exit or not re.fullmatch(diagnostic, r.stderr):
     sys.exit(f'FAIL: expected native fault rejection exit {a.expected_exit}, got {r.returncode}')
 print(f'PASS: native fault rejected with exit {a.expected_exit}')
