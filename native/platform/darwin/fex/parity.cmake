@@ -276,3 +276,22 @@ if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
         endforeach()
     endforeach()
 endif()
+if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
+    set(fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-retranslation64.exe)
+    add_fex_parity_fixture(${fixture} "${RAVEN_MINGW64}" raven_entry
+        ${RAVEN_DARWIN_DIR}/fex/retranslation_client.c)
+    add_custom_target(fex_retranslation64_fixture DEPENDS ${fixture})
+    add_dependencies(raven fex_retranslation64_fixture)
+    foreach(parallel 0 1)
+        add_test(NAME native_retranslation_fex_${parallel} COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/scripts/test-fex-retranslation.py --raven $<TARGET_FILE:raven>
+            --fixture ${fixture} --modules "${RAVEN_FEX_MODULE_ROOT}")
+        set_tests_properties(native_retranslation_fex_${parallel} PROPERTIES TIMEOUT 45
+            LABELS "fex;jit;smc")
+        if(parallel)
+            set_tests_properties(native_retranslation_fex_${parallel} PROPERTIES ENVIRONMENT "RAVEN_PARALLEL=1")
+        else()
+            set_tests_properties(native_retranslation_fex_${parallel} PROPERTIES ENVIRONMENT_MODIFICATION "RAVEN_PARALLEL=unset:")
+        endif()
+    endforeach()
+endif()

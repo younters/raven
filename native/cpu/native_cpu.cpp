@@ -1139,6 +1139,8 @@ bool NativeProcess::has_protection(uint64_t address, size_t size, int protection
 	return true;
 }
 
+void NativeProcess::flush_instruction_cache(uint64_t, size_t) {}
+
 void NativeProcess::protect_memory(uint64_t address, size_t size, int protection)
 {
 	state->trap_page.clear();

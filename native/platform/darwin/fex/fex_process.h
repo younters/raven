@@ -35,6 +35,7 @@ public:
 	uint64_t compare_exchange(uint64_t address, uint64_t expected, uint64_t desired, size_t size);
 	uint64_t map_memory(size_t size, int protection, uint64_t address);
 	void protect_memory(uint64_t address, size_t size, int protection);
+	void flush_instruction_cache(uint64_t address, size_t size);
 	bool has_protection(uint64_t address, size_t size, int protection) const;
 	void protect_image(uint64_t address, size_t size, int protection);
 	void unmap_memory(uint64_t address);

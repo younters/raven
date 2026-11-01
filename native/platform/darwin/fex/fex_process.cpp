@@ -527,6 +527,16 @@ FexProcess::~FexProcess()
         uint64_t args[8]{1, uintptr_t(values)};
         raven_ec_call(mapped_image->export_address("RavenCompileProfile"), args, thread_environment->teb.data());
         fprintf(stderr, "FEX compile: blocks=%llu ns=%llu\n", (unsigned long long)values[0], (unsigned long long)values[1]);
+        for (uint64_t mode : {2, 3}) for (uint64_t index = 0;; ++index) {
+            uint64_t record[4]{index};
+            uint64_t query[8]{mode, uintptr_t(record)};
+            raven_ec_call(mapped_image->export_address("RavenCompileProfile"), query, thread_environment->teb.data());
+            if (mode == 2 ? !record[1] : !record[3]) break;
+            if (mode == 2)
+                fprintf(stderr, "Raven profile pid=%d Raven translations page=%llx unique=%llu repeated=%llu recompiled=%llu\n", getpid(), (unsigned long long)record[0], (unsigned long long)record[1], (unsigned long long)record[2], (unsigned long long)record[3]);
+            else
+                fprintf(stderr, "Raven profile pid=%d Raven invalidation reason=%llu start=%llx size=%llu count=%llu\n", getpid(), (unsigned long long)record[0], (unsigned long long)record[1], (unsigned long long)record[2], (unsigned long long)record[3]);
+        }
     }
 	// Resident workers terminate their FEX thread before releasing private TLS.
 	state->workers.clear();
@@ -958,6 +968,13 @@ uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 	protect_memory(address, n, protection);
 	return address;
 }
+void FexProcess::flush_instruction_cache(uint64_t address, size_t size)
+{
+	if (address && !size) return;
+	if (address > UINT64_MAX - size) throw std::runtime_error("FEX flush range overflow");
+	uint64_t args[8]{address ? state->host(address, size) : 0, size};
+	raven_ec_call(mapped_image->export_address(wow64_module ? "BTCpuFlushInstructionCache2" : "BTCpu64FlushInstructionCache"), args, state->environment()->teb.data());
+}
 void FexProcess::protect_memory(uint64_t address, size_t size, int protection)
 {
 	if (!size || address % 4096 || size % 4096 || address > UINT64_MAX - size)
@@ -1055,7 +1072,7 @@ void FexProcess::map_image(LoadedImage &image)
 			auto end = std::find(bytes.begin() + name, bytes.end(), uint8_t(0));
 			if (end != bytes.end()) module.assign(reinterpret_cast<const char *>(bytes.data() + name), size_t(end - (bytes.begin() + name)));
 		}
-		fprintf(stderr, "Raven image base=%llx size=%zu module=%s\n", (unsigned long long)address, n, module.c_str());
+		fprintf(stderr, "Raven image pid=%d base=%llx size=%zu module=%s\n", getpid(), (unsigned long long)address, n, module.c_str());
 	}
 	for (size_t at = 0; at < n; at += 4096) state->pages[address + at] = PROT_NONE;
 	for (const auto &mapping : image.mappings())

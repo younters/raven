@@ -512,10 +512,23 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 		if (call[0])
 			thunks->free.push_back(call[0]);
 	});
-	// The guest runs as native code on a processor whose instruction cache follows stores, and nothing here caches translated code: a
-	// flush has nothing to do and succeeds.
-	registry.add("FlushInstructionCache", 3, [](ApiCall &call) { call.ret(1); });
-	registry.add("NtFlushInstructionCache", 3, [](ApiCall &call) { call.ret(0); });
+	// Wine ARM64EC forwards successful local flushes to the translator callback.
+	const auto flush = [&context](ApiCall &call, bool win32) {
+		if (call[0] != UINT64_MAX && !(call.pointer_width() == 4 && call[0] == UINT32_MAX)) {
+			if (win32) { call.set_last_error(6); call.ret(0); }
+			else call.ret(0xc0000008);
+			return;
+		}
+		if (call[1] > UINT64_MAX - call[2]) {
+			if (win32) { call.set_last_error(87); call.ret(0); }
+			else call.ret(0xc000000d);
+			return;
+		}
+		context.process.flush_instruction_cache(call[1], call[2]);
+		call.ret(win32 ? 1 : 0);
+	};
+	registry.add("FlushInstructionCache", 3, [flush](ApiCall &call) { flush(call, true); });
+	registry.add("NtFlushInstructionCache", 3, [flush](ApiCall &call) { flush(call, false); });
 	// SectionBasicInformation: the base address, the allocation attributes and the maximum size of the section.
 	// The PE headers of an image section's file: the machine, the subsystem and the rest SectionImageInformation reports.
 	const auto image_headers = [](const SectionObject &mapping) -> std::optional<std::vector<uint8_t>> {

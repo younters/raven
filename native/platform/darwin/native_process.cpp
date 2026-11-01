@@ -1211,6 +1211,11 @@ bool NativeProcess::has_protection(uint64_t address, size_t size, int protection
 	return true;
 }
 
+void NativeProcess::flush_instruction_cache(uint64_t address, size_t size)
+{
+	FEX_RETURN(flush_instruction_cache, address, size);
+}
+
 void NativeProcess::protect_memory(uint64_t address, size_t size, int protection)
 {
 	FEX_RETURN(protect_memory, address, size, protection);
