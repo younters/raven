@@ -116,6 +116,37 @@ int raven_entry(void) {
     invalid_debug.ContextFlags=CONTEXT_DEBUG_REGISTERS;
     invalid_debug.Dr7=0x20401; // I/O breakpoint encoding is privileged.
     CHECK(!SetThreadContext(thread,&invalid_debug) && GetLastError()==ERROR_INVALID_PARAMETER);
+    // A late unreadable FP group must not publish an earlier debug-register edit.
+    BYTE *transaction=VirtualAlloc(0,8192,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE);
+    CHECK(transaction);
+    DWORD prior;
+    CHECK(VirtualProtect(transaction+4096,4096,PAGE_NOACCESS,&prior));
+#ifdef _WIN64
+    CONTEXT *partial=(CONTEXT *)(transaction+4096-0x100);
+    partial->ContextFlags=CONTEXT_DEBUG_REGISTERS|CONTEXT_FLOATING_POINT;
+#else
+    CONTEXT *partial=(CONTEXT *)(transaction+4096-0xcc);
+    partial->ContextFlags=CONTEXT_DEBUG_REGISTERS|CONTEXT_EXTENDED_REGISTERS;
+#endif
+    partial->Dr0=0x55550000; partial->Dr7=0x401;
+    CHECK(!SetThreadContext(thread,partial));
+    back.ContextFlags=CONTEXT_DEBUG_REGISTERS;
+    CHECK(GetThreadContext(thread,&back));
+    CHECK(back.Dr0==ctx.Dr0 && back.Dr7==ctx.Dr7);
+    CHECK(VirtualFree(transaction,0,MEM_RELEASE));
+    // Test flags on a parked thread; restore before executing TF/DF/AC.
+    CONTEXT flags_test=ctx;
+    flags_test.ContextFlags=CONTEXT_CONTROL;
+    const DWORD user_flags=0x250541; // CF, ZF, TF, DF, RF, AC, ID
+    flags_test.EFlags|=user_flags;
+    CHECK(SetThreadContext(thread,&flags_test));
+    CHECK(GetThreadContext(thread,&flags_test));
+    CHECK((flags_test.EFlags&user_flags)==user_flags);
+    CHECK(SetThreadContext(thread,&ctx));
+    invalid_debug.Dr0=(DWORD_PTR)-1; invalid_debug.Dr7=0x401;
+#ifdef _WIN64
+    CHECK(!SetThreadContext(thread,&invalid_debug));
+#endif
     ctx.Dr0=0x12345000; ctx.Dr7=0x400;
     CHECK(SetThreadContext(thread,&ctx));
     CHECK(ntset(thread,&ctx)==0);
