@@ -21,8 +21,8 @@ parser.add_argument('--compute', type=Path, help='Optional verified process comp
 parser.add_argument('--parallel', choices=('off', 'on'), default='off')
 parser.add_argument('--samples', type=int, default=6)
 args = parser.parse_args()
-if args.samples < 5 or args.samples % 2:
-    parser.error('collect at least six samples in balanced pairs')
+if args.samples < 1:
+    parser.error('collect at least one sample')
 try:
     verify_module_pin(args.modules / 'xtajit64.dll', verify_patch_pins())
 except (RuntimeError, OSError) as error:

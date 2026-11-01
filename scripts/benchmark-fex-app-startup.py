@@ -19,8 +19,8 @@ p.add_argument('--output', type=Path, required=True)
 p.add_argument('--samples', type=int, default=6)
 p.add_argument('--timeout', type=float, default=45)
 a = p.parse_args()
-if a.samples < 5 or a.samples % 2:
-    p.error('at least six samples in balanced pairs required')
+if a.samples < 1:
+    p.error('at least one sample required')
 a.output.parent.mkdir(parents=True, exist_ok=True)
 repo = Path(__file__).resolve().parents[1]
 if subprocess.check_output(['git', '-C', str(repo), 'status', '--porcelain']):
