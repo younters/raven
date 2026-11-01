@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "xtajit64_sha256": "fc6e04e4065da6559080c1f0189e69d50fa050c5e9d9cbb56d2c808f045817cd",
-  "raven_process_init_rva": 28732,
+  "xtajit64_sha256": "8a57bc46cbfc3807f73f4ae702a959dad4e823fe73a08571dfc46561d99906bb",
+  "raven_process_init_rva": 28784,
   "patches": {
     "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
     "0002-raven-host-frontend.patch": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da",
@@ -27,10 +27,15 @@
     "0023-raven-x87-stack-and-rounding.patch": "af1c9d2d1bc56217a005c8bd63208df121ab9a31a0ec46822fb3975b4c22aaba",
     "0027-raven-wow64-unaligned-tso.patch": "a16a1a03ce322e2621dc84d8c7c5a924b668e79f5f6afd8fd5289a621f3c3aa6",
     "0028-raven-single-block-context.patch": "8eab717d368cad52ba40c925057a9bfd4cabe84b6127101a2e7724f565df784c",
-    "0029-raven-ymm-snapshots.patch": "4dabe825225cd0767ac2942984116b2e622659d1a0eb23b22ec13332e3a16fe6"
+    "0029-raven-ymm-snapshots.patch": "4dabe825225cd0767ac2942984116b2e622659d1a0eb23b22ec13332e3a16fe6",
+    "0050-raven-compile-timing.patch": "9d38ef52065af6b8c4ed26d0f7d490e2b51a6e400e7c670e15f036847601377f",
+    "0060-raven-retranslation-profile.patch": "f6eb04b83a6ec2522126419390d3edcfee43c6decf1446f68a0ee0607892f8e4",
+    "0061-raven-retain-immutable-translations.patch": "a33ced96ff2e8ecb1440e917d4889fe0b2615a2521eee963071ebdd01f10ea74",
+    "0062-raven-profile-records.patch": "ebc254f0503a74adbcc95cb48ffb71d7f51873de3af046061f57787adcaefdfc",
+    "0063-raven-shared-code-validation.patch": "9bc81740c9cca1b6f16d970d297bdef645499e4202581f5635bbf14b2ffefcf8"
   },
-  "xtajit_sha256": "a4dcb4a01c3ea03b360a71c8412c31fafb404bd5ae83142844e6a9f067695e70",
-  "raven_wow64_process_init_rva": 31132,
+  "xtajit_sha256": "3f88fbf281b14eb3eea3bd6817c65c32fa137d2d66d43c3a00aa44b60ceff214",
+  "raven_wow64_process_init_rva": 31180,
   "raven_wow64_process_init_instruction": 4162785278,
   "shared_patch12_xtajit_sha256": "5c785d47c43d8f2d0a444e82114ca731499b8a9e2ac408679b212db46c76bd6b",
   "host_abi_version": 2

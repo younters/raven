@@ -276,3 +276,58 @@ if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
         endforeach()
     endforeach()
 endif()
+if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
+    set(fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-retranslation64.exe)
+    add_fex_parity_fixture(${fixture} "${RAVEN_MINGW64}" raven_entry
+        ${RAVEN_DARWIN_DIR}/fex/retranslation_client.c)
+    add_custom_target(fex_retranslation64_fixture DEPENDS ${fixture})
+    add_dependencies(raven fex_retranslation64_fixture)
+    foreach(parallel 0 1)
+        add_test(NAME native_retranslation_fex_${parallel} COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/scripts/test-fex-retranslation.py --raven $<TARGET_FILE:raven>
+            --fixture ${fixture} --modules "${RAVEN_FEX_MODULE_ROOT}")
+        set_tests_properties(native_retranslation_fex_${parallel} PROPERTIES TIMEOUT 45
+            LABELS "fex;jit;smc")
+        if(parallel)
+            set_tests_properties(native_retranslation_fex_${parallel} PROPERTIES ENVIRONMENT "RAVEN_PARALLEL=1")
+        else()
+            set_tests_properties(native_retranslation_fex_${parallel} PROPERTIES ENVIRONMENT_MODIFICATION "RAVEN_PARALLEL=unset:")
+        endif()
+    endforeach()
+endif()
+if(RAVEN_FEX_MODHOST)
+    foreach(width 32 64)
+        set(compiler ${RAVEN_MINGW${width}})
+        if(NOT compiler)
+            continue()
+        endif()
+        set(entry raven_entry)
+        if(width EQUAL 32)
+            set(entry _raven_entry)
+        endif()
+        foreach(flush 0 1)
+            set(fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-alias-flush${width}-${flush}.exe)
+            add_custom_command(OUTPUT ${fixture}
+                COMMAND ${compiler} -O2 -nostdlib -fno-stack-protector -DALIAS_FLUSH=${flush}
+                    -Wl,--entry,${entry},--no-insert-timestamp
+                    -o ${fixture} ${RAVEN_DARWIN_DIR}/fex/alias_flush_client.c -lkernel32
+                DEPENDS ${RAVEN_DARWIN_DIR}/fex/alias_flush_client.c VERBATIM)
+            add_custom_target(fex_alias_flush${width}_${flush}_fixture DEPENDS ${fixture})
+            add_dependencies(raven fex_alias_flush${width}_${flush}_fixture)
+            foreach(parallel 0 1)
+                set(parallel_env)
+                if(parallel)
+                    list(APPEND parallel_env RAVEN_PARALLEL=1)
+                endif()
+                add_test(NAME native_alias_flush_x${width}_fex_${flush}_${parallel}
+                    COMMAND ${CMAKE_COMMAND} -E env --unset=RAVEN_PARALLEL
+                    ${parallel_env}
+                    ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+                    --raven $<TARGET_FILE:raven> --fixture ${fixture} --require-modules
+                    --modules "${RAVEN_FEX_MODULE_ROOT}" --timeout-ms 45000)
+                set_tests_properties(native_alias_flush_x${width}_fex_${flush}_${parallel}
+                    PROPERTIES TIMEOUT 65 LABELS "fex;smc;flush;shared")
+            endforeach()
+        endforeach()
+    endforeach()
+endif()

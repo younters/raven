@@ -1,0 +1,46 @@
+CTest lock acquired: final-serial-rerun
+Test project /Users/yount/.t3/worktrees/raven/t3-c067e4ec/build-perf
+      Start  264: native_parallel_lifecycle_x32
+ 1/13 Test  #264: native_parallel_lifecycle_x32 ............................   Passed    2.36 sec
+      Start  611: native_darwin_desktop_dpi_x64
+ 2/13 Test  #611: native_darwin_desktop_dpi_x64 ............................***Failed  Required regular expression not found. Regex=[Native entry returned 0
+]  0.25 sec
+Native entry returned 11 (process initialization not implemented)
+
+      Start  612: native_darwin_desktop_dpi_x32
+ 3/13 Test  #612: native_darwin_desktop_dpi_x32 ............................***Failed  Required regular expression not found. Regex=[Native entry returned 0
+]  0.46 sec
+Native entry returned 11 (process initialization not implemented)
+
+      Start  615: darwin_x87sidecar_correctness
+ 4/13 Test  #615: darwin_x87sidecar_correctness ............................   Passed    1.35 sec
+      Start  616: darwin_x87sidecar_fallback
+ 5/13 Test  #616: darwin_x87sidecar_fallback ...............................   Passed    4.28 sec
+      Start  617: darwin_x87sidecar_x64
+ 6/13 Test  #617: darwin_x87sidecar_x64 ....................................   Passed    1.29 sec
+      Start  618: darwin_x87sidecar_child
+ 7/13 Test  #618: darwin_x87sidecar_child ..................................   Passed    2.19 sec
+      Start  866: native_prefix_cleanup_2a5f05543babcf1a686555a3aac04198
+ 8/13 Test  #866: native_prefix_cleanup_2a5f05543babcf1a686555a3aac04198 ...   Passed    0.03 sec
+      Start  867: native_prefix_cleanup_4eec30e1cf857e54d3b6a5f6e8338034
+ 9/13 Test  #867: native_prefix_cleanup_4eec30e1cf857e54d3b6a5f6e8338034 ...   Passed    0.03 sec
+      Start  868: native_prefix_cleanup_4b36d7f130f29d85d21ea73c26db0d25
+10/13 Test  #868: native_prefix_cleanup_4b36d7f130f29d85d21ea73c26db0d25 ...   Passed    0.03 sec
+      Start  869: native_prefix_cleanup_040bc97c893a6d6aace61dc8f43fa7ba
+11/13 Test  #869: native_prefix_cleanup_040bc97c893a6d6aace61dc8f43fa7ba ...   Passed    0.03 sec
+      Start  958: native_prefix_cleanup_7d737524a24019254d5cf01b47f9de6d
+12/13 Test  #958: native_prefix_cleanup_7d737524a24019254d5cf01b47f9de6d ...   Passed    0.03 sec
+      Start 1279: native_prefix_cleanup_0ae3afc2a1262aad788c4a11083e0610
+13/13 Test #1279: native_prefix_cleanup_0ae3afc2a1262aad788c4a11083e0610 ...   Passed    0.03 sec
+
+85% tests passed, 2 tests failed out of 13
+
+Label Time Summary:
+prefix-cleanup    =   0.17 sec*proc (6 tests)
+
+Total Test time (real) =  12.39 sec
+
+The following tests FAILED:
+	611 - native_darwin_desktop_dpi_x64 (Failed)
+	612 - native_darwin_desktop_dpi_x32 (Failed)
+Errors while running CTest

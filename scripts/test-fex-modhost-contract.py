@@ -38,7 +38,7 @@ class Contract(unittest.TestCase):
         pins = verify_patch_pins()
         header = (REPO / 'native/platform/darwin/fex/modhost/module_contract.h').read_text()
         self.assertIn(f'0x{pins["raven_process_init_rva"]:x}', header)
-        self.assertEqual(pins['raven_wow64_process_init_rva'], 0x799c)
+        self.assertEqual(pins['raven_wow64_process_init_rva'], 0x79cc)
         self.assertEqual(pins['raven_wow64_process_init_instruction'], 0xf81f0ffe)
         self.assertIn(f'wow64_process_init_rva = 0x{pins["raven_wow64_process_init_rva"]:x}', header)
         self.assertIn(f'wow64_process_init_instruction = 0x{pins["raven_wow64_process_init_instruction"]:x}', header)

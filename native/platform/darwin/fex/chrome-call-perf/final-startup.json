@@ -1,0 +1,100 @@
+{
+  "source_head": "f6495f1b066895ec88aa28ca82249f17bd9e537f",
+  "scope": "one excluded warmup per engine/mode; balanced ABBA; launch to process-owned Notepad++ window plus successfully created Scintilla child; 50ms polling",
+  "raven_sha256": "ede91129f1e8ff453ea63433f766e5c4210f8f658f39a0bc163351f32fa9838b",
+  "module_sha256": "eb5453abe7a5f41a0fed0bdb501b5992fa3209660fcb248152516b30a0eafa0d",
+  "samples": [
+    {
+      "backend": "native",
+      "parallel": false,
+      "index": 0,
+      "command": [
+        "/Users/yount/.t3/worktrees/raven/t3-c067e4ec/build-perf/native/raven",
+        "--run-process",
+        "--execution=native",
+        "--timeout-ms=60000",
+        "--desktop=macos",
+        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-m5-startup-11zcw4em/False-0-native/notepad++.exe"
+      ],
+      "log": "/tmp/raven-perf-evidence/final-startup/npp-startup-0-native-0.log",
+      "startup_ms": 14617.462333990261,
+      "screenshot": "/tmp/raven-perf-evidence/final-startup/npp-startup-0-native-0.png",
+      "returncode_after_cleanup": -15
+    },
+    {
+      "backend": "fex",
+      "parallel": false,
+      "index": 0,
+      "command": [
+        "/Users/yount/.t3/worktrees/raven/t3-c067e4ec/build-perf/native/raven",
+        "--run-process",
+        "--execution=fex",
+        "--timeout-ms=60000",
+        "--desktop=macos",
+        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-m5-startup-11zcw4em/False-0-fex/notepad++.exe"
+      ],
+      "log": "/tmp/raven-perf-evidence/final-startup/npp-startup-0-fex-0.log",
+      "startup_ms": 10346.427333017346,
+      "screenshot": "/tmp/raven-perf-evidence/final-startup/npp-startup-0-fex-0.png",
+      "returncode_after_cleanup": -15
+    },
+    {
+      "backend": "native",
+      "parallel": true,
+      "index": 0,
+      "command": [
+        "/Users/yount/.t3/worktrees/raven/t3-c067e4ec/build-perf/native/raven",
+        "--run-process",
+        "--execution=native",
+        "--timeout-ms=60000",
+        "--desktop=macos",
+        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-m5-startup-11zcw4em/True-0-native/notepad++.exe"
+      ],
+      "log": "/tmp/raven-perf-evidence/final-startup/npp-startup-1-native-0.log",
+      "startup_ms": 26817.643082991708,
+      "screenshot": "/tmp/raven-perf-evidence/final-startup/npp-startup-1-native-0.png",
+      "returncode_after_cleanup": -15
+    },
+    {
+      "backend": "fex",
+      "parallel": true,
+      "index": 0,
+      "command": [
+        "/Users/yount/.t3/worktrees/raven/t3-c067e4ec/build-perf/native/raven",
+        "--run-process",
+        "--execution=fex",
+        "--timeout-ms=60000",
+        "--desktop=macos",
+        "/var/folders/6g/gpt817_95798kgc12czl6lrc0000gn/T/raven-m5-startup-11zcw4em/True-0-fex/notepad++.exe"
+      ],
+      "log": "/tmp/raven-perf-evidence/final-startup/npp-startup-1-fex-0.log",
+      "startup_ms": 22514.367333002156,
+      "screenshot": "/tmp/raven-perf-evidence/final-startup/npp-startup-1-fex-0.png",
+      "returncode_after_cleanup": -15
+    }
+  ],
+  "medians_ms": {
+    "native/0": 14617.462333990261,
+    "fex/0": 10346.427333017346,
+    "native/1": 26817.643082991708,
+    "fex/1": 22514.367333002156
+  },
+  "ranges_ms": {
+    "native/0": [
+      14617.462333990261,
+      14617.462333990261
+    ],
+    "fex/0": [
+      10346.427333017346,
+      10346.427333017346
+    ],
+    "native/1": [
+      26817.643082991708,
+      26817.643082991708
+    ],
+    "fex/1": [
+      22514.367333002156,
+      22514.367333002156
+    ]
+  }
+}

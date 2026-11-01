@@ -1,9 +1,14 @@
 foreach(width 64 32)
     set(compiler ${RAVEN_MINGW64})
     set(entry raven_entry)
+    set(compiler_base_flags)
     if(width EQUAL 32)
         set(compiler ${RAVEN_MINGW32})
         set(entry _raven_entry)
+        # This constant-return DLL has no relocations. MinGW's automatic base
+        # depends on the output path and can land in the x86 API-provider range
+        # starting at 0x70000000, making LoadLibrary fail in some build dirs.
+        set(compiler_base_flags -Wl,--image-base,0x30000000)
     endif()
     if(compiler)
         set(compiler_dir ${CMAKE_CURRENT_BINARY_DIR}/app-compiler${width})
@@ -12,7 +17,7 @@ foreach(width 64 32)
         add_custom_command(OUTPUT ${compiler_fixture} ${compiler_dll}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${compiler_dir}
             COMMAND ${compiler} -nostdlib -O1 -shared -DCOMPILER_DLL -Wl,--entry,0,--kill-at
-                -o ${compiler_dll} ${RAVEN_DARWIN_DIR}/tests/app_compiler.c
+                ${compiler_base_flags} -o ${compiler_dll} ${RAVEN_DARWIN_DIR}/tests/app_compiler.c
             COMMAND ${compiler} -nostdlib -O1 -Wl,--entry,${entry}
                 -o ${compiler_fixture} ${RAVEN_DARWIN_DIR}/tests/app_compiler.c -lkernel32
             DEPENDS ${RAVEN_DARWIN_DIR}/tests/app_compiler.c VERBATIM)

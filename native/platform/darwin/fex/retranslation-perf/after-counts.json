@@ -1,0 +1,526 @@
+{
+  "coverage": {
+    "timer_attempts": 2795270,
+    "captured_page_attempts": 2226103,
+    "unaccounted_attempts": 569167,
+    "complete": false,
+    "page_complete_process_count": 10,
+    "page_complete_totals": {
+      "unique": 1618822,
+      "repeated": 432512,
+      "recompiled": 350331
+    }
+  },
+  "totals": {
+    "unique": 1756458,
+    "repeated": 469645,
+    "recompiled": 382487
+  },
+  "classes": {
+    "image": {
+      "unique": 1756444,
+      "repeated": 469634,
+      "recompiled": 382479
+    },
+    "anonymous": {
+      "unique": 14,
+      "repeated": 11,
+      "recompiled": 8
+    }
+  },
+  "modules": {
+    "<anonymous>": {
+      "unique": 14,
+      "repeated": 11,
+      "recompiled": 8
+    },
+    "chrome.exe": {
+      "unique": 39266,
+      "repeated": 712,
+      "recompiled": 647
+    },
+    "chrome_elf.dll": {
+      "unique": 45908,
+      "repeated": 3519,
+      "recompiled": 2127
+    },
+    "raven-setupapi.dll": {
+      "unique": 48,
+      "repeated": 18,
+      "recompiled": 12
+    },
+    "raven-rtl.dll": {
+      "unique": 1767,
+      "repeated": 899,
+      "recompiled": 609
+    },
+    "oleaut32.dll": {
+      "unique": 96,
+      "repeated": 18,
+      "recompiled": 12
+    },
+    "raven-storage.dll": {
+      "unique": 12,
+      "repeated": 9,
+      "recompiled": 6
+    },
+    "comctl32.dll": {
+      "unique": 1083,
+      "repeated": 27,
+      "recompiled": 18
+    },
+    "raven-user32.dll": {
+      "unique": 369,
+      "repeated": 21,
+      "recompiled": 15
+    },
+    "raven-shell.dll": {
+      "unique": 385,
+      "repeated": 180,
+      "recompiled": 76
+    },
+    "raven-dwrite.dll": {
+      "unique": 1240,
+      "repeated": 612,
+      "recompiled": 431
+    },
+    "ucrtbase.dll": {
+      "unique": 212,
+      "repeated": 58,
+      "recompiled": 52
+    },
+    "chrome.dll": {
+      "unique": 1656502,
+      "repeated": 461401,
+      "recompiled": 377127
+    },
+    "kernel32.dll": {
+      "unique": 2303,
+      "repeated": 1090,
+      "recompiled": 704
+    },
+    "user32.dll": {
+      "unique": 165,
+      "repeated": 62,
+      "recompiled": 43
+    },
+    "advapi32.dll": {
+      "unique": 157,
+      "repeated": 79,
+      "recompiled": 35
+    },
+    "shell32.dll": {
+      "unique": 13,
+      "repeated": 5,
+      "recompiled": 3
+    },
+    "winmm.dll": {
+      "unique": 22,
+      "repeated": 20,
+      "recompiled": 20
+    },
+    "bcryptprimitives.dll": {
+      "unique": 10,
+      "repeated": 6,
+      "recompiled": 4
+    },
+    "ntdll.dll": {
+      "unique": 131,
+      "repeated": 42,
+      "recompiled": 25
+    },
+    "runtimeobject.dll": {
+      "unique": 15,
+      "repeated": 13,
+      "recompiled": 5
+    },
+    "ravenhost.dll": {
+      "unique": 13,
+      "repeated": 11,
+      "recompiled": 7
+    },
+    "ole32.dll": {
+      "unique": 19,
+      "repeated": 11,
+      "recompiled": 4
+    },
+    "raven-netlist.dll": {
+      "unique": 149,
+      "repeated": 4,
+      "recompiled": 4
+    },
+    "crypt32.dll": {
+      "unique": 6,
+      "repeated": 1,
+      "recompiled": 1
+    },
+    "ws2_32.dll": {
+      "unique": 27,
+      "repeated": 18,
+      "recompiled": 18
+    },
+    "iphlpapi.dll": {
+      "unique": 6,
+      "repeated": 1,
+      "recompiled": 1
+    },
+    "rpcrt4.dll": {
+      "unique": 4,
+      "repeated": 2,
+      "recompiled": 2
+    },
+    "chromecompaneros.dll": {
+      "unique": 1983,
+      "repeated": 777,
+      "recompiled": 456
+    },
+    "raven-uisettings.dll": {
+      "unique": 58,
+      "repeated": 1,
+      "recompiled": 1
+    },
+    "optimization_guide_internal.dll": {
+      "unique": 4430,
+      "repeated": 0,
+      "recompiled": 0
+    },
+    "gdi32.dll": {
+      "unique": 14,
+      "repeated": 4,
+      "recompiled": 4
+    },
+    "raven-audio.dll": {
+      "unique": 2,
+      "repeated": 0,
+      "recompiled": 0
+    },
+    "dwmapi.dll": {
+      "unique": 1,
+      "repeated": 0,
+      "recompiled": 0
+    },
+    "imm32.dll": {
+      "unique": 1,
+      "repeated": 0,
+      "recompiled": 0
+    },
+    "setupapi.dll": {
+      "unique": 3,
+      "repeated": 0,
+      "recompiled": 0
+    },
+    "shlwapi.dll": {
+      "unique": 2,
+      "repeated": 2,
+      "recompiled": 1
+    },
+    "uxtheme.dll": {
+      "unique": 2,
+      "repeated": 0,
+      "recompiled": 0
+    },
+    "version.dll": {
+      "unique": 3,
+      "repeated": 3,
+      "recompiled": 3
+    },
+    "ncrypt.dll": {
+      "unique": 1,
+      "repeated": 0,
+      "recompiled": 0
+    },
+    "netapi32.dll": {
+      "unique": 3,
+      "repeated": 1,
+      "recompiled": 1
+    },
+    "powrprof.dll": {
+      "unique": 1,
+      "repeated": 2,
+      "recompiled": 1
+    },
+    "pdh.dll": {
+      "unique": 1,
+      "repeated": 0,
+      "recompiled": 0
+    },
+    "secur32.dll": {
+      "unique": 1,
+      "repeated": 1,
+      "recompiled": 1
+    },
+    "shcore.dll": {
+      "unique": 2,
+      "repeated": 0,
+      "recompiled": 0
+    },
+    "userenv.dll": {
+      "unique": 3,
+      "repeated": 0,
+      "recompiled": 0
+    },
+    "winhttp.dll": {
+      "unique": 1,
+      "repeated": 2,
+      "recompiled": 1
+    },
+    "wtsapi32.dll": {
+      "unique": 3,
+      "repeated": 1,
+      "recompiled": 1
+    },
+    "oleacc.dll": {
+      "unique": 1,
+      "repeated": 1,
+      "recompiled": 1
+    }
+  },
+  "invalidations": {
+    "protection": 537401,
+    "free": 427,
+    "explicit-or-dirty": 270920,
+    "cache-clear": 7
+  },
+  "hottest_pages": [
+    [
+      "chrome.dll@10005a83000",
+      {
+        "unique": 1620,
+        "repeated": 1401,
+        "recompiled": 1062
+      }
+    ],
+    [
+      "chrome.dll@10003bac000",
+      {
+        "unique": 1568,
+        "repeated": 1182,
+        "recompiled": 885
+      }
+    ],
+    [
+      "chrome.dll@10004f77000",
+      {
+        "unique": 1539,
+        "repeated": 1058,
+        "recompiled": 762
+      }
+    ],
+    [
+      "chrome.dll@10004aa5000",
+      {
+        "unique": 788,
+        "repeated": 946,
+        "recompiled": 715
+      }
+    ],
+    [
+      "chrome.dll@1000144b000",
+      {
+        "unique": 952,
+        "repeated": 940,
+        "recompiled": 715
+      }
+    ],
+    [
+      "chrome.dll@100041cc000",
+      {
+        "unique": 1613,
+        "repeated": 930,
+        "recompiled": 772
+      }
+    ],
+    [
+      "chrome.dll@10003bb3000",
+      {
+        "unique": 1192,
+        "repeated": 913,
+        "recompiled": 728
+      }
+    ],
+    [
+      "chrome.dll@10004aa6000",
+      {
+        "unique": 798,
+        "repeated": 901,
+        "recompiled": 712
+      }
+    ],
+    [
+      "chrome.dll@10003bb5000",
+      {
+        "unique": 1369,
+        "repeated": 898,
+        "recompiled": 655
+      }
+    ],
+    [
+      "chrome.dll@10004f0a000",
+      {
+        "unique": 1212,
+        "repeated": 890,
+        "recompiled": 707
+      }
+    ],
+    [
+      "chrome.dll@100049ea000",
+      {
+        "unique": 1380,
+        "repeated": 883,
+        "recompiled": 638
+      }
+    ],
+    [
+      "chrome.dll@10005512000",
+      {
+        "unique": 1120,
+        "repeated": 868,
+        "recompiled": 653
+      }
+    ],
+    [
+      "chrome.dll@100040cb000",
+      {
+        "unique": 1057,
+        "repeated": 864,
+        "recompiled": 735
+      }
+    ],
+    [
+      "chrome.dll@10004adc000",
+      {
+        "unique": 1045,
+        "repeated": 860,
+        "recompiled": 656
+      }
+    ],
+    [
+      "chrome.dll@100041cb000",
+      {
+        "unique": 1480,
+        "repeated": 858,
+        "recompiled": 776
+      }
+    ],
+    [
+      "chrome.dll@10003f43000",
+      {
+        "unique": 1217,
+        "repeated": 856,
+        "recompiled": 691
+      }
+    ],
+    [
+      "chrome.dll@100041c8000",
+      {
+        "unique": 1533,
+        "repeated": 856,
+        "recompiled": 856
+      }
+    ],
+    [
+      "chrome.dll@100050f5000",
+      {
+        "unique": 1298,
+        "repeated": 856,
+        "recompiled": 671
+      }
+    ],
+    [
+      "chrome.dll@10003e26000",
+      {
+        "unique": 1088,
+        "repeated": 819,
+        "recompiled": 615
+      }
+    ],
+    [
+      "chrome.dll@1000440e000",
+      {
+        "unique": 1120,
+        "repeated": 815,
+        "recompiled": 619
+      }
+    ],
+    [
+      "chrome.dll@10004cbf000",
+      {
+        "unique": 1128,
+        "repeated": 786,
+        "recompiled": 566
+      }
+    ],
+    [
+      "chrome.dll@10004aa7000",
+      {
+        "unique": 603,
+        "repeated": 770,
+        "recompiled": 579
+      }
+    ],
+    [
+      "chrome.dll@10003e73000",
+      {
+        "unique": 818,
+        "repeated": 756,
+        "recompiled": 542
+      }
+    ],
+    [
+      "chrome.dll@100040cc000",
+      {
+        "unique": 984,
+        "repeated": 741,
+        "recompiled": 588
+      }
+    ],
+    [
+      "chrome.dll@10004bd4000",
+      {
+        "unique": 1406,
+        "repeated": 739,
+        "recompiled": 498
+      }
+    ],
+    [
+      "chrome.dll@100042b9000",
+      {
+        "unique": 1115,
+        "repeated": 728,
+        "recompiled": 620
+      }
+    ],
+    [
+      "chrome.dll@10003f59000",
+      {
+        "unique": 1179,
+        "repeated": 725,
+        "recompiled": 634
+      }
+    ],
+    [
+      "chrome.dll@10003baf000",
+      {
+        "unique": 1199,
+        "repeated": 714,
+        "recompiled": 607
+      }
+    ],
+    [
+      "chrome.dll@10004cc0000",
+      {
+        "unique": 1100,
+        "repeated": 709,
+        "recompiled": 510
+      }
+    ],
+    [
+      "chrome.dll@10003f6f000",
+      {
+        "unique": 1046,
+        "repeated": 691,
+        "recompiled": 531
+      }
+    ]
+  ]
+}

@@ -1,0 +1,77 @@
+FEX main image claimed inside image_pool
+FEX main image claimed inside image_pool
+FEX main image claimed inside image_pool
+FEX main image claimed inside image_pool
+FEX main image claimed inside image_pool
+FEX main image claimed inside image_pool
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX main image claimed inside image_pool
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+info:  Failed to set Metal cache path, fallback to system default
+[76811:46:1031/211942.366:ERROR:check.cc(376)] Check failed: false. NOTREACHED log messages are omitted in official builds. Sorry!
+[76811:1:1031/211942.625:ERROR:network_change_notifier_win.cc(268)] WSALookupServiceBegin failed with: 10108
+[76811:42:1031/211943.324:ERROR:dns_config_service_win.cc(525)] DNS registry watch failed to start.
+[76811:42:1031/211943.365:ERROR:dns_config_service_win.cc(545)] DNS hosts watch failed to start.
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX main image claimed inside image_pool
+raven: missing PE module: msvcr120.dll
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+raven: missing PE module: sdl2.dll (all unresolved: SDL2.dll!SDL_GL_SetSwapInterval SDL2.dll!SDL_GL_SetAttribute SDL2.dll!SDL_GL_CreateContext SDL2.dll!SDL_GetError SDL2.dll!SDL_GL_SwapWindow SDL2.dll!SDL_CreateWindow SDL2.dll!SDL_GetWindowSize SDL2.dll!SDL_GL_LoadLibrary SDL2.dll!SDL_Init SDL2.dll!SDL_Quit SDL2.dll!SDL_GL_GetProcAddress VCRUNTIME140.dll!_except_handler4_common VCRUNTIME140.dll!memset VCRUNTIME140.dll!strstr)
+machine=0xaa64 sections=7 image_size=4030464 DIR64_relocations=18932
+auxiliary_iat_writes=0
+resolved=128
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+raven: missing PE export: vulkan-1.dll!vkCmdBuildAccelerationStructuresKHR
+[76900:1:1031/211945.452:ERROR:mf_initializer.cc(32)] Failed to start Media Foundation, accelerated media functionality may be disabled. If you're using Windows N, see https://support.microsoft.com/en-us/topic/media-feature-pack-for-windows-10-n-may-2020-ebbdf559-b84c-0fc2-bd51-e23c9f6a4439 for information on how to install the Media Feature Pack. Error: Could not load mf.dll: The specified module could not be found. (0x7E)
+info:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1
+info:  Using feature level D3D_FEATURE_LEVEL_11_1
+[76900:46:1031/211946.866:ERROR:check.cc(376)] Check failed: false. NOTREACHED log messages are omitted in official builds. Sorry!
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
