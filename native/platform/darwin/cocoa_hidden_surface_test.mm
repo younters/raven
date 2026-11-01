@@ -63,6 +63,26 @@ int main(int argc, char **argv)
 			ui.owned_popup(4, 3, 0, 0, 40, 30, pixels);
 			check(ui.host_surface(4, 4, 0, 0, 40, 30, true)->surface == popup->surface,
 				"showing an owned popup replaced its Vulkan layer");
+			// A popup can acquire a regular host before its owner is presented.
+			// Conversion in either direction must retain the swap chain's layer
+			// and its already submitted contents, without another GPU Present.
+			ui.present(4, "Popup before owner", 40, 30, pixels);
+			check(ui.host_surface(4, 4, 0, 0, 40, 30, true)->surface == popup->surface,
+				"converting a popup to a regular host replaced its layer");
+			CAMetalLayer *popup_layer = (__bridge CAMetalLayer *)popup->surface;
+			CALayer *submitted = [CALayer layer];
+			submitted.backgroundColor = NSColor.greenColor.CGColor;
+			submitted.frame = CGRectMake(0, 0, 40, 30);
+			[popup_layer addSublayer:submitted];
+			ui.owned_popup(4, 3, 0, 0, 40, 30, pixels);
+			check(ui.host_surface(4, 4, 0, 0, 40, 30, true)->surface == popup->surface &&
+				submitted.superlayer == popup_layer,
+				"converting a regular host to an owned popup lost the submitted image");
+			NSView *popup_view = nil;
+			for (NSWindow *window in NSApp.windows)
+				for (NSView *view in window.contentView.subviews)
+					if (view.layer == popup_layer) popup_view = view;
+			check(popup_view && popup_view.superview, "converted popup layer was not reattached to its host");
 			const auto hosted_child = ui.host_surface(3, 31, 1, 2, 10, 12, true);
             CAMetalLayer *child_layer = (__bridge CAMetalLayer *)hosted_child->surface;
             NSView *child_view = nil;

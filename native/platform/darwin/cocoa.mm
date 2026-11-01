@@ -1370,7 +1370,9 @@ struct CocoaPresentation::State {
 			if (!owner)
 				throw std::runtime_error("macOS popup has no presented parent window");
 			if (Surface *existing = surface(handle); existing && (!existing->popup || existing->parent != parent || existing->close_posted))
-				forget(handle);
+				// Replacing the host window must preserve the layer referenced by an
+				// existing swap chain, just as the popup-to-regular transition does.
+				forget(handle, true);
 			Surface *target = surface(handle);
 			if (!target) {
 				auto created = std::make_unique<Surface>();
