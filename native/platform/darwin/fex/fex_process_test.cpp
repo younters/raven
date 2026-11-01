@@ -258,6 +258,11 @@ int main(int argc, char **argv)
 			throw std::runtime_error("malformed served stub was silently skipped");
 		}
 		if (mode == "internal") asm volatile("brk #0");
+        unsigned samples = 0;
+        if (mode == "timeout") process.set_guest_sampler(std::chrono::milliseconds(3), [&](uint64_t rip) {
+            check(rip == loaded.base() + image.entry, "sampled RIP imprecise");
+            ++samples;
+        });
 		auto result = process.call(loaded.base() + image.entry, {}, std::chrono::milliseconds(mode == "timeout" ? 20 : 5000));
 		if (mode == "debug-print") {
 			check(result.stop == raven::NativeStop::fault && result.signal == SIGSEGV && result.signal_code == 0x80 && result.value == 1,
@@ -317,6 +322,8 @@ int main(int argc, char **argv)
 			result = process.call(address, {});
 		} else if (mode == "timeout") {
 			check(result.stop == raven::NativeStop::timeout, "doorbell failed to interrupt guest loop");
+            check(samples > 0, "timed guest execution produced no samples");
+            process.set_guest_sampler(std::chrono::milliseconds(0), {});
 			auto context = process.context();
 			check(context.registers.rip == loaded.base() + image.entry, "doorbell RIP imprecise");
 			context.registers.rip += 2; context.registers.rax = 42;
