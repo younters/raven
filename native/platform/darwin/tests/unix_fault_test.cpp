@@ -6,12 +6,15 @@
 #include <cstring>
 #include <sys/mman.h>
 #include <dlfcn.h>
+#include <spawn.h>
+#include <sys/wait.h>
+extern char **environ;
 
 struct Request { uint64_t gate, handle, args; uint32_t code; };
 struct Args { uint64_t pointer, length; uint32_t mode, observed; };
 static void require(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
 int main(int argc, char **argv) {
-    if (argc != 7) return 2;
+    if (argc != 7 && argc != 8) return 2;
     try {
         raven::select_fex_execution(std::string(argv[6]) == "fex");
         const bool x86 = std::string(argv[4]) == "32";
@@ -69,13 +72,24 @@ int main(int argc, char **argv) {
             const uint64_t logger[5]{};
             process.write_memory(data, {reinterpret_cast<const uint8_t *>(logger), sizeof logger});
             require(invoke(data, 0) == 0, "mtld3d logger initialization failed");
-            // The logger must not replace Raven's signal handler. Release an
-            // invalid opaque native object to exercise a real native fault.
-            const uint64_t object = 1;
-            write(memory + 1024, object);
-            const uint64_t destroy[] = {0, memory + 1024, 1};
-            process.write_memory(data, {reinterpret_cast<const uint8_t *>(destroy), sizeof destroy});
-            require(invoke(data, 9) == av, "mtld3d native fault escaped after logger initialization");
+            if (argc == 8) {
+                // objc_release is outside the unix image. A declined fault there
+                // must terminate rather than skip foreign runtime lock frames.
+                const uint64_t object = 1;
+                write(memory + 1024, object);
+                const uint64_t destroy[] = {0, memory + 1024, 1};
+                process.write_memory(data, {reinterpret_cast<const uint8_t *>(destroy), sizeof destroy});
+                invoke(data, 9);
+                throw std::runtime_error("foreign objc_release fault was incorrectly recovered");
+            }
+            char *child_args[9]{};
+            for (unsigned i=0;i<7;++i) child_args[i]=argv[i];
+            child_args[7]=const_cast<char *>("--foreign-release");
+            pid_t child;
+            require(!posix_spawn(&child,argv[0],nullptr,nullptr,child_args,environ), "cannot spawn foreign-fault control");
+            int status=0;
+            require(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==139,
+                "foreign runtime fault did not terminate diagnostically");
         }
         require(invoke(1, code) == av, "bad top-level pointer was accepted");
         require(invoke(memory + 16384 - 8, code) == av, "partial argument block was accepted");
