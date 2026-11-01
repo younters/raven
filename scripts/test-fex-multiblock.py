@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify the qualified host DLL actually sets CONFIG_MULTIBLOCK(0) to \"0\".
 
-RVA evidence: llvm-objdump ProcessInit, shared 0029 module. Changed code must
+RVA evidence: llvm-objdump ProcessInit, private 0050 module. Changed code must
 be requalified deliberately rather than accepting only source patch presence.
 """
 import struct
@@ -20,13 +20,13 @@ def verify(data):
         raise RuntimeError('multiblock code RVA missing')
     # adrp x1, 0x180229000; add x1,x1,#0x96; mov w0,wzr;
     # mov w2,#1; bl FEXCore::Config::Set (option 0, string_view("0",1)).
-    if read(0x675c,20) != bytes.fromhex('011100f021580291e0031f2a220080527a160694') or read(0x229096,2)!=b'0\0':
+    if read(0x675c,20) != bytes.fromhex('011100f021580291e0031f2a220080529d160694') or read(0x229096,2)!=b'0\0':
         raise RuntimeError('qualified CONFIG_MULTIBLOCK=0 machine code missing; requalify module')
 
 data=Path(sys.argv[1]).read_bytes()
 verify(data)
 # Negative control: replacing the only matching call must be rejected.
-mutated=data.replace(bytes.fromhex('011100f021580291e0031f2a220080527a160694'), b'\0'*20)
+mutated=data.replace(bytes.fromhex('011100f021580291e0031f2a220080529d160694'), b'\0'*20)
 try:
     verify(mutated)
 except RuntimeError:
