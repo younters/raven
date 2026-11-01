@@ -98,6 +98,27 @@ static void render(HWND window) {
 	check(visual->SetOffsetY(20.0f), 14);
 	check(target->SetRoot(visual), 15);
 	check(composition->Commit(), 16);
+	IDXGISwapChain1 *owner_swap = nullptr;
+	IDCompositionTarget *owner_target = nullptr;
+	IDCompositionVisual2 *owner_visual = nullptr;
+	if (argument(L"--popup-transition")) {
+		// The owner is GPU-hosted too, with deliberately different pixels.
+		check(factory->CreateSwapChainForComposition(device, &desc, nullptr, &owner_swap), 102);
+		check(desktop->CreateTargetForHwnd(GetWindow(window, GW_OWNER), TRUE, &owner_target), 103);
+		check(composition->CreateVisual(&owner_visual), 104);
+		check(owner_visual->SetContent(owner_swap), 105);
+		check(owner_target->SetRoot(owner_visual), 106);
+		check(composition->Commit(), 107);
+		ID3D11Texture2D *texture = nullptr;
+		ID3D11RenderTargetView *rtv = nullptr;
+		check(owner_swap->GetBuffer(0, __uuidof(ID3D11Texture2D), (void **)&texture), 108);
+		check(device->CreateRenderTargetView(texture, nullptr, &rtv), 109);
+		const float red[] = {1, 0, 0, 1};
+		context->ClearRenderTargetView(rtv, red);
+		check(owner_swap->Present(0, 0), 110);
+		rtv->Release();
+		texture->Release();
+	}
 	check(composition->WaitForCommitCompletion(), 91);
 	DCOMPOSITION_FRAME_STATISTICS stats{};
 	LARGE_INTEGER before, after, frequency;
@@ -170,6 +191,21 @@ static void render(HWND window) {
 		Sleep(25);
 	}
 	stage('1');
+	if (argument(L"--popup-transition")) {
+		// Keep the submitted image while the HWND loses and regains its owner.
+		// No new Present or Commit may be needed to recover the popup's pixels.
+		HWND owner = GetWindow(window, GW_OWNER);
+		SetWindowLongPtrW(window, GWLP_HWNDPARENT, 0);
+		InvalidateRect(window, nullptr, FALSE);
+		UpdateWindow(window);
+		pump();
+		Sleep(100);
+		SetWindowLongPtrW(window, GWLP_HWNDPARENT, (LONG_PTR)owner);
+		InvalidateRect(window, nullptr, FALSE);
+		UpdateWindow(window);
+		pump();
+		Sleep(100);
+	}
 	check(visual->SetOffsetX(80.0f), 23);
 	check(visual->SetOffsetY(60.0f), 24);
 	stage('2'); // Setters must not change the committed visual.
@@ -244,6 +280,9 @@ static void render(HWND window) {
 		DestroyWindow(next);
 	}
 	red_view->Release();
+	if (owner_target) owner_target->Release();
+	if (owner_visual) owner_visual->Release();
+	if (owner_swap) owner_swap->Release();
 	red_back->Release();
 	view->Release();
 	back->Release();

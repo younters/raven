@@ -42,11 +42,14 @@ def main():
     work.mkdir(parents=True)
     prefix = work / 'prefix'
     env = os.environ | {'RAVEN_PREFIX': str(prefix), 'RAVEN_DXMT_ROOT': str(root), 'RAVEN_TRACE_DXMT': '1'}
-    command = [str(raven), '--run-process', '--execution=native', '--timeout-ms=45000', '--desktop=macos', str(program)]
+    engine = 'fex' if kind.endswith('-fex') else 'native'
+    command = [str(raven), '--run-process', '--execution=' + engine, '--timeout-ms=60000', '--desktop=macos', str(program)]
     if foreign or hidpi or kind.startswith('popup'):
         command += ['--']
     if kind.startswith('popup'):
         command += ['--popup']
+    if kind.startswith('popup-transition'):
+        command += ['--popup-transition']
     if foreign:
         command += ['--foreign']
     if hidpi:

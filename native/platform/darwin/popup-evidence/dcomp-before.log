@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/Users/yount/.t3/worktrees/raven/t3-7445c9a9/native/platform/darwin/tests/run_dcomp.py", line 191, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "/Users/yount/.t3/worktrees/raven/t3-7445c9a9/native/platform/darwin/tests/run_dcomp.py", line 124, in main
+    raise RuntimeError(f'expected pixels did not arrive at stage {stage}: {box}')
+RuntimeError: expected pixels did not arrive at stage 2: None
