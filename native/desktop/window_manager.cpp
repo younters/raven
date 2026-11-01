@@ -494,7 +494,8 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		const uint64_t target = message_only ? 0 : call[1];
 		if (!window) {
 			const auto foreign=foreign_window_info(call[0]);
-			if (!foreign || call[0]==target || (target&&!objects.window(target)&&!foreign_window_info(target))) { call.fail(1400);return; }
+			// The update a window's own process applies carries no message-only state.
+			if (!foreign || message_only || call[0]==target || (target&&!objects.window(target)&&!foreign_window_info(target))) { call.fail(1400);return; }
 			if (window_under(call[0],target,local_parent)) { call.fail(87);return; }
 			ForeignWindowUpdate update{};update.mask=1;update.parent=target;
 			if (!request_window_update(call[0],update)) {call.fail(1400);return;}
