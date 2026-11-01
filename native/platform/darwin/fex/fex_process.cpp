@@ -653,6 +653,12 @@ NativeContext FexProcess::context() const
 	r.es = *reinterpret_cast<uint16_t *>(p+0x3c); r.fs = *reinterpret_cast<uint16_t *>(p+0x3e);
 	r.gs = *reinterpret_cast<uint16_t *>(p+0x40); r.ss = *reinterpret_cast<uint16_t *>(p+0x42);
 	result.xstate.assign(p + 0x100, p + 0x300);
+	// The public legacy CONTEXT packet has no YMM upper halves. Keep them in
+	// the internal XSAVE-shaped snapshot so cooperative threads cannot share
+	// the translator's otherwise persistent high-vector state.
+	result.xstate.resize(832);
+	uint64_t vector_args[8]{uintptr_t(result.xstate.data() + 576)};
+	raven_ec_call(mapped_image->export_address("RavenGetYmmHigh"), vector_args, state->environment()->teb.data());
 	return result;
 }
 void FexProcess::set_context(const NativeContext &value)
@@ -692,8 +698,8 @@ void FexProcess::set_context(const NativeContext &value)
 	state->teb = r.gs_base;
 	guest_teb = state->teb ? reinterpret_cast<void *>(state->teb) : nullptr;
 	RavenFault::execution_teb = guest_teb;
-	if (!value.xstate.empty() && value.xstate.size() != 512)
-		throw std::runtime_error("FEX requires a 512-byte legacy floating-point packet");
+	if (!value.xstate.empty() && value.xstate.size() != 512 && value.xstate.size() != 832)
+		throw std::runtime_error("FEX requires a legacy or YMM floating-point packet");
 	const uint64_t registers[]{r.rax, r.rcx, r.rdx, r.rbx, r.rsp, r.rbp, r.rsi, r.rdi,
 		r.r8, r.r9, r.r10, r.r11, r.r12, r.r13, r.r14, r.r15, r.rip};
 	auto *p = state->environment()->context.data();
@@ -703,6 +709,10 @@ void FexProcess::set_context(const NativeContext &value)
     const uint16_t segments[]{uint16_t(r.cs),uint16_t(r.ds),uint16_t(r.es),uint16_t(r.fs),uint16_t(r.gs),uint16_t(r.ss)};
     memcpy(p+0x38,segments,sizeof segments);
 	if (!value.xstate.empty()) { memcpy(p + 0x100, value.xstate.data(), 512); memcpy(p + 0x34, value.xstate.data()+24, 4); }
+	if (value.xstate.size() == 832) {
+		uint64_t vector_args[8]{uintptr_t(value.xstate.data() + 576)};
+		raven_ec_call(mapped_image->export_address("RavenSetYmmHigh"), vector_args, state->environment()->teb.data());
+	}
 }
 NativeResult run_fex_entry(const PEImage &image, LoadedImage &loaded, const std::string &root)
 {

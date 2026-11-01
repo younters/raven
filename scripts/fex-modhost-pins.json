@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "xtajit64_sha256": "73d4d781cd705ace3c6c298c9b3d19dece1f0a9aa2e1960dbef9bf8646b5c2a2",
-  "raven_process_init_rva": 28248,
+  "xtajit64_sha256": "fc6e04e4065da6559080c1f0189e69d50fa050c5e9d9cbb56d2c808f045817cd",
+  "raven_process_init_rva": 28732,
   "patches": {
     "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
     "0002-raven-host-frontend.patch": "0c563d763f0da7b442f9e1639fca29a703ff08a55ead3bd0808c0965751e98da",
@@ -25,7 +25,9 @@
     "0021-raven-context-mxcsr-segments.patch": "6f196f33dcdbd48e3699fe34275e9e8111ce4c4cafd1b6154c38053a14366863",
     "0022-raven-conditional-loop-suspend.patch": "f9d985464f6d00f55b11517dcf3cd848f98b661d95d1de3b365454d855173c22",
     "0023-raven-x87-stack-and-rounding.patch": "af1c9d2d1bc56217a005c8bd63208df121ab9a31a0ec46822fb3975b4c22aaba",
-    "0027-raven-wow64-unaligned-tso.patch": "a16a1a03ce322e2621dc84d8c7c5a924b668e79f5f6afd8fd5289a621f3c3aa6"
+    "0027-raven-wow64-unaligned-tso.patch": "a16a1a03ce322e2621dc84d8c7c5a924b668e79f5f6afd8fd5289a621f3c3aa6",
+    "0028-raven-single-block-context.patch": "8eab717d368cad52ba40c925057a9bfd4cabe84b6127101a2e7724f565df784c",
+    "0029-raven-ymm-snapshots.patch": "4dabe825225cd0767ac2942984116b2e622659d1a0eb23b22ec13332e3a16fe6"
   },
   "xtajit_sha256": "a4dcb4a01c3ea03b360a71c8412c31fafb404bd5ae83142844e6a9f067695e70",
   "raven_wow64_process_init_rva": 31132,

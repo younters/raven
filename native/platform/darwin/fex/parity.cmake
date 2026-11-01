@@ -221,3 +221,58 @@ if(RAVEN_FEX_MODHOST)
         endforeach()
     endforeach()
 endif()
+
+if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
+    set(decommit_fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-decommit.exe)
+    add_fex_parity_fixture(${decommit_fixture} "${RAVEN_MINGW64}" raven_entry
+        ${RAVEN_DARWIN_DIR}/fex/decommit_client.c)
+    add_custom_target(fex_decommit_fixture DEPENDS ${decommit_fixture})
+    add_dependencies(raven fex_decommit_fixture)
+    foreach(engine native fex)
+        add_test(NAME native_decommit_mixed_${engine} COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py --require-modules --backend ${engine}
+            --raven $<TARGET_FILE:raven> --fixture ${decommit_fixture}
+            --modules "${RAVEN_FEX_MODULE_ROOT}")
+        set_tests_properties(native_decommit_mixed_${engine} PROPERTIES TIMEOUT 30
+            LABELS "engine-parity;memory")
+    endforeach()
+endif()
+
+if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
+    set(loop_fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-loop-context.exe)
+    add_fex_parity_fixture(${loop_fixture} "${RAVEN_MINGW64}" raven_entry
+        ${RAVEN_DARWIN_DIR}/fex/loop_context_client.c)
+    add_custom_target(fex_loop_context_fixture DEPENDS ${loop_fixture})
+    add_dependencies(raven fex_loop_context_fixture)
+    foreach(engine native fex)
+        add_test(NAME native_loop_context_${engine} COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py --require-modules --backend ${engine}
+            --raven $<TARGET_FILE:raven> --fixture ${loop_fixture}
+            --modules "${RAVEN_FEX_MODULE_ROOT}" --timeout-ms 40000)
+        set_tests_properties(native_loop_context_${engine} PROPERTIES TIMEOUT 60
+            LABELS "engine-parity;context")
+    endforeach()
+endif()
+
+if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
+    set(ymm_fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-ymm-snapshot.exe)
+    add_fex_parity_fixture(${ymm_fixture} "${RAVEN_MINGW64}" raven_entry
+        ${RAVEN_DARWIN_DIR}/fex/ymm_snapshot_client.c)
+    add_custom_target(fex_ymm_snapshot_fixture DEPENDS ${ymm_fixture})
+    add_dependencies(raven fex_ymm_snapshot_fixture)
+    foreach(engine native fex)
+        foreach(parallel 0 1)
+            add_test(NAME native_ymm_snapshot_${engine}_${parallel} COMMAND raven
+                --run-process --execution=${engine} --timeout-ms=40000 ${ymm_fixture})
+            set_tests_properties(native_ymm_snapshot_${engine}_${parallel} PROPERTIES
+                TIMEOUT 60 SKIP_RETURN_CODE 77 LABELS "engine-parity;context")
+            if(parallel)
+                set_tests_properties(native_ymm_snapshot_${engine}_${parallel} PROPERTIES
+                    ENVIRONMENT "RAVEN_PARALLEL=1")
+            else()
+                set_tests_properties(native_ymm_snapshot_${engine}_${parallel} PROPERTIES
+                    ENVIRONMENT_MODIFICATION "RAVEN_PARALLEL=unset:")
+            endif()
+        endforeach()
+    endforeach()
+endif()
