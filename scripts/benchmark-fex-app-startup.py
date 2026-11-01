@@ -18,9 +18,10 @@ p.add_argument('--modules', type=Path, required=True)
 p.add_argument('--output', type=Path, required=True)
 p.add_argument('--samples', type=int, default=6)
 p.add_argument('--timeout', type=float, default=45)
+p.add_argument("--smoke", action="store_true", help="Allow 1–3 samples; exploratory timing only")
 a = p.parse_args()
-if a.samples < 1:
-    p.error('at least one sample required')
+if not (1 <= a.samples <= 3 if a.smoke else a.samples >= 6 and a.samples % 2 == 0):
+    p.error('at least six samples in balanced pairs required')
 a.output.parent.mkdir(parents=True, exist_ok=True)
 repo = Path(__file__).resolve().parents[1]
 if subprocess.check_output(['git', '-C', str(repo), 'status', '--porcelain']):
@@ -44,7 +45,7 @@ for w in windows where (w[kCGWindowOwnerPID as String] as? Int) == pid && (w[kCG
     probe = root / 'windows'
     subprocess.run(['swiftc', str(source), '-o', str(probe)], check=True)
     for parallel in (False, True):
-        for index in range(-1, a.samples):
+        for index in range(0 if a.smoke else -1, a.samples):
             for backend in (('native', 'fex') if index % 2 == 0 else ('fex', 'native')):
                 case = root / f'{parallel}-{index}-{backend}'
                 subprocess.run(['cp', '-cR', str(a.fixture), str(case)], check=True)

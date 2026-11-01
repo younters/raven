@@ -20,9 +20,10 @@ parser.add_argument('--output', type=Path, required=True)
 parser.add_argument('--compute', type=Path, help='Optional verified process compute PE')
 parser.add_argument('--parallel', choices=('off', 'on'), default='off')
 parser.add_argument('--samples', type=int, default=6)
+parser.add_argument("--smoke", action="store_true", help="Allow 1–3 samples; exploratory timing only")
 args = parser.parse_args()
-if args.samples < 1:
-    parser.error('collect at least one sample')
+if not (1 <= args.samples <= 3 if args.smoke else args.samples >= 6 and args.samples % 2 == 0):
+    parser.error('collect at least six samples in balanced pairs')
 try:
     verify_module_pin(args.modules / 'xtajit64.dll', verify_patch_pins())
 except (RuntimeError, OSError) as error:
@@ -47,7 +48,7 @@ fixtures['compute'] = args.compute or args.build / 'native/darwin-parallel-bench
 for name, fixture in fixtures.items():
     record = dict(fixture=str(fixture), sha256=sha(fixture), native=[], fex=[])
     result['fixtures'][name] = record
-    for sample in range(-1, args.samples):
+    for sample in range(0 if args.smoke else -1, args.samples):
         for backend in (('native', 'fex') if sample % 2 == 0 else ('fex', 'native')):
             command = [str(raven), '--run-process', '--execution=' + backend,
                        '--timeout-ms=15000', str(fixture)]
