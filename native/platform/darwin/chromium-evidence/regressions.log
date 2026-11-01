@@ -1,0 +1,68 @@
+CTest lock acquired: chromium-final-regressions
+Test project /Users/yount/.t3/worktrees/raven/t3-f2979cdf/build-chromium
+      Start  127: native_dwrite
+ 1/19 Test  #127: native_dwrite ............................................***Failed  Required regular expression not found. Regex=[Native entry returned 0 
+]  0.42 sec
+Native entry returned 28 (process initialization not implemented)
+
+      Start  345: native_x86_dwrite
+ 2/19 Test  #345: native_x86_dwrite ........................................***Failed  Required regular expression not found. Regex=[Native entry returned 0 
+]  0.97 sec
+Native entry returned 28 (process initialization not implemented)
+
+      Start  407: native_shared-offset_fex
+ 3/19 Test  #407: native_shared-offset_fex .................................   Passed    0.03 sec
+      Start  510: darwin_gdi_foreign_present_native
+ 4/19 Test  #510: darwin_gdi_foreign_present_native ........................   Passed    0.23 sec
+      Start  511: darwin_gdi_foreign_present_fex
+ 5/19 Test  #511: darwin_gdi_foreign_present_fex ...........................   Passed    0.22 sec
+      Start  527: darwin_dcomp_foreign-hidpi
+ 6/19 Test  #527: darwin_dcomp_foreign-hidpi ...............................   Passed    4.59 sec
+      Start  544: darwin_dxmt_window_fex
+ 7/19 Test  #544: darwin_dxmt_window_fex ...................................   Passed   27.72 sec
+      Start  609: native_darwin_desktop_dpi_x64
+ 8/19 Test  #609: native_darwin_desktop_dpi_x64 ............................***Failed  Required regular expression not found. Regex=[Native entry returned 0 
+]  0.36 sec
+Native entry returned 11 (process initialization not implemented)
+
+      Start  610: native_darwin_desktop_dpi_x32
+ 9/19 Test  #610: native_darwin_desktop_dpi_x32 ............................***Failed  Required regular expression not found. Regex=[Native entry returned 0 
+]  0.50 sec
+Native entry returned 11 (process initialization not implemented)
+
+      Start  752: darwin_mullion_window12_native
+10/19 Test  #752: darwin_mullion_window12_native ...........................   Passed   36.39 sec
+      Start  783: native_prefix_cleanup_9c011be2e82d76cfceeabcb4d6dafdc8
+11/19 Test  #783: native_prefix_cleanup_9c011be2e82d76cfceeabcb4d6dafdc8 ...   Passed    0.02 sec
+      Start  831: native_prefix_cleanup_61cc546559a756badf2adc953902f2b2
+12/19 Test  #831: native_prefix_cleanup_61cc546559a756badf2adc953902f2b2 ...   Passed    0.01 sec
+      Start  834: native_prefix_cleanup_0a213a1a12bf07e3bf69180fb7a7d3a7
+13/19 Test  #834: native_prefix_cleanup_0a213a1a12bf07e3bf69180fb7a7d3a7 ...   Passed    0.05 sec
+      Start  835: native_prefix_cleanup_e24de884264ce175a820e0ca19e1ba64
+14/19 Test  #835: native_prefix_cleanup_e24de884264ce175a820e0ca19e1ba64 ...   Passed    0.04 sec
+      Start  847: native_prefix_cleanup_c9bfc572087f6d54a30bfbf81c694906
+15/19 Test  #847: native_prefix_cleanup_c9bfc572087f6d54a30bfbf81c694906 ...   Passed    0.01 sec
+      Start  954: native_prefix_cleanup_3c5f9f9e5f259d9ff3b4cb039224453a
+16/19 Test  #954: native_prefix_cleanup_3c5f9f9e5f259d9ff3b4cb039224453a ...   Passed    0.03 sec
+      Start 1032: native_prefix_cleanup_2d7cf26b8eb1a9a29584cf5c397ccece
+17/19 Test #1032: native_prefix_cleanup_2d7cf26b8eb1a9a29584cf5c397ccece ...   Passed    0.04 sec
+      Start 1403: native_prefix_cleanup_2199d62cc067ddb6742dd1303befa2e4
+18/19 Test #1403: native_prefix_cleanup_2199d62cc067ddb6742dd1303befa2e4 ...   Passed    0.01 sec
+      Start 1501: native_prefix_cleanup_828e6a86942f15e5ad1cc50d8973ef2e
+19/19 Test #1501: native_prefix_cleanup_828e6a86942f15e5ad1cc50d8973ef2e ...   Passed    0.04 sec
+
+79% tests passed, 4 tests failed out of 19
+
+Label Time Summary:
+fex               =   0.03 sec*proc (1 test)
+m2                =   0.03 sec*proc (1 test)
+prefix-cleanup    =   0.23 sec*proc (9 tests)
+
+Total Test time (real) =  71.68 sec
+
+The following tests FAILED:
+	127 - native_dwrite (Failed)
+	345 - native_x86_dwrite (Failed)
+	609 - native_darwin_desktop_dpi_x64 (Failed)
+	610 - native_darwin_desktop_dpi_x32 (Failed)
+Errors while running CTest

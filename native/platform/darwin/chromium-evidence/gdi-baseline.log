@@ -1,0 +1,11 @@
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+raven: FEX shared mapping offset must be host-page aligned
+GDI producer ended before publishing its frame

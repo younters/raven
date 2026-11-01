@@ -8,6 +8,8 @@
 #include <iterator>
 #include <stdexcept>
 #include <sys/mman.h>
+#include <cstdio>
+#include <unistd.h>
 
 static void check(bool value, const char *message)
 {
@@ -121,7 +123,7 @@ int main(int argc, char **argv)
 		} else if (mode == "breakpoint") {
 			loaded.data()[image.entry] = 0xcc;
 			loaded.data()[image.entry + 1] = 0xc3;
-		} else check(mode == "sparse-reservation" || mode == "entry" || mode == "lifetime" || mode == "served-malformed" || mode == "teb-switch", "unknown mode");
+		} else check(mode == "shared-offset" || mode == "sparse-reservation" || mode == "entry" || mode == "lifetime" || mode == "served-malformed" || mode == "teb-switch", "unknown mode");
 		raven::LoadedImage *images[]{&loaded};
 		if (mode == "lifetime") {
 			auto second_rejected = [&] {
@@ -143,6 +145,32 @@ int main(int argc, char **argv)
 			return 0;
 		}
 		raven::FexProcess process(images, root);
+		if (mode == "shared-offset") {
+			const auto file = std::unique_ptr<FILE, decltype(&fclose)>(std::tmpfile(), fclose);
+			check(bool(file), "cannot create shared view fixture");
+			const int fd = fileno(file.get());
+			check(ftruncate(fd, 65536) == 0, "cannot size shared view fixture");
+			for (const uint64_t offset : {4096, 8192, 12288, 16384}) {
+				const uint8_t marker = uint8_t(offset / 4096);
+				check(pwrite(fd, &marker, 1, off_t(offset)) == 1, "cannot seed shared pixels");
+				const auto address = process.map_shared(fd, 20000, offset);
+				check(process.read_memory(address, 1)[0] == marker, "shared view included preceding header");
+				if (offset % 16384) {
+					bool hidden = false;
+					try { process.read_memory(address - 4096, 1); } catch (const std::exception &) { hidden = true; }
+					check(hidden, "shared view exposed preceding file header to guest reads");
+				}
+				const uint8_t changed = uint8_t(marker + 10);
+				process.write_memory(address + 19999, std::span(&changed, 1));
+				uint8_t observed = 0;
+				check(pread(fd, &observed, 1, off_t(offset + 19999)) == 1 && observed == changed,
+					"guest shared writes did not reach the backing file");
+				process.unmap_memory(address);
+				check(!process.has_protection(address, 4096, PROT_READ | PROT_WRITE), "shared view survived teardown");
+			}
+			std::cout << "PASS: shared Windows page offsets and teardown\n";
+			return 0;
+		}
         if (mode == "vector-context") {
             auto packet=process.context();
             check(packet.xstate.size()==832, "YMM snapshot size");
