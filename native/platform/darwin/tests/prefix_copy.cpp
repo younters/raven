@@ -3,6 +3,7 @@
 #include <fstream>
 #include <cassert>
 #include <unistd.h>
+#include <sys/resource.h>
 int main() {
     namespace fs=std::filesystem;
     char name[]="/tmp/raven-prefix-copy-XXXXXX";
@@ -26,6 +27,13 @@ int main() {
     assert(fs::file_size(copy)==17);
     fs::permissions(file,fs::perms::owner_write,fs::perm_options::add);
     std::ofstream(file)<<"third";
+    // Exhaust descriptors to fail mkstemp independently of root permissions.
+    struct rlimit saved, limited;
+    assert(!getrlimit(RLIMIT_NOFILE,&saved)); limited=saved; limited.rlim_cur=0;
+    assert(!setrlimit(RLIMIT_NOFILE,&limited));
+    prefix.place_runtime_components(source);
+    assert(!setrlimit(RLIMIT_NOFILE,&saved));
+    assert(fs::file_size(copy)==17);
     // Rename over a nonempty directory fails even for root, after copying.
     fs::remove(copy); fs::create_directory(copy);
     std::ofstream(copy/"keep")<<"existing";
