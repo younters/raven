@@ -90,6 +90,10 @@ interface probe {
     records = []
 
     def run(command, cwd=None):
+        # GCC 14 and later make pointer mismatches errors; upstream's own components still carry some (ULONG * for unsigned int *),
+        # so they stay warnings for every MinGW compile, as for the ReactOS sources below.
+        if str(command[0]).endswith("-gcc"):
+            command = [command[0], "-Wno-error=incompatible-pointer-types", *command[1:]]
         result = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
         records.append(dict(command=[str(part) for part in command], returncode=result.returncode))
         if result.returncode:
@@ -522,7 +526,7 @@ interface probe {
          "-o", output / "urlmon.dll", *urlmon_objects, output / "urlmon.def", "-luuid", "-lole32", "-loleaut32", "-lshlwapi", "-ladvapi32", "-lwininet", "-luser32", "-lshell32", "-lkernel32", "-lgcc"])
     # riched20.dll: Raven's own rich edit control, with the type library of its text object model that its resources carry.
     own_riched = repo / "native/upstream/raven-riched20"
-    run([*widl, "-t", "-T", generated / "tom_library.tlb", own_riched / "tom_library.idl"])
+    run([*widl, "-L", generated, "-t", "-T", generated / "tom_library.tlb", own_riched / "tom_library.idl"])
     run([triple + "-windres", "-I", generated, own_riched / "resources.rc", "-o", objects / "riched20.res.o"])
     riched_objects = [objects / "riched20.res.o"]
     for path in [*sorted(own_riched.glob("*.c")), repo / "native/upstream/raven-comctl32/crt.c"]:
