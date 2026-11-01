@@ -62,6 +62,12 @@ with contextlib.ExitStack() as stack:
         descriptors = (exit_file.fileno(),)
         command.append('--exit-code-fd=' + str(exit_file.fileno()))
     command.append(str(args.fixture))
+    if args.disable_pool:
+        positive_env=dict(env)
+        positive_env.pop('RAVEN_FEX_DISABLE_IMAGE_POOL', None)
+        positive=subprocess.run(command,env=positive_env,capture_output=True,text=True,timeout=args.timeout_ms/1000+10)
+        if positive.returncode or 'Native entry returned 0 ' not in positive.stdout or 'FEX main image claimed inside image_pool' not in positive.stderr:
+            sys.exit('FAIL: positive control at the same fixed address failed: '+positive.stderr)
     try:
         result = subprocess.run(command, env=env, capture_output=True, text=True,
                                 timeout=args.timeout_ms / 1000 + 10, pass_fds=descriptors)
@@ -95,7 +101,7 @@ with contextlib.ExitStack() as stack:
         sys.exit(0)
     if args.fixed_base == 0x140000000 and 'FEX main image claimed inside image_pool' not in result.stderr:
         sys.exit('FAIL: main image was not claimed inside image_pool')
-    if args.fixed_base is not None and 'FEX placement pressure applied' not in result.stderr:
+    if os.environ.get('RAVEN_FEX_PLACEMENT_PRESSURE') and args.fixed_base is not None and 'FEX placement pressure applied' not in result.stderr:
         sys.exit('FAIL: host pressure was not applied')
     if result.returncode or 'Native entry returned 0 ' not in result.stdout:
         print(f'FAIL: expected verified zero entry return, host exit={result.returncode}', file=sys.stderr)

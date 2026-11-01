@@ -57,10 +57,8 @@ static void reserve_main_image(int argc, char **argv)
         std::fprintf(stderr, "raven: FEX early image reservation failed at %llx\n", (unsigned long long)base);
         std::exit(1);
     }
-#ifdef RAVEN_FEX_PLACEMENT_TEST_HOOKS
-    if (base >= pool && base - pool < 0x100000000ULL && size <= 0x100000000ULL - (base - pool))
+    if (fex_image_pool_claimed(base))
         std::fprintf(stderr, "FEX main image claimed inside image_pool\n");
-#endif
 }
 
 void launch_fex_host(int argc, char **argv)
