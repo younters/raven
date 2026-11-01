@@ -1,0 +1,14 @@
+<!doctype html><title>JS waiting</title><body><script>
+function work() {
+  const start = performance.now();
+  let primes = 0;
+  for (let n = 2; n < 3000000; n++) { let prime = true; for (let d = 2; d * d <= n; d++) if (n % d === 0) { prime = false; break; } if (prime) primes++; }
+  const items = []; for (let i = 0; i < 400000; i++) items.push({key: (i * 7919) % 100003, text: "item" + i});
+  items.sort((a, b) => a.key - b.key);
+  let text = ""; for (let i = 0; i < 200000; i++) text += String.fromCharCode(65 + i % 26);
+  const json = JSON.stringify(items.slice(0, 50000)); JSON.parse(json);
+  const result = {milliseconds: performance.now() - start, primes, length: text.length, items: items.length};
+  document.body.textContent = 'RAVEN_BENCH_RESULT=' + JSON.stringify(result);
+}
+work();
+</script>
