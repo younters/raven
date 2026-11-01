@@ -20,10 +20,10 @@ REVISION = "dacf2a6c47fa562799f9c8a41ab6d5c558556558"
 ARCHIVE_SHA256 = "5373bbbb60541cb2a49e0acb53360e1218d4f5d56c31f9187b341b9fc16daa69"
 PREFIXES = ("sdk/include/", "sdk/lib/pseh/", "sdk/tools/hpp/", "sdk/tools/spec2def/", "sdk/lib/3rdparty/zlib/", "sdk/lib/3rdparty/libwine/",
             "dll/win32/msi/",
-            "base/system/msiexec/", "dll/win32/rpcrt4/", "sdk/lib/3rdparty/libxml2/", "sdk/lib/3rdparty/libwin-iconv/", "dll/3rdparty/libxslt/",
+            "base/system/msiexec/", "sdk/lib/3rdparty/libxml2/", "sdk/lib/3rdparty/libwin-iconv/", "dll/3rdparty/libxslt/",
             "dll/win32/stdole2.tlb/",
             "dll/3rdparty/libpng/", "dll/3rdparty/libjpeg/", "dll/3rdparty/libtiff/",
-            "dll/win32/windowscodecs/", "dll/win32/gdiplus/", "sdk/lib/getopt/", "dll/win32/riched20/", "dll/win32/msvfw32/", "dll/win32/setupapi/", "dll/win32/kernel32/wine/lzexpand.c")
+            "sdk/lib/getopt/", "dll/win32/setupapi/", "dll/win32/kernel32/wine/lzexpand.c")
 # Interface headers the installer sources include, generated from the public IDL files with what they import.
 IDLS = ("objidlbase", "commoncontrols", "fusion", "msxml2", "oaidl", "ocidl", "objidl", "unknwn", "wtypes", "propidl", "urlmon", "shobjidl", "servprov", "docobj", "oleidl",
         "exdisp", "activscp", "shldisp", "mshtml", "xmldom", "imnact", "msctf", "shtypes", "oleacc", "comcat", "mscoree", "wincodec", "dispex",
@@ -248,26 +248,21 @@ interface probe {
                                            (("CreateAssemblyCache", 8), ("CreateAssemblyNameObject", 16), ("SxsLookupClrGuid", 24), ("SxspGenerateManifestPathOnAssemblyIdentity", 16))))
     run([triple + "-dlltool", *(["-k"] if x86 else []), "-d", output / "sxs_import.def", "-l", output / "libsxs.a"])
     compile(support / "support.c", "installer_support")
-    # rpcrt4.dll: remote procedure calls, which the installer's custom action server speaks over local pipes, with the NDR engine.
-    rpc_root = source / "dll/win32/rpcrt4"
-    run([*widl, "-I", rpc_root, "-c", "-C", generated / "epm_c.c", "-h", "-H", generated / "epm_c.h", rpc_root / "epm.idl"])
-    run([*widl, "-I", rpc_root, "-Oicf", "-p", "-P", generated / "ndr_types_p.c", "-h", "-H", generated / "ndr_types.h", rpc_root / "ndr_types.idl"])
-    run([*widl, "--dlldata-only", "--dlldata=" + str(generated / "proxy.dlldata.c"), "ndr_types"])
-    run([output / "spec2def", spec_arch, "-n=rpcrt4.dll", "-d=" + str(output / "rpcrt4.def"), "-s=" + str(generated / "rpcrt4_stubs.c"), rpc_root / "rpcrt4.spec"])
-    # Define the proxy registration exports locally instead of importing a namesake from ole32.
-    # The resource registrar uses its image base; rpcrt4_main remains the library entry point.
-    rpc_flags = ["-D_RPCRT4_", "-DWINE_REGISTER_DLL", "-DCOM_NO_WINDOWS_H", "-D_CRT_NON_CONFORMING_SWPRINTFS", "-DMSWMSG", "-I" + str(rpc_root)]
-    rpc_sources = [rpc_root / name for name in ("cproxy.c", "cpsf.c", "cstub.c", "ndr_clientserver.c", "ndr_contexthandle.c", "ndr_es.c",
-                   "ndr_fullpointer.c", "ndr_marshall.c", "ndr_ole.c", "ndr_stubless.c", "ros_extra.c", "rpc_assoc.c", "rpc_async.c", "rpc_binding.c",
-                   "rpc_epmap.c", "rpc_message.c", "rpcrt4_main.c", "rpc_server.c", "rpc_transport.c", "thunks.c", "unix_func.c", "ndr_typelib.c")] + [
-                   generated / name for name in ("epm_c.c", "ndr_types_p.c", "proxy.dlldata.c", "rpcrt4_stubs.c")]
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        rpc = list(pool.map(lambda path: compile(path, "rpcrt4_" + path.stem.replace(".", "_"),
-                                                [*rpc_flags, *(["-DDllMain=rpcrt4_proxy_DllMain"] if path.name == "proxy.dlldata.c" else [])]), rpc_sources))
-    rpc.append(compile(source / "sdk/lib/3rdparty/libwine/register.c", "rpcrt4_register", ["-I" + str(rpc_root)]))
-    link("rpcrt4.dll", bases["rpcrt4"], [*rpc, objects / "installer_support.o", *debug], output / "rpcrt4.def",
-         [*[f"-l{library}" for library in ("advapi32", "ws2_32", "iphlpapi", "wininet", "secur32", "user32", "ole32", "oleaut32", "msvcrt",
-          "kernel32", "ntdll", "uuid", "gcc", "kernel32", "msvcrt")]], output / "librpcrt4.a")
+    # rpcrt4.dll: Raven's own remote procedure calls, which the installer's custom action server speaks over local pipes.
+    own_rpc = repo / "native/upstream/raven-rpcrt4"
+    rpc_objects = []
+    for path in [*sorted(own_rpc.glob("*.c")), repo / "native/upstream/raven-comctl32/crt.c"]:
+        target = objects / ("rpcrt4_" + path.stem + ".o")
+        run([triple + "-gcc", "-c", "-O2", "-std=gnu11", "-fno-builtin", "-D_WIN32_WINNT=0x601", "-DUNICODE", "-D_UNICODE", "-DCOBJMACROS", "-D_RPCRT4_", "-I" + str(own_rpc), "-o", target, path])
+        rpc_objects.append(target)
+    rpc_exports = (own_rpc / "exports.txt").read_text()
+    (output / "rpcrt4.def").write_text("LIBRARY rpcrt4.dll\nEXPORTS\n" + rpc_exports)
+    run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{'_DllMain@12' if x86 else 'DllMain'},--image-base,{bases['rpcrt4']:#x},--no-insert-timestamp,--enable-stdcall-fixup", *link_extra,
+         "-o", output / "rpcrt4.dll", *rpc_objects, output / "rpcrt4.def", "-lole32", "-loleaut32", "-luuid", "-luser32", "-ladvapi32", "-lkernel32", "-lntdll", "-lgcc"])
+    rpc_defined = decorated(rpc_objects)
+    (output / "rpcrt4_import.def").write_text("LIBRARY rpcrt4.dll\nEXPORTS\n" + "".join(
+        f" {name}{'' if rpc_defined.get(name) is None else '@' + str(rpc_defined[name])}\n" for name in (line.split()[0] for line in rpc_exports.splitlines() if line.strip()) if "PRIVATE" not in name))
+    run([triple + "-dlltool", *(["-k"] if x86 else []), "-d", output / "rpcrt4_import.def", "-l", output / "librpcrt4.a"])
     # msi.dll: the Windows Installer engine, its SQL and condition grammars, and the RPC stubs of its custom action server.
     msi_root = source / "dll/win32/msi"
     run(["bison", "-o", generated / "cond.tab.c", "-d", msi_root / "cond.y"])
@@ -468,25 +463,43 @@ interface probe {
                         for word in line.split()[-1:] if word.lstrip("_").split("@")[0] in wanted})
     (output / "mlang_import.def").write_text("LIBRARY mlang.dll\nEXPORTS\n" + "".join(f" {name}\n" for name in mlang_names))
     run([triple + "-dlltool", *(["-k"] if x86 else []), "-d", output / "mlang_import.def", "-l", output / "libmlang.a"])
-    # windowscodecs.dll: the imaging component; its interfaces' proxies register through a script widl writes from the IDL.
-    codecs_root = source / "dll/win32/windowscodecs"
-    codecs_widl = [*widl, "-I", codecs_root]
-    run([*codecs_widl, "-h", "-H", generated / "windowscodecs_wincodec.h", codecs_root / "windowscodecs_wincodec.idl"])
-    run([*codecs_widl, "-p", "-P", generated / "windowscodecs_wincodec_p.c", codecs_root / "windowscodecs_wincodec.idl"])
-    run([*codecs_widl, "-r", "-o", generated / "windowscodecs_wincodec_r.rgs", codecs_root / "windowscodecs_wincodec.idl"])
-    run([*widl, "--dlldata-only", "--dlldata=" + str(generated / "windowscodecs_dlldata.c"), "windowscodecs_wincodec"])
-    (generated / "windowscodecs_r.rc").write_text("1 WINE_REGISTRY windowscodecs_wincodec_r.rgs\n")
-    run([triple + "-windres", "--preprocessor=" + str(wrapper), "-O", "coff", "-D__REACTOS__", "-D__WINESRC__", "-D_M_IX86" if x86 else "-D_M_AMD64",
-         "-I" + str(generated), "-i", generated / "windowscodecs_r.rc", "-o", objects / "windowscodecs_r.res.o"])
-    codecs_flags = ["-DENTRY_PREFIX=WIC_", "-DPROXY_DELEGATION", "-DWINE_REGISTER_DLL", "-I" + str(libs / "libpng"), "-I" + str(libs / "libjpeg"),
-                    "-I" + str(libs / "libtiff"), "-I" + str(zlib_include)]
-    library("windowscodecs.dll", codecs_root, codecs_flags, ["libjpeg", "libpng", "libtiff", "ole32", "oleaut32", "rpcrt4", "shlwapi", "user32", "gdi32",
-            "advapi32", "propsys"], sources=[*listed_sources(codecs_root), codecs_root / "bitmap.c", codecs_root / "guid.c",
-            generated / "windowscodecs_wincodec_p.c", generated / "windowscodecs_dlldata.c"], objects_more=[objects / "windowscodecs_r.res.o"],
-            helpers=("register.c",), rc="version.rc")
-    gdiplus_root = source / "dll/win32/gdiplus"
-    library("gdiplus.dll", gdiplus_root, ["-D_USE_MATH_DEFINES", "-U_WIN32_WINNT", "-D_WIN32_WINNT=0x601", "-UWINVER", "-DWINVER=0x601"], ["mlang", "shlwapi", "oleaut32", "ole32", "user32", "gdi32", "windowscodecs"],
-            sources=[*listed_sources(gdiplus_root), gdiplus_root / "guid.c"], rc="gdiplus.rc")
+    # windowscodecs.dll: Raven's own imaging component; JPEG and TIFF go through the libraries built above, named by path so
+    # no export of the component can resolve to one of the installer's own import libraries.
+    own_codecs = repo / "native/upstream/raven-windowscodecs"
+    codecs_objects = []
+    for path in [*sorted(own_codecs.glob("*.c")), repo / "native/upstream/raven-comctl32/crt.c"]:
+        target = objects / ("codecs_" + path.stem + ".o")
+        run([triple + "-gcc", "-c", "-O2", "-std=gnu11", "-fno-builtin", "-D_WIN32_WINNT=0x601", "-DUNICODE", "-D_CRTIMP=", "-DCOBJMACROS", "-I" + str(own_codecs),
+             "-I" + str(libs / "libjpeg"), "-I" + str(libs / "libtiff"), "-w", path, "-o", target])
+        codecs_objects.append(target)
+    codecs_exports = (own_codecs / "exports.txt").read_text()
+    (output / "windowscodecs.def").write_text("LIBRARY windowscodecs.dll\nEXPORTS\n" + codecs_exports)
+    next_base[0] -= 0x400000 if x86 else 0x4000000
+    run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{'_DllMain@12' if x86 else 'DllMain'},--image-base,{next_base[0]:#x},--no-insert-timestamp,--enable-stdcall-fixup", *link_extra,
+         "-o", output / "windowscodecs.dll", *codecs_objects, output / "windowscodecs.def", output / "liblibjpeg.a", output / "liblibtiff.a", "-lole32", "-loleaut32", "-luuid", "-ladvapi32",
+         "-lgdi32", "-luser32", "-lkernel32", "-lgcc"])
+    codecs_defined = decorated(codecs_objects)
+    codecs_names = [line.split()[0].partition("=")[0] for line in codecs_exports.splitlines() if line.strip()]
+    (output / "windowscodecs_import.def").write_text("LIBRARY windowscodecs.dll\nEXPORTS\n" + "".join(
+        f" {name}{'@' + str(codecs_defined[name]) if x86 and codecs_defined.get(name) is not None else ''}\n" for name in codecs_names))
+    run([triple + "-dlltool", *(["-k"] if x86 else []), "-d", output / "windowscodecs_import.def", "-l", output / "libwindowscodecs.a"])
+    # gdiplus.dll: Raven's own drawing library, which reads and writes pictures through the imaging component.
+    own_gdiplus = repo / "native/upstream/raven-gdiplus"
+    gdiplus_objects = []
+    for path in [*sorted(own_gdiplus.glob("*.c")), repo / "native/upstream/raven-comctl32/crt.c"]:
+        target = objects / ("gdiplus_" + path.stem + ".o")
+        run([triple + "-gcc", "-c", "-O2", "-std=gnu11", "-fno-builtin", "-D_WIN32_WINNT=0x601", "-DUNICODE", "-D_UNICODE", "-DCOBJMACROS", "-D_CRTIMP=", "-I" + str(own_gdiplus), path, "-o", target])
+        gdiplus_objects.append(target)
+    gdiplus_exports = (own_gdiplus / "exports.txt").read_text()
+    (output / "gdiplus.def").write_text("LIBRARY gdiplus.dll\nEXPORTS\n" + gdiplus_exports)
+    next_base[0] -= 0x400000 if x86 else 0x4000000
+    run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{'_DllMain@12' if x86 else 'DllMain'},--image-base,{next_base[0]:#x},--no-insert-timestamp,--enable-stdcall-fixup", *link_extra,
+         "-o", output / "gdiplus.dll", *gdiplus_objects, output / "gdiplus.def", "-lole32", "-loleaut32", "-lshlwapi", "-luuid", "-luser32", "-lgdi32", "-lkernel32", "-ladvapi32", "-lgcc"])
+    gdiplus_defined = decorated(gdiplus_objects)
+    gdiplus_names = [line.strip() for line in gdiplus_exports.splitlines() if line.strip()]
+    (output / "gdiplus_import.def").write_text("LIBRARY gdiplus.dll\nEXPORTS\n" + "".join(
+        f" {name}{'@' + str(gdiplus_defined[name]) if x86 and gdiplus_defined.get(name) is not None else ''}\n" for name in gdiplus_names))
+    run([triple + "-dlltool", *(["-k"] if x86 else []), "-d", output / "gdiplus_import.def", "-l", output / "libgdiplus.a"])
     # urlmon.dll: Raven's own. Ordinals without a name are the ones old callers import by.
     own_urlmon = repo / "native/upstream/raven-urlmon"
     urlmon_objects = []
@@ -507,10 +520,22 @@ interface probe {
     next_base[0] -= 0x400000 if x86 else 0x4000000
     run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{'_DllMain@12' if x86 else 'DllMain'},--image-base,{next_base[0]:#x},--no-insert-timestamp", *link_extra,
          "-o", output / "urlmon.dll", *urlmon_objects, output / "urlmon.def", "-luuid", "-lole32", "-loleaut32", "-lshlwapi", "-ladvapi32", "-lwininet", "-luser32", "-lshell32", "-lkernel32", "-lgcc"])
-    # riched20.dll: the rich edit control, with the type library of its text object model that its resources carry.
-    riched_root = source / "dll/win32/riched20"
-    run([*widl, "-I", riched_root, "-L", generated, "-t", "-T", generated / "riched_tom.tlb", riched_root / "riched_tom.idl"])
-    library("riched20.dll", riched_root, [], ["ole32", "oleaut32", "usp10", "imm32", "user32", "gdi32"], rc="version.rc")
+    # riched20.dll: Raven's own rich edit control, with the type library of its text object model that its resources carry.
+    own_riched = repo / "native/upstream/raven-riched20"
+    run([*widl, "-t", "-T", generated / "tom_library.tlb", own_riched / "tom_library.idl"])
+    run([triple + "-windres", "-I", generated, own_riched / "resources.rc", "-o", objects / "riched20.res.o"])
+    riched_objects = [objects / "riched20.res.o"]
+    for path in [*sorted(own_riched.glob("*.c")), repo / "native/upstream/raven-comctl32/crt.c"]:
+        target = objects / ("riched20_" + path.stem + ".o")
+        run([triple + "-gcc", "-c", "-O2", "-std=gnu11", "-fno-builtin", "-D_WIN32_WINNT=0x601", "-DUNICODE", "-D_UNICODE", "-DCOBJMACROS", "-D_CRTIMP=", "-I" + str(own_riched), path, "-o", target])
+        riched_objects.append(target)
+    riched_exports = (own_riched / "exports.txt").read_text()
+    (output / "riched20.def").write_text("LIBRARY riched20.dll\nEXPORTS\n" + riched_exports)
+    next_base[0] -= 0x400000 if x86 else 0x4000000
+    run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{'_DllMain@12' if x86 else 'DllMain'},--image-base,{next_base[0]:#x},--no-insert-timestamp,--enable-stdcall-fixup", *link_extra,
+         "-o", output / "riched20.dll", *riched_objects, output / "riched20.def", "-lole32", "-loleaut32", "-luuid", "-luser32", "-lgdi32", "-lkernel32", "-lgcc"])
+    (output / "riched20_import.def").write_text("LIBRARY riched20.dll\nEXPORTS\n" + (" CreateTextServices@12\n" if x86 else " CreateTextServices\n"))
+    run([triple + "-dlltool", *(["-k"] if x86 else []), "-d", output / "riched20_import.def", "-l", output / "libriched20.a"])
     # msftedit.dll: the newer rich edit library, which imports riched20.dll and passes every export on to it.
     (output / "msftedit.def").write_text("LIBRARY msftedit.dll\nEXPORTS\n" + "".join(
         f"\t{name} = riched20.{name}{' DATA' if name.startswith('IID_') else ''}\n" for name in ("CreateTextServices", "IID_IRichEditOle",
@@ -519,10 +544,16 @@ interface probe {
     next_base[0] -= 0x400000 if x86 else 0x4000000
     link("msftedit.dll", next_base[0], [compile(support / "msftedit.c", "msftedit", plain, False)], output / "msftedit.def",
          ["-L" + str(output), *[f"-l{library}" for library in ("riched20", "kernel32", "gcc")]])
-    # msvfw32.dll: video for Windows, which the animation control opens its clips through. Its English strings only: the shared ReactOS
-    # resource script also names a manifest the ReactOS build generates.
-    (generated / "msvfw32.rc").write_text('#include "msvideo_private.h"\n#pragma code_page(65001)\n#include "lang/msvfw32_En.rc"\n')
-    library("msvfw32.dll", source / "dll/win32/msvfw32", [], ["winmm", "comctl32", "user32", "gdi32", "advapi32"], rc=generated / "msvfw32.rc")
+    # msvfw32.dll: Raven's own video for Windows: the codec manager, DrawDib and the MCI window.
+    own_vfw = repo / "native/upstream/raven-msvfw32"
+    vfw_objects = []
+    for part in ("codecs", "draw", "mciwnd", "main"):
+        vfw_objects.append(objects / ("msvfw32_" + part + ".o"))
+        run([triple + "-gcc", "-O2", "-std=gnu11", "-fno-builtin", "-D_WIN32_WINNT=0x601", "-DUNICODE", "-D_CRTIMP=", "-w", "-c", "-o", vfw_objects[-1], own_vfw / (part + ".c")])
+    (output / "msvfw32.def").write_text("LIBRARY msvfw32.dll\nEXPORTS\n" + (own_vfw / "exports.txt").read_text())
+    next_base[0] -= 0x400000 if x86 else 0x4000000
+    run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{'_DllMain@12' if x86 else 'DllMain'},--image-base,{next_base[0]:#x},--no-insert-timestamp,--enable-stdcall-fixup", *link_extra,
+         "-o", output / "msvfw32.dll", *vfw_objects, repo / "native/upstream/raven-comctl32/crt.c", output / "msvfw32.def", "-lcomdlg32", "-ladvapi32", "-lgdi32", "-luser32", "-lkernel32", "-lgcc"])
     # xmllite.dll: the streaming XML reader and writer, which the Office Click-to-Run client reads its configuration with.
     xmllite_root = repo / "native/upstream/raven-xmllite"
     library("xmllite.dll", xmllite_root, wine_module=False, sources=[xmllite_root / name for name in ("guid.c", "reader.c", "writer.c")])

@@ -11,7 +11,8 @@ programs and, with `--arch x86`, for 32-bit ones:
 - `msiexec.exe` (`base/system/msiexec`),
   which each prefix also keeps in its system directories;
 - `sxs.dll`: Raven's own side-by-side assembly cache from [`native/upstream/raven-sxs`](../raven-sxs/README.md);
-- `rpcrt4.dll` (`dll/win32/rpcrt4`): remote procedure calls over local named pipes;
+- `rpcrt4.dll`: Raven's own from [`native/upstream/raven-rpcrt4`](../raven-rpcrt4/README.md): remote
+  procedure calls and the NDR engine;
 - `raven-storage.dll`: Raven's own structured storage from
   [`native/upstream/raven-storage`](../raven-storage/README.md);
 - `oleaut32.dll` (`dll/win32/oleaut32`): automation, variants and type libraries;
@@ -19,7 +20,11 @@ programs and, with `--arch x86`, for 32-bit ones:
   `sdk/lib/3rdparty/libxml2` and `dll/3rdparty/libxslt`, and `atl100.dll`, Raven's own from [`native/upstream/raven-atl100`](../raven-atl100/README.md);
 - `urlmon.dll`: Raven's own from [`native/upstream/raven-urlmon`](../raven-urlmon/README.md): URLs, monikers
   and the protocols behind them;
-- the imaging stack: `windowscodecs.dll`, `gdiplus.dll`, `mlang.dll` (Raven's own, from
+- `riched20.dll`: Raven's own from [`native/upstream/raven-riched20`](../raven-riched20/README.md): the rich
+  edit control and its object model;
+- the imaging stack: `windowscodecs.dll` (Raven's own, from
+  [`native/upstream/raven-windowscodecs`](../raven-windowscodecs/README.md)), `gdiplus.dll` (Raven's own, from
+  [`native/upstream/raven-gdiplus`](../raven-gdiplus/README.md)), `mlang.dll` (Raven's own, from
   [`native/upstream/raven-mlang`](../raven-mlang/README.md)) and `libpng.dll`, `libjpeg.dll`, `libtiff.dll` (`dll/3rdparty`);
 - `advpack.dll`: Raven's own from [`native/upstream/raven-advpack`](../raven-advpack/README.md): the setup helpers IExpress packages and the
   DirectX setup run INF files through.

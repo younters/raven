@@ -568,6 +568,13 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 		call.write(call[1], info);
 		call.ret(1);
 	});
+	// LOGFONT holds the character set past its numbers and three flag bytes; asking for the default answers ANSI.
+	registry.add("GetTextCharset", 1, [=, this](ApiCall &call) {
+		guarded(call, 1, [&] {
+			const uint8_t charset = selected_font(require_dc(call, 0)).definition[23];
+			call.ret(charset == 1 ? 0 : charset);
+		});
+	});
 	registry.add("GetTextCharsetInfo", 3, [=, this](ApiCall &call) {
 		guarded(call, 1, [&] {
 			auto &dc = require_dc(call, 0);
@@ -750,7 +757,8 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 		});
 	});
 	registry.add("GetTextMetricsA", 2, [=](ApiCall &call) { text_metrics(call, true); });
-	registry.add("GetCharWidthW", 4, [=, this](ApiCall &call) {
+	for (const auto *name : {"GetCharWidthW", "GetCharWidth32W"})
+	registry.add(name, 4, [=, this](ApiCall &call) {
 		guarded(call, 0, [&] {
 			auto &dc = require_dc(call, 0);
 			const auto &font = selected_font(dc);
@@ -1473,6 +1481,29 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 	// ScriptGetProperties(table, count): the properties of the scripts ScriptItemize names, which is the one neutral script: no language,
 	// the ANSI character set and simple text. The table stays for the life of the process, as Uniscribe's does.
 	auto script_table = std::make_shared<uint64_t>(0);
+	// SCRIPT_FONTPROPERTIES: glyphs here are the characters themselves, and no font offers a kashida.
+	registry.add("ScriptGetFontProperties", 3, [](ApiCall &call) {
+		if (!call[2] || call.load<int32_t>(call[2]) != 16) {
+			call.ret(0x80070057U);
+			return;
+		}
+		call.store<uint16_t>(call[2] + 4, 0x20);
+		call.store<uint16_t>(call[2] + 6, 0);
+		call.store<uint16_t>(call[2] + 8, 0);
+		call.store<uint16_t>(call[2] + 10, 0xffff);
+		call.store<int32_t>(call[2] + 12, 0);
+		call.ret(0);
+	});
+	// No national digit shapes: the control and state a default run starts from.
+	registry.add("ScriptApplyDigitSubstitution", 3, [](ApiCall &call) {
+		if (!call[1] || !call[2]) {
+			call.ret(0x80070057U);
+			return;
+		}
+		call.store<uint32_t>(call[1], 0);
+		call.store<uint16_t>(call[2], 0);
+		call.ret(0);
+	});
 	registry.add("ScriptGetProperties", 2, [=, this](ApiCall &call) {
 		if (!call[0] && !call[1]) {
 			call.ret(0x80070057U);
