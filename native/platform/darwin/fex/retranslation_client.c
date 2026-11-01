@@ -4,7 +4,7 @@
 #include <stdint.h>
 int raven_entry(void)
 {
-    BYTE *code = VirtualAlloc(NULL, 16384, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    BYTE *code = VirtualAlloc(NULL, 16384, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
     DWORD old, written;
     if (!code) return 1;
     code[0] = 0xb8; code[1] = 42; code[2] = code[3] = code[4] = 0; code[5] = 0xc3;

@@ -31,6 +31,22 @@ invalidations = Counter()
 for reason, start, size, count in re.findall(
         r'Raven invalidation reason=(\d+) start=([0-9a-f]+) size=(\d+) count=(\d+)', text):
     invalidations[reasons[int(reason)]] += int(count)
+timer_attempts = sum(int(v) for v in re.findall(r'FEX compile: blocks=(\d+) ns=\d+', text))
 totals = sum(modules.values(), Counter())
-print(json.dumps(dict(totals=totals, modules=modules, invalidations=invalidations,
+page_attempts = totals['unique'] + totals['repeated']
+coverage = dict(timer_attempts=timer_attempts, captured_page_attempts=page_attempts,
+                unaccounted_attempts=timer_attempts - page_attempts,
+                complete=timer_attempts == page_attempts)
+# A process that reached the invalidation pass completed its page pass.
+completed_pids = set(re.findall(r'Raven profile pid=(\d+) Raven invalidation', text))
+completed = Counter()
+for pid, unique, repeated, recompiled in re.findall(
+        r'Raven profile pid=(\d+) Raven translations page=[0-9a-f]+ unique=(\d+) repeated=(\d+) recompiled=(\d+)', text):
+    if pid in completed_pids:
+        completed.update(unique=int(unique), repeated=int(repeated), recompiled=int(recompiled))
+coverage['page_complete_process_count'] = len(completed_pids)
+coverage['page_complete_totals'] = completed
+classes = {'image': sum((v for k, v in modules.items() if k != '<anonymous>'), Counter()),
+           'anonymous': modules.get('<anonymous>', Counter())}
+print(json.dumps(dict(coverage=coverage, totals=totals, classes=classes, modules=modules, invalidations=invalidations,
                      hottest_pages=sorted(pages.items(), key=lambda kv: kv[1]['repeated'], reverse=True)[:30]), indent=2))
