@@ -1022,7 +1022,18 @@ void FexProcess::map_image(LoadedImage &image)
 	// Register the view before changing protections; FEX tracks executable pages.
 	uint64_t args[8]{state->host(address, n), n, 0x3000, 0x40, 1, 0};
 	notify_memory("NotifyMemoryAlloc", args, 4);
-	for (size_t at = 0; at < n; at += 4096) protect_memory(address + at, 4096, state->pages.at(address + at));
+	// Notify once per contiguous protection run, rather than once per guest
+	// page. Large Chrome images otherwise cross the PE host boundary tens of
+	// thousands of times and protect each 16 KiB host page up to four times.
+	// All logical page protections are installed above before any host change,
+	// so mixed-protection host pages still use the same union policy.
+	for (size_t at = 0; at < n;) {
+		const int protection = state->pages.at(address + at);
+		size_t end = at + 4096;
+		while (end < n && state->pages.at(address + end) == protection) end += 4096;
+		protect_memory(address + at, end - at, protection);
+		at = end;
+	}
 }
 std::pair<uint64_t, uint64_t> FexProcess::stack_bounds() const { return {state->guest(state->stack), state->stack_top}; }
 NativeMode FexProcess::mode() const { return state->mode; }
