@@ -1,0 +1,70 @@
+{
+  "scope": "offline synthetic JS; headless; parallel; GPU enabled; milliseconds lower is better",
+  "raven_sha256": "8ad18dc92ac914c686c2c01426cf009835346b78368b5fc67087042977a83d85",
+  "module_sha256": "4c00606f9efdba002c471a715dba1a61c970a29e48e8dfbb17641f33d33bc5bc",
+  "page_sha256": "d5cf21232da5e8b8702d866dca075e7d1d522df2c54ccf5f9a0e5e5d176deeb1",
+  "samples": [
+    {
+      "engine": "native",
+      "sample": 0,
+      "command": [
+        "/Users/yount/.t3/worktrees/raven/t3-8a666752/build-retranslation/native/raven",
+        "--run-process",
+        "--execution=native",
+        "--timeout-ms=120000",
+        "--desktop=macos",
+        "--stdio=inherit",
+        "/private/tmp/raven-retranslation-chrome-prefix/drive_c/Program Files/Google/Chrome/Application/chrome.exe",
+        "--",
+        "--headless=new",
+        "--no-sandbox",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-networking",
+        "--user-data-dir=Z:/private/tmp/raven-retranslation-chrome-prefix/bench-profile-native-1793505540653122000",
+        "--dump-dom",
+        "file:///Z:/Users/yount/.t3/worktrees/raven/t3-8a666752/scripts/benchmarks/chrome-js.html"
+      ],
+      "log": "/tmp/raven-retranslation-before-counts.native-0.log",
+      "wall_seconds": 10.400711916008731,
+      "returncode": 0,
+      "result": {
+        "milliseconds": 881.3000000119209,
+        "primes": 216816,
+        "length": 200000,
+        "items": 400000
+      }
+    },
+    {
+      "engine": "fex",
+      "sample": 0,
+      "command": [
+        "/Users/yount/.t3/worktrees/raven/t3-8a666752/build-retranslation/native/raven",
+        "--run-process",
+        "--execution=fex",
+        "--timeout-ms=120000",
+        "--desktop=macos",
+        "--stdio=inherit",
+        "/private/tmp/raven-retranslation-chrome-prefix/drive_c/Program Files/Google/Chrome/Application/chrome.exe",
+        "--",
+        "--headless=new",
+        "--no-sandbox",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-networking",
+        "--user-data-dir=Z:/private/tmp/raven-retranslation-chrome-prefix/bench-profile-fex-1793505551057158000",
+        "--dump-dom",
+        "file:///Z:/Users/yount/.t3/worktrees/raven/t3-8a666752/scripts/benchmarks/chrome-js.html"
+      ],
+      "log": "/tmp/raven-retranslation-before-counts.fex-0.log",
+      "wall_seconds": 46.71050174999982,
+      "returncode": 0,
+      "result": {
+        "milliseconds": 7188.5,
+        "primes": 216816,
+        "length": 200000,
+        "items": 400000
+      }
+    }
+  ]
+}

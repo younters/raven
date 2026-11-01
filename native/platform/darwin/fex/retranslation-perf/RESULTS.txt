@@ -1,0 +1,143 @@
+FEX translation retention: implementation and qualification
+==========================================================
+Base: perf/fex-chrome-call-costs / 8d6d8690.
+Branch: perf/fex-retranslation. Implementation HEAD: bf8a323494434ced1061fbdf81669efd3423d493.
+Final evidence-only commit is reported in the handback.
+
+Result
+------
+Confirmed two local problems, fixed with patch 0061:
+* An executable protection notification invalidated translations even when an
+  entirely RX interval stayed RX and its bytes could not have changed.
+* RWXIntervals retained pages after RWX -> RX. Raven initially registers an
+  entire image as RWX, then applies section protections; consequently immutable
+  DLL code retained writable-code status. Darwin's frontend generates inline
+  SMC validation for writable code because it cannot trap logical 4 KiB writes
+  with physical 16 KiB permissions. Removing stale RWX membership removes this
+  unnecessary validation and associated compilation/code-buffer pressure.
+The relative contributions of these mechanisms were NOT isolated experimentally.
+
+All normal invalidation paths inspected already use 4 KiB FEX guest pages.
+No evidence of blanket 16 KiB invalidation or ordinary range invalidation
+clearing every lookup translation was found. Full code-buffer clears are
+separately profiled. Current upstream InvalidationTracker had the same behavior;
+no newer applicable invalidation fix was found to backport. See README links.
+
+Retain invalidation for writable transitions, execute-right changes, real dirty
+notifications, code writes, explicit flushes, frees and faults. Empty non-null
+flush ranges do nothing; NULL retains whole-process flush semantics. Forward
+FlushInstructionCache/NtFlushInstructionCache to the Windows frontend, matching
+Wine ARM64EC. Accept both pseudo-handles and real SelfProcessObject handles.
+Cross-process flush notification remains unsupported rather than returning a
+false local success for a foreign handle.
+
+Compilation counts and their limits
+----------------------------------
+Before 1: 8,233,040 timed attempts / 74.209282735 aggregate compiler seconds,
+          16 reporting processes.
+Before 2: 8,230,396 timed attempts / 80.749898163 aggregate compiler seconds,
+          16 reporting processes.
+After:    2,795,270 timed attempts / 12.100114282 aggregate compiler seconds,
+          12 reporting processes.
+These sums overlap in wall time and process sets differ. They are not a pure
+estimate of saved invalidations or browser-wide complete totals.
+
+The requested BEFORE unique/repeated split is UNAVAILABLE: the first profiler
+used FEX logging, but its private PEB environment disables that logger. Host
+FEX_SILENTLOG did not affect it. Patch 0062 pulls records through the profile
+export independently of logging; no fourth Chrome sample was run to replace
+those missing data.
+
+AFTER complete page dumps from 10 processes:
+  unique guest RIPs                  1,618,822
+  additional attempts at those RIPs    432,512
+  RIPs compiled more than once         350,331
+
+Including two partially dumped processes, captured records contain 1,756,458
+unique RIPs / 469,645 repeated attempts / 382,487 multiply compiled RIPs.
+The page records cover 2,226,103 of the 2,795,270 timer attempts: 569,167
+attempts have no captured page record. Two detail dumps do not reach their
+invalidation pass, consistent with interruption during teardown; the precise
+interruption mechanism was not isolated. These captured totals are LOWER
+BOUNDS, not a complete browser measurement.
+The parser now exposes coverage and the complete-page subset explicitly.
+
+Captured module classifications (including partial processes):
+  image ranges: 1,756,444 unique, 469,634 repeated
+  anonymous:           14 unique,      11 repeated
+  chrome.dll:  1,656,502 unique, 461,401 repeated (377,127 multiply compiled)
+Classification matches per-PID mapped image ranges, including executable images,
+not just DLLs. It does not establish V8 ownership of an anonymous allocation or
+track allocation reuse within an unloaded historical image range.
+
+Captured invalidation events:
+  protection               537,401
+  free                         427
+  explicit/dirty/inline SMC 270,920
+  code-buffer clear               7
+  DEP / section-unmap / write-fault / untracked-write: none in captured records.
+Of 537,400 protection range keys, only one repeated (two events). Most recorded
+protection keys are image initialization, not demonstrated live-code eviction.
+Reason 5 groups several callers of the aligned-interval API; it does NOT provide
+separate flush/dirty/inline-SMC causality. No per-block invalidation history was
+added. Thus the full requested Chrome causal comparison remains INCOMPLETE.
+
+Chrome harness: three completed paired samples total
+----------------------------------------------------
+                         Rosetta                   FEX
+                    JS ms   run wall s       JS ms   run wall s
+Before 1           1122.1     11.599630        6803.2    51.548943
+Before 2            881.3     10.400712        7188.5    46.710502
+Fixed               887.0     18.329699        4663.3    35.231985
+All DOM checks passed: primes=216816, length=200000, items=400000.
+FEX JS was 31-35% faster in these exploratory observations. This is not a
+statistical estimate or isolated attribution. Run wall includes teardown/profile
+output, not first paint. Rosetta wall variation illustrates scheduling noise.
+One attempted final launch was immediately stopped and discarded after the
+coordination check found the other agent's benchmark; it produced no result.
+The final completed pair waited for that agent's two benchmark batches to end.
+
+Build and isolation
+-------------------
+APFS-cloned modules: /tmp/raven-retranslation-modules.
+Build IDs: retranslation-profile-0060, retranslation-fixed-0062.
+Raven: build-retranslation, RelWithDebInfo, RAVEN_FEX_MODHOST=ON, -j8.
+The supplied FEX builder retains its default Release module recipe, -j8.
+FONT_HASHES, PNG_*, requested component/DXMT/Mullion/SQLite paths, Skia and fonts
+were copied from /Users/yount/Documents/Projects/raven/build-macos/CMakeCache.txt.
+No shared component changes, push, debugger attachment, or killing other agents'
+Raven processes. Observed available disk stayed above 6 GiB (about 14 GiB minimum).
+
+Tests
+-----
+All CTest invocations used /tmp/raven-ctest-lock.sh.
+Initial targeted selection: 20 tests, 18 passed, two new wrapper failures.
+Two small wrapper-only followups failed until CLI argument order and the
+stdio=inherit status-line assumption were corrected. Guest execution itself
+returned zero and its code page had unique=1, repeated=1, recompiled=1.
+The final fixture additionally starts RWX before RX, covering stale tracking.
+
+Area ONCE: RAVEN_PREFIX_SETUP=1, -R 'fex|context|parity|steam|dxmt', -j8:
+564 tests, two DXMT window screenshot failures, three skips, 48.45 seconds.
+Both final retranslation regressions passed; all x32/x64 FEX JIT stress and
+self-modification checks and compiled multiblock-disable contract passed.
+Requalified the contract's BL relocation by disassembly; option 0 and "0" were
+unchanged, target Config::Set moved to 0x18018ca64. Multiblock remains disabled.
+
+ONE full suite: RAVEN_PREFIX_SETUP=1, -j8:
+1,597 registered, one disabled, 15 skipped; four failures, 428.18 seconds:
+  darwin_dcomp_popup (timeout)
+  darwin_dxmt_window (screencapture)
+  darwin_dxmt_window_fex (screencapture)
+  native_darwin_app_compiler_x32 (returned 1)
+
+ONE serial rerun: RAVEN_PREFIX_SETUP=1, --rerun-failed -j1:
+7/8 passed including four cleanup fixtures, 59.70 seconds. The compositor and
+both DXMT tests passed. Only native_darwin_app_compiler_x32 still failed.
+Its native-backend guest cannot resolve D3DCompile from its compiler fixture.
+No claim that this failure predates the work, or that the full suite is green.
+No further test or benchmark reruns were made.
+
+Logs: /tmp/raven-retranslation-{targeted,targeted-setup,targeted-arguments,area,
+full,rerun}.log. Original Chrome logs and JSON are /tmp/raven-retranslation-*.
+Checked-in JSON retains hashes and commands; original detail log is about 51 MiB.
