@@ -97,3 +97,86 @@ Logs are `/tmp/raven-mb-implementation-{area,full,rerun}.log`.
 The supplied uncommitted implementation files remain uncommitted and unchanged;
 this continuation commits only investigation/qualification notes. Both requested
 implementation goals and fresh Steam-login qualification remain outstanding.
+
+## Steam multiblock experiment (2026-10-31, second continuation)
+
+**Do not promote 0040 yet.** This experiment did not reproduce the old
+SteamUI SHA fault, but multiblock still failed the anonymous-login acceptance
+check. No register-reconstruction repair or deterministic regression was
+produced, and the implementation task remains incomplete.
+
+The source started at 09ed0d13 with its supplied uncommitted diagnostics,
+0040 inverse patch, and private-module pins. The enabled configuration used
+`build-perf/native/raven`, `RAVEN_PARALLEL=1`,
+`RAVEN_FEX_MODULE_ROOT=/tmp/raven-chrome-private-modules`, and build id
+`chrome-multiblock-negative-0040`. `/tmp/raven-steam-mb2` was an APFS clone
+of `/tmp/raven-rosetta-steam-pristine`; Steam config/userdata in the clone
+were removed and AutoLoginUser cleared using its reg.exe before launch.
+No account was used and `/tmp/raven-steam-login-fex` was not accessed.
+
+Three enabled launches were made, with fault tracing and the supplied
+snapshot-ring diagnostic. The first was stopped during observation; the
+second had a 180-second timeout; the third had a 360-second timeout. None
+produced a sign-in surface or a `Sign in to Steam` CEF page. SharedJSContext
+was present. The original SteamUI+0x3c98d SHA fault did not appear.
+
+- Launch 1 faulted at `libcef.dll+0x3505d57`, guest `movq (%rcx), %rax`,
+  with RCX=0. The actual faulting AArch64 instruction was `ldar x8,[x0]`
+  at host PC 0x73e841f51c, with X0=0. Caller return address:
+  `libcef.dll+0x34fbef3`.
+- Launch 2 reached SharedJSContext first paint and timed out without a
+  fault-trace access violation or login page.
+- Launch 3 faulted at `libcef.dll+0x3524424`, guest `lock xaddl %edx,(%rcx)`,
+  with RCX=0xefefefefefefefef and RDX=1. The actual AArch64 instruction
+  was `ldaddal w6,w7,[x0]` at host PC 0x735e8c1be4, with X0 containing
+  that same poison value. Caller return address: `libcef.dll+0x34fbf16`.
+  The preceding guest instructions load the pointer from (%rdx), store it
+  to (%rax), test it and branch before the atomic increment.
+
+Guest disassembly used **cef.win64/libcef.dll**, not the different win7x64
+binary. The host instructions above were independently disassembled from
+pages dumped by the supplied diagnostic. They establish that the invalid
+pointers were present at the native fault, before context reconstruction;
+they do not establish where those pointers first became invalid or whether
+a previous context restore caused it. A complete compiled-block dump and
+root-cause diagnosis remain outstanding.
+
+A single-block control used a separate pristine clone,
+`/tmp/raven-mb2-singleblock-control`, with the same anonymous preparation,
+the same source/runtime build except the host entry contract restored to
+0x703c, and `/tmp/raven-steam-private-modules` (qualified 0029 DLL hash
+fc6e04e4065da6559080c1f0189e69d50fa050c5e9d9cbb56d2c808f045817cd).
+It reached the complete anonymous sign-in form within about 70 seconds.
+Both its CEF title and 700x440 IOSurface readback were checked; username
+and password fields were empty. It was then stopped without input.
+The enabled contract and build were restored after this control.
+
+Local evidence (not committed): `/tmp/raven-mb2-launch-{1,2,3}.log`,
+`/tmp/raven-mb2-pages-{1,2,3}.json`,
+`/tmp/raven-chrome-fault-18540-73e841f51c.bin`,
+`/tmp/raven-chrome-fault-31203-735e8c1be4.bin`,
+`/tmp/raven-mb2-jit-{18540,31203}.o`,
+`/tmp/raven-mb2-control-steam.log`, `/tmp/raven-mb2-control-pages.json`,
+and `/tmp/raven-mb2-control-capture/700x440.png`.
+
+No Chrome or M5 timings were collected: the enabled configuration failed
+its Steam gate, so there is no qualified before/after performance gain.
+0040, the supplied diagnostics, pins and synthetic probe remain uncommitted.
+No shared module root was modified, no debugger attached, and nothing pushed.
+
+Qualification of the supplied enabled build (not a repair), all through
+`/tmp/raven-ctest-lock.sh` with `RAVEN_PREFIX_SETUP=1`:
+
+- Full build `cmake --build build-perf -j8` passed.
+- Area selection `-R 'fex|context|parity|steam|dxmt' -j4`: 560 registered,
+  one failure (`native_multiblock_disabled_fex`), two skips, 125.31 seconds.
+  The disabled-state contract correctly rejects the supplied enabled DLL.
+- One full suite `-j4`: 1,597 registered, one disabled, eight skipped,
+  one failure (the same disabled-multiblock contract), 204.68 seconds.
+- No serial rerun was needed: the sole failure is the deterministic contract
+  disagreement already observed in the area run. Logs:
+  `/tmp/raven-mb2-{area,full}.log`. `git diff --check` passed.
+- The two disposable Steam prefixes and temporary control executables were
+  removed by literal path after their process groups had stopped. Evidence
+  logs, dumps and the anonymous control screenshot remain. Available disk
+  stayed above 6 GiB; final observed free space was 17 GiB.
