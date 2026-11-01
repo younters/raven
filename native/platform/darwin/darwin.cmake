@@ -158,6 +158,30 @@ if(TARGET raven_cpu)
     endif()
 endif()
 
+# The software compositor draws through GetDC/BitBlt into a foreign HWND. Its
+# shared pixels start at a Windows-page offset, including on a 16K Darwin host.
+if(TARGET raven_cpu AND RAVEN_MINGW64)
+    set(RAVEN_FOREIGN_GDI ${CMAKE_CURRENT_BINARY_DIR}/foreign-gdi.exe)
+    add_custom_command(OUTPUT ${RAVEN_FOREIGN_GDI}
+        COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector -fno-builtin
+            -Wl,--entry,raven_entry -o ${RAVEN_FOREIGN_GDI} ${RAVEN_DARWIN_DIR}/tests/foreign_gdi.c
+            -luser32 -lgdi32 -lkernel32 -lgcc
+        DEPENDS ${RAVEN_DARWIN_DIR}/tests/foreign_gdi.c VERBATIM)
+    add_custom_target(darwin_foreign_gdi_fixture ALL DEPENDS ${RAVEN_FOREIGN_GDI})
+    add_executable(darwin_foreign_gdi_test ${RAVEN_DARWIN_DIR}/tests/foreign_gdi.cpp)
+    target_link_libraries(darwin_foreign_gdi_test PRIVATE raven_cpu)
+    add_dependencies(darwin_foreign_gdi_test darwin_foreign_gdi_fixture raven)
+    foreach(engine native fex)
+        if(engine STREQUAL "fex" AND NOT RAVEN_FEX_MODHOST)
+            continue()
+        endif()
+        add_test(NAME darwin_gdi_foreign_present_${engine} COMMAND darwin_foreign_gdi_test
+            $<TARGET_FILE:raven> ${RAVEN_FOREIGN_GDI} ${engine})
+        set_tests_properties(darwin_gdi_foreign_present_${engine} PROPERTIES TIMEOUT 30
+            ENVIRONMENT "RAVEN_PARALLEL=1;RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")
+    endforeach()
+endif()
+
 # A Windows Vulkan program presents into the actual CAMetalLayer, then replaces its swapchain after a client resize.
 if(TARGET vulkan_pe_fixture AND RAVEN_MINGW64)
     set(RAVEN_COCOA_VULKAN_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/vulkan-fixtures/cocoa-present.exe)
