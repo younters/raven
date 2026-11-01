@@ -1409,9 +1409,21 @@ if(TARGET fex_process_test)
     add_test(NAME native_vector_context_fex COMMAND fex_process_test ${FEX_ENTRY_FIXTURE} vector-context)
     set_tests_properties(native_vector_context_fex PROPERTIES TIMEOUT 30 LABELS "fex;context"
         ENVIRONMENT "RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")
-    add_test(NAME native_multiblock_disabled_fex COMMAND ${Python3_EXECUTABLE}
-        ${PROJECT_SOURCE_DIR}/scripts/test-fex-multiblock.py ${RAVEN_FEX_MODULE_ROOT}/xtajit64.dll)
-    set_tests_properties(native_multiblock_disabled_fex PROPERTIES LABELS "fex;contract")
+endif()
+if(RAVEN_FEX_MODHOST AND TARGET raven_cpu AND RAVEN_MINGW64)
+    # Multiblock call-ret stacks: a thread that entered F through a block link
+    # must not return into F's translation after another thread rewrote F.
+    set(fixture ${CMAKE_CURRENT_BINARY_DIR}/multiblock-callret-fex.exe)
+    add_custom_command(OUTPUT ${fixture}
+        COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector -fno-builtin -mno-stack-arg-probe
+            -Wl,--entry,raven_entry,--image-base,0x10000000000,--no-insert-timestamp
+            -o ${fixture} ${RAVEN_DARWIN_DIR}/fex/multiblock_callret_client.c -lkernel32
+        DEPENDS ${RAVEN_DARWIN_DIR}/fex/multiblock_callret_client.c VERBATIM)
+    add_custom_target(multiblock_callret_fex_fixture ALL DEPENDS ${fixture})
+    add_test(NAME native_multiblock_callret_fex COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py
+        --raven $<TARGET_FILE:raven> --fixture ${fixture} --modules "${RAVEN_FEX_MODULE_ROOT}")
+    set_tests_properties(native_multiblock_callret_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;process"
+        ENVIRONMENT RAVEN_PARALLEL=1)
 endif()
 if(TARGET fex_modhost_substrate)
     add_test(NAME darwin_unix_declined_fault COMMAND ${Python3_EXECUTABLE}

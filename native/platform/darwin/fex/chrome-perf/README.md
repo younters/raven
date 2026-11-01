@@ -270,3 +270,109 @@ lookup, which clears its call-ret stack. The call-ret hypothesis remains
 unproven. Next variants: B enters F through a return (not a link); or F's
 continuation lies on a different page from F's entry, with only that page
 invalidated.
+
+## Fifth continuation (2026-11-01): multiblock re-enabled with 0041
+
+**Done: 0028 removed, multiblock on, 0041 added.** Worktree
+`/Users/yount/.t3/worktrees/raven/t3-fe1ceb9d`, this branch merged with macos
+73103efe (0050 and 0060–0063 included). Private module root:
+`/tmp/raven-mbfix-modules`, build id `mbfix-0041`; xtajit64.dll
+`4de30d05…`, RavenProcessInit RVA 0x705c; xtajit.dll `ac0ea9a6…`, WoW64 RVA
+unchanged at 0x79cc. No shared module was touched.
+
+Machine state: `pmset` reported **battery power** for every run here, not AC.
+No run had a sleep or DarkWake event. Fix for runc.sh: its sleep count also
+counted untimestamped `pmset -g log` lines (24 false events per run); count only
+lines that start with a date.
+
+### Root cause: stale multiblock call-ret entries (proven)
+
+In multiblock mode a CALL pushes (return RIP, host address of the continuation
+in the caller's block), and RET jumps straight to that host address when the
+RIP matches. `InvalidateThreadCachedCodeRange` cleared a thread's call-ret stack
+only if that thread's own `CachedCodePages` covered the range. A thread that
+entered the block through a patched block link never caches it, so its stack
+keeps the entry and RET returns into the old translation.
+
+Why the old `multiblock_callret_client.c` passed: Raven multiplexes guest
+threads onto resident FEX workers, and after a syscall a guest thread can resume
+on another worker, which has a different call-ret stack. Its rewrite ran
+VirtualProtect inside the callee, so the RET never reached the stale entry. The
+rewritten client keeps A alive, so B gets its own worker. B's G spins without a
+syscall while the main thread rewrites F. Results, `RAVEN_PARALLEL=1`:
+
+| module | client exit |
+|---|---|
+| OFF (0028, single block) | 0 |
+| MB (multiblock, no fix) | **21** (B returned the old immediate), 4/4 |
+| G (MB, CALL always pushes zeros) | 0 (1 run) |
+| FIX (MB + 0041) | 0, 4/4 |
+
+A diagnostic build (MB plus invalidation records through
+`RAVEN_FEX_PROFILE_COMPILE`) showed the gap directly. For the one invalidation
+that dropped F from the shared cache, three workers had no own-cache hit, so
+their stacks were left alone. Only the worker that compiled F was cleared.
+
+0041 (FEXCore only): `GuestToHostMap::InvalidateRange` returns whether it
+dropped code, `InvalidateCodeBuffersCodeRange` records this in
+`CodeBuffersInvalidated` (under CodeInvalidationMutex), and
+`InvalidateThreadCachedCodeRange` clears every thread's call-ret stack when it
+is set. Threads with an own-cache hit are cleared as before. 0050–0063 apply
+unchanged on top. Not covered: a thread already executing inside a block when
+it is dropped can still push a new entry afterwards. That is a guest
+cross-modifying-code race, and upstream behaves the same way.
+
+The client is now ctest `native_multiblock_callret_fex` (fex;process,
+RAVEN_PARALLEL=1). It replaces `native_multiblock_disabled_fex` and
+`scripts/test-fex-multiblock.py`, which byte-matched 0028's
+`Config::Set(MULTIBLOCK, "0")` call.
+
+### Chrome and Steam
+
+The earlier multiblock Chrome/Steam failures **no longer reproduce on today's
+base, even without 0041**. The Chrome harness gave these results (fresh clone,
+headless `--dump-dom`; modules use `CONFIG_MULTIBLOCK "1"` instead of deleting
+the line, so they keep RVA 0x7070 and share one raven):
+
+- `--disable-gpu`: OFF 2/2, MB 5/5, C 3/3, G 3/3, FIX 5/5 pass.
+- GPU on: OFF 2/2, MB 3/3, FIX 1/1 pass.
+- Final 0041 modules: 2/2 GPU on, 1/1 `--disable-gpu` pass.
+
+The old GPU-on and Steam multiblock failures were on the pre-merge base. The
+`--disable-gpu` multiblock runs then were all sleep-invalidated. So the earlier
+failure probably went away with today's macos FEX fixes (01132ec4 cache-flush
+forwarding / retained translations, aa1f113e shared-view validation). That is
+not bisected. The call-ret defect is real, but no workload here showed it.
+
+Steam: fresh `cp -cR` of `/tmp/raven-rosetta-steam-pristine`,
+loginusers.vdf, config.vdf and userdata removed, AutoLoginUser cleared,
+`RAVEN_PARALLEL=1`, `-cef-enable-debugging`, final 0041 modules: CEF reported
+"Sign in to Steam" after 28, 28 and 29 s (3/3). Nine x64 FEX processes used
+RVA 0x705c and none had an access violation. Script:
+`/tmp/raven-mbfix-scratch/steam.py`.
+
+### Benchmark (`benchmark-chrome-fex.py --samples 3`, fresh clone of /tmp/raven-chrome-fex)
+
+| configuration | JS ms (mean) | wall s (mean) |
+|---|---|---|
+| FEX, multiblock off (0028 module, `8a57bc46…`) | 4730 / 4835 / 4674 (4746) | 31.0 |
+| FEX, multiblock + 0041 semantics (RVA-0x7070 variant) | 4614 / 4536 / 4560 (4570) | 24.1 |
+| FEX, final 0041 modules (`4de30d05…`) | 4504 / 4477 / 4484 (4488) | 24.5 |
+| Rosetta (native engine) | 1148 / 840 / 1148 (1045) | 19.1 |
+
+Multiblock cuts the JS time ~5% and Chrome's whole launch-to-DOM wall time
+~21%. The off/on rows used the same raven binary built at the 0x7070 contract.
+All runs were on battery, so the numbers are indicative only. Evidence:
+`/tmp/raven-mbfix-scratch/bench-{off,on,final}.json`.
+
+### Tests
+
+- Targeted: `native_multiblock_callret_fex` passed (run without the ctest
+  lock by mistake; 2 tests, 4 s).
+- FEX area, `RAVEN_PREFIX_SETUP=1`, through `/tmp/raven-ctest-lock.sh mb-fix`,
+  `-R 'fex|flush|retranslation|context|parity|thread|jit|selfmodify' -j8`:
+  554 tests: 6 failed, the other 548 passed or skipped (2 skips, mtld3d32/64). The six failed in <0.1 s:
+  context-groups32/64 native+fex and mtld3d-runtime32/64 fex lacked fixture
+  executables that are not in ALL.
+- After building those four fixtures, one serial `--rerun-failed -j1`:
+  12/12 passed. Logs: `/tmp/raven-mbfix-scratch/{area,rerun}.log`.
