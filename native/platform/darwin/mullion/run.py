@@ -37,6 +37,11 @@ finally:
     if thread: thread.join()
 (work / 'stdout.log').write_bytes(result.stdout)
 (work / 'stderr.log').write_bytes(result.stderr)
+log = result.stderr.decode(errors='replace')
+for module in ('d3d12.dll', 'dxgi.dll', 'winemetal.dll'):
+    expected = f'raven: Mullion module loaded: {root / "pe64" / module}'
+    if expected not in log:
+        raise SystemExit(f'{engine}/{kind}: no load confirmation for {module}')
 drive = prefix / 'drive_c'
 report = drive / ('d3d12.txt' if kind == 'device' else kind + '.txt')
 text = report.read_text() if report.exists() else 'missing'

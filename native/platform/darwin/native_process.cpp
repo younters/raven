@@ -263,7 +263,7 @@ GuestAgent::GuestAgent(const std::string &bootstrap, std::chrono::milliseconds t
 			native_environment.emplace_back(std::string("DXMT_CONFIG=") + config);
 		if (const char *file = std::getenv("DXMT_CONFIG_FILE"))
 			native_environment.emplace_back(std::string("DXMT_CONFIG_FILE=") + file);
-		for (const char *key : {"MTL_DEBUG_LAYER", "MTL_SHADER_VALIDATION", "MTL_CAPTURE_ENABLED"})
+		for (const char *key : {"MTL_DEBUG_LAYER", "MTL_SHADER_VALIDATION", "MTL_CAPTURE_ENABLED", "RAVEN_D3D12_BACKEND"})
 			if (const char *value = std::getenv(key)) native_environment.emplace_back(std::string(key) + "=" + value);
 		const int spawned = spawn_x87_guest(&pid, bootstrap, name, x86, &actions, &attributes, std::move(native_environment));
 		posix_spawn_file_actions_destroy(&actions);

@@ -813,9 +813,9 @@ add_test(NAME native_darwin_teardown_ps_rows COMMAND ${Python3_EXECUTABLE}
 set(DXMT_POOL_TEST ${CMAKE_CURRENT_BINARY_DIR}/darwin-dxmt-pool-test)
 add_custom_command(OUTPUT ${DXMT_POOL_TEST}
     COMMAND ${CMAKE_C_COMPILER} -arch x86_64 -fblocks
-        ${RAVEN_DARWIN_DIR}/dxmt/presentation_pool_test.m
+        ${RAVEN_DARWIN_DIR}/dxmt/presentation_pool_test.m ${RAVEN_DARWIN_DIR}/dxmt/checked_memory.c
         -framework Foundation -framework Metal -framework IOSurface -o ${DXMT_POOL_TEST}
-    DEPENDS ${RAVEN_DARWIN_DIR}/dxmt/presentation_pool_test.m
+    DEPENDS ${RAVEN_DARWIN_DIR}/dxmt/presentation_pool_test.m ${RAVEN_DARWIN_DIR}/dxmt/checked_memory.c
         ${RAVEN_DARWIN_DIR}/dxmt/presentation.m ${RAVEN_DARWIN_DIR}/dxmt/slot_state.h
         ${RAVEN_DARWIN_DIR}/guest/protocol.h
     VERBATIM)
@@ -833,9 +833,9 @@ if(TARGET darwin_unix_call_fixtures)
     set(adapter ${CMAKE_CURRENT_BINARY_DIR}/raven-dxmt-test.dylib)
     add_custom_command(OUTPUT ${adapter}
         COMMAND ${CMAKE_C_COMPILER} -arch x86_64 -dynamiclib -fblocks
-            ${RAVEN_DARWIN_DIR}/dxmt/unix_adapter.m ${RAVEN_DARWIN_DIR}/dxmt/presentation.m
+            ${RAVEN_DARWIN_DIR}/dxmt/unix_adapter.m ${RAVEN_DARWIN_DIR}/dxmt/presentation.m ${RAVEN_DARWIN_DIR}/dxmt/checked_memory.c
             -framework Foundation -framework Metal -framework IOSurface -o ${adapter}
-        DEPENDS ${RAVEN_DARWIN_DIR}/dxmt/unix_adapter.m ${RAVEN_DARWIN_DIR}/dxmt/presentation.m
+        DEPENDS ${RAVEN_DARWIN_DIR}/dxmt/unix_adapter.m ${RAVEN_DARWIN_DIR}/dxmt/presentation.m ${RAVEN_DARWIN_DIR}/dxmt/checked_memory.c
             ${RAVEN_DARWIN_DIR}/guest/protocol.h VERBATIM)
     foreach(version 0 4 5)
         set(library ${CMAKE_CURRENT_BINARY_DIR}/adapter-protocol-${version}.dylib)
@@ -1177,6 +1177,7 @@ if(RAVEN_MULLION_ROOT AND RAVEN_MINGW64)
             DEPENDS ${PROJECT_SOURCE_DIR}/testdata/d3d12/${workload}.c ${PROJECT_SOURCE_DIR}/testdata/d3d12/tri5_shaders.h
             VERBATIM)
         add_custom_target(mullion_${workload}_fixture DEPENDS "${_fixture}")
+        add_dependencies(raven mullion_${workload}_fixture)
         foreach(engine native fex)
             add_test(NAME darwin_mullion_${workload}_${engine}
                 COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/mullion/run.py
@@ -1221,3 +1222,139 @@ target_link_libraries(prefix_copy_test PRIVATE raven_cpu)
 target_include_directories(prefix_copy_test PRIVATE ${PROJECT_SOURCE_DIR}/native)
 target_compile_options(prefix_copy_test PRIVATE -UNDEBUG)
 add_test(NAME native_prefix_copy COMMAND prefix_copy_test)
+if(RAVEN_MINGW64)
+    set(_crt_locale "${CMAKE_CURRENT_BINARY_DIR}/crt-locale.exe")
+    add_custom_command(OUTPUT "${_crt_locale}"
+        COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-builtin -fno-stack-protector
+            -Wl,--entry,entry,--no-insert-timestamp -o "${_crt_locale}"
+            ${RAVEN_DARWIN_DIR}/mullion/crt_locale.c -lkernel32 -lgcc
+        DEPENDS ${RAVEN_DARWIN_DIR}/mullion/crt_locale.c VERBATIM)
+    add_custom_target(darwin_crt_locale_fixture DEPENDS "${_crt_locale}")
+    add_dependencies(raven darwin_crt_locale_fixture)
+    foreach(engine native fex)
+        add_test(NAME darwin_crt_locale_${engine} COMMAND raven --run-process --execution=${engine} "${_crt_locale}")
+        set_tests_properties(darwin_crt_locale_${engine} PROPERTIES TIMEOUT 60)
+    endforeach()
+endif()
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+    set(_buffer_test "${CMAKE_CURRENT_BINARY_DIR}/dxmt-buffer-registry-test")
+    add_custom_command(OUTPUT "${_buffer_test}"
+        COMMAND /usr/bin/clang -arch arm64 -O2 -fblocks
+            ${RAVEN_DARWIN_DIR}/dxmt/buffer_registry_test.m ${RAVEN_DARWIN_DIR}/dxmt/checked_memory.c
+            -framework Foundation -framework Metal -o "${_buffer_test}"
+        DEPENDS ${RAVEN_DARWIN_DIR}/dxmt/buffer_registry_test.m ${RAVEN_DARWIN_DIR}/dxmt/unix_adapter.m VERBATIM)
+    add_custom_target(darwin_dxmt_buffer_registry_fixture ALL DEPENDS "${_buffer_test}")
+    add_test(NAME darwin_dxmt_buffer_registry COMMAND "${_buffer_test}")
+endif()
+
+# Negative unix-call boundary tests: synthetic faults exercise recovery independently of Metal.
+if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64 AND RAVEN_MINGW32)
+    add_executable(darwin_unix_fault_test ${RAVEN_DARWIN_DIR}/tests/unix_fault_test.cpp)
+    target_link_libraries(darwin_unix_fault_test PRIVATE raven_cpu)
+    target_link_options(darwin_unix_fault_test PRIVATE -Wl,-platform_version,macos,11.0,11.0)
+    set(unix_fault_outputs)
+    foreach(width 32 64)
+        set(cc ${RAVEN_MINGW${width}})
+        set(pe ${CMAKE_CURRENT_BINARY_DIR}/unix-fault-${width}.exe)
+        set(entry mainCRTStartup)
+        # Avoid dyld's randomized host-image range in this in-process fixture.
+        set(image_base 0x10000000000)
+        if(width EQUAL 32)
+            set(entry _mainCRTStartup)
+            set(image_base 0x400000)
+        endif()
+        add_custom_command(OUTPUT ${pe}
+            COMMAND ${cc} -O2 -nostdlib -fno-stack-protector -Wl,--entry,${entry},--image-base,${image_base}
+                ${RAVEN_DARWIN_DIR}/tests/unix_fault_pe.c -o ${pe}
+            DEPENDS ${RAVEN_DARWIN_DIR}/tests/unix_fault_pe.c VERBATIM)
+        list(APPEND unix_fault_outputs ${pe})
+    endforeach()
+    foreach(arch arm64 x86_64)
+        set(root ${CMAKE_CURRENT_BINARY_DIR}/unix-fault-${arch})
+        file(MAKE_DIRECTORY ${root})
+        file(WRITE ${root}/unix-call-count "22\n")
+        file(MAKE_DIRECTORY ${root}/mismatch)
+        file(WRITE ${root}/mismatch/unix-call-count "22\n")
+        add_custom_command(OUTPUT ${root}/mismatch/mtld3d.so ${root}/mismatch/raven-mtld3d.dylib
+            COMMAND /usr/bin/clang -arch ${arch} -dynamiclib -O2 -g -DTABLE_COUNT=23
+                ${RAVEN_DARWIN_DIR}/tests/unix_fault_library.c -o ${root}/mismatch/mtld3d.so
+            COMMAND ${CMAKE_COMMAND} -E copy ${root}/mismatch/mtld3d.so ${root}/mismatch/raven-mtld3d.dylib
+            DEPENDS ${RAVEN_DARWIN_DIR}/tests/unix_fault_library.c ${RAVEN_DARWIN_DIR}/unix_memory.h VERBATIM)
+        list(APPEND unix_fault_outputs ${root}/mismatch/mtld3d.so ${root}/mismatch/raven-mtld3d.dylib)
+
+        add_custom_command(OUTPUT ${root}/mtld3d.so ${root}/raven-mtld3d.dylib
+            COMMAND /usr/bin/clang -arch ${arch} -dynamiclib -O2 -g
+                ${RAVEN_DARWIN_DIR}/tests/unix_fault_library.c -o ${root}/mtld3d.so
+            COMMAND ${CMAKE_COMMAND} -E copy ${root}/mtld3d.so ${root}/raven-mtld3d.dylib
+            DEPENDS ${RAVEN_DARWIN_DIR}/tests/unix_fault_library.c ${RAVEN_DARWIN_DIR}/unix_memory.h VERBATIM)
+        list(APPEND unix_fault_outputs ${root}/mtld3d.so ${root}/raven-mtld3d.dylib)
+    endforeach()
+    add_custom_target(darwin_unix_fault_fixtures ALL DEPENDS ${unix_fault_outputs})
+    add_dependencies(darwin_unix_fault_test darwin_unix_fault_fixtures raven-bootstrap)
+    foreach(engine native fex)
+        set(arch arm64)
+        set(widths 32 64)
+        if(engine STREQUAL "native")
+            set(arch x86_64)
+            # Rosetta's unix-call gate is Win64-only; WoW64 graphics uses FEX.
+            set(widths 64)
+        endif()
+        foreach(width IN LISTS widths)
+            add_test(NAME darwin_unix_fault_${width}_${engine} COMMAND darwin_unix_fault_test
+                $<TARGET_FILE:raven-bootstrap> ${CMAKE_CURRENT_BINARY_DIR}/unix-fault-${width}.exe
+                ${CMAKE_CURRENT_BINARY_DIR}/unix-fault-${arch} ${width} fault ${engine})
+            set_tests_properties(darwin_unix_fault_${width}_${engine} PROPERTIES TIMEOUT 30
+                ENVIRONMENT "RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")
+        endforeach()
+    endforeach()
+endif()
+
+set(RAVEN_MTLD3D_TEST_ROOT "$ENV{RAVEN_MTLD3D_ARM64_ROOT}" CACHE PATH "Private mtld3d overlay for unix range tests")
+if(TARGET darwin_unix_fault_test)
+    foreach(engine native fex)
+        set(sub unix64)
+        if(engine STREQUAL "fex")
+            set(sub unix-arm64)
+        endif()
+        foreach(backend dxmt mullion)
+            if(backend STREQUAL "dxmt")
+                set(root "${RAVEN_DXMT_ROOT}/${sub}")
+                if(engine STREQUAL "fex")
+                    set(root "${RAVEN_DXMT_ARM64_ROOT}")
+                endif()
+            else()
+                set(root "${RAVEN_MULLION_ROOT}/${sub}")
+            endif()
+            if(EXISTS "${root}/winemetal.so")
+                add_test(NAME darwin_unix_ranges_${backend}_${engine} COMMAND darwin_unix_fault_test
+                    $<TARGET_FILE:raven-bootstrap> ${CMAKE_CURRENT_BINARY_DIR}/unix-fault-64.exe
+                    "${root}" 64 ${backend} ${engine})
+                set_tests_properties(darwin_unix_ranges_${backend}_${engine} PROPERTIES TIMEOUT 30
+                    ENVIRONMENT "RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT};RAVEN_D3D12_BACKEND=${backend}")
+            endif()
+        endforeach()
+    endforeach()
+    if(EXISTS "${RAVEN_MTLD3D_TEST_ROOT}/mtld3d.so")
+        foreach(width 32 64)
+            add_test(NAME darwin_unix_ranges_mtld3d_${width}_fex COMMAND darwin_unix_fault_test
+                $<TARGET_FILE:raven-bootstrap> ${CMAKE_CURRENT_BINARY_DIR}/unix-fault-${width}.exe
+                "${RAVEN_MTLD3D_TEST_ROOT}" ${width} mtld3d fex)
+            set_tests_properties(darwin_unix_ranges_mtld3d_${width}_fex PROPERTIES TIMEOUT 30
+                ENVIRONMENT "RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")
+        endforeach()
+    endif()
+endif()
+
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+    set(macdrv_test ${CMAKE_CURRENT_BINARY_DIR}/darwin-macdrv-abi-test)
+    add_custom_command(OUTPUT ${macdrv_test}
+        COMMAND /usr/bin/clang -arch arm64 -O2 -g -fblocks
+            ${RAVEN_DARWIN_DIR}/dxmt/macdrv_abi_test.m ${RAVEN_DARWIN_DIR}/dxmt/checked_memory.c
+            -framework Foundation -framework Metal -framework IOSurface -o ${macdrv_test}
+        DEPENDS ${RAVEN_DARWIN_DIR}/dxmt/macdrv_abi_test.m ${RAVEN_DARWIN_DIR}/dxmt/presentation.m
+            ${RAVEN_DARWIN_DIR}/dxmt/macdrv_abi.h ${RAVEN_DARWIN_DIR}/dxmt/checked_memory.c
+            ${RAVEN_DARWIN_DIR}/dxmt/checked_memory.h ${RAVEN_DARWIN_DIR}/unix_guard.h VERBATIM)
+    add_custom_target(darwin_macdrv_abi_fixture ALL DEPENDS ${macdrv_test})
+    add_test(NAME darwin_dxmt_macdrv_abi COMMAND ${macdrv_test})
+endif()

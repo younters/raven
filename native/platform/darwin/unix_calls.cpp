@@ -40,8 +40,10 @@ std::optional<ModuleBytes> darwin_graphics_module(std::string_view name, bool x6
     if (!darwin_graphics_system_module(name, x64)) return std::nullopt;
     const auto root = dxmt_root();
 	const auto path = root / "pe64" / name;
-	if (auto bytes = ModuleBytes::map(path))
+	if (auto bytes = ModuleBytes::map(path)) {
+		if (mullion_selected()) std::cerr << "raven: Mullion module loaded: " << path.string() << '\n';
 		return bytes;
+	}
 	throw std::runtime_error("configured DXMT module is missing: " + path.string());
 }
 
@@ -100,7 +102,11 @@ bool DarwinUnixCalls::dispatch(std::string_view name)
 				if (args[5]) process.validate_write_memory(args[5], process.mode() == NativeMode::x86 ? 4 : 8);
 				auto handle = handles.find(args[1]);
 				if (handle == handles.end()) {
-					// The provisioner validates the pinned table layout. Release overlays
+					const auto path = mtld3d ? root / "mtld3d.so" : root / "unix64" / "winemetal.so";
+                    if (!std::filesystem::is_regular_file(path))
+                        throw std::runtime_error("overlay missing at " + path.string());
+                    // The loader checks this sidecar against the compiled table contract.
+					// Release overlays
                     // predate the count file and have 132 entries; the source pin has 146.
                     uint32_t count = mtld3d ? 22 : 132;
                     if (!mtld3d && mullion_selected() && !std::filesystem::is_regular_file(root / "unix64/unix-call-count"))
@@ -108,10 +114,9 @@ bool DarwinUnixCalls::dispatch(std::string_view name)
                     const auto count_path = mtld3d ? root / "unix-call-count" : root / "unix64" / "unix-call-count";
                     if (std::filesystem::exists(count_path)) {
                         std::ifstream input(count_path);
-                        if (!(input >> count) || (mtld3d ? count != 22 : mullion_selected() ? count == 0 || count > 4096 : count != 132 && count != 146))
+                        if (!(input >> count) || (mtld3d ? count != 22 : mullion_selected() ? count != 197 : count != 132 && count != 146))
                             throw std::runtime_error("unsupported DXMT unix table size");
                     }
-					const auto path = mtld3d ? root / "mtld3d.so" : root / "unix64" / "winemetal.so";
 					handle = handles.emplace(args[1], process.load_unix_library(path.string(), count)).first;
 				}
 				process.write_memory(args[3], {reinterpret_cast<const uint8_t *>(&handle->second), 8});

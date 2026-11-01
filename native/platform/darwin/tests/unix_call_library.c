@@ -1,3 +1,4 @@
+#include "../unix_memory.h"
 #include "unix_call_shared.h"
 #include <errno.h>
 #include <pthread.h>
@@ -77,3 +78,14 @@ static int32_t probe(void *args)
 }
 
 __attribute__((visibility("default"))) int32_t (*__wine_unix_call_funcs[])(void *) = {probe};
+
+static const uint32_t sizes[] = {sizeof(struct unix_call_probe)};
+static int validate(uint32_t code, void *args, raven_unix_check_range check) {
+    struct unix_call_probe *p = args;
+    return code == 0 && (!p->rendezvous || check(p->rendezvous, sizeof(uint32_t), 1));
+}
+static void set_check(raven_unix_check_range check) { (void)check; }
+const struct raven_unix_contract *raven_unix_get_contract(void) {
+    static const struct raven_unix_contract contract = {1, sizeof(__wine_unix_call_funcs)/sizeof(__wine_unix_call_funcs[0]), sizes, validate, set_check};
+    return &contract;
+}

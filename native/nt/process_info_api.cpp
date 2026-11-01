@@ -471,10 +471,11 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 				call.fail(50); return;
 			}
 			alignment = call.load_pointer(requirements + 2 * width);
+			if (call[1] && alignment) { call.fail(87); return; }
 			if (!alignment) alignment = 65536;
 			if (alignment < 65536 || (alignment & (alignment - 1))) { call.fail(87); return; }
 		}
-		if (call[1] || alignment == 65536 || !(call.u32(3) & 0x2000)) {
+		if (call[1] || alignment == 65536 || !(call.u32(3) & (0x2000 | 0x1000))) {
 			if (call[1] && (call[1] & (alignment - 1))) { call.fail(87); return; }
 			const auto result = context.memory.allocate(call[1], call[2], call.u32(3), call.u32(4));
 			if (result.status) call.fail(87); else call.ret(result.address);
@@ -487,7 +488,7 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		const auto address = (probe.address + alignment - 1) & ~(alignment - 1);
 		const auto released = context.memory.free(probe.address, 0, 0x8000);
 		if (released.status) { call.fail(8); return; }
-		const auto result = context.memory.allocate(address, call[2], call.u32(3), call.u32(4));
+		const auto result = context.memory.allocate(address, call[2], call.u32(3) | 0x2000, call.u32(4));
 		if (result.status) call.fail(8); else call.ret(result.address);
 	});
 	registry.add("VirtualAllocEx", 5, [memory_operation](ApiCall &call) { memory_operation(call, "process:allocate"); });

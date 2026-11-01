@@ -1,3 +1,6 @@
+#include "macdrv_abi.h"
+#include <Block.h>
+#include "checked_memory.h"
 // DXMT v0.80's window/drawable ABI, implemented with public IOSurface and Metal APIs in the x86_64 process.
 #include "../guest/protocol.h"
 #include <math.h>
@@ -22,7 +25,7 @@ struct layer_props {
 	bool opaque, sync, framebuffer_only;
 	uint32_t format;
 };
-_Static_assert(sizeof(struct layer_props) == 40, "DXMT v0.80 layer ABI");
+RAVEN_MACDRV_LAYER(struct layer_props, device, scale, width, height, opaque, sync, framebuffer_only, format);
 
 @interface RavenDXMTDrawable : NSObject {
 @public
@@ -224,7 +227,7 @@ static int32_t release_view(void *args)
 // DXMT's private macdrv ABI: four pointer fields, followed by ten callbacks
 // in the source overlay (the released v0.80 consumes the first nine).
 struct raven_macdrv_data { void *hwnd, *window, *view, *client; };
-static void mac_init(int force) { (void)force; }
+static void mac_init(BOOL force) { (void)force; }
 static struct raven_macdrv_data *mac_data(void *hwnd)
 {
 	struct raven_macdrv_data *data = calloc(1, sizeof(*data));
@@ -233,7 +236,7 @@ static struct raven_macdrv_data *mac_data(void *hwnd)
 	return data;
 }
 static void mac_release_data(struct raven_macdrv_data *data) { free(data); }
-static void *mac_window(void *hwnd, int required) { (void)hwnd; (void)required; return NULL; }
+static void *mac_window(void *hwnd, BOOL required) { (void)hwnd; (void)required; return NULL; }
 static void *mac_device(void) { return (void *)MTLCreateSystemDefaultDevice(); }
 static void mac_release_device(void *device) { [(id)device release]; }
 static void *mac_view(void *hwnd, void *device)
@@ -246,14 +249,30 @@ static void *mac_layer(void *view) { return view; }
 static void mac_release_view(void *view) { uint64_t args = (uint64_t)view; release_view(&args); }
 static void mac_main(dispatch_block_t block)
 {
-	if ([NSThread isMainThread]) block();
-	else dispatch_sync(dispatch_get_main_queue(), block);
+	if (!block) return;
+	// The Blocks ABI carries a descriptor-sized capture area. Validate before
+    // Block_copy invokes optional copy helpers or reads that capture area.
+    struct block_literal { void *isa; int flags, reserved; void (*invoke)(void *); const uint64_t *descriptor; };
+    const struct block_literal *literal = raven_unix_checked((const void *)block, 1, sizeof(*literal), 0);
+    const uint64_t *descriptor = raven_unix_checked(literal->descriptor, 2, sizeof(uint64_t), 0);
+    if (descriptor[1] < sizeof(*literal)) { raven_unix_checked(NULL, 1, 1, 0); return; }
+    raven_unix_checked(literal, descriptor[1], 1, 0);
+    raven_unix_executable((const void *)literal->invoke);
+    if (literal->flags & (1 << 25)) {
+        raven_unix_checked(descriptor, 4, sizeof(uint64_t), 0);
+        raven_unix_executable((const void *)descriptor[2]);
+        raven_unix_executable((const void *)descriptor[3]);
+    }
+    dispatch_block_t owned = Block_copy(block);
+    if ([NSThread isMainThread]) owned();
+    else dispatch_sync(dispatch_get_main_queue(), owned);
+    Block_release(owned);
 }
 __attribute__((visibility("default"))) const struct {
-	void (*init)(int);
+	void (*init)(BOOL);
 	struct raven_macdrv_data *(*get_data)(void *);
 	void (*release_data)(struct raven_macdrv_data *);
-	void *(*window)(void *, int);
+	void *(*window)(void *, BOOL);
 	void *(*device)(void);
 	void (*release_device)(void *);
 	void *(*view)(void *, void *);
@@ -262,13 +281,16 @@ __attribute__((visibility("default"))) const struct {
 	void (*main)(dispatch_block_t);
 } macdrv_functions = {mac_init, mac_data, mac_release_data, mac_window,
 	mac_device, mac_release_device, mac_view, mac_layer, mac_release_view, mac_main};
+RAVEN_MACDRV_TABLE(__typeof__(macdrv_functions), init, get_data, release_data, window, device,
+    release_device, view, layer, release_view, main);
+RAVEN_MACDRV_DATA(struct raven_macdrv_data, hwnd, window, view, client);
 #endif
 
 static int32_t set_props(void *args)
 {
 	const uint64_t *p = args;
 	RavenDXMTLayer *layer = (RavenDXMTLayer *)p[0];
-	const struct layer_props *next = (const void *)p[1];
+	const struct layer_props *next = raven_unix_checked((const void *)p[1], 1, sizeof(*next), 0);
 	if (next->width != layer->props.width || next->height != layer->props.height || next->format != layer->props.format)
 		[layer->frames removeAllObjects];
 	layer->props = *next;
@@ -278,7 +300,7 @@ static int32_t set_props(void *args)
 static int32_t get_props(void *args)
 {
 	const uint64_t *p = args;
-	*(struct layer_props *)p[1] = ((RavenDXMTLayer *)p[0])->props;
+	*(struct layer_props *)raven_unix_checked((void *)p[1], 1, sizeof(struct layer_props), 1) = ((RavenDXMTLayer *)p[0])->props;
 	return 0;
 }
 
@@ -416,7 +438,7 @@ static int32_t set_colorspace(void *args)
 
 static int32_t get_edr(void *args)
 {
-	float *values = (float *)((uint64_t *)args)[1];
+	float *values = raven_unix_checked((void *)((uint64_t *)args)[1], 2, sizeof(float), 1);
 	values[0] = values[1] = 1;
 	return 0;
 }
@@ -437,10 +459,8 @@ void raven_dxmt_wrap_presentation(void **table)
 	table[67] = next_drawable;
 	table[70] = set_props;
 	table[71] = get_props;
-#if !defined(__aarch64__)
 	table[72] = create_view;
 	table[73] = release_view;
-#endif
 	table[93] = set_colorspace;
 	table[97] = get_edr;
 	table[101] = display_setting;

@@ -2,6 +2,8 @@
 #include "../mullion/backend.h"
 #include "fex_process.h"
 #include "guest_window.h"
+#include "unix_ranges.h"
+#include "../mtld3d/callbacks.h"
 #include "fex-module-config.h"
 #define RAVEN_FEX_EMBEDDED
 #include "modhost/native_host.cpp"
@@ -74,12 +76,16 @@ struct StopPacket {
 };
 thread_local StopPacket last_stop{};
 // Libraries and their callback state live until process exit, including GPU callbacks.
-struct UnixLibrary { std::string path; void *image; int32_t (**table)(void *); uint32_t count; };
+struct UnixLibrary { std::string path; void *image; int32_t (**table)(void *); uint32_t count; const raven_unix_contract *contract; };
 std::vector<UnixLibrary> unix_libraries;
+// Native libraries and GPU callbacks retain this validator until process exit.
+UnixRanges &unix_ranges = *new UnixRanges;
+int unix_check_range(uint64_t address, uint64_t size, uint32_t write) { return unix_ranges.check(address, size, write); }
 std::function<std::vector<uint8_t>(uint64_t, size_t)> unix_read_memory;
 int (*read_native_buffer)(uint64_t, void *, size_t) = nullptr;
 raven_control *const unix_control = new raven_control{};
 thread_local uint32_t *wow64_unix_doorbell = nullptr;
+const bool trace_unix = getenv("RAVEN_TRACE_UNIX") != nullptr;
 constexpr uint32_t unix_service = 0x7ffffffd;
 constexpr uint32_t completion = 0x7ffffffe;
 uint64_t packet_word(void *packet, size_t offset)
@@ -105,17 +111,18 @@ uint64_t process_dispatch(uint64_t number, void *packet)
 			memcpy(&ordinal, words.data() + 8, 4);
 			uint32_t guest_args;
 			memcpy(&guest_args, words.data() + 12, 4);
-			if (!guest_args) return 0xc000000du;
-			try { unix_read_memory(guest_args, 8); } // Validate the header before entering native code.
-			catch (const std::runtime_error &) { return 0xc0000005u; }
+			if (!guest_args) return 0xc0000005u;
 			args = wow64_guest_base + guest_args;
 		}
 		uint64_t status = 0xc0000008u;
 		if (handle && handle <= unix_libraries.size()) {
 			const auto &library = unix_libraries[handle - 1];
-			if (getenv("RAVEN_TRACE_UNIX")) fprintf(stderr, "unix enter %u\n", ordinal);
-			status = ordinal < library.count ? uint32_t(library.table[ordinal](reinterpret_cast<void *>(args))) : 0xc000000du;
-			if (getenv("RAVEN_TRACE_UNIX")) fprintf(stderr, "unix leave %u status=%llx\n", ordinal, (unsigned long long)status);
+			if (wow64_module && ordinal < library.count &&
+				(args - wow64_guest_base > UINT32_MAX || library.contract->argument_sizes[ordinal] >
+					(uint64_t(1) << 32) - (args - wow64_guest_base))) return 0xc0000005u;
+			if (trace_unix) fprintf(stderr, "unix enter %u\n", ordinal);
+			status = ordinal < library.count && library.table[ordinal] ? uint32_t(raven_unix_invoke(library.table[ordinal], reinterpret_cast<void *>(args), ordinal, library.contract, unix_check_range)) : 0xc000000du;
+			if (trace_unix) fprintf(stderr, "unix leave %u status=%llx\n", ordinal, (unsigned long long)status);
 		}
 		// BeginSimulation clears the suspend doorbell on reentry. A hot unix
 		// polling loop must not discard a scheduler interrupt on every call.
@@ -844,6 +851,7 @@ uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 		if (begin + n + 65536 > address + n) munmap(reinterpret_cast<void *>(address + n), begin + n + 65536 - address - n);
 	}
 	state->regions.emplace(address, State::Region{n, false});
+	unix_ranges.set(state->host(address, n), n, PROT_NONE);
 	uint64_t args[8]{state->host(address, n), n, 0x3000, guest_protection(protection), 0, 0};
 	notify_memory("NotifyMemoryAlloc", args, 4);
 	if (protection != PROT_NONE)
@@ -862,9 +870,11 @@ void FexProcess::protect_memory(uint64_t address, size_t size, int protection)
 			if (mprotect(reinterpret_cast<void *>(state->host(address, size)), size, PROT_NONE))
 				throw std::runtime_error("FEX host protection failed");
 			state->pages.erase(state->pages.lower_bound(address), state->pages.lower_bound(address + size));
+			unix_ranges.set(state->host(address, size), size, protection);
 			return;
 		}
 		for (uint64_t at = address; at < address + size; at += 4096) state->pages[at] = protection;
+		unix_ranges.set(state->host(address, size), size, protection);
 		if (!state->window && address == 0x7ffe0000 && size == 4096) return;
 		// Tier 0: union the four logical protections of each real 16K page. Guest
 		// executable bytes remain host data; MAP_JIT owns native executable code.
@@ -894,6 +904,7 @@ void FexProcess::unmap_memory(uint64_t address)
 	auto found = state->regions.find(address);
 	if (found == state->regions.end()) throw std::runtime_error("FEX allocation not found");
 	const auto n = found->second.size;
+	unix_ranges.set(state->host(address, n), n, PROT_NONE);
 	uint64_t args[8]{state->host(address, n), n, 0x8000};
 	notify_memory("NotifyMemoryFree", args, 3, [&] {
 		if (state->window) {
@@ -928,6 +939,7 @@ void FexProcess::map_image(LoadedImage &image)
 	}
 	state->image_reservations.erase(address);
 	state->regions.emplace(address, State::Region{n, true});
+	unix_ranges.set(state->host(address, n), n, PROT_NONE);
 	state->images.push_back(&image);
 	for (size_t at = 0; at < n; at += 4096) state->pages[address + at] = PROT_NONE;
 	for (const auto &mapping : image.mappings())
@@ -955,7 +967,7 @@ uint64_t FexProcess::load_unix_library(const std::string &path, uint32_t count)
 	const bool mtld3d = std::filesystem::path(path).filename() == "mtld3d.so";
 	if (wow64_module && !mtld3d) throw std::runtime_error("FEX WoW64 translator is only defined for mtld3d");
 	if ((!mtld3d && std::filesystem::path(path).filename() != "winemetal.so") ||
-	    (mtld3d ? count != 22 : mullion_selected() ? count == 0 || count > 4096 : count != 132 && count != 146))
+	    (mtld3d ? count != 22 : mullion_selected() ? count != 197 : count != 132 && count != 146))
 		throw std::runtime_error("unsupported FEX unix library/table pair");
 	for (size_t i = 0; i < unix_libraries.size(); ++i)
 		if (unix_libraries[i].path == path) {
@@ -967,23 +979,42 @@ uint64_t FexProcess::load_unix_library(const std::string &path, uint32_t count)
 		const char *root = getenv("RAVEN_MTLD3D_ARM64_ROOT");
 		if (!root || !*root) throw std::runtime_error("set RAVEN_MTLD3D_ARM64_ROOT to the private arm64 overlay");
 		uint32_t overlay_count = 0;
+		if (!std::filesystem::is_regular_file(std::filesystem::path(root) / "mtld3d.so"))
+			throw std::runtime_error("overlay missing at " + (std::filesystem::path(root) / "mtld3d.so").string());
 		std::ifstream metadata(std::string(root) + "/unix-call-count");
 		if (!(metadata >> overlay_count) || overlay_count != count)
 			throw std::runtime_error("FEX mtld3d PE/unix table count mismatch");
-		void *adapter = dlopen((std::string(root) + "/raven-mtld3d.dylib").c_str(), RTLD_NOW | RTLD_GLOBAL);
+		void *adapter = dlopen((std::string(root) + "/raven-mtld3d.dylib").c_str(), RTLD_NOW | RTLD_LOCAL);
 		if (!adapter) throw std::runtime_error(dlerror());
+		std::unique_ptr<void, decltype(&dlclose)> adapter_guard(adapter, dlclose);
 		auto init = reinterpret_cast<void (*)(raven_control *)>(dlsym(adapter, "raven_mtld3d_init"));
 		auto version = reinterpret_cast<uint32_t (*)()>(dlsym(adapter, "raven_mtld3d_protocol_version"));
 		if (!init || !version || version() != RAVEN_GUEST_VERSION) throw std::runtime_error("mtld3d adapter protocol mismatch");
 		init(unix_control);
 		void *image = dlopen((std::string(root) + "/mtld3d.so").c_str(), RTLD_NOW | RTLD_LOCAL);
 		if (!image) throw std::runtime_error(dlerror());
+		std::unique_ptr<void, decltype(&dlclose)> image_guard(image, dlclose);
+		auto get_contract = reinterpret_cast<const raven_unix_contract *(*)()>(dlsym(image, "raven_unix_get_contract"));
+		const auto *contract = get_contract ? get_contract() : nullptr;
+		if (!contract || contract->version != RAVEN_UNIX_CONTRACT_VERSION || contract->count != count ||
+			!contract->argument_sizes || !contract->validate || !contract->set_memory_check)
+			throw std::runtime_error("FEX unixlib compiled contract/count mismatch; reprovision overlay");
+		contract->set_memory_check(unix_check_range);
 		auto table = reinterpret_cast<int32_t (**)(void *)>(dlsym(image, wow64_module ? "__wine_unix_call_wow64_funcs" : "__wine_unix_call_funcs"));
-		if (!table) { dlclose(image); throw std::runtime_error("FEX mtld3d table missing"); }
+		if (!table) throw std::runtime_error("FEX mtld3d table missing");
+		raven_mtld3d_callbacks callbacks{1, sizeof(raven_mtld3d_callbacks),
+			reinterpret_cast<decltype(callbacks.create)>(dlsym(adapter, "raven_mtld3d_layer_create")),
+			reinterpret_cast<decltype(callbacks.release)>(dlsym(adapter, "raven_mtld3d_layer_release")),
+			reinterpret_cast<decltype(callbacks.present)>(dlsym(adapter, "raven_mtld3d_present"))};
+		auto bind = reinterpret_cast<int (*)(const raven_mtld3d_callbacks *)>(dlsym(image, "raven_mtld3d_bind"));
+		if (!bind || !callbacks.create || !callbacks.release || !callbacks.present || bind(&callbacks))
+			throw std::runtime_error("mtld3d explicit callback binding failed");
 		auto set_base = reinterpret_cast<void (*)(uint64_t)>(dlsym(image, "raven_mtld3d_set_guest_base"));
 		if (!set_base) throw std::runtime_error("mtld3d address translator missing");
 		set_base(wow64_module ? wow64_guest_base : 0);
-		unix_libraries.push_back({path, image, table, count});
+		unix_libraries.push_back({path, image, table, count, contract});
+		adapter_guard.release();
+		image_guard.release();
 		return unix_libraries.size();
 	}
 	const std::string selected_root = mullion_selected() ? (mullion_root() / "unix-arm64").string() : "";
@@ -991,24 +1022,36 @@ uint64_t FexProcess::load_unix_library(const std::string &path, uint32_t count)
 	if (!root || !*root) root = RAVEN_DXMT_DEFAULT_ARM64_ROOT;
 	if (!*root) throw std::runtime_error("set RAVEN_DXMT_ARM64_ROOT, or configure it at build time, to the arm64 DXMT overlay");
 	uint32_t overlay_count = 0;
+	if (!std::filesystem::is_regular_file(std::filesystem::path(root) / "winemetal.so"))
+		throw std::runtime_error("overlay missing at " + (std::filesystem::path(root) / "winemetal.so").string());
 	std::ifstream metadata(std::string(root) + "/unix-call-count");
 	if (!(metadata >> overlay_count) || overlay_count != count)
 		throw std::runtime_error("FEX DXMT PE/unix table count mismatch");
-	void *adapter = dlopen((std::string(root) + "/raven-dxmt.dylib").c_str(), RTLD_NOW | RTLD_GLOBAL);
+	void *adapter = dlopen((std::string(root) + "/raven-dxmt.dylib").c_str(), RTLD_NOW | RTLD_LOCAL);
 	if (!adapter) throw std::runtime_error(dlerror());
+	std::unique_ptr<void, decltype(&dlclose)> adapter_guard(adapter, dlclose);
 	auto version = reinterpret_cast<uint32_t (*)()>(dlsym(adapter, "raven_unixlib_protocol_version"));
 	auto init = reinterpret_cast<void (*)(raven_control *)>(dlsym(adapter, "raven_unixlib_init"));
 	auto wrap = reinterpret_cast<void *(*)(void *, uint32_t)>(dlsym(adapter, "raven_unixlib_wrap_table"));
 	if (!version || version() != RAVEN_GUEST_VERSION || !init || !wrap) throw std::runtime_error("FEX DXMT adapter protocol mismatch");
 	void *image = dlopen((std::string(root) + "/winemetal.so").c_str(), RTLD_NOW | RTLD_LOCAL);
 	if (!image) throw std::runtime_error(dlerror());
+	std::unique_ptr<void, decltype(&dlclose)> image_guard(image, dlclose);
+	auto get_contract = reinterpret_cast<const raven_unix_contract *(*)()>(dlsym(image, "raven_unix_get_contract"));
+	const auto *contract = get_contract ? get_contract() : nullptr;
+	if (!contract || contract->version != RAVEN_UNIX_CONTRACT_VERSION || contract->count != count ||
+		!contract->argument_sizes || !contract->validate || !contract->set_memory_check)
+		throw std::runtime_error("FEX unixlib compiled contract/count mismatch; reprovision overlay");
+	contract->set_memory_check(unix_check_range);
 	void *table = dlsym(image, "__wine_unix_call_funcs");
 	if (!table) throw std::runtime_error("FEX DXMT table missing");
-	read_native_buffer = reinterpret_cast<decltype(read_native_buffer)>(dlsym(adapter, "raven_dxmt_read_memory"));
 	init(unix_control);
 	table = wrap(table, count);
 	if (!table) throw std::runtime_error("FEX DXMT table wrapping failed");
-	unix_libraries.push_back({path, image, reinterpret_cast<int32_t (**)(void *)>(table), count});
+	unix_libraries.push_back({path, image, reinterpret_cast<int32_t (**)(void *)>(table), count, contract});
+	read_native_buffer = reinterpret_cast<decltype(read_native_buffer)>(dlsym(adapter, "raven_dxmt_read_memory"));
+	adapter_guard.release();
+	image_guard.release();
 	return unix_libraries.size();
 }
 void FexProcess::add_api_trap(uint64_t address, uint32_t callee_cleanup)
