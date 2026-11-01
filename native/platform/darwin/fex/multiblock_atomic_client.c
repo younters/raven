@@ -48,8 +48,8 @@ static DWORD WINAPI worker(void *argument)
         "lock xaddl %%eax, (%[refs])\n"
         "mov $1, %%eax\n"
         "lock xaddl %%eax, (%[refs])\n"
-        // FEX folds this compare into the branch when both successors
-        // overwrite flags inside the multiblock; NZCV is then never written.
+        // Compare-with-zero back edge: a FoldBranch candidate. Observed stops here
+        // reported ZF consistent with R8, so it was not folded in practice.
         "sub $1, %%r8\n"
         "cmp $0, %%r8\n"
         "jne 1b\n"

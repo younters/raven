@@ -230,3 +230,35 @@ Next steps: restore a passing D control first. Then repeat C at least 3 times; i
 holds, minimise to CALL + return-entry + `ret` with the call-ret stack under
 suspension. An IR cross-block-use checker (variant X) was inconclusive: the
 module's CRT log file never appeared.
+
+## Fourth continuation (2026-11-01): harness and call-ret lead
+
+build-perf was reconfigured and rebuilt against the restored raven-components.
+The GPU path is still unreliable, but `--disable-gpu` works: the multiblock-off
+control D passed headless `--dump-dom` with a checked result (49 s, JS 8535 ms).
+Use `/tmp/raven-mb3-scratch/runc.sh MODDIR NAME` (fresh prefix clone,
+`caffeinate -dims`, and a Sleep/DarkWake count for the run window).
+
+From about 02:55 local the Mac keeps entering Maintenance Sleep and DarkWake on battery.
+`caffeinate -dims` does not stop it. The repeat runs of variant C (C1/C2) took
+620 s against a 200 s timeout, with 26–28 sleep events each, and are invalid.
+No timed Chrome, Steam or benchmark result is valid until the machine is on AC
+power and awake.
+
+Leading hypothesis (not yet proven): stale call-ret stack returns into
+invalidated multiblock code. In multiblock mode, CALL pushes (guest return RIP,
+host address of the continuation inside the caller's multiblock). RET jumps
+straight to that host address when the RIP matches, with no lookup. Single-block mode pushes
+(0, 0), so RET always performs a lookup, which matches variant C passing.
+`InvalidateThreadCachedCodeRange` clears a thread's call-ret stack only when
+that thread's own `CachedCodePages` covers the range. A thread that entered
+the block through linked branches or another thread's compile keeps its stale
+entries. Ruled out: Raven's MEM_DECOMMIT+MEM_COMMIT returns zeroed pages on
+both engines, so the clearing itself works.
+
+Next: a deterministic test. Thread A compiles a multiblock caller F; thread B
+enters F only through linked branches, then calls G, which rewrites F's
+post-call bytes and flushes. The result depends on whether B returns into the
+new or the old translation. If confirmed, fix in 0041 by clearing every
+thread's call-ret stack on any invalidation (not only those with cached pages),
+then qualify with variant C's removed.
