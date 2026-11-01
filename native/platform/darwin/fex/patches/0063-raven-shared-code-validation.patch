@@ -1,0 +1,120 @@
+--- a/Source/Windows/Common/InvalidationTracker.h
++++ b/Source/Windows/Common/InvalidationTracker.h
+@@ -23,6 +23,7 @@
+ class InvalidationTracker {
+ public:
+   InvalidationTracker(FEXCore::Context::Context& CTX, const std::unordered_map<DWORD, FEXCore::Core::InternalThreadState*>& Threads, uint64_t GuestBase = 0);
++  void MarkSharedMemory(uint64_t Address, uint64_t Size);
+   void HandleMemoryProtectionNotification(uint64_t Address, uint64_t Size, ULONG Prot);
+   void HandleProcessExecuteFlagsChange(ULONG Flags);
+   void HandleImageMap(std::string_view Name, uint64_t Address);
+@@ -60,6 +61,9 @@
+ 
+   FEXCore::IntervalList<uint64_t> XIntervals;
+   FEXCore::IntervalList<uint64_t> RWXIntervals;
++  // Aliases (including other processes) can modify executable bytes even when
++  // this view is RX. This is byte-validation policy, not write permission.
++  FEXCore::IntervalList<uint64_t> SharedIntervals;
+   std::shared_mutex IntervalsLock;
+   FEXCore::Context::Context& CTX;
+   const std::unordered_map<DWORD, FEXCore::Core::InternalThreadState*>& Threads;
+--- a/Source/Windows/Common/InvalidationTracker.cpp
++++ b/Source/Windows/Common/InvalidationTracker.cpp
+@@ -212,6 +212,7 @@
+     std::unique_lock Lock(IntervalsLock);
+     XIntervals.Remove({SectionBase, SectionBase + SectionSize});
+     RWXIntervals.Remove({SectionBase, SectionBase + SectionSize});
++    SharedIntervals.Remove({SectionBase, SectionBase + SectionSize});
+   }
+ 
+   return {SectionBase, SectionSize};
+@@ -234,6 +235,7 @@
+     std::unique_lock Lock(IntervalsLock);
+     XIntervals.Remove({AlignedBase, AlignedBase + AlignedSize});
+     RWXIntervals.Remove({AlignedBase, AlignedBase + AlignedSize});
++    SharedIntervals.Remove({AlignedBase, AlignedBase + AlignedSize});
+   }
+ }
+ 
+@@ -272,21 +274,33 @@
+ 
+ bool InvalidationTracker::BeginUntrackedWriteLocked(uint64_t Address, uint64_t Size) {
+   return ProtectRWXIntervalsInternal(Address, Size, true);
++}
++
++void InvalidationTracker::MarkSharedMemory(uint64_t Address, uint64_t Size) {
++  {
++    std::unique_lock Lock(IntervalsLock);
++    SharedIntervals.Insert({Address, Address + Size});
++  }
++  // Recompile any pre-existing block with validation before publishing the view.
++  InvalidateIntervalInternal(Address, Size);
+ }
+ 
+ FEXCore::HLE::ExecutableRangeInfo InvalidationTracker::QueryExecutableRange(uint64_t Address) {
+   std::shared_lock Lock(IntervalsLock);
+   const auto XResult = XIntervals.Query(Address);
+-  if (!XResult.Enclosed) {
+-    return {};
+-  }
++  if (!XResult.Enclosed) return {};
+   const auto RWXResult = RWXIntervals.Query(Address);
+-  if (RWXResult.Enclosed) {
+-    return {RWXResult.Interval.Offset, RWXResult.Interval.End - RWXResult.Interval.Offset, true};
+-  } else if (RWXResult.Size && RWXResult.Size < XResult.Size) {
+-    return {XResult.Interval.Offset, RWXResult.Interval.Offset - XResult.Interval.Offset, false};
++  const auto SharedResult = SharedIntervals.Query(Address);
++  auto End = XResult.Interval.End;
++  const bool ValidateBytes = RWXResult.Enclosed || SharedResult.Enclosed;
++  if (ValidateBytes) {
++    if (RWXResult.Enclosed) End = std::min(End, RWXResult.Interval.End);
++    if (SharedResult.Enclosed) End = std::min(End, SharedResult.Interval.End);
++  } else {
++    if (RWXResult.Size) End = std::min(End, RWXResult.Interval.Offset);
++    if (SharedResult.Size) End = std::min(End, SharedResult.Interval.Offset);
+   }
+-  return {XResult.Interval.Offset, XResult.Interval.End - XResult.Interval.Offset, false};
++  return {Address, End - Address, ValidateBytes};
+ }
+ 
+ void InvalidationTracker::DetectMonoBackpatcherBlock(FEXCore::Core::InternalThreadState* Thread, uint64_t HostPc) {
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -1383,4 +1383,9 @@
+ }
+ extern "C" void *RavenTestAllocate(uint64_t Size) { return malloc(Size); }
+ extern "C" void RavenTestFree(void *Pointer) { free(Pointer); }
++extern "C" void RavenMarkSharedMemory(uint64_t Address, uint64_t Size) {
++  std::scoped_lock Lock(ThreadCreationMutex);
++  InvalidationTracker->MarkSharedMemory(Address, Size);
++}
++
+ #endif
+--- a/Source/Windows/ARM64EC/libarm64ecfex.def
++++ b/Source/Windows/ARM64EC/libarm64ecfex.def
+@@ -29,3 +29,4 @@
+   RavenGetYmmHigh
+   RavenSetYmmHigh
+   RavenCompileProfile
++  RavenMarkSharedMemory
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -1184,6 +1184,11 @@
+   }
+   return false;
+ }
++extern "C" void RavenMarkSharedMemory(uint64_t Address, uint64_t Size) {
++  std::scoped_lock Lock(ThreadCreationMutex);
++  InvalidationTracker->MarkSharedMemory(Address, Size);
++}
++
+ extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, CONTEXT *Native) {
+   const auto Thread = GetTLS().ThreadState();
+   if (!Thread) return STATUS_NOT_SUPPORTED;
+--- a/Source/Windows/WOW64/libwow64fex.def
++++ b/Source/Windows/WOW64/libwow64fex.def
+@@ -28,3 +28,4 @@
+   RavenWow64Run
+   RavenHandleFault
+   RavenWow64Doorbell
++  RavenMarkSharedMemory

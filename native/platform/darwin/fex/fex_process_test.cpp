@@ -89,7 +89,7 @@ int main(int argc, char **argv)
 			// Recovery/valid completion has its own deterministic result.
 			code.insert(code.end(), {0xb8, 42, 0, 0, 0, 0xc3});
 			memcpy(loaded.data().data() + image.entry, code.data(), code.size());
-		} else if (mode == "selfmodify") {
+		} else if (mode == "selfmodify" || mode == "flush-only") {
 			const uint8_t code[]{0xb8, 1, 0, 0, 0, 0xc3};
 			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
 		} else if (mode == "timeout" || mode == "wait-unwind") {
@@ -258,6 +258,11 @@ int main(int argc, char **argv)
 			throw std::runtime_error("malformed served stub was silently skipped");
 		}
 		if (mode == "internal") asm volatile("brk #0");
+        unsigned samples = 0;
+        if (mode == "timeout") process.set_guest_sampler(std::chrono::milliseconds(3), [&](uint64_t rip) {
+            check(rip == loaded.base() + image.entry, "sampled RIP imprecise");
+            ++samples;
+        });
 		auto result = process.call(loaded.base() + image.entry, {}, std::chrono::milliseconds(mode == "timeout" ? 20 : 5000));
 		if (mode == "debug-print") {
 			check(result.stop == raven::NativeStop::fault && result.signal == SIGSEGV && result.signal_code == 0x80 && result.value == 1,
@@ -307,7 +312,17 @@ int main(int argc, char **argv)
 			process.return_api(42);
 			result = process.resume();
 		}
-		if (mode == "selfmodify") {
+		if (mode == "flush-only") {
+			check(result.stop == raven::NativeStop::returned && result.value == 1, "initial flush code result mismatch");
+			const auto address = loaded.base() + image.entry;
+			// Mutate the loader's backing alias directly: no protect or dirty
+			// notification. Only the explicit flush may discard this RX block.
+			loaded.data()[image.entry + 1] = 42;
+			result = process.call(address, {});
+			check(result.stop == raven::NativeStop::returned && result.value == 1, "flush negative control did not retain old translation");
+			process.flush_instruction_cache(address, 6);
+			result = process.call(address, {});
+		} else if (mode == "selfmodify") {
 			check(result.stop == raven::NativeStop::returned && result.value == 1, "first code result mismatch");
 			const auto address = loaded.base() + image.entry;
 			process.protect_image(address & ~uint64_t(4095), 4096, PROT_READ | PROT_WRITE | PROT_EXEC);
@@ -317,6 +332,8 @@ int main(int argc, char **argv)
 			result = process.call(address, {});
 		} else if (mode == "timeout") {
 			check(result.stop == raven::NativeStop::timeout, "doorbell failed to interrupt guest loop");
+            check(samples > 0, "timed guest execution produced no samples");
+            process.set_guest_sampler(std::chrono::milliseconds(0), {});
 			auto context = process.context();
 			check(context.registers.rip == loaded.base() + image.entry, "doorbell RIP imprecise");
 			context.registers.rip += 2; context.registers.rax = 42;

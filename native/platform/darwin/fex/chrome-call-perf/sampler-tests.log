@@ -1,0 +1,21 @@
+CTest lock acquired: sampler
+Test project /Users/yount/.t3/worktrees/raven/t3-c067e4ec/build-perf
+    Start  402: native_timeout_fex
+1/4 Test  #402: native_timeout_fex .......................................   Passed    0.11 sec
+    Start  668: native_parallel_timeout_fex
+2/4 Test  #668: native_parallel_timeout_fex ..............................   Passed    0.06 sec
+    Start 1292: native_prefix_cleanup_8e3726c09355c25308331ea56990f01c
+3/4 Test #1292: native_prefix_cleanup_8e3726c09355c25308331ea56990f01c ...   Passed    0.03 sec
+    Start 1449: native_prefix_cleanup_f919e885919d5ae2282464ca4b792a8e
+4/4 Test #1449: native_prefix_cleanup_f919e885919d5ae2282464ca4b792a8e ...   Passed    0.01 sec
+
+100% tests passed out of 4
+
+Label Time Summary:
+fex               =   0.17 sec*proc (2 tests)
+m2                =   0.11 sec*proc (1 test)
+m3                =   0.06 sec*proc (1 test)
+parallel          =   0.06 sec*proc (1 test)
+prefix-cleanup    =   0.04 sec*proc (2 tests)
+
+Total Test time (real) =   0.24 sec

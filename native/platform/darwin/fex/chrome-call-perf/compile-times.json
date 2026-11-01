@@ -1,0 +1,74 @@
+{
+  "scope": "one row per exiting process; process times overlap; attempts include repeated translations, not unique blocks; no module/anonymous split",
+  "processes": [
+    {
+      "compilation_attempts": 107402,
+      "compile_ms": 891.627856
+    },
+    {
+      "compilation_attempts": 40779,
+      "compile_ms": 359.334607
+    },
+    {
+      "compilation_attempts": 218766,
+      "compile_ms": 1881.314042
+    },
+    {
+      "compilation_attempts": 219328,
+      "compile_ms": 1895.41732
+    },
+    {
+      "compilation_attempts": 43255,
+      "compile_ms": 381.813873
+    },
+    {
+      "compilation_attempts": 218749,
+      "compile_ms": 1993.025089
+    },
+    {
+      "compilation_attempts": 45798,
+      "compile_ms": 387.877892
+    },
+    {
+      "compilation_attempts": 1773692,
+      "compile_ms": 15136.113311
+    },
+    {
+      "compilation_attempts": 286358,
+      "compile_ms": 2487.711762
+    },
+    {
+      "compilation_attempts": 349727,
+      "compile_ms": 3019.126267
+    },
+    {
+      "compilation_attempts": 218552,
+      "compile_ms": 1829.432859
+    },
+    {
+      "compilation_attempts": 205233,
+      "compile_ms": 1754.457727
+    },
+    {
+      "compilation_attempts": 101066,
+      "compile_ms": 794.636965
+    },
+    {
+      "compilation_attempts": 326444,
+      "compile_ms": 2961.785736
+    },
+    {
+      "compilation_attempts": 311636,
+      "compile_ms": 2758.615276
+    },
+    {
+      "compilation_attempts": 3868993,
+      "compile_ms": 32853.593376
+    },
+    {
+      "compilation_attempts": 199942,
+      "compile_ms": 1643.035843
+    }
+  ],
+  "total_compile_ms": 73028.919801
+}

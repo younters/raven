@@ -1,0 +1,1056 @@
+FEX main image claimed inside image_pool
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+[70989:1:1031/211709.522:ERROR:net\base\network_change_notifier_win.cc:224] WSALookupServiceBegin failed with: 10108
+[70989:54:1031/211709.746:ERROR:net\dns\dns_config_service_win.cc:526] DNS registry watch failed to start.
+[70989:54:1031/211709.760:ERROR:net\dns\dns_config_service_win.cc:546] DNS hosts watch failed to start.
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX main image claimed inside image_pool
+[71005:1:1031/211710.819:ERROR:media\base\win\mf_initializer.cc:46] Failed to start Media Foundation, accelerated media functionality may be disabled. If you're using Windows N, see https://support.microsoft.com/en-us/topic/media-feature-pack-for-windows-10-n-may-2020-ebbdf559-b84c-0fc2-bd51-e23c9f6a4439 for information on how to install the Media Feature Pack. Error: Could not load mf.dll: The specified module could not be found. (0x7E)
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+[71006:14:1031/211711.040:ERROR:net\dns\dns_config_service_win.cc:526] DNS registry watch failed to start.
+[71006:30:1031/211711.040:ERROR:net\base\network_change_notifier_win.cc:224] WSALookupServiceBegin failed with: 10108
+[71006:14:1031/211711.058:ERROR:net\dns\dns_config_service_win.cc:546] DNS hosts watch failed to start.
+info:  Maximum supported feature level: D3D_FEATURE_LEVEL_11_1
+info:  Using feature level D3D_FEATURE_LEVEL_11_1
+[71005:1:1031/211711.597:ERROR:ui\gl\direct_composition_support.cc:775] Failed to retrieve IDCompositionDevice3: No such interface supported (0x80004002)
+samples: 1204 in the last period
+  5 chrome.dll+5a83400
+  4 chrome.dll+5a1e300
+  4 chrome.dll+3bac000
+  3 chrome.dll+5a83a00
+  3 chrome.dll+5a83200
+  3 chrome.dll+54df100
+  3 chrome.dll+4aa6500
+  3 chrome.dll+3bb3100
+  3 chrome.dll+48cb00
+  2 chrome.dll+5a84000
+  2 chrome.dll+5a83e00
+  2 chrome.dll+5a83d00
+  2 chrome.dll+5a83500
+  2 chrome.dll+5a83300
+  2 chrome.dll+55c4d00
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+samples: 80 in the last period
+  2 chrome.dll+5101200
+  2 chrome.dll+46c8a00
+  1 chrome.dll+5a6ec00
+  1 chrome.dll+5a6b300
+  1 chrome.dll+53a4500
+  1 chrome.dll+5398f00
+  1 chrome.dll+50f7000
+  1 chrome.dll+50e0000
+  1 chrome.dll+4f7a600
+  1 chrome.dll+4cbfe00
+  1 chrome.dll+4cae700
+  1 chrome.dll+4b0c700
+  1 chrome.dll+4aa6f00
+  1 chrome.dll+49eb400
+  1 chrome.dll+49de700
+samples: 56 in the last period
+  1 chrome.dll+5a83400
+  1 chrome.dll+5a37d00
+  1 chrome.dll+55c5f00
+  1 chrome.dll+558a800
+  1 chrome.dll+5513800
+  1 chrome.dll+5244600
+  1 chrome.dll+50f7000
+  1 chrome.dll+50e0100
+  1 chrome.dll+5038200
+  1 chrome.dll+4f78200
+  1 chrome.dll+4ef8200
+  1 chrome.dll+4e44100
+  1 chrome.dll+4cc0500
+  1 chrome.dll+4b89d00
+  1 chrome.dll+4b0a400
+samples: 210 in the last period
+  3 chrome.dll+49de500
+  2 chrome.dll+492dc00
+  2 chrome.dll+42a5600
+  2 ?
+  1 dxcompiler.dll+11de500
+  1 dxcompiler.dll+c5c300
+  1 dxcompiler.dll+c58a00
+  1 dxcompiler.dll+b56a00
+  1 dxcompiler.dll+b36b00
+  1 dxcompiler.dll+b06300
+  1 dxcompiler.dll+49300
+  1 d3d11.dll+265800
+  1 d3d11.dll+20ab00
+  1 d3d11.dll+57e00
+  1 d3d11.dll+44600
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX compile: blocks=107402 ns=891627856
+FEX calls: resume count=4082 ns=1469515931
+FEX calls: context count=11493 ns=2834349
+FEX calls: arguments count=3537 ns=759357
+warn:  MakeWindowAssociation: Ignoring flags 2
+samples: 1224 in the last period
+  5 chrome.dll+5a83400
+  5 chrome.dll+3ba2e00
+  3 chrome.dll+5a1e300
+  3 chrome.dll+5469000
+  3 chrome.dll+466e400
+  3 chrome.dll+1c10400
+  2 kernel32.dll+15400
+  2 chrome.dll+5a83d00
+  2 chrome.dll+5624e00
+  2 chrome.dll+5528000
+  2 chrome.dll+54c4100
+  2 chrome.dll+5468e00
+  2 chrome.dll+52b7500
+  2 chrome.dll+51ca100
+  2 chrome.dll+5156100
+samples: 371 in the last period
+  2 chrome.dll+5a83b00
+  2 chrome.dll+55c7000
+  2 chrome.dll+5501e00
+  2 chrome.dll+4c82500
+  2 chrome.dll+4b9bc00
+  2 chrome.dll+417d500
+  2 chrome.dll+3228e00
+  2 chrome.dll+19c8600
+  1 chrome.dll+c400c00
+  1 chrome.dll+b49f100
+  1 chrome.dll+a7f4600
+  1 chrome.dll+5a83300
+  1 chrome.dll+5a6e900
+  1 chrome.dll+5a6b300
+  1 chrome.dll+5a28900
+warn:  D3D11Device: Unknown interface query 29da1d51-1321-4454-804b-f5fc9f861f0f
+samples: 14 in the last period
+  1 d3d11.dll+cd600
+  1 d3d11.dll+8f700
+  1 dxgi.dll+4c800
+  1 chrome.dll+cb48800
+  1 chrome.dll+6429200
+  1 chrome.dll+5606800
+  1 chrome.dll+54ff700
+  1 chrome.dll+512b700
+  1 chrome.dll+4aa7400
+  1 chrome.dll+3bb3d00
+  1 chrome.dll+26a4000
+  1 chrome.dll+255c600
+  1 chrome.dll+255c100
+  1 chrome.dll+1e74a00
+samples: 549 in the last period
+  3 chrome.dll+5a83e00
+  3 chrome.dll+5a1e300
+  2 chrome.dll+3f59700
+  2 chrome.dll+3f3df00
+  2 chrome.dll+3e74400
+  2 chrome.dll+3bafa00
+  2 chrome.dll+3ba2e00
+  2 chrome.dll+3228600
+  2 chrome.dll+602e00
+  2 chrome.dll+2db300
+  1 kernel32.dll+14f00
+  1 chrome.dll+c3ffd00
+  1 chrome.dll+b6e0500
+  1 chrome.dll+b48cc00
+  1 chrome.dll+5b38900
+samples: 259 in the last period
+  2 chrome.dll+5a83300
+  2 chrome.dll+4a7bc00
+  2 chrome.dll+4169c00
+  2 chrome.dll+3e74400
+  2 chrome.dll+3228e00
+  1 chrome.dll+c401000
+  1 chrome.dll+5a83d00
+  1 chrome.dll+5a83a00
+  1 chrome.dll+5a36d00
+  1 chrome.dll+5a28d00
+  1 chrome.dll+59ee000
+  1 chrome.dll+59e2500
+  1 chrome.dll+5689300
+  1 chrome.dll+560e100
+  1 chrome.dll+5607400
+samples: 222 in the last period
+  2 chrome.dll+52da800
+  2 chrome.dll+52d7800
+  2 chrome.dll+52d6500
+  2 chrome.dll+50af700
+  2 chrome.dll+4f15200
+  2 chrome.dll+3baf700
+  1 chrome.dll+5a83e00
+  1 chrome.dll+5a83d00
+  1 chrome.dll+5a3df00
+  1 chrome.dll+5a1e300
+  1 chrome.dll+55f4d00
+  1 chrome.dll+55f2800
+  1 chrome.dll+55f2600
+  1 chrome.dll+556fc00
+  1 chrome.dll+556bd00
+samples: 508 in the last period
+  3 chrome.dll+3bac700
+  2 chrome.dll+5511f00
+  2 chrome.dll+50e0200
+  2 chrome.dll+4a7b100
+  2 chrome.dll+4445100
+  2 chrome.dll+416a100
+  2 chrome.dll+409f700
+  2 chrome.dll+3c34f00
+  2 chrome.dll+3228600
+  2 chrome.dll+144bf00
+  1 chrome.dll+c3fa900
+  1 chrome.dll+b499d00
+  1 chrome.dll+b494200
+  1 chrome.dll+b48c400
+  1 chrome.dll+8993400
+samples: 1231 in the last period
+  5 chrome.dll+48d300
+  4 chrome.dll+3bac000
+  4 chrome.dll+bc2900
+  3 chrome.dll+acc0f00
+  3 chrome.dll+aafd600
+  3 chrome.dll+aafb100
+  3 chrome.dll+a7ee400
+  3 chrome.dll+4f21f00
+  3 chrome.dll+4b42800
+  3 chrome.dll+3f43200
+  3 chrome.dll+3c32e00
+  3 chrome.dll+3bea800
+  3 chrome.dll+3bddd00
+  3 chrome.dll+3bb3d00
+  3 chrome.dll+1773000
+[70989:110:1031/211723.310:ERROR:services\device\public\cpp\geolocation\system_geolocation_source_win.cc:115] Failed to get IAppCapability statics: Class not registered (0x80040154)
+samples: 1796 in the last period
+  5 chrome.dll+3c06300
+  4 chrome.dll+5a1e300
+  4 chrome.dll+4e45700
+  4 chrome.dll+4075300
+  4 chrome.dll+3de7c00
+  4 chrome.dll+3de7b00
+  4 chrome.dll+3c05900
+  4 chrome.dll+3c05700
+  3 chrome.dll+54f5200
+  3 chrome.dll+54f3800
+  3 chrome.dll+4433c00
+  3 chrome.dll+405fe00
+  3 chrome.dll+3ef2900
+  3 chrome.dll+3ef2800
+  3 chrome.dll+3ec3200
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX compile: blocks=40779 ns=359334607
+FEX calls: resume count=1809 ns=673690020
+FEX calls: context count=4703 ns=1284547
+FEX calls: arguments count=1432 ns=327703
+samples: 271 in the last period
+  2 chrome.dll+5a4ba00
+  2 chrome.dll+4018e00
+  2 chrome.dll+3c1b000
+  2 chrome.dll+3c05700
+  2 chrome.dll+3c00000
+  2 chrome.dll+3bed900
+  2 chrome.dll+3bcdb00
+  2 chrome.dll+3baf900
+  1 chrome.dll+b05b700
+  1 chrome.dll+aac6d00
+  1 chrome.dll+73cab00
+  1 chrome.dll+5a83b00
+  1 chrome.dll+591a200
+  1 chrome.dll+583f900
+  1 chrome.dll+5838000
+samples: 519 in the last period
+  8 ?
+  3 d3dcompiler_47.dll+18700
+  2 d3dcompiler_47.dll+14e400
+  2 d3dcompiler_47.dll+113900
+  2 d3dcompiler_47.dll+112e00
+  2 d3dcompiler_47.dll+107400
+  2 d3dcompiler_47.dll+104f00
+  2 d3dcompiler_47.dll+104e00
+  2 d3dcompiler_47.dll+fe800
+  2 d3dcompiler_47.dll+c7900
+  2 d3dcompiler_47.dll+48e00
+  2 d3dcompiler_47.dll+37c00
+  2 d3dcompiler_47.dll+37100
+  2 d3dcompiler_47.dll+35900
+  2 chrome.dll+5cb2c00
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+samples: 247 in the last period
+  2 chrome.dll+5a83b00
+  2 chrome.dll+4cc0000
+  2 chrome.dll+3436400
+  2 chrome.dll+1302200
+  2 chrome.dll+12fbb00
+  1 chrome.dll+5ab0a00
+  1 chrome.dll+5a83600
+  1 chrome.dll+5a83200
+  1 chrome.dll+56fb500
+  1 chrome.dll+56c7e00
+  1 chrome.dll+5563400
+  1 chrome.dll+549e000
+  1 chrome.dll+5497500
+  1 chrome.dll+5462a00
+  1 chrome.dll+5442400
+samples: 113 in the last period
+  1 chrome.dll+dd15500
+  1 chrome.dll+5c8c000
+  1 chrome.dll+5767e00
+  1 chrome.dll+5767d00
+  1 chrome.dll+56cbd00
+  1 chrome.dll+5586200
+  1 chrome.dll+5526a00
+  1 chrome.dll+550fc00
+  1 chrome.dll+54ab800
+  1 chrome.dll+5462c00
+  1 chrome.dll+53b7d00
+  1 chrome.dll+5387900
+  1 chrome.dll+5252c00
+  1 chrome.dll+51c9e00
+  1 chrome.dll+51c2100
+samples: 1221 in the last period
+  4 chrome.dll+5a83200
+  3 chrome.dll+5a1e300
+  3 chrome.dll+409d800
+  3 chrome.dll+3bac000
+  3 chrome.dll+84ae00
+  2 chrome.dll+5a83400
+  2 chrome.dll+59efe00
+  2 chrome.dll+5512000
+  2 chrome.dll+5469100
+  2 chrome.dll+5468f00
+  2 chrome.dll+5455b00
+  2 chrome.dll+533a700
+  2 chrome.dll+52bf600
+  2 chrome.dll+5153b00
+  2 chrome.dll+50b2a00
+samples: 1350 in the last period
+  3 chrome.dll+47d5e00
+  3 chrome.dll+3e74400
+  3 chrome.dll+3db9b00
+  3 chrome.dll+3bac000
+  3 raven-rtl.dll+1b00
+  2 ?
+  2 ?
+  2 chrome.dll+5a83300
+  2 chrome.dll+59ce200
+  2 chrome.dll+5889f00
+  2 chrome.dll+581b500
+  2 chrome.dll+57cf600
+  2 chrome.dll+5683900
+  2 chrome.dll+5671900
+  2 chrome.dll+524ff00
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+samples: 81 in the last period
+  3 ?
+  1 d3d11.dll+114b00
+  1 d3d11.dll+10d100
+  1 d3d11.dll+e3800
+  1 d3d11.dll+c5800
+  1 d3d11.dll+63400
+  1 d3d11.dll+4ee00
+  1 chrome.dll+dc7d400
+  1 chrome.dll+dc7cb00
+  1 chrome.dll+dc74000
+  1 chrome.dll+da28f00
+  1 chrome.dll+da28d00
+  1 chrome.dll+da21f00
+  1 chrome.dll+d1bd600
+  1 chrome.dll+ceece00
+[71205:1:1031/211733.010:VERBOSE1:chrome\updater\updater.cc:375] Version: 157.0.8089.0, opt, x86, command line: "C:\Program Files (x86)\Google\GoogleUpdater\157.0.8089.0\updater.exe" --wake-all --system
+samples: 172 in the last period
+  2 chrome.dll+497b700
+  2 chrome.dll+466fd00
+  1 chrome.dll+5a83d00
+  1 chrome.dll+5a83600
+  1 chrome.dll+56dc200
+  1 chrome.dll+55a8c00
+  1 chrome.dll+5512300
+  1 chrome.dll+54fc200
+  1 chrome.dll+54a0600
+  1 chrome.dll+53cb600
+  1 chrome.dll+5374200
+  1 chrome.dll+5359600
+  1 chrome.dll+5307200
+  1 chrome.dll+5300f00
+  1 chrome.dll+52d2100
+[71205:1:1031/211733.020:VERBOSE1:chrome\updater\updater.cc:378] OS version: 10.0.19045.2364, arch: x86_64, System uptime (seconds): 349640, parent pid: 70989
+[71205:1:1031/211733.030:VERBOSE1:chrome\updater\updater.cc:383] Available disk space in install directory (C:\Program Files (x86)\Google\GoogleUpdater): 5268156416B (4.906GiB) / 994662584320B (926.352GiB)
+[71205:1:1031/211733.051:VERBOSE1:chrome\updater\updater.cc:387] Available disk space in temporary directory (C:\Users\yount\AppData\Local\Temp): 5268156416B (4.906GiB) / 994662584320B (926.352GiB)
+[71205:1:1031/211733.059:VERBOSE1:chrome\updater\util\win_util.cc:619] available: 67818M, total: 98304M, phys: 25G
+[71205:1:1031/211733.095:VERBOSE2:chrome\updater\event_history.cc:266] Emitted a UPDATER_PROCESS START event to the history log
+samples: 411 in the last period
+  3 chrome.dll+49ea300
+  2 chrome.dll+4c8d800
+  2 chrome.dll+4aa7300
+  2 chrome.dll+4169b00
+  2 chrome.dll+3c3b800
+  2 chrome.dll+766e00
+  1 chrome.dll+e993500
+  1 chrome.dll+e980e00
+  1 chrome.dll+e97fd00
+  1 chrome.dll+e21e900
+  1 chrome.dll+c400800
+  1 chrome.dll+b49ef00
+  1 chrome.dll+b493e00
+  1 chrome.dll+b48c300
+  1 chrome.dll+898f100
+samples: 11 in the last period
+  1 chrome.dll+abda400
+  1 chrome.dll+51c2500
+  1 chrome.dll+506a100
+  1 chrome.dll+4ba6c00
+  1 chrome.dll+493f600
+  1 chrome.dll+4810c00
+  1 chrome.dll+480cb00
+  1 chrome.dll+1f25f00
+  1 chrome.dll+113bf00
+  1 chrome.dll+936d00
+  1 chrome.dll+1e5c00
+samples: 1110 in the last period
+  3 chrome.dll+5a1e300
+  2 chrome.dll+5a84000
+  2 chrome.dll+5a83d00
+  2 chrome.dll+5a83600
+  2 chrome.dll+5a83400
+  2 chrome.dll+56c7c00
+  2 chrome.dll+55d2f00
+  2 chrome.dll+54b9300
+  2 chrome.dll+5472e00
+  2 chrome.dll+5468c00
+  2 chrome.dll+5359a00
+  2 chrome.dll+52c2900
+  2 chrome.dll+5155100
+  2 chrome.dll+5105e00
+  2 chrome.dll+504df00
+[71206:1:1031/211733.779:VERBOSE1:chrome\updater\updater.cc:375] Version: 157.0.8089.0, opt, x86, command line: "C:\Program Files (x86)\Google\GoogleUpdater\157.0.8089.0\updater.exe" --crash-handler --system "--database=C:\Program Files (x86)\Google\GoogleUpdater\157.0.8089.0\Crashpad" --url=https://clients2.google.com/cr/report --annotation=prod=Update4 --annotation=ver=157.0.8089.0 "--attachment=C:\Program Files (x86)\Google\GoogleUpdater\updater.log" "--attachment=C:\Program Files (x86)\Google\GoogleUpdater\updater_history.jsonl" --initial-client-data=0x120,0x124,0x128,0x11c,0x12c,0x9f165c,0x9f1668,0x9f1674
+[71206:1:1031/211733.785:VERBOSE1:chrome\updater\updater.cc:378] OS version: 10.0.19045.2364, arch: x86_64, System uptime (seconds): 349641, parent pid: 71205
+[71206:1:1031/211733.794:VERBOSE1:chrome\updater\updater.cc:383] Available disk space in install directory (C:\Program Files (x86)\Google\GoogleUpdater): 5202223104B (4.845GiB) / 994662584320B (926.352GiB)
+[71206:1:1031/211733.815:VERBOSE1:chrome\updater\updater.cc:387] Available disk space in temporary directory (C:\Users\yount\AppData\Local\Temp): 5202223104B (4.845GiB) / 994662584320B (926.352GiB)
+[71206:1:1031/211733.822:VERBOSE1:chrome\updater\updater.cc:394] Parent process command line: "C:\Program Files (x86)\Google\GoogleUpdater\157.0.8089.0\updater.exe" --wake-all --system
+[71206:1:1031/211733.824:VERBOSE1:chrome\updater\util\win_util.cc:619] available: 67455M, total: 98304M, phys: 25G
+[71206:1:1031/211733.863:VERBOSE2:chrome\updater\event_history.cc:266] Emitted a UPDATER_PROCESS START event to the history log
+[71205:1:1031/211733.951:VERBOSE1:chrome\updater\crash_reporter.cc:123] Crash handler launched and ready.
+[71205:1:1031/211733.961:VERBOSE1:chrome\updater\crash_client.cc:109] Found 0 completed crash reports
+[71205:1:1031/211733.963:VERBOSE1:chrome\updater\crash_client.cc:132] Found 0 pending crash reports
+[71205:1:1031/211733.970:VERBOSE2:chrome\updater\usage_stats_permissions_win.cc:85] no app enables usage stats
+[71205:1:1031/211733.976:VERBOSE1:chrome\updater\updater.cc:107] Crash reporting initialized.
+[71205:1:1031/211734.032:VERBOSE1:chrome\updater\updater.cc:166] IsUserAdmin: 0, IsUserNonElevatedAdmin: 1, IsUACOn: 1, IsElevatedWithUACOn: 0, LUA: 1
+[71205:6:1031/211734.093:VERBOSE1:chrome\updater\app\app_wakeall.cc:58] Launching `"C:\Program Files (x86)\Google\GoogleUpdater\157.0.8089.0\updater.exe" --wake --system`
+samples: 1398 in the last period
+  4 chrome.dll+3baab00
+  3 chrome.dll+5a83300
+  3 chrome.dll+5801800
+  3 chrome.dll+3ebdc00
+  3 chrome.dll+3d82d00
+  2 chrome.dll+5a1e300
+  2 chrome.dll+59d6800
+  2 chrome.dll+5868f00
+  2 chrome.dll+583f500
+  2 chrome.dll+5665200
+  2 chrome.dll+4f77f00
+  2 chrome.dll+4f36000
+  2 chrome.dll+4c5e300
+  2 chrome.dll+4b53800
+  2 chrome.dll+4af9900
+[71207:1:1031/211734.672:VERBOSE1:chrome\updater\updater.cc:375] Version: 157.0.8089.0, opt, x86, command line: "C:\Program Files (x86)\Google\GoogleUpdater\157.0.8089.0\updater.exe" --wake --system
+[71207:1:1031/211734.679:VERBOSE1:chrome\updater\updater.cc:378] OS version: 10.0.19045.2364, arch: x86_64, System uptime (seconds): 349642, parent pid: 71205
+[71207:1:1031/211734.687:VERBOSE1:chrome\updater\updater.cc:383] Available disk space in install directory (C:\Program Files (x86)\Google\GoogleUpdater): 5158842368B (4.805GiB) / 994662584320B (926.352GiB)
+[71207:1:1031/211734.709:VERBOSE1:chrome\updater\updater.cc:387] Available disk space in temporary directory (C:\Users\yount\AppData\Local\Temp): 5158842368B (4.805GiB) / 994662584320B (926.352GiB)
+[71207:1:1031/211734.718:VERBOSE1:chrome\updater\updater.cc:394] Parent process command line: "C:\Program Files (x86)\Google\GoogleUpdater\157.0.8089.0\updater.exe" --wake-all --system
+[71207:1:1031/211734.719:VERBOSE1:chrome\updater\util\win_util.cc:619] available: 67225M, total: 98304M, phys: 25G
+[71207:1:1031/211734.758:VERBOSE2:chrome\updater\event_history.cc:266] Emitted a UPDATER_PROCESS START event to the history log
+[71208:1:1031/211735.386:VERBOSE1:chrome\updater\updater.cc:375] Version: 157.0.8089.0, opt, x86, command line: "C:\Program Files (x86)\Google\GoogleUpdater\157.0.8089.0\updater.exe" --crash-handler --system "--database=C:\Program Files (x86)\Google\GoogleUpdater\157.0.8089.0\Crashpad" --url=https://clients2.google.com/cr/report --annotation=prod=Update4 --annotation=ver=157.0.8089.0 "--attachment=C:\Program Files (x86)\Google\GoogleUpdater\updater.log" "--attachment=C:\Program Files (x86)\Google\GoogleUpdater\updater_history.jsonl" --initial-client-data=0x120,0x124,0x128,0x11c,0x12c,0x9f165c,0x9f1668,0x9f1674
+[71208:1:1031/211735.392:VERBOSE1:chrome\updater\updater.cc:378] OS version: 10.0.19045.2364, arch: x86_64, System uptime (seconds): 349643, parent pid: 71207
+[71208:1:1031/211735.401:VERBOSE1:chrome\updater\updater.cc:383] Available disk space in install directory (C:\Program Files (x86)\Google\GoogleUpdater): 5115219968B (4.764GiB) / 994662584320B (926.352GiB)
+[71208:1:1031/211735.421:VERBOSE1:chrome\updater\updater.cc:387] Available disk space in temporary directory (C:\Users\yount\AppData\Local\Temp): 5115219968B (4.764GiB) / 994662584320B (926.352GiB)
+[71208:1:1031/211735.429:VERBOSE1:chrome\updater\updater.cc:394] Parent process command line: "C:\Program Files (x86)\Google\GoogleUpdater\157.0.8089.0\updater.exe" --wake --system
+[71208:1:1031/211735.430:VERBOSE1:chrome\updater\util\win_util.cc:619] available: 67222M, total: 98304M, phys: 25G
+[71208:1:1031/211735.466:VERBOSE2:chrome\updater\event_history.cc:266] Emitted a UPDATER_PROCESS START event to the history log
+[71207:1:1031/211735.555:VERBOSE1:chrome\updater\crash_reporter.cc:123] Crash handler launched and ready.
+[71207:1:1031/211735.566:VERBOSE1:chrome\updater\crash_client.cc:109] Found 0 completed crash reports
+[71207:1:1031/211735.569:VERBOSE1:chrome\updater\crash_client.cc:132] Found 0 pending crash reports
+[71207:1:1031/211735.577:VERBOSE2:chrome\updater\usage_stats_permissions_win.cc:85] no app enables usage stats
+[71207:1:1031/211735.583:VERBOSE1:chrome\updater\updater.cc:107] Crash reporting initialized.
+[71207:1:1031/211735.648:VERBOSE1:chrome\updater\updater.cc:166] IsUserAdmin: 0, IsUserNonElevatedAdmin: 1, IsUACOn: 1, IsElevatedWithUACOn: 0, LUA: 1
+[71207:1:1031/211735.673:VERBOSE1:chrome\updater\ipc\update_service_internal_proxy_win.cc:158] Run
+[71207:6:1031/211735.693:VERBOSE2:chrome\updater\ipc\proxy_impl_base_win.h:82] ::CoCreateInstance failed: {6D40BDAD-BF13-535B-BC3B-EEEE65B1D745}: 80040154
+[71207:1:1031/211735.723:VERBOSE1:chrome\updater\ipc\update_service_internal_proxy_win.cc:158] Run
+[71207:6:1031/211735.731:VERBOSE2:chrome\updater\ipc\proxy_impl_base_win.h:82] ::CoCreateInstance failed: {6D40BDAD-BF13-535B-BC3B-EEEE65B1D745}: 80040154
+[71207:1:1031/211735.736:VERBOSE1:chrome\updater\ipc\update_service_internal_proxy_win.cc:158] Run
+[71207:6:1031/211735.738:VERBOSE2:chrome\updater\ipc\proxy_impl_base_win.h:82] ::CoCreateInstance failed: {6D40BDAD-BF13-535B-BC3B-EEEE65B1D745}: 80040154
+[71207:1:1031/211735.740:VERBOSE1:chrome\updater\app\app.cc:52] Shutdown: 0
+[71207:1:1031/211735.743:VERBOSE1:chrome\updater\ipc\update_service_internal_proxy_win.cc:150] ~UpdateServiceInternalProxyWinImpl
+[71207:6:1031/211735.746:VERBOSE2:chrome\updater\ipc\proxy_impl_base_win.h:58] ~ProxyImplBase
+[71207:1:1031/211735.810:VERBOSE2:chrome\updater\event_history.cc:266] Emitted a UPDATER_PROCESS END event to the history log
+[71207:1:1031/211735.813:VERBOSE1:chrome\updater\updater.cc:420] UpdaterMain (--wake) returned 0.
+FEX calls: resume count=6836 ns=645065098
+FEX calls: context count=20784 ns=1003605
+FEX calls: arguments count=6707 ns=1383627
+machine=0xaa64 sections=7 image_size=4030464 DIR64_relocations=18932
+auxiliary_iat_writes=0
+resolved=128
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+[71208:1:1031/211735.859:VERBOSE2:chrome\updater\event_history.cc:266] Emitted a UPDATER_PROCESS END event to the history log
+[71208:1:1031/211735.860:VERBOSE1:chrome\updater\updater.cc:420] UpdaterMain (--crash-handler) returned 0.
+[71205:6:1031/211735.865:VERBOSE1:chrome\updater\app\app_wakeall.cc:68] `"C:\Program Files (x86)\Google\GoogleUpdater\157.0.8089.0\updater.exe" --wake --system` exited 0
+FEX calls: resume count=4126 ns=321706447
+FEX calls: context count=12199 ns=545377
+FEX calls: arguments count=3987 ns=740983
+machine=0xaa64 sections=7 image_size=4030464 DIR64_relocations=18932
+auxiliary_iat_writes=0
+resolved=128
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+[71205:1:1031/211735.890:VERBOSE1:chrome\updater\app\app.cc:52] Shutdown: 0
+[71205:1:1031/211735.958:VERBOSE2:chrome\updater\event_history.cc:266] Emitted a UPDATER_PROCESS END event to the history log
+[71205:1:1031/211735.960:VERBOSE1:chrome\updater\updater.cc:420] UpdaterMain (--wake-all) returned 0.
+FEX calls: resume count=6716 ns=622897269
+FEX calls: context count=20524 ns=970827
+FEX calls: arguments count=6576 ns=1278350
+machine=0xaa64 sections=7 image_size=4030464 DIR64_relocations=18932
+auxiliary_iat_writes=0
+resolved=128
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+[71206:1:1031/211736.027:VERBOSE2:chrome\updater\event_history.cc:266] Emitted a UPDATER_PROCESS END event to the history log
+[71206:1:1031/211736.031:VERBOSE1:chrome\updater\updater.cc:420] UpdaterMain (--crash-handler) returned 0.
+FEX calls: resume count=4123 ns=362890483
+FEX calls: context count=12213 ns=615748
+FEX calls: arguments count=3984 ns=828770
+machine=0xaa64 sections=7 image_size=4030464 DIR64_relocations=18932
+auxiliary_iat_writes=0
+resolved=128
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+samples: 520 in the last period
+  2 chrome.dll+553d900
+  2 chrome.dll+4c81e00
+  2 chrome.dll+4aa7300
+  2 chrome.dll+470b700
+  2 chrome.dll+4668e00
+  2 chrome.dll+40ee600
+  2 chrome.dll+3f43500
+  2 chrome.dll+3bac000
+  2 chrome.dll+182ec00
+  2 chrome.dll+5d5b00
+  2 chrome.dll+95200
+  1 ntdll.dll+1400
+  1 kernel32.dll+15500
+  1 chrome.dll+c401b00
+  1 chrome.dll+b48c400
+FEX compile: blocks=218766 ns=1881314042
+samples: 1 in the last period
+  1 chrome.dll+83b6900
+FEX calls: resume count=8076 ns=2997242424
+FEX calls: context count=23780 ns=5648500
+FEX calls: arguments count=7387 ns=1571199
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+samples: 291 in the last period
+  2 chrome.dll+5a83500
+  2 chrome.dll+5a1e300
+  2 chrome.dll+486dd00
+  2 chrome.dll+3e2c800
+  2 chrome.dll+3228600
+  1 chrome.dll+aacd100
+  1 chrome.dll+8647000
+  1 chrome.dll+5bdaa00
+  1 chrome.dll+5b2ee00
+  1 chrome.dll+5a83e00
+  1 chrome.dll+5a83b00
+  1 chrome.dll+5a83300
+  1 chrome.dll+5a36300
+  1 chrome.dll+5a2de00
+  1 chrome.dll+5a22900
+samples: 1925 in the last period
+  607 ?
+  426 ?
+  256 ?
+  51 ?
+  49 ?
+  23 ?
+  9 chrome.dll+5832c00
+  5 chrome.dll+584ae00
+  3 ?
+  3 ?
+  3 chrome.dll+57cf800
+  2 chrome.dll+5a84000
+  2 chrome.dll+5813e00
+  2 chrome.dll+57d5a00
+  2 chrome.dll+3c05800
+samples: 1216 in the last period
+  9 chrome.dll+3957d00
+  7 chrome.dll+3957a00
+  4 chrome.dll+5a83200
+  4 chrome.dll+3bb3100
+  4 chrome.dll+3bac000
+  4 chrome.dll+3957e00
+  3 chrome.dll+5a83600
+  3 chrome.dll+5a1e300
+  3 chrome.dll+458e000
+  3 chrome.dll+33ad600
+  2 chrome.dll+5a83a00
+  2 chrome.dll+5511e00
+  2 chrome.dll+5469000
+  2 chrome.dll+51cce00
+  2 chrome.dll+5091700
+samples: 12 in the last period
+  3 ?
+  1 chrome.dll+da4f700
+  1 chrome.dll+64c6000
+  1 chrome.dll+5d36400
+  1 chrome.dll+5a83600
+  1 chrome.dll+4a8a800
+  1 chrome.dll+2c3f900
+  1 chrome.dll+2be5300
+  1 chrome.dll+1f02d00
+  1 chrome.dll+1c7c500
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX compile: blocks=219328 ns=1895417320
+FEX calls: resume count=8150 ns=3057621906
+FEX calls: context count=24021 ns=5674699
+FEX calls: arguments count=7465 ns=1618213
+samples: 475 in the last period
+  2 chrome.dll+54ddb00
+  2 chrome.dll+4db2800
+  2 chrome.dll+4c84c00
+  2 chrome.dll+493dd00
+  2 chrome.dll+46fc100
+  2 chrome.dll+460b300
+  2 chrome.dll+45b2f00
+  2 chrome.dll+3ebcd00
+  2 chrome.dll+3d81300
+  2 chrome.dll+3bc9a00
+  2 chrome.dll+1798600
+  1 kernel32.dll+14f00
+  1 ?
+  1 ?
+  1 ?
+FEX compile: blocks=43255 ns=381813873
+FEX calls: resume count=1878 ns=680330698
+FEX calls: context count=4875 ns=1347859
+FEX calls: arguments count=1470 ns=373092
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+samples: 9 in the last period
+  1 chrome.dll+5883000
+  1 chrome.dll+582b800
+  1 chrome.dll+4ca3800
+  1 chrome.dll+4b09300
+  1 chrome.dll+4496400
+  1 chrome.dll+4492300
+  1 chrome.dll+3f06f00
+  1 chrome.dll+3e88e00
+  1 chrome.dll+3e87f00
+samples: 549 in the last period
+  3 chrome.dll+3baf900
+  2 chrome.dll+5a83600
+  2 chrome.dll+5a1e300
+  2 chrome.dll+4583a00
+  2 chrome.dll+41cfe00
+  2 chrome.dll+3e1dd00
+  2 chrome.dll+3d44500
+  2 chrome.dll+3bb3100
+  2 chrome.dll+3bace00
+  2 chrome.dll+3228600
+  2 chrome.dll+56ca00
+  2 chrome.dll+3ea500
+  2 chrome.dll+3bb300
+  1 chrome.dll+c400f00
+  1 chrome.dll+b49ee00
+FEX compile: blocks=218749 ns=1993025089
+FEX calls: resume count=8266 ns=3168834033
+FEX calls: context count=24441 ns=5876932
+FEX calls: arguments count=7558 ns=1472187
+FEX compile: blocks=45798 ns=387877892
+FEX calls: resume count=4554 ns=785419812
+FEX calls: context count=13878 ns=2759395
+FEX calls: arguments count=4234 ns=987841
+samples: 1402 in the last period
+  36 chrome.dll+3957d00
+  16 chrome.dll+3957e00
+  12 chrome.dll+3957a00
+  7 chrome.dll+3957c00
+  5 chrome.dll+5a83d00
+  5 chrome.dll+5a83500
+  5 chrome.dll+3bb3100
+  4 chrome.dll+5a1e300
+  4 chrome.dll+3bddd00
+  3 chrome.dll+55b3e00
+  3 chrome.dll+522f100
+  3 chrome.dll+3c3b900
+  3 chrome.dll+3bb3700
+  3 chrome.dll+3bac100
+  3 chrome.dll+3bac000
+samples: 94 in the last period
+  1 chrome.dll+cfeed00
+  1 chrome.dll+be5db00
+  1 chrome.dll+5acf100
+  1 chrome.dll+55f4d00
+  1 chrome.dll+55f2600
+  1 chrome.dll+556e500
+  1 chrome.dll+556de00
+  1 chrome.dll+556dd00
+  1 chrome.dll+556cf00
+  1 chrome.dll+556b100
+  1 chrome.dll+54e8200
+  1 chrome.dll+5463b00
+  1 chrome.dll+5461c00
+  1 chrome.dll+5460a00
+  1 chrome.dll+5455b00
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+samples: 112 in the last period
+  1 ?
+  1 ?
+  1 chrome.dll+5a83400
+  1 chrome.dll+5a02f00
+  1 chrome.dll+59cee00
+  1 chrome.dll+59ce400
+  1 chrome.dll+5995a00
+  1 chrome.dll+586f500
+  1 chrome.dll+5854700
+  1 chrome.dll+5801900
+  1 chrome.dll+57c5100
+  1 chrome.dll+5708300
+  1 chrome.dll+56e0100
+  1 chrome.dll+5672b00
+  1 chrome.dll+54ddb00
+samples: 460 in the last period
+  2 chrome.dll+55c7000
+  2 chrome.dll+4c9da00
+  2 chrome.dll+4aa7100
+  2 chrome.dll+4a7cb00
+  2 chrome.dll+4168700
+  2 chrome.dll+3e26200
+  2 chrome.dll+3be8400
+  2 chrome.dll+f7f700
+  1 chrome.dll+b6e0400
+  1 chrome.dll+a7f4800
+  1 chrome.dll+5b2ee00
+  1 chrome.dll+5a84000
+  1 chrome.dll+5a83d00
+  1 chrome.dll+5a83b00
+  1 chrome.dll+5a83a00
+samples: 17 in the last period
+  3 ?
+  1 d3d11.dll+112700
+  1 d3d11.dll+9cc00
+  1 chrome.dll+dc81100
+  1 chrome.dll+bd4c000
+  1 chrome.dll+abda400
+  1 chrome.dll+64c2600
+  1 chrome.dll+64a8b00
+  1 chrome.dll+5d97300
+  1 chrome.dll+5cc1500
+  1 chrome.dll+5ad1400
+  1 chrome.dll+508aa00
+  1 chrome.dll+247e300
+  1 chrome.dll+20dc900
+  1 chrome.dll+69b500
+<!DOCTYPE html>
+<html><head><title>JS waiting</title></head><body>RAVEN_BENCH_RESULT={"milliseconds":6831,"primes":216816,"length":200000,"items":400000}</body></html>
+FEX compile: blocks=1773692 ns=15136113311
+FEX calls: resume count=37630 ns=24322357897
+FEX calls: context count=103641 ns=26164084
+FEX calls: arguments count=31932 ns=5547217
+samples: 194 in the last period
+  1 chrome.dll+d7fb300
+  1 chrome.dll+b494100
+  1 chrome.dll+b493b00
+  1 chrome.dll+a926500
+  1 chrome.dll+a91ec00
+  1 chrome.dll+a90b000
+  1 chrome.dll+a90af00
+  1 chrome.dll+73cb000
+  1 chrome.dll+73c9800
+  1 chrome.dll+73c9500
+  1 chrome.dll+5ccf800
+  1 chrome.dll+5b71800
+  1 chrome.dll+5a38400
+  1 chrome.dll+5801800
+  1 chrome.dll+56e1800
+FEX compile: blocks=286358 ns=2487711762
+FEX calls: resume count=10147 ns=3928414038
+FEX calls: context count=30136 ns=7743442
+FEX calls: arguments count=9221 ns=1888980
+FEX compile: blocks=349727 ns=3019126267
+FEX calls: resume count=12101 ns=4782833254
+FEX calls: context count=35873 ns=9157682
+FEX calls: arguments count=11079 ns=2348772
+[70989:1:1031/211746.366:ERROR:chrome\browser\web_applications\os_integration\os_integration_manager.cc:270] Can't perform OS integration while the browser is shutting down.
+FEX compile: blocks=218552 ns=1829432859
+FEX calls: resume count=8337 ns=2952362304
+FEX calls: context count=24802 ns=6002255
+FEX calls: arguments count=7683 ns=1579051
+FEX main image claimed inside image_pool
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+[70989:1:1031/211747.240:ERROR:chrome\browser\web_applications\os_integration\os_integration_manager.cc:270] Can't perform OS integration while the browser is shutting down.
+[70989:1:1031/211747.258:ERROR:chrome\browser\web_applications\os_integration\os_integration_manager.cc:270] Can't perform OS integration while the browser is shutting down.
+[70989:1:1031/211747.259:ERROR:chrome\browser\web_applications\os_integration\os_integration_manager.cc:270] Can't perform OS integration while the browser is shutting down.
+[70989:1:1031/211747.260:ERROR:chrome\browser\web_applications\os_integration\os_integration_manager.cc:270] Can't perform OS integration while the browser is shutting down.
+[70989:1:1031/211747.580:ERROR:chrome\browser\web_applications\externally_managed_app_manager.cc:680] https://docs.google.com/presentation/installwebapp?usp=chrome_default from install source 1 failed to install with reason 21
+samples: 874 in the last period
+  13 chrome.dll+3957d00
+  7 chrome.dll+3957a00
+  4 chrome.dll+3bb3100
+  4 chrome.dll+3957c00
+  3 chrome.dll+4ac5a00
+  2 chrome.dll+5a1e300
+  2 chrome.dll+55b4000
+  2 chrome.dll+54bdf00
+  2 chrome.dll+5468e00
+  2 chrome.dll+5442b00
+  2 chrome.dll+4f7a600
+  2 chrome.dll+49ed200
+  2 chrome.dll+430bb00
+  2 chrome.dll+40d2400
+  2 chrome.dll+3e29800
+samples: 6 in the last period
+  1 chrome.dll+54f3e00
+  1 chrome.dll+51c1c00
+  1 chrome.dll+3bb4500
+  1 chrome.dll+2984400
+  1 chrome.dll+1c29300
+  1 chrome.dll+7ddd00
+samples: 1 in the last period
+  1 chrome.dll+40d2400
+samples: 134 in the last period
+  2 chrome.dll+41c8200
+  1 chrome.dll+e8d1700
+  1 chrome.dll+d2e6500
+  1 chrome.dll+aae1a00
+  1 chrome.dll+a932400
+  1 chrome.dll+a92b600
+  1 chrome.dll+a90b600
+  1 chrome.dll+a904b00
+  1 chrome.dll+a8fd300
+  1 chrome.dll+a8fa500
+  1 chrome.dll+a8f9e00
+  1 chrome.dll+a8ef700
+  1 chrome.dll+8c3f900
+  1 chrome.dll+898f300
+  1 chrome.dll+8881e00
+samples: 2 in the last period
+  1 chrome.dll+5361600
+  1 chrome.dll+1506800
+samples: 167 in the last period
+  2 chrome.dll+4aa6700
+  1 kernel32.dll+6900
+  1 kernel32.dll+1f00
+  1 chrome.dll+5a83e00
+  1 chrome.dll+5a6b300
+  1 chrome.dll+5a1f400
+  1 chrome.dll+56e0a00
+  1 chrome.dll+5624e00
+  1 chrome.dll+55bd700
+  1 chrome.dll+5554400
+  1 chrome.dll+5538200
+  1 chrome.dll+5537900
+  1 chrome.dll+54eae00
+  1 chrome.dll+53d9200
+  1 chrome.dll+5378c00
+samples: 252 in the last period
+  3 chrome.dll+5a83300
+  2 chrome.dll+4f77f00
+  2 chrome.dll+4174200
+  2 chrome.dll+3e74400
+  2 chrome.dll+14eee00
+  2 chrome.dll+144c800
+  2 chrome_elf.dll+163a00
+  1 kernel32.dll+14f00
+  1 chrome.dll+b48cd00
+  1 chrome.dll+62e5700
+  1 chrome.dll+5a84300
+  1 chrome.dll+5a83d00
+  1 chrome.dll+5a83b00
+  1 chrome.dll+5a83a00
+  1 chrome.dll+5a83600
+FEX compile: blocks=205233 ns=1754457727
+FEX calls: resume count=7178 ns=2784673341
+FEX calls: context count=20772 ns=5028373
+FEX calls: arguments count=6355 ns=1324059
+FEX compile: blocks=101066 ns=794636965
+FEX calls: resume count=4088 ns=1306998288
+FEX calls: context count=11683 ns=2489791
+FEX calls: arguments count=3577 ns=694586
+FEX compile: blocks=326444 ns=2961785736
+FEX calls: resume count=22589 ns=5780813878
+FEX calls: context count=61595 ns=15326918
+FEX calls: arguments count=19340 ns=3865275
+FEX compile: blocks=311636 ns=2758615276
+FEX compile: blocks=3868993 ns=32853593376
+FEX calls: resume count=205429 ns=64305990507
+FEX calls: context count=833582 ns=131865242
+FEX calls: arguments count=374415 ns=42991179
+FEX compile: blocks=199942 ns=1643035843
+samples: 9 in the last period
+  1 chrome_elf.dll+163900
+  1 chrome_elf.dll+45a00
+  1 chrome.exe+1d4200
+  1 chrome.exe+12cc00
+  1 chrome.exe+abe00
+  1 chrome.exe+46300
+  1 chrome.exe+45e00
+  1 chrome.exe+43400
+  1 chrome.exe+1fa00

@@ -88,6 +88,7 @@ public:
 	// Host primitives; Windows reservation/commit and PAGE_* semantics belong above this boundary.
 	uint64_t map_memory(size_t size, int protection, uint64_t address = 0);
 	void protect_memory(uint64_t address, size_t size, int protection);
+	void flush_instruction_cache(uint64_t address, size_t size);
 	// Whether the guest's own mappings give exactly this protection to every page of the range.
 	bool has_protection(uint64_t address, size_t size, int protection) const;
 	// The same for pages of a mapped program image, which the program may protect although it did not allocate them.

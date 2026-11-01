@@ -1,0 +1,62 @@
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -1,5 +1,10 @@
+ #include <map>
+ #include <tuple>
++#include <vector>
++#include <cstdint>
++#ifdef FEX_RAVEN_DIVIDE
++extern "C" void RavenRecordInvalidation(uint64_t, uint64_t, uint64_t);
++#endif
+ // SPDX-License-Identifier: MIT
+ /*
+ $info$
+@@ -505,6 +510,9 @@
+ 
+ void ContextImpl::ClearCodeCache(FEXCore::Core::InternalThreadState* Thread, bool NewCodeBuffer) {
+   FEXCORE_PROFILE_INSTANT("ClearCodeCache");
++#ifdef FEX_RAVEN_DIVIDE
++  RavenRecordInvalidation(8, 0, NewCodeBuffer);
++#endif
+ 
+   if (NewCodeBuffer) {
+     // Allocate new CodeBuffer + L3 LookupCache and clear L1+L2 caches
+@@ -906,6 +914,7 @@
+ static std::mutex RavenProfileMutex;
+ static std::map<uint64_t, uint64_t> RavenCompileAddresses;
+ static std::map<std::tuple<uint64_t, uint64_t, uint64_t>, uint64_t> RavenInvalidations;
++static std::vector<std::array<uint64_t, 4>> RavenProfilePages, RavenProfileInvalidations;
+ static std::atomic<bool> RavenCompileTimingEnabled {false};
+ static std::atomic<uint64_t> RavenCompileCount {0}, RavenCompileNS {0};
+ extern "C" void RavenRecordInvalidation(uint64_t Reason, uint64_t Start, uint64_t Size) {
+@@ -914,6 +923,14 @@
+   ++RavenInvalidations[{Reason, Start, Size}];
+ }
+ extern "C" void RavenCompileProfile(uint64_t Enable, uint64_t* Values) {
++  if (Enable >= 2 && Values) {
++    std::scoped_lock Lock(RavenProfileMutex);
++    const auto &Records = Enable == 2 ? RavenProfilePages : RavenProfileInvalidations;
++    const auto Index = Values[0];
++    auto Record = Index < Records.size() ? Records[Index] : std::array<uint64_t, 4>{};
++    std::copy(Record.begin(), Record.end(), Values);
++    return;
++  }
+   RavenCompileTimingEnabled.store(Enable != 0, std::memory_order_relaxed);
+   if (Values) {
+     Values[0] = RavenCompileCount.load(std::memory_order_relaxed);
+@@ -925,11 +942,13 @@
+       auto &Page = Pages[RIP & ~uint64_t(4095)];
+       ++Page[0]; Page[1] += Count - 1; Page[2] += Count > 1;
+     }
++    RavenProfilePages.clear();
++    RavenProfileInvalidations.clear();
+     for (auto [Page, Counts] : Pages)
+-      LogMan::Msg::IFmt("Raven translations page={:x} unique={} repeated={} recompiled={}", Page, Counts[0], Counts[1], Counts[2]);
++      RavenProfilePages.push_back({Page, Counts[0], Counts[1], Counts[2]});
+     for (auto [Key, Count] : RavenInvalidations) {
+       auto [Reason, Start, Size] = Key;
+-      LogMan::Msg::IFmt("Raven invalidation reason={} start={:x} size={} count={}", Reason, Start, Size, Count);
++      RavenProfileInvalidations.push_back({Reason, Start, Size, Count});
+     }
+   }
+ }

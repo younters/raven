@@ -244,6 +244,30 @@ void initialize_process(Bytes bytes, size_t opt)
 }
 }
 
+namespace {
+// Controller-only measurements; disabled runs do not read the clock.
+struct FexCallTimings {
+    bool enabled = std::getenv("RAVEN_FEX_PROFILE_CALLS") != nullptr;
+    uint64_t count[3]{}, ns[3]{};
+    ~FexCallTimings() {
+        if (!enabled) return;
+        const char *names[]{"resume", "context", "arguments"};
+        for (unsigned i=0; i<3; ++i)
+            fprintf(stderr, "FEX calls: %s count=%llu ns=%llu\n", names[i], (unsigned long long)count[i], (unsigned long long)ns[i]);
+    }
+} fex_call_timings;
+struct FexCallTimer {
+    unsigned index;
+    std::chrono::steady_clock::time_point start;
+    FexCallTimer(unsigned i) : index(i), start(fex_call_timings.enabled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}) {}
+    ~FexCallTimer() {
+        if (!fex_call_timings.enabled) return;
+        ++fex_call_timings.count[index];
+        fex_call_timings.ns[index] += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-start).count();
+    }
+};
+}
+
 namespace raven {
 // Workers execute only translated code. The existing NT scheduler retains all API
 // handlers on its controller/coroutine stacks, just as with the Rosetta agent.
@@ -402,7 +426,8 @@ struct FexProcess::State {
 	uint64_t user_limit = 0x7fff0000ULL;
 	uint64_t stack_top = 0;
 	std::function<void()> unix_pump;
-	std::chrono::milliseconds budget{5000}, slice{0};
+	std::chrono::milliseconds budget{5000}, slice{0}, sample_period{0};
+	std::function<void(uint64_t)> sampler;
 	std::chrono::steady_clock::time_point slice_started = std::chrono::steady_clock::now();
 	std::function<bool()> slice_wanted;
 	std::function<void()> slice_yield;
@@ -468,6 +493,10 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 	char *argv[]{program, path.data()};
 	if (map_module(2, argv, resolve, inspect_image, initialize_process, module_mapping))
 		throw std::runtime_error("FEX module initialization failed");
+	if (!wow64_module && std::getenv("RAVEN_FEX_PROFILE_COMPILE")) {
+        uint64_t args[8]{1, 0};
+        raven_ec_call(mapped_image->export_address("RavenCompileProfile"), args, thread_environment->teb.data());
+    }
 	// Guest x86 code is data to the arm64 host. Keep it non-executable; only FEX's
 	// separate native code cache uses MAP_JIT. Never replace an existing host mapping.
 	for (auto *image : images) map_image(*image);
@@ -513,6 +542,22 @@ FexProcess::~FexProcess()
 		std::fputs("FEX destruction requires the process owner thread\n", stderr);
 		std::terminate();
 	}
+	if (!wow64_module && std::getenv("RAVEN_FEX_PROFILE_COMPILE")) {
+        uint64_t values[2]{};
+        uint64_t args[8]{1, uintptr_t(values)};
+        raven_ec_call(mapped_image->export_address("RavenCompileProfile"), args, thread_environment->teb.data());
+        fprintf(stderr, "FEX compile: blocks=%llu ns=%llu\n", (unsigned long long)values[0], (unsigned long long)values[1]);
+        for (uint64_t mode : {2, 3}) for (uint64_t index = 0;; ++index) {
+            uint64_t record[4]{index};
+            uint64_t query[8]{mode, uintptr_t(record)};
+            raven_ec_call(mapped_image->export_address("RavenCompileProfile"), query, thread_environment->teb.data());
+            if (mode == 2 ? !record[1] : !record[3]) break;
+            if (mode == 2)
+                fprintf(stderr, "Raven profile pid=%d Raven translations page=%llx unique=%llu repeated=%llu recompiled=%llu\n", getpid(), (unsigned long long)record[0], (unsigned long long)record[1], (unsigned long long)record[2], (unsigned long long)record[3]);
+            else
+                fprintf(stderr, "Raven profile pid=%d Raven invalidation reason=%llu start=%llx size=%llu count=%llu\n", getpid(), (unsigned long long)record[0], (unsigned long long)record[1], (unsigned long long)record[2], (unsigned long long)record[3]);
+        }
+    }
 	// Resident workers terminate their FEX thread before releasing private TLS.
 	state->workers.clear();
 	if (thread_environment) {
@@ -570,6 +615,7 @@ NativeResult FexProcess::call(uint64_t address, std::span<const uint64_t> argume
 }
 NativeResult FexProcess::resume()
 {
+	FexCallTimer timing{0};
 	state->require_owner();
 	if (!state->active || state->thread.awaiting_api)
 		throw std::runtime_error("FEX has no resumable call or awaits an API result");
@@ -635,7 +681,8 @@ NativeResult FexProcess::resume()
         dispatch_state.restore();
 		NativeJit::protect(previous);
 	}
-	if (std::getenv("RAVEN_FEX_TRACE"))
+	static const bool trace_stops = std::getenv("RAVEN_FEX_TRACE") != nullptr;
+	if (trace_stops)
 		std::cerr << "FEX stop rip=" << std::hex << last_stop.rip << " address=" << last_stop.exception.information[1] << std::dec << "\n";
 	state->thread.awaiting_syscall = last_stop.kind == NativeStop::syscall;
 	if (state->thread.awaiting_syscall) state->thread.context.registers.orig_rax = last_stop.value;
@@ -708,6 +755,7 @@ NativeContext FexProcess::context(bool full) const
 {
 	static fex_perf::Counter perf{"context"};
 	fex_perf::Timer timer(perf);
+	FexCallTimer timing{1};
 	state->require_owner();
 	if (!stopped()) throw std::runtime_error("FEX context requires a stopped worker");
 	NativeContext result{};
@@ -946,6 +994,26 @@ uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 	protect_memory(address, n, protection);
 	return address;
 }
+void FexProcess::flush_instruction_cache(uint64_t address, size_t size)
+{
+	const auto notify = [&](uint64_t start, size_t length) {
+		uint64_t args[8]{start ? state->host(start, length) : 0, length};
+		raven_ec_call(mapped_image->export_address(wow64_module ? "BTCpuFlushInstructionCache2" : "BTCpu64FlushInstructionCache"), args, state->environment()->teb.data());
+	};
+	if (!address) { notify(0, 0); return; }
+	if (!size) return;
+	const uint64_t end = size > UINT64_MAX - address ? UINT64_MAX : address + size;
+	// Ignore holes and out-of-window addresses rather than translating an
+	// arbitrary API range to a host pointer (which can throw in WoW64).
+	auto page = state->pages.lower_bound(address & ~uint64_t(4095));
+	while (page != state->pages.end() && page->first < end) {
+		const auto start = std::max(address, page->first);
+		auto stop = page->first + 4096;
+		while (++page != state->pages.end() && page->first == stop && stop < end) stop += 4096;
+		stop = std::min(end, stop);
+		if (start < stop && state->mapped_range(start, stop - start)) notify(start, stop - start);
+	}
+}
 void FexProcess::protect_memory(uint64_t address, size_t size, int protection)
 {
 	static fex_perf::Counter perf{"protect_memory"};
@@ -1033,6 +1101,20 @@ void FexProcess::map_image(LoadedImage &image)
 	state->regions.emplace(address, State::Region{n, true});
 	unix_ranges.set(state->host(address, n), n, PROT_NONE);
 	state->images.push_back(&image);
+	if (std::getenv("RAVEN_FEX_PROFILE_COMPILE")) {
+		// Read only bounded PE metadata from the loader's image view.
+		auto bytes = image.data();
+		auto word = [&](size_t at) { uint32_t v = 0; if (at <= bytes.size() && bytes.size() - at >= 4) memcpy(&v, bytes.data() + at, 4); return v; };
+		auto pe = word(0x3c);
+		auto exp = word(size_t(pe) + 24 + (wow64_module ? 96 : 112));
+		auto name = exp ? word(size_t(exp) + 12) : 0;
+		std::string module = "<image>";
+		if (name && name < bytes.size()) {
+			auto end = std::find(bytes.begin() + name, bytes.end(), uint8_t(0));
+			if (end != bytes.end()) module.assign(reinterpret_cast<const char *>(bytes.data() + name), size_t(end - (bytes.begin() + name)));
+		}
+		fprintf(stderr, "Raven image pid=%d base=%llx size=%zu module=%s\n", getpid(), (unsigned long long)address, n, module.c_str());
+	}
 	for (size_t at = 0; at < n; at += 4096) state->pages[address + at] = PROT_NONE;
 	for (const auto &mapping : image.mappings())
 		for (uint64_t at = mapping.address; at < mapping.address + mapping.size; at += 4096) state->pages[at] = mapping.protection;
@@ -1174,6 +1256,7 @@ uint64_t FexProcess::result_register() const { return context(false).registers.r
 void FexProcess::set_resume_hook(std::function<void()> hook) { state->resume_hook = std::move(hook); }
 std::vector<uint64_t> FexProcess::api_arguments(size_t count) const
 {
+	FexCallTimer timing{2};
 	if (state->thread.translated_words) return *state->thread.translated_words;
 	if (wow64_module) {
 		std::vector<uint64_t> words;
@@ -1227,7 +1310,8 @@ void FexProcess::return_api(uint64_t value)
 {
 	if (state->thread.translated_words && callback_depth() == state->thread.translated_depth) { state->thread.translated_result = value; return; }
 	if (!state->thread.awaiting_api) throw std::runtime_error("FEX has no pending API");
-	auto saved = context();
+	// API return changes only GPRs; preserve the live FP/YMM state in FEX.
+	auto saved = context(false);
 	if (wow64_module) {
 		uint32_t target; auto bytes = read_memory(saved.registers.rsp, 4); memcpy(&target, bytes.data(), 4);
 		saved.registers.rsp += 4 + state->traps.at(saved.registers.rip - 1);
@@ -1414,7 +1498,11 @@ NativeResult FexProcess::resume(std::chrono::milliseconds timeout)
 			continue; // Recompute the deadline after another guest thread ran.
 		}
 		state->budget = slicing ? std::min(remaining, state->slice) : remaining;
+		const bool sampling = state->sample_period.count() > 0 && state->sampler;
+		if (sampling) state->budget = std::min(state->budget, state->sample_period);
 		auto result = resume();
+		if (sampling && result.stop == NativeStop::timeout) state->sampler(result.instruction);
+		if (sampling && result.stop == NativeStop::timeout && state->budget < remaining && !slicing) continue;
 		if (state->parallel && result.stop == NativeStop::timeout && std::chrono::steady_clock::now() < deadline)
 			continue; // A remote suspend consumed this doorbell; resume the edited packet.
 		if (result.stop != NativeStop::timeout || !slicing || state->budget >= remaining) return result;
@@ -1422,6 +1510,11 @@ NativeResult FexProcess::resume(std::chrono::milliseconds timeout)
 		state->slice_yield();
 		state->slice_started = std::chrono::steady_clock::now();
 	}
+}
+void FexProcess::set_guest_sampler(std::chrono::milliseconds period, std::function<void(uint64_t)> sampler)
+{
+	state->sample_period = period;
+	state->sampler = std::move(sampler);
 }
 void FexProcess::set_time_slicing(std::chrono::milliseconds slice, std::function<bool()> wanted, std::function<void()> yield)
 {
@@ -1490,6 +1583,11 @@ uint64_t FexProcess::map_shared(int descriptor, size_t size, uint64_t offset, ui
 	const auto n = state->regions.at(address).size;
 	void *mapped = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, descriptor, off_t(offset - delta));
 	if (mapped == MAP_FAILED) { unmap_memory(address); throw std::runtime_error("FEX shared descriptor mapping failed"); }
+	// Logical permissions remain unchanged. FEX must validate executable bytes
+	// in shared views because writes through aliases/other processes bypass
+	// this virtual address's dirty notifications and page faults.
+	uint64_t shared[8]{state->host(address, n), n};
+	raven_ec_call(mapped_image->export_address("RavenMarkSharedMemory"), shared, state->environment()->teb.data());
 	if (delta) {
 		try {
 			protect_memory(address, delta, PROT_NONE);

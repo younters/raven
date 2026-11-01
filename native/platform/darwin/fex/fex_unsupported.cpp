@@ -22,10 +22,4 @@ void FexProcess::decline_served()
 {
 	throw std::runtime_error("FEX decline_served is not implemented");
 }
-void FexProcess::set_guest_sampler(std::chrono::milliseconds period, std::function<void(uint64_t rip)> sampler)
-{
-	(void)period;
-	(void)sampler;
-	throw std::runtime_error("FEX set_guest_sampler is not implemented");
-}
 }

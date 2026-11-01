@@ -1,0 +1,264 @@
+{
+  "timestamp": "2026-11-01T03:10:38.932769+00:00",
+  "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "parallel": "on",
+  "scope": "whole process wall time; isolated fresh prefix per launch; one warmup per backend excluded; balanced ABBA order",
+  "source_head": "279e4b9985081add8ed4697da3317ea415667847",
+  "raven_sha256": "c80224da4c4f2b965c57e7444d173dd55ba2a4d6d852db5dd359d32270408e6f",
+  "module_sha256": "fc6e04e4065da6559080c1f0189e69d50fa050c5e9d9cbb56d2c808f045817cd",
+  "benchmark_script_sha256": "f62a8b58ab6e1bc5791f3a73a73c1f9e18c6e40657293ba961a9b887964fb4d4",
+  "source_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "fixtures": {
+    "kernel-ansi": {
+      "fixture": "build-perf/native/kernel-ansi-fex.exe",
+      "sha256": "21cea95b2faec1a2d2db57e90ea15fbabb96e4d94b245d0ffc0cc29523517702",
+      "native": [
+        {
+          "index": 0,
+          "command": [
+            "build-perf/native/raven",
+            "--run-process",
+            "--execution=native",
+            "--timeout-ms=15000",
+            "build-perf/native/kernel-ansi-fex.exe"
+          ],
+          "returncode": 0,
+          "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+          "stderr": "",
+          "wall_ms": 4225.351958
+        }
+      ],
+      "fex": [
+        {
+          "index": 0,
+          "command": [
+            "build-perf/native/raven",
+            "--run-process",
+            "--execution=fex",
+            "--timeout-ms=15000",
+            "build-perf/native/kernel-ansi-fex.exe"
+          ],
+          "returncode": 0,
+          "stdout": "machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189\nCHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: FEX host ABI v2 rejects v1 and truncated host tables\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+          "stderr": "FEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\n",
+          "wall_ms": 3549.69775
+        }
+      ],
+      "median_ms": {
+        "native": 4225.351958,
+        "fex": 3549.69775
+      },
+      "range_ms": {
+        "native": [
+          4225.351958,
+          4225.351958
+        ],
+        "fex": [
+          3549.69775,
+          3549.69775
+        ]
+      }
+    },
+    "kernel-file": {
+      "fixture": "build-perf/native/kernel-file-fex.exe",
+      "sha256": "910841108c0f714a7c60afb02dd7e8e222e3b6c5c6f69c84364d183563550f40",
+      "native": [
+        {
+          "index": 0,
+          "command": [
+            "build-perf/native/raven",
+            "--run-process",
+            "--execution=native",
+            "--timeout-ms=15000",
+            "build-perf/native/kernel-file-fex.exe"
+          ],
+          "returncode": 0,
+          "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+          "stderr": "",
+          "wall_ms": 4337.787292
+        }
+      ],
+      "fex": [
+        {
+          "index": 0,
+          "command": [
+            "build-perf/native/raven",
+            "--run-process",
+            "--execution=fex",
+            "--timeout-ms=15000",
+            "build-perf/native/kernel-file-fex.exe"
+          ],
+          "returncode": 0,
+          "stdout": "machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189\nCHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: FEX host ABI v2 rejects v1 and truncated host tables\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+          "stderr": "FEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\n",
+          "wall_ms": 3652.585459
+        }
+      ],
+      "median_ms": {
+        "native": 4337.787292,
+        "fex": 3652.585459
+      },
+      "range_ms": {
+        "native": [
+          4337.787292,
+          4337.787292
+        ],
+        "fex": [
+          3652.585459,
+          3652.585459
+        ]
+      }
+    },
+    "kernel-threads": {
+      "fixture": "build-perf/native/kernel-threads-fex.exe",
+      "sha256": "6f805ef3c595fb5bce2e239ab88ecd5d38f9da9fb1b1bad1cd4683fb67af2d92",
+      "native": [
+        {
+          "index": 0,
+          "command": [
+            "build-perf/native/raven",
+            "--run-process",
+            "--execution=native",
+            "--timeout-ms=15000",
+            "build-perf/native/kernel-threads-fex.exe"
+          ],
+          "returncode": 0,
+          "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+          "stderr": "",
+          "wall_ms": 5091.460584
+        }
+      ],
+      "fex": [
+        {
+          "index": 0,
+          "command": [
+            "build-perf/native/raven",
+            "--run-process",
+            "--execution=fex",
+            "--timeout-ms=15000",
+            "build-perf/native/kernel-threads-fex.exe"
+          ],
+          "returncode": 0,
+          "stdout": "machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189\nCHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: FEX host ABI v2 rejects v1 and truncated host tables\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+          "stderr": "FEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\n",
+          "wall_ms": 4637.096208
+        }
+      ],
+      "median_ms": {
+        "native": 5091.460584,
+        "fex": 4637.096208
+      },
+      "range_ms": {
+        "native": [
+          5091.460584,
+          5091.460584
+        ],
+        "fex": [
+          4637.096208,
+          4637.096208
+        ]
+      }
+    },
+    "kernel-seh": {
+      "fixture": "build-perf/native/kernel-seh-fex.exe",
+      "sha256": "976bb5245904396ee764380def100d903e3a40fac6a3870ea8ec5eee2c763ec4",
+      "native": [
+        {
+          "index": 0,
+          "command": [
+            "build-perf/native/raven",
+            "--run-process",
+            "--execution=native",
+            "--timeout-ms=15000",
+            "build-perf/native/kernel-seh-fex.exe"
+          ],
+          "returncode": 0,
+          "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+          "stderr": "",
+          "wall_ms": 4541.55975
+        }
+      ],
+      "fex": [
+        {
+          "index": 0,
+          "command": [
+            "build-perf/native/raven",
+            "--run-process",
+            "--execution=fex",
+            "--timeout-ms=15000",
+            "build-perf/native/kernel-seh-fex.exe"
+          ],
+          "returncode": 0,
+          "stdout": "machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189\nCHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: FEX host ABI v2 rejects v1 and truncated host tables\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+          "stderr": "FEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\n",
+          "wall_ms": 5884.817416
+        }
+      ],
+      "median_ms": {
+        "native": 4541.55975,
+        "fex": 5884.817416
+      },
+      "range_ms": {
+        "native": [
+          4541.55975,
+          4541.55975
+        ],
+        "fex": [
+          5884.817416,
+          5884.817416
+        ]
+      }
+    },
+    "compute": {
+      "fixture": "build-perf/native/darwin-parallel-benchmark.exe",
+      "sha256": "7968cb8b96f1d7ea9086f31bc5385dc5625d74596a5d9bd3cca406fa94fff4d9",
+      "native": [
+        {
+          "index": 0,
+          "command": [
+            "build-perf/native/raven",
+            "--run-process",
+            "--execution=native",
+            "--timeout-ms=15000",
+            "build-perf/native/darwin-parallel-benchmark.exe"
+          ],
+          "returncode": 0,
+          "stdout": "Native entry returned 0 (process initialization not implemented)\n",
+          "stderr": "",
+          "wall_ms": 6986.927375
+        }
+      ],
+      "fex": [
+        {
+          "index": 0,
+          "command": [
+            "build-perf/native/raven",
+            "--run-process",
+            "--execution=fex",
+            "--timeout-ms=15000",
+            "build-perf/native/darwin-parallel-benchmark.exe"
+          ],
+          "returncode": 0,
+          "stdout": "machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189\nCHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)\nauxiliary_iat_writes=127\nresolved=127\nPASS: native PE DllMain attach\nPASS: FEX host ABI v2 rejects v1 and truncated host tables\nPASS: RavenProcessInit\nPASS: ThreadInit\nNative entry returned 0 (process initialization not implemented)\n",
+          "stderr": "FEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\nFEX main image claimed inside image_pool\n",
+          "wall_ms": 4469.301459
+        }
+      ],
+      "median_ms": {
+        "native": 6986.927375,
+        "fex": 4469.301459
+      },
+      "range_ms": {
+        "native": [
+          6986.927375,
+          6986.927375
+        ],
+        "fex": [
+          4469.301459,
+          4469.301459
+        ]
+      }
+    }
+  }
+}

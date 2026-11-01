@@ -142,6 +142,7 @@ std::shared_ptr<KernelObject> object_from_record(const InheritedHandle &item)
 			pipe->listener->type = item.bits & 1 ? SOCK_SEQPACKET : SOCK_STREAM;
 		}
 		pipe->message_mode = item.bits & 1;
+		pipe->read_messages = item.bits & 8;
 		pipe->server = item.bits & 2;
 		pipe->inherit = true;
 		pipe->name = item.text;
