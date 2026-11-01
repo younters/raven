@@ -97,6 +97,8 @@ int raven_entry(void) {
     ctx.FloatSave.ControlWord=0x37f;
 #endif
     const DWORD ds=ctx.SegDs, es=ctx.SegEs, fs=ctx.SegFs, gs=ctx.SegGs;
+    const DWORD cs=ctx.SegCs, ss=ctx.SegSs;
+    ctx.SegCs=ctx.SegSs=0;
     ctx.SegDs=ctx.SegEs=ctx.SegFs=ctx.SegGs=0;
     ctx.EFlags |= 0x1a7000;
 #ifndef _WIN64
@@ -155,6 +157,7 @@ int raven_entry(void) {
 #endif
     back.ContextFlags=CONTEXT_ALL;
     CHECK(GetThreadContext(thread,&back));
+    CHECK(back.SegCs==cs && back.SegSs==ss);
     CHECK(back.SegDs==ds && back.SegEs==es && back.SegFs==fs && back.SegGs==gs);
     CHECK(!(back.EFlags & 0x1a7000));
     CHECK(back.Dr0==ctx.Dr0 && back.Dr7==ctx.Dr7);
