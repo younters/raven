@@ -1,41 +1,66 @@
 {
-  "focused": {
-    "tests": 478,
-    "failed": [
-      "native_context_groups32_fex",
-      "native_context_groups64_fex",
-      "darwin_mullion_device_native",
-      "darwin_mullion_device_fex",
-      "darwin_mullion_clear_native",
-      "darwin_mullion_clear_fex",
-      "darwin_mullion_draw_native",
-      "darwin_mullion_draw_fex",
-      "darwin_mullion_window12_native",
-      "darwin_mullion_window12_fex"
-    ],
-    "skipped": [],
-    "disabled": [],
-    "passed": 468
-  },
-  "recheck": {
+  "v6-ranges": {
     "tests": 20,
+    "passed": 20,
+    "failed": [],
+    "skipped": [],
+    "disabled": [],
+    "seconds": "0",
+    "log": "/tmp/raven-graphics-v6-ranges.log",
+    "junit": "/tmp/raven-graphics-v6-ranges.xml"
+  },
+  "v6-focused": {
+    "tests": 536,
+    "passed": 534,
     "failed": [
-      "darwin_mullion_device_native",
-      "darwin_mullion_clear_native",
-      "darwin_mullion_draw_native",
-      "darwin_mullion_window12_native"
+      "darwin_unix_ranges_dxmt_fex",
+      "darwin_unix_ranges_mtld3d_64_fex"
     ],
     "skipped": [],
     "disabled": [],
-    "passed": 16
+    "seconds": "123",
+    "log": "/tmp/raven-graphics-v6-focused.log",
+    "junit": "/tmp/raven-graphics-v6-focused.xml"
   },
-  "full": {
-    "tests": 1502,
+  "v6-full": {
+    "tests": 1571,
+    "passed": 1564,
+    "failed": [],
+    "skipped": [
+      "native_vulkan_descriptor_buffer_x64",
+      "native_vulkan_descriptor_buffer_x32",
+      "native_minesweeper_workflow",
+      "native_darwin_capture_authorized",
+      "native_darwin_installer_widl",
+      "native_darwin_fd_budget_low_hard"
+    ],
+    "disabled": [
+      "native_vulkan_queued_extensions_x64"
+    ],
+    "seconds": "188",
+    "log": "/tmp/raven-graphics-v6-full.log",
+    "junit": "/tmp/raven-graphics-v6-full.xml"
+  },
+  "mtld3d-shared-address-unit": {
+    "passed": 1,
+    "failed": 0,
+    "log": "/tmp/raven-graphics-v7-rust-shared.log"
+  },
+  "v7-focused": {
+    "tests": 536,
+    "passed": 536,
+    "failed": [],
+    "skipped": [],
+    "disabled": [],
+    "seconds": "216",
+    "log": "/tmp/raven-graphics-v7-focused.log",
+    "junit": "/tmp/raven-graphics-v7-focused.xml"
+  },
+  "v7-full": {
+    "tests": 1571,
+    "passed": 1563,
     "failed": [
-      "darwin_mullion_device_native",
-      "darwin_mullion_clear_native",
-      "darwin_mullion_draw_native",
-      "darwin_mullion_window12_native"
+      "darwin_dxmt_fullscreen_fex"
     ],
     "skipped": [
       "native_vulkan_descriptor_buffer_x64",
@@ -48,13 +73,38 @@
     "disabled": [
       "native_vulkan_queued_extensions_x64"
     ],
-    "passed": 1491
+    "seconds": "189",
+    "log": "/tmp/raven-graphics-v7-full.log",
+    "junit": "/tmp/raven-graphics-v7-full.xml"
   },
-  "final-mullion": {
-    "tests": 16,
-    "passed": 16,
+  "v7-fullscreen-recheck": {
+    "tests": 2,
+    "passed": 2,
     "failed": [],
     "skipped": [],
-    "disabled": []
+    "disabled": [],
+    "repetitions_per_test": 5,
+    "seconds": 26.17,
+    "log": "/tmp/raven-graphics-v7-fullscreen-recheck.log",
+    "junit": "/tmp/raven-graphics-v7-fullscreen-recheck.xml"
+  },
+  "v8-full": {
+    "tests": 1571,
+    "passed": 1564,
+    "failed": [],
+    "skipped": [
+      "native_vulkan_descriptor_buffer_x64",
+      "native_vulkan_descriptor_buffer_x32",
+      "native_minesweeper_workflow",
+      "native_darwin_capture_authorized",
+      "native_darwin_installer_widl",
+      "native_darwin_fd_budget_low_hard"
+    ],
+    "disabled": [
+      "native_vulkan_queued_extensions_x64"
+    ],
+    "seconds": "189",
+    "log": "/tmp/raven-graphics-v8-full.log",
+    "junit": "/tmp/raven-graphics-v8-full.xml"
   }
 }
