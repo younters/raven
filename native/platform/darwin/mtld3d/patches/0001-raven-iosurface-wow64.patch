@@ -1,5 +1,22 @@
+diff --git a/unix/Cargo.toml b/unix/Cargo.toml
+index c34e9ce..e4f1583 100644
+--- a/unix/Cargo.toml
++++ b/unix/Cargo.toml
+@@ -97,10 +97,10 @@ snmalloc-rs = { version = "0.7.6", features = ["build_cc"] }
+ strum = { version = "0.28", default-features = false }
+ 
+ [profile.dev]
+-panic = "abort"
++panic = "unwind"
+ 
+ [profile.release]
+-panic = "abort"
++panic = "unwind"
+ lto = "thin"
+ # Match windows/Cargo.toml — limited debug info for post-mortem
+ # symbolication of mtld3d.so crashes (e.g. NSException stack traces).
 diff --git a/unix/shared/src/encoder_wire.rs b/unix/shared/src/encoder_wire.rs
-index 8392bf8..cc373e5 100644
+index 8392bf8..f063025 100644
 --- a/unix/shared/src/encoder_wire.rs
 +++ b/unix/shared/src/encoder_wire.rs
 @@ -619,8 +619,8 @@ impl LeaseCompletion {
@@ -8,7 +25,7 @@ index 8392bf8..cc373e5 100644
          // SAFETY: queued() requires this queue to outlive publication and consumption.
 -        let queue = unsafe { &*(queue_address as *const CompletionQueue) };
 -        let address = core::ptr::from_ref(self) as u64;
-+        let queue = unsafe { &*(crate::raven_address::host(queue_address) as *const CompletionQueue) };
++        let queue = unsafe { &*(crate::raven_address::host::<CompletionQueue >(queue_address, 1, false) as *const CompletionQueue) };
 +        let address = crate::raven_address::guest(core::ptr::from_ref(self) as u64);
          let mut head = queue.head.load(Ordering::Relaxed);
          loop {
@@ -18,7 +35,7 @@ index 8392bf8..cc373e5 100644
          loop {
              // SAFETY: every node of this detached list is retained and unconsumed.
 -            let cell = unsafe { &*(last as *const LeaseCompletion) };
-+            let cell = unsafe { &*(crate::raven_address::host(last) as *const LeaseCompletion) };
++            let cell = unsafe { &*(crate::raven_address::host::<LeaseCompletion >(last, 1, true) as *const LeaseCompletion) };
              let next = cell.next.load(Ordering::Relaxed);
              if next == 0 {
                  break;
@@ -27,12 +44,12 @@ index 8392bf8..cc373e5 100644
          }
          // SAFETY: `last` is the retained final node of the same detached list.
 -        let tail = unsafe { &*(last as *const LeaseCompletion) };
-+        let tail = unsafe { &*(crate::raven_address::host(last) as *const LeaseCompletion) };
++        let tail = unsafe { &*(crate::raven_address::host::<LeaseCompletion >(last, 1, true) as *const LeaseCompletion) };
          let mut head = self.head.load(Ordering::Relaxed);
          loop {
              tail.next.store(head, Ordering::Relaxed);
 diff --git a/unix/shared/src/ffi_boundary.rs b/unix/shared/src/ffi_boundary.rs
-index 1de632c..12f9842 100644
+index 1de632c..fb402f1 100644
 --- a/unix/shared/src/ffi_boundary.rs
 +++ b/unix/shared/src/ffi_boundary.rs
 @@ -79,7 +79,7 @@ impl<T> Deref for InPtr<'_, T> {
@@ -40,7 +57,7 @@ index 1de632c..12f9842 100644
      fn deref(&self) -> &T {
          // SAFETY: invariant carried from construction.
 -        unsafe { self.0.as_ref() }
-+        unsafe { &*(crate::raven_address::host(self.0.as_ptr() as u64) as *const T) }
++        unsafe { &*(crate::raven_address::host::<T >(self.0.as_ptr() as u64, 1, false) as *const T) }
      }
  }
  
@@ -49,7 +66,7 @@ index 1de632c..12f9842 100644
      fn deref(&self) -> &T {
          // SAFETY: invariant carried from construction.
 -        unsafe { self.0.as_ref() }
-+        unsafe { &*(crate::raven_address::host(self.0.as_ptr() as u64) as *const T) }
++        unsafe { &*(crate::raven_address::host::<T >(self.0.as_ptr() as u64, 1, false) as *const T) }
      }
  }
  
@@ -57,16 +74,49 @@ index 1de632c..12f9842 100644
      fn deref_mut(&mut self) -> &mut T {
          // SAFETY: invariant carried from construction.
 -        unsafe { self.0.as_mut() }
-+        unsafe { &mut *(crate::raven_address::host(self.0.as_ptr() as u64) as *mut T) }
++        unsafe { &mut *(crate::raven_address::host::<T >(self.0.as_ptr() as u64, 1, true) as *mut T) }
      }
  }
  
+@@ -162,9 +162,9 @@ impl<T: Copy> ValueIn<'_, T> {
+ 
+     /// Consume `self` and return the pointee by value.
+     #[must_use]
+-    pub const fn read(self) -> T {
++    pub fn read(self) -> T {
+         // SAFETY: invariant carried from construction; `read_unaligned` assumes no alignment.
+-        unsafe { self.0.as_ptr().read_unaligned() }
++        unsafe { (crate::raven_address::host::<T>(self.0.as_ptr() as u64, 1, false) as *const T).read_unaligned() }
+     }
+ 
+     /// One-shot null-filtered read. Convenience for the `opt + read` pair.
+@@ -172,7 +172,7 @@ impl<T: Copy> ValueIn<'_, T> {
+     /// # Safety
+     /// As [`Self::opt`].
+     #[must_use]
+-    pub const unsafe fn read_opt(p: *const c_void) -> Option<T> {
++    pub unsafe fn read_opt(p: *const c_void) -> Option<T> {
+         // SAFETY: forwarded from this fn's unsafe contract.
+         match unsafe { Self::opt(p) } {
+             Some(v) => Some(v.read()),
+@@ -206,9 +206,9 @@ impl<T> OutPtr<'_, T> {
+     }
+ 
+     /// Consume `self` and write `val` through the pointer.
+-    pub const fn write(self, val: T) {
++    pub fn write(self, val: T) {
+         // SAFETY: invariant carried from construction; `write_unaligned` assumes no alignment.
+-        unsafe { self.0.as_ptr().write_unaligned(val) };
++        unsafe { (crate::raven_address::host::<T>(self.0.as_ptr() as u64, 1, true) as *mut T).write_unaligned(val) };
+     }
+ 
+     /// One-shot null-guarded write. Convenience for the `opt + write` pair.
 @@ -260,14 +260,14 @@ impl<T> Deref for VtableThis<'_, T> {
      type Target = T;
      fn deref(&self) -> &T {
          // SAFETY: invariant carried from construction.
 -        unsafe { self.0.as_ref() }
-+        unsafe { &*(crate::raven_address::host(self.0.as_ptr() as u64) as *const T) }
++        unsafe { &*(crate::raven_address::host::<T >(self.0.as_ptr() as u64, 1, false) as *const T) }
      }
  }
  
@@ -74,10 +124,28 @@ index 1de632c..12f9842 100644
      fn deref_mut(&mut self) -> &mut T {
          // SAFETY: invariant carried from construction.
 -        unsafe { self.0.as_mut() }
-+        unsafe { &mut *(crate::raven_address::host(self.0.as_ptr() as u64) as *mut T) }
++        unsafe { &mut *(crate::raven_address::host::<T >(self.0.as_ptr() as u64, 1, true) as *mut T) }
      }
  }
  
+@@ -289,6 +289,7 @@ impl<T> DerefMut for VtableThis<'_, T> {
+ /// These requirements also apply to references or other invariants within `T`;
+ /// `Copy` alone does not make arbitrary bytes valid values.
+ pub unsafe fn slice_from_caller<'a, T: Copy>(data: *const T, count: usize) -> Cow<'a, [T]> {
++    let data = crate::raven_address::host::<T>(data as u64, count, false) as *const T;
+     if data.is_aligned() {
+         // SAFETY: aligned per the branch, and the caller guarantees the extent.
+         return Cow::Borrowed(unsafe { core::slice::from_raw_parts(data, count) });
+@@ -319,7 +320,8 @@ pub unsafe fn slice_from_caller<'a, T: Copy>(data: *const T, count: usize) -> Co
+ ///
+ /// `data` must be non-null and address `values.len() * size_of::<T>()` writable bytes in one
+ /// allocation that do not overlap `values`; alignment is not required.
+-pub const unsafe fn slice_to_caller<T: Copy>(data: *mut T, values: &[T]) {
++pub unsafe fn slice_to_caller<T: Copy>(data: *mut T, values: &[T]) {
++    let data = crate::raven_address::host::<T>(data as u64, values.len(), true) as *mut T;
+     // SAFETY: the caller guarantees the extent and that the regions do not overlap, and a
+     // byte copy has no alignment requirement on either side.
+     unsafe {
 diff --git a/unix/shared/src/lib.rs b/unix/shared/src/lib.rs
 index f44a67f..f289ef5 100644
 --- a/unix/shared/src/lib.rs
@@ -90,48 +158,69 @@ index f44a67f..f289ef5 100644
 +pub mod raven_address;
 diff --git a/unix/shared/src/raven_address.rs b/unix/shared/src/raven_address.rs
 new file mode 100644
-index 0000000..a1f4a8b
+index 0000000..9ecbc65
 --- /dev/null
 +++ b/unix/shared/src/raven_address.rs
-@@ -0,0 +1,36 @@
-+//! Raven WoW64 address window. Wire scalars and opaque native handles stay unchanged.
-+//! Only guest-memory fields call these helpers. Both PE ABIs already use u64 wire fields.
-+use core::sync::atomic::{AtomicU64, Ordering};
+@@ -0,0 +1,57 @@
++//! Checked guest/native address translation for Raven's two PE widths.
++use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
++pub type Check = extern "C" fn(u64, u64, u32) -> i32;
 +static BASE: AtomicU64 = AtomicU64::new(0);
++static CHECK: AtomicUsize = AtomicUsize::new(0);
 +pub fn set_base(base: u64) { BASE.store(base, Ordering::Release); }
-+fn host_in(base: u64, address: u64) -> u64 {
-+    if address != 0 && address <= u32::MAX as u64 { base + address } else { address }
++pub fn set_check(check: Check) { CHECK.store(check as usize, Ordering::Release); }
++pub fn host_in(base: u64, address: u64, size: u64) -> Option<u64> {
++    if size > isize::MAX as u64 || address.checked_add(size).is_none() { return None; }
++    if address == 0 { return if size == 0 { Some(0) } else { None }; }
++    if base != 0 && address <= u32::MAX as u64 {
++        if size > (1u64 << 32) - address { return None; }
++        base.checked_add(address).and_then(|host| host.checked_add(size).map(|_| host))
++    } else { Some(address) }
 +}
-+fn guest_in(base: u64, address: u64) -> u64 {
++pub fn checked(address: u64, size: u64, write: bool) -> Option<u64> {
++    let address = host_in(BASE.load(Ordering::Acquire), address, size)?;
++    if size == 0 { return Some(address); }
++    let callback = CHECK.load(Ordering::Acquire);
++    if callback == 0 {
++        // PE memory faults already belong to the Windows guest. The native
++        // unix library must instead receive Raven's range validator at load.
++        #[cfg(target_os = "windows")]
++        return Some(address);
++        #[cfg(not(target_os = "windows"))]
++        return None;
++    }
++    let check: Check = unsafe { core::mem::transmute(callback) };
++    if check(address, size, u32::from(write)) == 0 { None } else { Some(address) }
++}
++#[derive(Debug)]
++pub struct AccessViolation;
++pub fn host<T>(address: u64, count: usize, write: bool) -> u64 {
++    let size = count.checked_mul(size_of::<T>()).and_then(|v| u64::try_from(v).ok());
++    match size.and_then(|size| checked(address, size, write)) {
++        Some(0) if count == 0 => align_of::<T>() as u64,
++        Some(value) => value,
++        None => std::panic::panic_any(AccessViolation),
++    }
++}
++pub fn guest(address: u64) -> u64 {
++    let base = BASE.load(Ordering::Acquire);
 +    if base != 0 && address >= base && address - base <= u32::MAX as u64 { address - base } else { address }
 +}
-+pub fn host(address: u64) -> u64 { host_in(BASE.load(Ordering::Acquire), address) }
-+pub fn guest(address: u64) -> u64 { guest_in(BASE.load(Ordering::Acquire), address) }
-+
-+#[cfg(test)]
-+mod tests {
++#[cfg(test)] mod tests {
 +    use super::*;
-+    #[test]
-+    fn guest_fields_round_trip_without_truncating_native_handles() {
++    #[test] fn translation_checks_extent_and_overflow() {
 +        let base = 0x7000000000;
-+        for address in [1, 0x10000, 0x80000000, u32::MAX as u64] {
-+            assert_eq!(host_in(base, address), base + address);
-+            assert_eq!(guest_in(base, host_in(base, address)), address);
-+        }
-+        assert_eq!(host_in(base, 0), 0);
-+        assert_eq!(guest_in(base, 0), 0);
-+        for native in [0x100000000, 0x123456789, base - 1, base + 0x100000000] {
-+            assert_eq!(host_in(base, native), native);
-+            assert_eq!(guest_in(base, native), native);
-+        }
-+        for x64 in [0, 1, 0xffffffff, 0x100000000, 0x123456789] {
-+            assert_eq!(host_in(0, x64), x64);
-+            assert_eq!(guest_in(0, x64), x64);
-+        }
++        assert_eq!(host_in(base, 0xfffffff0, 16), Some(base + 0xfffffff0));
++        assert_eq!(host_in(base, 0xfffffff0, 17), None);
++        assert_eq!(host_in(0, u64::MAX - 3, 8), None);
++        assert_eq!(host_in(u64::MAX - 8, 4, 8), None);
++        assert_eq!(host_in(base, 0, 1), None);
++        assert_eq!(host_in(base, 0, 0), Some(0));
++        assert_eq!(host_in(base, base + 0x10000, 8), Some(base + 0x10000));
 +    }
 +}
 diff --git a/unix/unix/src/encoder.rs b/unix/unix/src/encoder.rs
-index f76110c..e36ba73 100644
+index f76110c..aeb0f24 100644
 --- a/unix/unix/src/encoder.rs
 +++ b/unix/unix/src/encoder.rs
 @@ -324,8 +324,8 @@ impl SharedCounter {
@@ -141,12 +230,12 @@ index f76110c..e36ba73 100644
 -    const unsafe fn new(raw: u64) -> Self {
 -        Self(raw as *const AtomicU64)
 +    unsafe fn new(raw: u64) -> Self {
-+        Self(mtld3d_shared::raven_address::host(raw as u64) as *const AtomicU64)
++        Self(mtld3d_shared::raven_address::host::<AtomicU64 >(raw as u64, 1, true) as *const AtomicU64)
      }
  
      fn load(&self, order: Ordering) -> u64 {
 diff --git a/unix/unix/src/encoder/ops.rs b/unix/unix/src/encoder/ops.rs
-index 66dae4a..cf66340 100644
+index 66dae4a..fa00899 100644
 --- a/unix/unix/src/encoder/ops.rs
 +++ b/unix/unix/src/encoder/ops.rs
 @@ -115,7 +115,7 @@ fn execute_control(
@@ -154,7 +243,7 @@ index 66dae4a..cf66340 100644
                      Some(unsafe {
                          core::slice::from_raw_parts(
 -                            r.entries_ptr as *const u16,
-+                            mtld3d_shared::raven_address::host(r.entries_ptr as u64) as *const u16,
++                            mtld3d_shared::raven_address::host::<u16>(r.entries_ptr as u64, r.entries_len as usize, false) as *const u16,
                              r.entries_len as usize,
                          )
                      })
@@ -163,7 +252,7 @@ index 66dae4a..cf66340 100644
      let address = checked_address(span.address, length, 1)?;
      // SAFETY: frame admission retains the immutable payload allocation through submit replay.
 -    Ok(unsafe { std::slice::from_raw_parts(address as *const u8, length) })
-+    Ok(unsafe { std::slice::from_raw_parts(mtld3d_shared::raven_address::host(address as u64) as *const u8, length) })
++    Ok(unsafe { std::slice::from_raw_parts(mtld3d_shared::raven_address::host::<u8>(address as u64, length, false) as *const u8, length) })
  }
  fn checked_address(address: u64, length: usize, alignment: usize) -> Result<usize, WireError> {
      let address = usize::try_from(address).map_err(|_| WireError::InvalidValue)?;
@@ -172,7 +261,7 @@ index 66dae4a..cf66340 100644
      let address = checked_address(address, size_of::<AtomicU64>(), align_of::<AtomicU64>())?;
      // SAFETY: the command's retained reply lease pins this initialized atomic through execution.
 -    let cell = unsafe { InPtr::<AtomicU64>::new(address as *const _) };
-+    let cell = unsafe { InPtr::<AtomicU64>::new(mtld3d_shared::raven_address::host(address as u64) as *const _) };
++    let cell = unsafe { InPtr::<AtomicU64>::new(mtld3d_shared::raven_address::host::<AtomicU64>(address as u64, 1, true) as *const _) };
      cell.store(value, Ordering::Release);
      Ok(())
  }
@@ -180,44 +269,80 @@ index 66dae4a..cf66340 100644
      let address = checked_address(address, size_of::<AtomicU32>(), align_of::<AtomicU32>())?;
      // SAFETY: the command's retained reply lease pins this initialized atomic through execution.
 -    let cell = unsafe { InPtr::<AtomicU32>::new(address as *const _) };
-+    let cell = unsafe { InPtr::<AtomicU32>::new(mtld3d_shared::raven_address::host(address as u64) as *const _) };
++    let cell = unsafe { InPtr::<AtomicU32>::new(mtld3d_shared::raven_address::host::<AtomicU32>(address as u64, 1, true) as *const _) };
      cell.store(value, Ordering::Release);
      Ok(())
  }
 diff --git a/unix/unix/src/encoder_service.rs b/unix/unix/src/encoder_service.rs
-index 60f4f8b..e8e4759 100644
+index 60f4f8b..762c682 100644
 --- a/unix/unix/src/encoder_service.rs
 +++ b/unix/unix/src/encoder_service.rs
+@@ -289,7 +289,7 @@ fn decode_settings(bytes: &[u8]) -> Result<(Mtld3dConfig, GpuCaps, Option<PathBu
+     Ok((config, caps, path))
+ }
+ 
+-pub extern "C" fn create_handler(args: *mut core::ffi::c_void) -> i32 {
++pub fn create_handler(args: *mut core::ffi::c_void) -> i32 {
+     // SAFETY: the dispatcher supplies the matching exclusive parameter record.
+     let Some(mut params) = (unsafe { InPtrMut::<CreateEncoderParams>::opt(args) }) else {
+         mtld3d_shared::log_once_warn!(target: LOG_TARGET, "encoder: null creation parameters");
 @@ -328,7 +328,7 @@ pub extern "C" fn create_handler(args: *mut core::ffi::c_void) -> i32 {
      // SAFETY: creation retains the immutable config bytes for this synchronous call;
      // the nonempty range was checked above and contains only byte-aligned values.
      let bytes = unsafe {
 -        std::slice::from_raw_parts(params.config_ptr as *const u8, params.config_len as usize)
-+        std::slice::from_raw_parts(mtld3d_shared::raven_address::host(params.config_ptr as u64) as *const u8, params.config_len as usize)
++        std::slice::from_raw_parts(mtld3d_shared::raven_address::host::<u8>(params.config_ptr as u64, params.config_len as usize, false) as *const u8, params.config_len as usize)
      };
      let (config, caps, path) = match decode_settings(bytes) {
          Ok(settings) => settings,
+@@ -363,7 +363,7 @@ pub extern "C" fn create_handler(args: *mut core::ffi::c_void) -> i32 {
+     params.result
+ }
+ 
+-pub extern "C" fn destroy_handler(args: *mut core::ffi::c_void) -> i32 {
++pub fn destroy_handler(args: *mut core::ffi::c_void) -> i32 {
+     // SAFETY: the dispatcher supplies the matching exclusive parameter record.
+     let Some(mut params) = (unsafe { InPtrMut::<DestroyEncoderParams>::opt(args) }) else {
+         mtld3d_shared::log_once_warn!(target: LOG_TARGET, "encoder: null destruction parameters");
 @@ -429,12 +429,12 @@ impl EncodedFrame {
      pub unsafe fn decode(&self) -> Result<mtld3d_core::encoder_packet::ReplayPacket, WireError> {
          // SAFETY: the admitted packet contract retains this immutable byte range.
          let metadata = unsafe {
 -            std::slice::from_raw_parts(self.metadata_ptr as *const u8, self.metadata_len as usize)
-+            std::slice::from_raw_parts(mtld3d_shared::raven_address::host(self.metadata_ptr as u64) as *const u8, self.metadata_len as usize)
++            std::slice::from_raw_parts(mtld3d_shared::raven_address::host::<u8>(self.metadata_ptr as u64, self.metadata_len as usize, false) as *const u8, self.metadata_len as usize)
          };
          // SAFETY: the admitted packet contract retains this immutable byte range.
          let operations = unsafe {
              std::slice::from_raw_parts(
 -                self.operations_ptr as *const u8,
-+                mtld3d_shared::raven_address::host(self.operations_ptr as u64) as *const u8,
++                mtld3d_shared::raven_address::host::<u8>(self.operations_ptr as u64, self.operations_len as usize, false) as *const u8,
                  self.operations_len as usize,
              )
          };
+@@ -445,7 +445,7 @@ impl EncodedFrame {
+     }
+ }
+ 
+-pub extern "C" fn submit_handler(args: *mut core::ffi::c_void) -> i32 {
++pub fn submit_handler(args: *mut core::ffi::c_void) -> i32 {
+     use mtld3d_shared::encoder_runtime::SubmitEncoderFrameParams;
+     // SAFETY: the dispatcher supplies this request's exclusive typed record.
+     let Some(mut params) = (unsafe { InPtrMut::<SubmitEncoderFrameParams>::opt(args) }) else {
+@@ -508,7 +508,7 @@ pub extern "C" fn submit_handler(args: *mut core::ffi::c_void) -> i32 {
+     })
+ }
+ 
+-pub extern "C" fn control_handler(args: *mut core::ffi::c_void) -> i32 {
++pub fn control_handler(args: *mut core::ffi::c_void) -> i32 {
+     use mtld3d_shared::encoder_runtime::EncoderControlParams;
+     // SAFETY: the dispatcher supplies this request's exclusive typed record.
+     let Some(params) = (unsafe { InPtrMut::<EncoderControlParams>::opt(args) }) else {
 @@ -547,7 +547,7 @@ pub extern "C" fn control_handler(args: *mut core::ffi::c_void) -> i32 {
                  // SAFETY: the API call retains the validated texture handle list until return.
                  unsafe {
                      std::slice::from_raw_parts(
 -                        params.textures_ptr as *const u64,
-+                        mtld3d_shared::raven_address::host(params.textures_ptr as u64) as *const u64,
++                        mtld3d_shared::raven_address::host::<u64>(params.textures_ptr as u64, params.textures_len as usize, false) as *const u64,
                          params.textures_len as usize,
                      )
                  }
@@ -226,93 +351,265 @@ index 60f4f8b..e8e4759 100644
      if address != 0 {
          // SAFETY: device creation retains this aligned mailbox through native shutdown.
 -        unsafe { &*(address as *const std::sync::atomic::AtomicU32) }
-+        unsafe { &*(mtld3d_shared::raven_address::host(address as u64) as *const std::sync::atomic::AtomicU32) }
++        unsafe { &*(mtld3d_shared::raven_address::host::<std::sync::atomic::AtomicU32 >(address as u64, 1, true) as *const std::sync::atomic::AtomicU32) }
              .store(1, std::sync::atomic::Ordering::Release);
      }
  }
 diff --git a/unix/unix/src/handlers.rs b/unix/unix/src/handlers.rs
-index d255f06..a73d089 100644
+index d255f06..b76410e 100644
 --- a/unix/unix/src/handlers.rs
 +++ b/unix/unix/src/handlers.rs
-@@ -86,7 +86,7 @@ pub extern "C" fn write_log_handler(args: *mut c_void) -> i32 {
+@@ -27,7 +27,7 @@ const STATUS_UNSUCCESSFUL: i32 = 0xC000_0001_u32.cast_signed();
+ /// d3d9.dll dispatches this as its first thunk after it has wired up its
+ /// own PE-side `env_logger`. `mtld3d_shared` owns the init policy; this
+ /// handler just forwards to it so all three cdylibs stay byte-identical.
+-pub extern "C" fn init_logger_handler(args: *mut c_void) -> i32 {
++pub fn init_logger_handler(args: *mut c_void) -> i32 {
+     // The PE side can replay this first-thunk init (a second `Direct3DCreate9`
+     // re-runs it), so the one-time process setup runs under a single `Once`
+     // here rather than each callee carrying its own idempotency flag.
+@@ -60,7 +60,9 @@ pub extern "C" fn init_logger_handler(args: *mut c_void) -> i32 {
+         // install the always-on signal handler.
+         mtld3d_shared::crumb::init();
+         mtld3d_shared::crumb::set_write_sink(crate::log_file::write_bytes);
+-        crate::crash::install();
++        // Raven owns synchronous fault dispatch. Its FEX repair handler must
++        // run before the scoped unix-call recovery; do not interpose Wine's
++        // terminating crash handler on those signals.
+         // Declare to macOS that we're a latency-critical game, not idle UI, so
+         // it keeps the process out of App Nap / display throttling and the
+         // compositor keeps cycling the layer even when the on-screen scene is
+@@ -75,7 +77,7 @@ pub extern "C" fn init_logger_handler(args: *mut c_void) -> i32 {
+ /// Writes the formatted line into this process's log file, next to the unix
+ /// side's own lines; the PE side has no usable standard handles of its own
+ /// when a launcher spawned the game.
+-pub extern "C" fn write_log_handler(args: *mut c_void) -> i32 {
++pub fn write_log_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *mut WriteLogParams.
+     let Some(params) = (unsafe { InPtrMut::<WriteLogParams>::opt(args) }) else {
+         return -1;
+@@ -86,7 +88,7 @@ pub extern "C" fn write_log_handler(args: *mut c_void) -> i32 {
      // SAFETY: PE supplied `ptr`/`len` as a byte slice valid for the call
      // duration; the pointer is non-zero per the check above.
      let bytes =
 -        unsafe { core::slice::from_raw_parts(params.ptr as *const u8, params.len as usize) };
-+        unsafe { core::slice::from_raw_parts(mtld3d_shared::raven_address::host(params.ptr as u64) as *const u8, params.len as usize) };
++        unsafe { core::slice::from_raw_parts(mtld3d_shared::raven_address::host::<u8>(params.ptr as u64, params.len as usize, false) as *const u8, params.len as usize) };
      match params.kind {
          LogLineKind::Ordinary => crate::log_file::write_all(bytes),
          LogLineKind::FaultReport => crate::log_file::write_fault(bytes),
-@@ -120,11 +120,11 @@ pub extern "C" fn open_log_handler(args: *mut c_void) -> i32 {
+@@ -102,7 +104,7 @@ pub extern "C" fn write_log_handler(args: *mut c_void) -> i32 {
+ /// file itself appears with the first line written after this. The thunk
+ /// also carries `debug.mainThreadChecker`, acted on here because this is the
+ /// first thunk that runs with the configuration resolved.
+-pub extern "C" fn open_log_handler(args: *mut c_void) -> i32 {
++pub fn open_log_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *mut OpenLogParams.
+     let Some(params) = (unsafe { InPtrMut::<OpenLogParams>::opt(args) }) else {
+         return -1;
+@@ -120,11 +122,11 @@ pub extern "C" fn open_log_handler(args: *mut c_void) -> i32 {
      // SAFETY: PE supplied `dir_ptr`/`dir_len` as a byte slice valid for the
      // call duration; the pointer is non-zero per the check above.
      let dir = unsafe {
 -        core::slice::from_raw_parts(params.dir_ptr as *const u8, params.dir_len as usize)
-+        core::slice::from_raw_parts(mtld3d_shared::raven_address::host(params.dir_ptr as u64) as *const u8, params.dir_len as usize)
++        core::slice::from_raw_parts(mtld3d_shared::raven_address::host::<u8>(params.dir_ptr as u64, params.dir_len as usize, false) as *const u8, params.dir_len as usize)
      };
      // SAFETY: same contract for `stem_ptr`/`stem_len`.
      let stem = unsafe {
 -        core::slice::from_raw_parts(params.stem_ptr as *const u8, params.stem_len as usize)
-+        core::slice::from_raw_parts(mtld3d_shared::raven_address::host(params.stem_ptr as u64) as *const u8, params.stem_len as usize)
++        core::slice::from_raw_parts(mtld3d_shared::raven_address::host::<u8>(params.stem_ptr as u64, params.stem_len as usize, false) as *const u8, params.stem_len as usize)
      };
      let (Ok(dir), Ok(stem)) = (core::str::from_utf8(dir), core::str::from_utf8(stem)) else {
          warn!(target: LOG_TARGET, "OpenLog: the location is not UTF-8, logging to stderr");
-@@ -148,7 +148,7 @@ fn borrowed_utf8<'a>(ptr: u64, len: u32) -> Result<Option<&'a str>, ()> {
+@@ -148,7 +150,7 @@ fn borrowed_utf8<'a>(ptr: u64, len: u32) -> Result<Option<&'a str>, ()> {
      }
      // SAFETY: the PE caller retains the byte-aligned buffer of `len` bytes at
      // `ptr` through this call.
 -    let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len as usize) };
-+    let bytes = unsafe { std::slice::from_raw_parts(mtld3d_shared::raven_address::host(ptr as u64) as *const u8, len as usize) };
++    let bytes = unsafe { std::slice::from_raw_parts(mtld3d_shared::raven_address::host::<u8>(ptr as u64, len as usize, false) as *const u8, len as usize) };
      std::str::from_utf8(bytes).map(Some).map_err(|_| ())
  }
  
-@@ -208,7 +208,7 @@ pub extern "C" fn get_device_info_handler(args: *mut c_void) -> i32 {
+@@ -188,7 +190,7 @@ fn log_identity() {
+     }
+ }
+ 
+-pub extern "C" fn get_device_info_handler(args: *mut c_void) -> i32 {
++pub fn get_device_info_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *mut GetDeviceInfoParams.
+     let Some(mut params) = (unsafe { InPtrMut::<GetDeviceInfoParams>::opt(args) }) else {
+         return -1;
+@@ -208,7 +210,7 @@ pub extern "C" fn get_device_info_handler(args: *mut c_void) -> i32 {
              // `u8` buffer it owns for the unix-call duration; `buf_len` fits its
              // allocation per the wire contract.
              let buf =
 -                unsafe { core::slice::from_raw_parts_mut(params.name_ptr as *mut u8, buf_len) };
-+                unsafe { core::slice::from_raw_parts_mut(mtld3d_shared::raven_address::host(params.name_ptr as u64) as *mut u8, buf_len) };
++                unsafe { core::slice::from_raw_parts_mut(mtld3d_shared::raven_address::host::<u8>(params.name_ptr as u64, buf_len, true) as *mut u8, buf_len) };
              buf[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
              buf[copy_len] = 0;
              params.name_len = u64::try_from(copy_len).expect("name copy len fits u64");
-@@ -264,7 +264,7 @@ pub extern "C" fn create_command_queue_handler(args: *mut c_void) -> i32 {
+@@ -250,7 +252,7 @@ fn borrow_device_record(handle: DeviceRecordHandle) -> Option<Arc<metal::DeviceR
+     unsafe { metal::DeviceRecord::borrow(handle) }
+ }
+ 
+-pub extern "C" fn create_command_queue_handler(args: *mut c_void) -> i32 {
++pub fn create_command_queue_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *mut CreateCommandQueueParams.
+     let Some(mut params) = (unsafe { InPtrMut::<CreateCommandQueueParams>::opt(args) }) else {
+         return -1;
+@@ -264,7 +266,7 @@ pub extern "C" fn create_command_queue_handler(args: *mut c_void) -> i32 {
          // valid for the call duration; the pointer is non-zero per the check.
          let bytes = unsafe {
              core::slice::from_raw_parts(
 -                params.gate_file_ptr as *const u8,
-+                mtld3d_shared::raven_address::host(params.gate_file_ptr as u64) as *const u8,
++                mtld3d_shared::raven_address::host::<u8>(params.gate_file_ptr as u64, params.gate_file_len as usize, false) as *const u8,
                  params.gate_file_len as usize,
              )
          };
-@@ -422,7 +422,7 @@ pub extern "C" fn set_cursor_overlay_handler(args: *mut c_void) -> i32 {
+@@ -294,7 +296,7 @@ pub extern "C" fn create_command_queue_handler(args: *mut c_void) -> i32 {
+     }
+ }
+ 
+-pub extern "C" fn attach_metal_layer_handler(args: *mut c_void) -> i32 {
++pub fn attach_metal_layer_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *mut AttachMetalLayerParams.
+     let Some(mut params) = (unsafe { InPtrMut::<AttachMetalLayerParams>::opt(args) }) else {
+         return -1;
+@@ -354,7 +356,7 @@ pub extern "C" fn attach_metal_layer_handler(args: *mut c_void) -> i32 {
+ /// retargets the device at another window, which attaches a view there
+ /// straight after; the retired view stays kept for a device that comes back
+ /// to its window.
+-pub extern "C" fn detach_metal_layer_handler(args: *mut c_void) -> i32 {
++pub fn detach_metal_layer_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *const DetachMetalLayerParams.
+     let Some(params) = (unsafe { InPtr::<DetachMetalLayerParams>::opt(args.cast()) }) else {
+         return -1;
+@@ -373,7 +375,7 @@ pub extern "C" fn detach_metal_layer_handler(args: *mut c_void) -> i32 {
+ ///
+ /// Runs on the API thread, a Wine thread, as win32u's surface calls require,
+ /// and only at a `Present` whose device found its request word set.
+-pub extern "C" fn present_client_surface_handler(args: *mut c_void) -> i32 {
++pub fn present_client_surface_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *const PresentClientSurfaceParams.
+     let Some(params) = (unsafe { InPtr::<PresentClientSurfaceParams>::opt(args.cast()) }) else {
+         return -1;
+@@ -387,7 +389,7 @@ pub extern "C" fn present_client_surface_handler(args: *mut c_void) -> i32 {
+ /// Runs on the API thread, so it only validates, hands the sprite bytes over
+ /// to be copied when one came along, stores the wanted state and queues the
+ /// main-thread apply. Nothing here waits on `AppKit`.
+-pub extern "C" fn set_cursor_overlay_handler(args: *mut c_void) -> i32 {
++pub fn set_cursor_overlay_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *mut SetCursorOverlayParams.
+     let Some(params) = (unsafe { InPtr::<SetCursorOverlayParams>::opt(args) }) else {
+         return -1;
+@@ -422,7 +424,7 @@ pub extern "C" fn set_cursor_overlay_handler(args: *mut c_void) -> i32 {
          // valid for the call duration; the pointer is non-zero per the branch
          // and the length was just checked against the sprite's geometry.
          Some(unsafe {
 -            core::slice::from_raw_parts(params.pixels_ptr as *const u8, params.pixels_len as usize)
-+            core::slice::from_raw_parts(mtld3d_shared::raven_address::host(params.pixels_ptr as u64) as *const u8, params.pixels_len as usize)
++            core::slice::from_raw_parts(mtld3d_shared::raven_address::host::<u8>(params.pixels_ptr as u64, params.pixels_len as usize, false) as *const u8, params.pixels_len as usize)
          })
      };
      if metal::set_cursor_overlay(&params, pixels) {
-@@ -757,7 +757,7 @@ pub extern "C" fn destroy_resources_bulk_handler(args: *mut c_void) -> i32 {
+@@ -432,7 +434,7 @@ pub extern "C" fn set_cursor_overlay_handler(args: *mut c_void) -> i32 {
+     }
+ }
+ 
+-pub extern "C" fn set_present_wait_policy_handler(args: *mut c_void) -> i32 {
++pub fn set_present_wait_policy_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *const SetPresentWaitPolicyParams.
+     let Some(params) = (unsafe { InPtr::<SetPresentWaitPolicyParams>::opt(args.cast()) }) else {
+         return -1;
+@@ -510,7 +512,7 @@ pub fn malloc_in_use() -> u64 {
+     u64::try_from(stats.size_in_use).unwrap_or(u64::MAX)
+ }
+ 
+-pub extern "C" fn destroy_command_queue_handler(args: *mut c_void) -> i32 {
++pub fn destroy_command_queue_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *const DestroyCommandQueueParams.
+     let Some(params) = (unsafe { InPtr::<DestroyCommandQueueParams>::opt(args.cast()) }) else {
+         return -1;
+@@ -537,7 +539,7 @@ pub extern "C" fn destroy_command_queue_handler(args: *mut c_void) -> i32 {
+     STATUS_SUCCESS
+ }
+ 
+-pub extern "C" fn create_backbuffer_handler(args: *mut c_void) -> i32 {
++pub fn create_backbuffer_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *mut CreateBackbufferParams.
+     let Some(mut params) = (unsafe { InPtrMut::<CreateBackbufferParams>::opt(args) }) else {
+         error!(target: LOG_TARGET, "CreateBackbuffer: null params pointer");
+@@ -623,7 +625,7 @@ pub extern "C" fn create_backbuffer_handler(args: *mut c_void) -> i32 {
+     STATUS_SUCCESS
+ }
+ 
+-pub extern "C" fn blit_texture_to_buffer_handler(args: *mut c_void) -> i32 {
++pub fn blit_texture_to_buffer_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *const BlitTextureToBufferParams.
+     let Some(params) = (unsafe { InPtr::<BlitTextureToBufferParams>::opt(args.cast()) }) else {
+         return -1;
+@@ -658,7 +660,7 @@ pub extern "C" fn blit_texture_to_buffer_handler(args: *mut c_void) -> i32 {
+     }
+ }
+ 
+-pub extern "C" fn create_depth_texture_handler(args: *mut c_void) -> i32 {
++pub fn create_depth_texture_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *mut CreateDepthTextureParams.
+     let Some(mut params) = (unsafe { InPtrMut::<CreateDepthTextureParams>::opt(args) }) else {
+         return -1;
+@@ -688,7 +690,7 @@ pub extern "C" fn create_depth_texture_handler(args: *mut c_void) -> i32 {
+     }
+ }
+ 
+-pub extern "C" fn create_color_target_handler(args: *mut c_void) -> i32 {
++pub fn create_color_target_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *mut CreateColorTargetParams.
+     let Some(mut params) = (unsafe { InPtrMut::<CreateColorTargetParams>::opt(args) }) else {
+         return -1;
+@@ -746,7 +748,7 @@ pub extern "C" fn create_color_target_handler(args: *mut c_void) -> i32 {
+     STATUS_SUCCESS
+ }
+ 
+-pub extern "C" fn destroy_resources_bulk_handler(args: *mut c_void) -> i32 {
++pub fn destroy_resources_bulk_handler(args: *mut c_void) -> i32 {
+     // SAFETY: unix-call handler params; PE side passes *const DestroyResourcesBulkParams.
+     let Some(params) = (unsafe { InPtr::<DestroyResourcesBulkParams>::opt(args.cast()) }) else {
+         return -1;
+@@ -757,7 +759,7 @@ pub extern "C" fn destroy_resources_bulk_handler(args: *mut c_void) -> i32 {
      // SAFETY: PE supplied `handles_ptr` as a `[u64; count]` valid for the
      // call duration; the handles are read-only here.
      let slice = unsafe {
 -        core::slice::from_raw_parts(params.handles_ptr as *const u64, params.count as usize)
-+        core::slice::from_raw_parts(mtld3d_shared::raven_address::host(params.handles_ptr as u64) as *const u64, params.count as usize)
++        core::slice::from_raw_parts(mtld3d_shared::raven_address::host::<u64>(params.handles_ptr as u64, params.count as usize, false) as *const u64, params.count as usize)
      };
      destroy_resources_bulk(params.kind, slice);
      STATUS_SUCCESS
 diff --git a/unix/unix/src/lib.rs b/unix/unix/src/lib.rs
-index 0409ec8..b67d427 100644
+index 0409ec8..8997c4e 100644
 --- a/unix/unix/src/lib.rs
 +++ b/unix/unix/src/lib.rs
-@@ -1,3 +1,4 @@
+@@ -1,9 +1,10 @@
 +mod raven;
++mod raven_contract;
  use core::ffi::c_void;
  
  use mtld3d_shared::Thunks;
+ use strum::{EnumCount, VariantArray};
+ 
+-mod crash;
+ mod draw;
+ mod encoder;
+ mod encoder_service;
+@@ -65,7 +66,8 @@ macro_rules! arp {
+     ($inner:path) => {{
+         extern "C" fn arp_wrap(args: *mut c_void) -> i32 {
+             mtld3d_shared::crumb!(stringify!($inner), args as usize as u64);
+-            objc2::rc::autoreleasepool(|_| $inner(args))
++            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| objc2::rc::autoreleasepool(|_| $inner(args))))
++                .unwrap_or(0xc0000005u32 as i32)
+         }
+         arp_wrap as UnixCallFn
+     }};
 diff --git a/unix/unix/src/metal/buffer.rs b/unix/unix/src/metal/buffer.rs
-index ee4ab2e..d04746c 100644
+index ee4ab2e..23b9ee6 100644
 --- a/unix/unix/src/metal/buffer.rs
 +++ b/unix/unix/src/metal/buffer.rs
 @@ -105,7 +105,7 @@ pub fn create_buffer(
@@ -320,12 +617,12 @@ index ee4ab2e..d04746c 100644
          }
      };
 -    let Some(pe_ptr) = NonNull::new(desc.backing_ptr as *mut c_void) else {
-+    let Some(pe_ptr) = NonNull::new(mtld3d_shared::raven_address::host(desc.backing_ptr as u64) as *mut c_void) else {
++    let Some(pe_ptr) = NonNull::new(mtld3d_shared::raven_address::host::<c_void >(desc.backing_ptr as u64, desc.length as usize, true) as *mut c_void) else {
          warn!(
              target: LOG_TARGET,
              "create_buffer: backing_ptr null (kind={:?} id={:#x})",
 diff --git a/unix/unix/src/metal/command.rs b/unix/unix/src/metal/command.rs
-index 3d634bd..f97f072 100644
+index 3d634bd..08c8631 100644
 --- a/unix/unix/src/metal/command.rs
 +++ b/unix/unix/src/metal/command.rs
 @@ -162,6 +162,7 @@ const PRESENTED_MIN_EXCESS_NS: u64 = 3_000_000;
@@ -341,7 +638,7 @@ index 3d634bd..f97f072 100644
      // outlives every in-flight command buffer that references it (device
      // teardown drains pending cmdbufs before dropping the Arc).
 -    let atomic = unsafe { &*(coherent_seq_ptr as *const AtomicU64) };
-+    let atomic = unsafe { &*(mtld3d_shared::raven_address::host(coherent_seq_ptr as u64) as *const AtomicU64) };
++    let atomic = unsafe { &*(mtld3d_shared::raven_address::host::<AtomicU64 >(coherent_seq_ptr as u64, 1, true) as *const AtomicU64) };
      let through = if atomic.load(Ordering::Acquire) >= target_seq {
          target_seq
      } else {
@@ -350,7 +647,7 @@ index 3d634bd..f97f072 100644
          // command buffers that reference it are drained on device teardown
          // before the Arc drops.
 -        let atomic = unsafe { &*(failed_submit_seq_ptr as *const AtomicU64) };
-+        let atomic = unsafe { &*(mtld3d_shared::raven_address::host(failed_submit_seq_ptr as u64) as *const AtomicU64) };
++        let atomic = unsafe { &*(mtld3d_shared::raven_address::host::<AtomicU64 >(failed_submit_seq_ptr as u64, 1, true) as *const AtomicU64) };
          atomic.fetch_max(seq, Ordering::Release);
      }
  }
@@ -359,7 +656,7 @@ index 3d634bd..f97f072 100644
          // SAFETY: SubmitFrame carries stable PE AtomicU64 pointers kept live
          // through this call and every registered command buffer's completion.
 -        let counter = unsafe { &*(pointer as *const AtomicU64) };
-+        let counter = unsafe { &*(mtld3d_shared::raven_address::host(pointer as u64) as *const AtomicU64) };
++        let counter = unsafe { &*(mtld3d_shared::raven_address::host::<AtomicU64 >(pointer as u64, 1, true) as *const AtomicU64) };
          counter.fetch_max(seq, Ordering::Release);
      }
  }
@@ -395,7 +692,7 @@ index 3d634bd..f97f072 100644
          let blits = unsafe {
              core::slice::from_raw_parts(
 -                pass.leading_blits_ptr as *const BlitCommand,
-+                mtld3d_shared::raven_address::host(pass.leading_blits_ptr as u64) as *const BlitCommand,
++                mtld3d_shared::raven_address::host::<BlitCommand>(pass.leading_blits_ptr as u64, pass.leading_blits_count as usize, false) as *const BlitCommand,
                  pass.leading_blits_count as usize,
              )
          };
@@ -404,7 +701,7 @@ index 3d634bd..f97f072 100644
          let commands = unsafe {
              core::slice::from_raw_parts(
 -                pass.commands_ptr as *const Command,
-+                mtld3d_shared::raven_address::host(pass.commands_ptr as u64) as *const Command,
++                mtld3d_shared::raven_address::host::<Command>(pass.commands_ptr as u64, pass.command_count as usize, false) as *const Command,
                  pass.command_count as usize,
              )
          };
@@ -413,7 +710,7 @@ index 3d634bd..f97f072 100644
                  }
                  Some(CommandType::SetVertexBytes) => {
 -                    let ptr = core::ptr::NonNull::new(cmd.param_b as *mut c_void);
-+                    let ptr = core::ptr::NonNull::new(mtld3d_shared::raven_address::host(cmd.param_b as u64) as *mut c_void);
++                    let ptr = core::ptr::NonNull::new(mtld3d_shared::raven_address::host::<c_void >(cmd.param_b as u64, to_usize(cmd.param_c), false) as *mut c_void);
                      if let Some(ptr) = ptr {
                          let length = to_usize(cmd.param_c);
                          if length > SET_BYTES_MAX {
@@ -422,7 +719,7 @@ index 3d634bd..f97f072 100644
                  }
                  Some(CommandType::SetVertexBytesAt) => {
 -                    let ptr = cmd.param_b as *const core::ffi::c_void;
-+                    let ptr = mtld3d_shared::raven_address::host(cmd.param_b as u64) as *const core::ffi::c_void;
++                    let ptr = mtld3d_shared::raven_address::host::<core::ffi::c_void >(cmd.param_b as u64, to_usize(cmd.param_c), false) as *const core::ffi::c_void;
                      if ptr.is_null() {
                          continue;
                      }
@@ -431,7 +728,7 @@ index 3d634bd..f97f072 100644
                  }
                  Some(CommandType::SetFragmentBytesAt) => {
 -                    let ptr = cmd.param_b as *const core::ffi::c_void;
-+                    let ptr = mtld3d_shared::raven_address::host(cmd.param_b as u64) as *const core::ffi::c_void;
++                    let ptr = mtld3d_shared::raven_address::host::<core::ffi::c_void >(cmd.param_b as u64, to_usize(cmd.param_c), false) as *const core::ffi::c_void;
                      if ptr.is_null() {
                          continue;
                      }
@@ -440,7 +737,7 @@ index 3d634bd..f97f072 100644
                      let prim_type =
                          mtl_primitive_type_or_fallback(cmd.param_a, "DrawIndexedPrimitivesUp");
 -                    let Some(ptr) = core::ptr::NonNull::new(cmd.param_b as *mut c_void) else {
-+                    let Some(ptr) = core::ptr::NonNull::new(mtld3d_shared::raven_address::host(cmd.param_b as u64) as *mut c_void) else {
++                    let Some(ptr) = core::ptr::NonNull::new(mtld3d_shared::raven_address::host::<c_void >(cmd.param_b as u64, to_usize(cmd.param_c), false) as *mut c_void) else {
                          continue;
                      };
                      let byte_len = to_usize(cmd.param_c);
@@ -449,7 +746,7 @@ index 3d634bd..f97f072 100644
      };
  
 -    let Some(ptr) = NonNull::new(dst_ptr as *mut c_void) else {
-+    let Some(ptr) = NonNull::new(mtld3d_shared::raven_address::host(dst_ptr as u64) as *mut c_void) else {
++    let Some(ptr) = NonNull::new(mtld3d_shared::raven_address::host::<c_void >(dst_ptr as u64, to_usize(dst_len), true) as *mut c_void) else {
          error!(target: LOG_TARGET, "blit_texture_to_buffer: null dst_ptr");
          return false;
      };
@@ -494,7 +791,7 @@ index 0b329a8..1b2f1d6 100644
          return;
      }
 diff --git a/unix/unix/src/metal/submission.rs b/unix/unix/src/metal/submission.rs
-index a4e2ef8..c31df52 100644
+index a4e2ef8..b6c34eb 100644
 --- a/unix/unix/src/metal/submission.rs
 +++ b/unix/unix/src/metal/submission.rs
 @@ -52,7 +52,7 @@ impl RetirementCounter {
@@ -502,7 +799,7 @@ index a4e2ef8..c31df52 100644
          self.0.map_or(0, |address| {
              // SAFETY: construction keeps the atomic live through all uses.
 -            unsafe { &*(address.get() as *const AtomicU64) }.load(Ordering::Acquire)
-+            unsafe { &*(mtld3d_shared::raven_address::host(address.get() as u64) as *const AtomicU64) }.load(Ordering::Acquire)
++            unsafe { &*(mtld3d_shared::raven_address::host::<AtomicU64 >(address.get() as u64, 1, true) as *const AtomicU64) }.load(Ordering::Acquire)
          })
      }
  
@@ -511,29 +808,238 @@ index a4e2ef8..c31df52 100644
          if let Some(address) = self.0 {
              // SAFETY: construction keeps the atomic live through all uses.
 -            unsafe { &*(address.get() as *const AtomicU64) }.fetch_max(seq, Ordering::Release);
-+            unsafe { &*(mtld3d_shared::raven_address::host(address.get() as u64) as *const AtomicU64) }.fetch_max(seq, Ordering::Release);
++            unsafe { &*(mtld3d_shared::raven_address::host::<AtomicU64 >(address.get() as u64, 1, true) as *const AtomicU64) }.fetch_max(seq, Ordering::Release);
          }
      }
  }
 diff --git a/unix/unix/src/raven.rs b/unix/unix/src/raven.rs
 new file mode 100644
-index 0000000..1bb36ff
+index 0000000..ffb283e
 --- /dev/null
 +++ b/unix/unix/src/raven.rs
-@@ -0,0 +1,11 @@
+@@ -0,0 +1,40 @@
 +use core::ffi::c_void;
-+unsafe extern "C" {
-+    pub fn raven_mtld3d_layer_create(hwnd: u64, device: *mut c_void, width: u32, height: u32) -> *mut c_void;
-+    pub fn raven_mtld3d_layer_release(layer: *mut c_void);
-+    pub fn raven_mtld3d_present(command: *mut c_void, drawable: *mut c_void, duration: f64) -> i32;
++#[derive(Clone, Copy)]
++#[repr(C)]
++pub struct Callbacks {
++    pub version: u32,
++    pub size: u32,
++    pub create: unsafe extern "C" fn(u64, *mut c_void, u32, u32) -> *mut c_void,
++    pub release: unsafe extern "C" fn(*mut c_void),
++    pub present: unsafe extern "C" fn(*mut c_void, *mut c_void, f64) -> i32,
 +}
-+
++static CALLBACKS: std::sync::OnceLock<Callbacks> = std::sync::OnceLock::new();
 +#[unsafe(no_mangle)]
-+pub extern "C" fn raven_mtld3d_set_guest_base(base: u64) {
-+    mtld3d_shared::raven_address::set_base(base);
++pub unsafe extern "C" fn raven_mtld3d_bind(callbacks: *const Callbacks) -> i32 {
++    if callbacks.is_null() { return -1; }
++    let value = unsafe { callbacks.read() };
++    if value.version != 1 || value.size as usize != size_of::<Callbacks>() { return -1; }
++    if let Some(old) = CALLBACKS.get() {
++        return if old.create as usize == value.create as usize && old.release as usize == value.release as usize &&
++            old.present as usize == value.present as usize { 0 } else { -1 };
++    }
++    if CALLBACKS.set(value).is_ok() { 0 } else { -1 }
 +}
++pub unsafe fn raven_mtld3d_layer_create(hwnd: u64, device: *mut c_void, width: u32, height: u32) -> *mut c_void {
++    unsafe { (CALLBACKS.get().expect("Raven callbacks").create)(hwnd, device, width, height) }
++}
++pub unsafe fn raven_mtld3d_layer_release(layer: *mut c_void) {
++    unsafe { (CALLBACKS.get().expect("Raven callbacks").release)(layer) }
++}
++pub unsafe fn raven_mtld3d_present(command: *mut c_void, drawable: *mut c_void, duration: f64) -> i32 {
++    unsafe { (CALLBACKS.get().expect("Raven callbacks").present)(command, drawable, duration) }
++}
++#[unsafe(no_mangle)]
++pub extern "C" fn raven_mtld3d_set_guest_base(base: u64) { mtld3d_shared::raven_address::set_base(base); }
++
++const _: () = {
++    assert!(size_of::<Callbacks>() == 32);
++    assert!(core::mem::offset_of!(Callbacks, create) == 8);
++    assert!(core::mem::offset_of!(Callbacks, release) == 16);
++    assert!(core::mem::offset_of!(Callbacks, present) == 24);
++};
+diff --git a/unix/unix/src/raven_contract.rs b/unix/unix/src/raven_contract.rs
+new file mode 100644
+index 0000000..dac461d
+--- /dev/null
++++ b/unix/unix/src/raven_contract.rs
+@@ -0,0 +1,174 @@
++use core::ffi::c_void;
++use mtld3d_shared::raven_address::{self, Check};
++#[repr(C)]
++struct Contract { version: u32, count: u32, sizes: *const u32, validate: extern "C" fn(u32,*mut c_void,Check)->i32, set: extern "C" fn(Check) }
++unsafe impl Sync for Contract {}
++static SIZES: [u32; 22] = [
++    size_of::<mtld3d_shared::InitLoggerParams>() as u32,
++    size_of::<mtld3d_shared::GetDeviceInfoParams>() as u32,
++    size_of::<mtld3d_shared::CreateCommandQueueParams>() as u32,
++    size_of::<mtld3d_shared::AttachMetalLayerParams>() as u32,
++    size_of::<mtld3d_shared::DestroyCommandQueueParams>() as u32,
++    size_of::<mtld3d_shared::CreateBackbufferParams>() as u32,
++    size_of::<mtld3d_shared::CreateDepthTextureParams>() as u32,
++    size_of::<mtld3d_shared::CreateColorTargetParams>() as u32,
++    size_of::<mtld3d_shared::BlitTextureToBufferParams>() as u32,
++    size_of::<mtld3d_shared::DestroyResourcesBulkParams>() as u32,
++    size_of::<mtld3d_shared::WriteLogParams>() as u32,
++    size_of::<mtld3d_shared::OpenLogParams>() as u32,
++    size_of::<mtld3d_shared::SetCursorOverlayParams>() as u32,
++    size_of::<mtld3d_shared::DetachMetalLayerParams>() as u32,
++    size_of::<mtld3d_shared::SetPresentWaitPolicyParams>() as u32,
++    size_of::<mtld3d_shared::encoder_runtime::CreateEncoderParams>() as u32,
++    size_of::<mtld3d_shared::encoder_runtime::DestroyEncoderParams>() as u32,
++    size_of::<mtld3d_shared::encoder_runtime::SubmitEncoderFrameParams>() as u32,
++    size_of::<mtld3d_shared::encoder_runtime::EncoderControlParams>() as u32,
++    size_of::<mtld3d_shared::shader_create::CreateShaderProgramParams>() as u32,
++    size_of::<mtld3d_shared::shader_create::CancelShaderProgramParams>() as u32,
++    size_of::<mtld3d_shared::PresentClientSurfaceParams>() as u32,
++];
++extern "C" fn set(check: Check) { raven_address::set_check(check); }
++extern "C" fn validate(code:u32, args:*mut c_void, _check:Check) -> i32 {
++    let p = args as *const u8;
++    match code {
++    0 => {
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::InitLoggerParams, filter_ptr)).cast::<u64>().read_unaligned() }; let length = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::InitLoggerParams, filter_len)).cast::<u32>().read_unaligned() } as u64;
++        if raven_address::checked(address, length, false).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::InitLoggerParams, early_dir_ptr)).cast::<u64>().read_unaligned() }; let length = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::InitLoggerParams, early_dir_len)).cast::<u32>().read_unaligned() } as u64;
++        if raven_address::checked(address, length, false).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::InitLoggerParams, early_stem_ptr)).cast::<u64>().read_unaligned() }; let length = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::InitLoggerParams, early_stem_len)).cast::<u32>().read_unaligned() } as u64;
++        if raven_address::checked(address, length, false).is_none() { return 0; }
++        1
++    },
++    1 => {
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::GetDeviceInfoParams, name_ptr)).cast::<u64>().read_unaligned() }; let length = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::GetDeviceInfoParams, name_buf_len)).cast::<u64>().read_unaligned() } as u64;
++        if raven_address::checked(address, length, true).is_none() { return 0; }
++        1
++    },
++    2 => {
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::CreateCommandQueueParams, gate_file_ptr)).cast::<u64>().read_unaligned() }; let length = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::CreateCommandQueueParams, gate_file_len)).cast::<u32>().read_unaligned() } as u64;
++        if raven_address::checked(address, length, false).is_none() { return 0; }
++        1
++    },
++    3 => {
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::AttachMetalLayerParams, backing_scale_ptr)).cast::<u64>().read_unaligned() }; let length = 4;
++        if address != 0 && raven_address::checked(address, length, true).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::AttachMetalLayerParams, cursor_kick_ptr)).cast::<u64>().read_unaligned() }; let length = 4;
++        if address != 0 && raven_address::checked(address, length, true).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::AttachMetalLayerParams, client_surface_request_ptr)).cast::<u64>().read_unaligned() }; let length = 4;
++        if address != 0 && raven_address::checked(address, length, true).is_none() { return 0; }
++        1
++    },
++    4 => {
++        1
++    },
++    5 => {
++        1
++    },
++    6 => {
++        1
++    },
++    7 => {
++        1
++    },
++    8 => {
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::BlitTextureToBufferParams, dst_ptr)).cast::<u64>().read_unaligned() }; let length = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::BlitTextureToBufferParams, dst_len)).cast::<u64>().read_unaligned() } as u64;
++        if raven_address::checked(address, length, true).is_none() { return 0; }
++        1
++    },
++    9 => {
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::DestroyResourcesBulkParams, handles_ptr)).cast::<u64>().read_unaligned() }; let length = (unsafe { p.add(core::mem::offset_of!(mtld3d_shared::DestroyResourcesBulkParams, count)).cast::<u32>().read_unaligned() } as u64) * 8;
++        if raven_address::checked(address, length, false).is_none() { return 0; }
++        1
++    },
++    10 => {
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::WriteLogParams, ptr)).cast::<u64>().read_unaligned() }; let length = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::WriteLogParams, len)).cast::<u32>().read_unaligned() } as u64;
++        if raven_address::checked(address, length, false).is_none() { return 0; }
++        1
++    },
++    11 => {
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::OpenLogParams, dir_ptr)).cast::<u64>().read_unaligned() }; let length = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::OpenLogParams, dir_len)).cast::<u32>().read_unaligned() } as u64;
++        if raven_address::checked(address, length, false).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::OpenLogParams, stem_ptr)).cast::<u64>().read_unaligned() }; let length = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::OpenLogParams, stem_len)).cast::<u32>().read_unaligned() } as u64;
++        if raven_address::checked(address, length, false).is_none() { return 0; }
++        1
++    },
++    12 => {
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::SetCursorOverlayParams, pixels_ptr)).cast::<u64>().read_unaligned() }; let length = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::SetCursorOverlayParams, pixels_len)).cast::<u32>().read_unaligned() } as u64;
++        if address != 0 && raven_address::checked(address, length, false).is_none() { return 0; }
++        1
++    },
++    13 => {
++        1
++    },
++    14 => {
++        1
++    },
++    15 => {
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::CreateEncoderParams, config_ptr)).cast::<u64>().read_unaligned() }; let length = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::CreateEncoderParams, config_len)).cast::<u32>().read_unaligned() } as u64;
++        if raven_address::checked(address, length, false).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::CreateEncoderParams, failure_ptr)).cast::<u64>().read_unaligned() }; let length = 4;
++        if address != 0 && raven_address::checked(address, length, true).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::CreateEncoderParams, source_clock_ptr)).cast::<u64>().read_unaligned() }; let length = size_of::<mtld3d_shared::clock_calibration::ClockCalibration>() as u64;
++        if address != 0 && raven_address::checked(address, length, false).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::CreateEncoderParams, coherent_seq_ptr)).cast::<u64>().read_unaligned() }; let length = 8;
++        if raven_address::checked(address, length, true).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::CreateEncoderParams, upload_coherent_seq_ptr)).cast::<u64>().read_unaligned() }; let length = 8;
++        if raven_address::checked(address, length, true).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::CreateEncoderParams, failed_submit_seq_ptr)).cast::<u64>().read_unaligned() }; let length = 8;
++        if raven_address::checked(address, length, true).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::CreateEncoderParams, retained_bytes_ptr)).cast::<u64>().read_unaligned() }; let length = 8;
++        if raven_address::checked(address, length, true).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::CreateEncoderParams, paced_present_seq_ptr)).cast::<u64>().read_unaligned() }; let length = 8;
++        if raven_address::checked(address, length, true).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::CreateEncoderParams, largest_free_word_ptr)).cast::<u64>().read_unaligned() }; let length = 8;
++        if raven_address::checked(address, length, true).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::CreateEncoderParams, guest_page_bytes_ptr)).cast::<u64>().read_unaligned() }; let length = 8;
++        if raven_address::checked(address, length, true).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::CreateEncoderParams, guest_pool_bytes_ptr)).cast::<u64>().read_unaligned() }; let length = 8;
++        if raven_address::checked(address, length, true).is_none() { return 0; }
++        1
++    },
++    16 => {
++        1
++    },
++    17 => {
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::SubmitEncoderFrameParams, metadata_ptr)).cast::<u64>().read_unaligned() }; let length = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::SubmitEncoderFrameParams, metadata_len)).cast::<u32>().read_unaligned() } as u64;
++        if raven_address::checked(address, length, false).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::SubmitEncoderFrameParams, operations_ptr)).cast::<u64>().read_unaligned() }; let length = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::SubmitEncoderFrameParams, operations_len)).cast::<u32>().read_unaligned() } as u64;
++        if raven_address::checked(address, length, false).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::SubmitEncoderFrameParams, completion)).cast::<u64>().read_unaligned() }; let length = size_of::<mtld3d_shared::encoder_wire::LeaseCompletion>() as u64;
++        if raven_address::checked(address, length, true).is_none() { return 0; }
++        1
++    },
++    18 => {
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::EncoderControlParams, textures_ptr)).cast::<u64>().read_unaligned() }; let length = (unsafe { p.add(core::mem::offset_of!(mtld3d_shared::encoder_runtime::EncoderControlParams, textures_len)).cast::<u32>().read_unaligned() } as u64) * 8;
++        if raven_address::checked(address, length, false).is_none() { return 0; }
++        1
++    },
++    19 => {
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::shader_create::CreateShaderProgramParams, tokens_ptr)).cast::<u64>().read_unaligned() }; let length = (unsafe { p.add(core::mem::offset_of!(mtld3d_shared::shader_create::CreateShaderProgramParams, token_count)).cast::<u32>().read_unaligned() } as u64) * 4;
++        if raven_address::checked(address, length, false).is_none() { return 0; }
++        let address = unsafe { p.add(core::mem::offset_of!(mtld3d_shared::shader_create::CreateShaderProgramParams, semantics_ptr)).cast::<u64>().read_unaligned() }; let length = (unsafe { p.add(core::mem::offset_of!(mtld3d_shared::shader_create::CreateShaderProgramParams, semantic_capacity)).cast::<u32>().read_unaligned() } as u64) * size_of::<mtld3d_shared::shader_create::ShaderInputSemantic>() as u64;
++        if raven_address::checked(address, length, true).is_none() { return 0; }
++        1
++    },
++    20 => {
++        1
++    },
++    21 => {
++        1
++    },
++    _ => 0,
++    }
++}
++static CONTRACT: Contract = Contract { version:1, count: crate::__wine_unix_call_funcs.len() as u32, sizes: SIZES.as_ptr(), validate, set };
++#[unsafe(no_mangle)]
++pub extern "C" fn raven_unix_get_contract() -> *const c_void { core::ptr::addr_of!(CONTRACT).cast() }
++
++const _: () = {
++    assert!(size_of::<Contract>() == 32);
++    assert!(core::mem::offset_of!(Contract, sizes) == 8);
++    assert!(core::mem::offset_of!(Contract, validate) == 16);
++    assert!(core::mem::offset_of!(Contract, set) == 24);
++};
 diff --git a/unix/unix/src/shader_programs.rs b/unix/unix/src/shader_programs.rs
-index 785721c..695ab54 100644
+index 785721c..575a633 100644
 --- a/unix/unix/src/shader_programs.rs
 +++ b/unix/unix/src/shader_programs.rs
 @@ -68,7 +68,7 @@ impl ProgramRegistry {
@@ -541,7 +1047,7 @@ index 785721c..695ab54 100644
          // checks above reject null, overflow, misalignment and oversized slices.
          let tokens = unsafe {
 -            slice_from_caller(params.tokens_ptr as *const u32, params.token_count as usize)
-+            slice_from_caller(mtld3d_shared::raven_address::host(params.tokens_ptr as u64) as *const u32, params.token_count as usize)
++            slice_from_caller(mtld3d_shared::raven_address::host::<u32>(params.tokens_ptr as u64, params.token_count as usize, false) as *const u32, params.token_count as usize)
          };
          let shader = match parse_shader(&params.stage, &tokens) {
              Ok(shader) => shader,
@@ -550,10 +1056,28 @@ index 785721c..695ab54 100644
          };
          for (index, semantic) in shader.input_semantics.into_iter().enumerate() {
 -            let out = (params.semantics_ptr as *mut ShaderInputSemantic).wrapping_add(index);
-+            let out = (mtld3d_shared::raven_address::host(params.semantics_ptr as u64) as *mut ShaderInputSemantic).wrapping_add(index);
++            let out = (mtld3d_shared::raven_address::host::<ShaderInputSemantic >(params.semantics_ptr as u64, params.semantic_capacity as usize, true) as *mut ShaderInputSemantic).wrapping_add(index);
              // SAFETY: capacity and alignment were checked before publication. The caller grants
              // exclusive writable access to this buffer, and index is less than its capacity.
              unsafe { OutPtr::write_opt(out, semantic) };
+@@ -136,7 +136,7 @@ impl ProgramRegistry {
+     }
+ }
+ 
+-pub extern "C" fn create_handler(args: *mut core::ffi::c_void) -> i32 {
++pub fn create_handler(args: *mut core::ffi::c_void) -> i32 {
+     // SAFETY: the dispatcher supplies the exclusive matching shader creation record.
+     let Some(mut params) = (unsafe { InPtrMut::<CreateShaderProgramParams>::opt(args) }) else {
+         log_once_warn!(target: LOG_TARGET, "shader creation: null parameters");
+@@ -155,7 +155,7 @@ pub extern "C" fn create_handler(args: *mut core::ffi::c_void) -> i32 {
+     unsafe { service.programs.parse(&mut params) }
+ }
+ 
+-pub extern "C" fn cancel_handler(args: *mut core::ffi::c_void) -> i32 {
++pub fn cancel_handler(args: *mut core::ffi::c_void) -> i32 {
+     // SAFETY: the dispatcher supplies the exclusive matching cancellation record.
+     let Some(params) = (unsafe { InPtrMut::<CancelShaderProgramParams>::opt(args) }) else {
+         log_once_warn!(target: LOG_TARGET, "shader cancellation: null parameters");
 diff --git a/windows/core/src/encoder_data.rs b/windows/core/src/encoder_data.rs
 index 63e0110..207ec48 100644
 --- a/windows/core/src/encoder_data.rs
@@ -568,7 +1092,7 @@ index 63e0110..207ec48 100644
      }
  
 diff --git a/windows/core/src/encoder_draw.rs b/windows/core/src/encoder_draw.rs
-index 4c9b424..e1a0d04 100644
+index 4c9b424..b392659 100644
 --- a/windows/core/src/encoder_draw.rs
 +++ b/windows/core/src/encoder_draw.rs
 @@ -691,7 +691,7 @@ fn read_optional_bytes(reader: &mut SnapshotReader<'_>) -> Result<Option<Scratch
@@ -576,12 +1100,12 @@ index 4c9b424..e1a0d04 100644
          .checked_add(record.length as usize)
          .ok_or(WireError::InvalidValue)?;
 -    let pointer = NonNull::new(address as *mut u8).ok_or(WireError::InvalidValue)?;
-+    let pointer = NonNull::new(mtld3d_shared::raven_address::host(address as u64) as *mut u8).ok_or(WireError::InvalidValue)?;
++    let pointer = NonNull::new(mtld3d_shared::raven_address::host::<u8 >(address as u64, record.length as usize, false) as *mut u8).ok_or(WireError::InvalidValue)?;
      // SAFETY: the trusted frame producer retains this immutable range through every consumer.
      Ok(Some(unsafe {
          ScratchSlice::from_raw_parts(pointer, record.length)
 diff --git a/windows/core/src/encoder_draw/draw_record.rs b/windows/core/src/encoder_draw/draw_record.rs
-index 6099d7e..a219275 100644
+index 6099d7e..e155a11 100644
 --- a/windows/core/src/encoder_draw/draw_record.rs
 +++ b/windows/core/src/encoder_draw/draw_record.rs
 @@ -838,11 +838,11 @@ impl VertexBytes {
@@ -594,7 +1118,7 @@ index 6099d7e..a219275 100644
              return ScratchSlice::EMPTY;
          }
 -        let address = NonNull::new(self.address as *mut u8).expect("retained UP allocation");
-+        let address = NonNull::new(mtld3d_shared::raven_address::host(self.address as u64) as *mut u8).expect("retained UP allocation");
++        let address = NonNull::new(mtld3d_shared::raven_address::host::<u8 >(self.address as u64, self.length as usize, false) as *mut u8).expect("retained UP allocation");
          // SAFETY: the packet caller guarantees the exact immutable capture lifetime and extent.
          unsafe { ScratchSlice::from_raw_parts(address, self.length) }
      }
@@ -608,12 +1132,12 @@ index 6099d7e..a219275 100644
              return ScratchSlice::EMPTY;
          }
 -        let address = NonNull::new(self.address as *mut u8).expect("retained index allocation");
-+        let address = NonNull::new(mtld3d_shared::raven_address::host(self.address as u64) as *mut u8).expect("retained index allocation");
++        let address = NonNull::new(mtld3d_shared::raven_address::host::<u8 >(self.address as u64, self.length as usize, false) as *mut u8).expect("retained index allocation");
          // SAFETY: the packet caller guarantees the exact immutable capture lifetime and extent.
          unsafe { ScratchSlice::from_raw_parts(address, self.length) }
      }
 diff --git a/windows/core/src/encoder_packet.rs b/windows/core/src/encoder_packet.rs
-index baf8855..25ac17f 100644
+index baf8855..8fd633a 100644
 --- a/windows/core/src/encoder_packet.rs
 +++ b/windows/core/src/encoder_packet.rs
 @@ -695,7 +695,7 @@ impl Drop for ReplayCompletion {
@@ -621,12 +1145,12 @@ index baf8855..25ac17f 100644
          // SAFETY: prepare_packet validates the address and its caller retains the cell until
          // acknowledgment. This guard is last in the frame, after every borrowed data consumer.
 -        let cell = unsafe { &*(self.address as *const LeaseCompletion) };
-+        let cell = unsafe { &*(mtld3d_shared::raven_address::host(self.address as u64) as *const LeaseCompletion) };
++        let cell = unsafe { &*(mtld3d_shared::raven_address::host::<LeaseCompletion >(self.address as u64, 1, true) as *const LeaseCompletion) };
          if self.rejected {
              cell.publish_rejected();
          } else {
 diff --git a/windows/core/src/encoder_packet/metadata.rs b/windows/core/src/encoder_packet/metadata.rs
-index 1fa54d5..4138af8 100644
+index 1fa54d5..2e77610 100644
 --- a/windows/core/src/encoder_packet/metadata.rs
 +++ b/windows/core/src/encoder_packet/metadata.rs
 @@ -73,12 +73,12 @@ impl MetadataStorage {
@@ -640,7 +1164,7 @@ index 1fa54d5..4138af8 100644
          }
          // SAFETY: seal initializes every byte in the retained scratch allocation.
 -        unsafe { core::slice::from_raw_parts(self.header as *const u8, size_of::<FrameMetadata>()) }
-+        unsafe { core::slice::from_raw_parts(mtld3d_shared::raven_address::host(self.header as u64) as *const u8, size_of::<FrameMetadata>()) }
++        unsafe { core::slice::from_raw_parts(mtld3d_shared::raven_address::host::<u8>(self.header as u64, size_of::<FrameMetadata>(), false) as *const u8, size_of::<FrameMetadata>()) }
      }
      /// Initialize one header in the existing frame arena without copying payload arrays.
      ///
@@ -649,7 +1173,7 @@ index 1fa54d5..4138af8 100644
          // SAFETY: from_bytes grants this initialized retained canonical payload for 'a;
          // the fixed count, alignment and extent were checked before constructing its borrow.
 -        Ok(Some(unsafe { &*(address as *const FramePerfPayload) }))
-+        Ok(Some(unsafe { &*(mtld3d_shared::raven_address::host(address as u64) as *const FramePerfPayload) }))
++        Ok(Some(unsafe { &*(mtld3d_shared::raven_address::host::<FramePerfPayload >(address as u64, 1, false) as *const FramePerfPayload) }))
      }
  
      /// PERF-disabled frames have no telemetry attachment.
@@ -667,7 +1191,7 @@ index 360a303..27448af 100644
          // moves the metadata out and clears its token before returning the arena for reuse.
          unsafe { self.metadata.as_bytes() }
 diff --git a/windows/core/src/encoder_packet/replay.rs b/windows/core/src/encoder_packet/replay.rs
-index 922a0bc..d9aedd3 100644
+index 922a0bc..d330fb8 100644
 --- a/windows/core/src/encoder_packet/replay.rs
 +++ b/windows/core/src/encoder_packet/replay.rs
 @@ -185,7 +185,7 @@ impl CommandCursor {
@@ -675,7 +1199,7 @@ index 922a0bc..d9aedd3 100644
                  return Ok(None);
              }
 -            let descriptor = (self.table_address as *const u8).wrapping_add(self.table_offset);
-+            let descriptor = (mtld3d_shared::raven_address::host(self.table_address as u64) as *const u8).wrapping_add(self.table_offset);
++            let descriptor = (mtld3d_shared::raven_address::host::<u8 >(self.table_address as u64, self.table_bytes, false) as *const u8).wrapping_add(self.table_offset);
              // SAFETY: new checked the table alignment and complete fixed-size extent;
              // the frame retains these initialized integer-only descriptors.
              let descriptor =
@@ -684,7 +1208,7 @@ index 922a0bc..d9aedd3 100644
          // SAFETY: the retained region contains this aligned complete integer-only header;
          // the matched producer retains its initialized typed allocation through final submit.
 -        let header = unsafe { &*(address as *const CommandHeader) };
-+        let header = unsafe { &*(mtld3d_shared::raven_address::host(address as u64) as *const CommandHeader) };
++        let header = unsafe { &*(mtld3d_shared::raven_address::host::<CommandHeader >(address as u64, 1, false) as *const CommandHeader) };
          let length = header.record_bytes;
          if (length as usize) < COMMAND_HEADER_BYTES {
              return Err(WireError::InvalidValue);
@@ -693,12 +1217,12 @@ index 922a0bc..d9aedd3 100644
              return Err(WireError::Truncated);
          }
 -        let payload_start = (address as *const u8).wrapping_add(COMMAND_HEADER_BYTES);
-+        let payload_start = (mtld3d_shared::raven_address::host(address as u64) as *const u8).wrapping_add(COMMAND_HEADER_BYTES);
++        let payload_start = (mtld3d_shared::raven_address::host::<u8 >(address as u64, length as usize, false) as *const u8).wrapping_add(COMMAND_HEADER_BYTES);
          // SAFETY: the exact logical payload fits within the retained command region.
          let payload = unsafe {
              core::slice::from_raw_parts(payload_start, length as usize - COMMAND_HEADER_BYTES)
 diff --git a/windows/core/src/encoder_reply.rs b/windows/core/src/encoder_reply.rs
-index 4dcf0a4..9775881 100644
+index 4dcf0a4..f6a0a3e 100644
 --- a/windows/core/src/encoder_reply.rs
 +++ b/windows/core/src/encoder_reply.rs
 @@ -49,7 +49,7 @@ impl ReplyU64 {
@@ -706,7 +1230,7 @@ index 4dcf0a4..9775881 100644
              ReplyBacking::Guest(address) => {
                  // SAFETY: from_guest pins this aligned atomic through every reply access.
 -                let cell = unsafe { &*(*address as *const AtomicU64) };
-+                let cell = unsafe { &*(mtld3d_shared::raven_address::host(*address as u64) as *const AtomicU64) };
++                let cell = unsafe { &*(mtld3d_shared::raven_address::host::<AtomicU64 >(*address as u64, 1, true) as *const AtomicU64) };
                  cell.store(value, ordering);
              }
          }
@@ -715,12 +1239,12 @@ index 4dcf0a4..9775881 100644
              ReplyBacking::Guest(address) => {
                  // SAFETY: from_guest pins this aligned atomic through every reply access.
 -                let cell = unsafe { &*(*address as *const AtomicU32) };
-+                let cell = unsafe { &*(mtld3d_shared::raven_address::host(*address as u64) as *const AtomicU32) };
++                let cell = unsafe { &*(mtld3d_shared::raven_address::host::<AtomicU32 >(*address as u64, 1, true) as *const AtomicU32) };
                  cell.store(value, ordering);
              }
          }
 diff --git a/windows/core/src/guest_completions.rs b/windows/core/src/guest_completions.rs
-index 7bf34b7..02aff14 100644
+index 7bf34b7..658139f 100644
 --- a/windows/core/src/guest_completions.rs
 +++ b/windows/core/src/guest_completions.rs
 @@ -152,7 +152,7 @@ impl CompletionPool {
@@ -728,12 +1252,12 @@ index 7bf34b7..02aff14 100644
              // SAFETY: every queued node belongs to a retained slot or packet. Only this
              // cursor consumes the detached list, and recycling requires consumption first.
 -            let cell = unsafe { &*(pending as *const LeaseCompletion) };
-+            let cell = unsafe { &*(mtld3d_shared::raven_address::host(pending as u64) as *const LeaseCompletion) };
++            let cell = unsafe { &*(mtld3d_shared::raven_address::host::<LeaseCompletion >(pending as u64, 1, true) as *const LeaseCompletion) };
              // SAFETY: this node was uniquely detached and stays retained by its owner.
              let (next, token) = unsafe { cell.consume() };
              pending = next;
 diff --git a/windows/core/src/guest_pages.rs b/windows/core/src/guest_pages.rs
-index 7158f5a..171f2bf 100644
+index 7158f5a..fc362ee 100644
 --- a/windows/core/src/guest_pages.rs
 +++ b/windows/core/src/guest_pages.rs
 @@ -274,7 +274,7 @@ impl GuestPageDescriptor {
@@ -741,12 +1265,12 @@ index 7158f5a..171f2bf 100644
      unsafe fn adopt_page(&self) -> Result<PageBox, WireError> {
          self.validate()?;
 -        let source = NonNull::new(self.source as *mut u8).ok_or(WireError::InvalidValue)?;
-+        let source = NonNull::new(mtld3d_shared::raven_address::host(self.source as u64) as *mut u8).ok_or(WireError::InvalidValue)?;
++        let source = NonNull::new(mtld3d_shared::raven_address::host::<u8 >(self.source as u64, self.padded_len as usize, true) as *mut u8).ok_or(WireError::InvalidValue)?;
          // SAFETY: validate checks the fixed-layout cell, and adoption retains it until final drop.
          let completion = unsafe { LeaseCompletionPtr::new(self.completion) };
          // SAFETY: validation checks page alignment and extents; the caller grants unique native
 diff --git a/windows/core/src/guest_pages/owned.rs b/windows/core/src/guest_pages/owned.rs
-index 7277f57..0eb68e2 100644
+index 7277f57..e912069 100644
 --- a/windows/core/src/guest_pages/owned.rs
 +++ b/windows/core/src/guest_pages/owned.rs
 @@ -146,8 +146,8 @@ pub struct GuestOwnedPage {
@@ -756,12 +1280,12 @@ index 7277f57..0eb68e2 100644
 -    pub const fn as_ptr(&self) -> *const u8 {
 -        self.source as *const u8
 +    pub fn as_ptr(&self) -> *const u8 {
-+        mtld3d_shared::raven_address::host(self.source as u64) as *const u8
++        mtld3d_shared::raven_address::host::<u8 >(self.source as u64, self.len, false) as *const u8
      }
      #[must_use]
      pub const fn len(&self) -> usize {
 diff --git a/windows/core/src/page_box.rs b/windows/core/src/page_box.rs
-index eab55d9..3819a07 100644
+index eab55d9..a2bd1b3 100644
 --- a/windows/core/src/page_box.rs
 +++ b/windows/core/src/page_box.rs
 @@ -427,13 +427,13 @@ impl PageBox {
@@ -776,7 +1300,7 @@ index eab55d9..3819a07 100644
              PageOwnership::Guest { readers, .. } => {
                  // SAFETY: from_guest_lease pins the original aligned counter until Drop.
 -                unsafe { &*(*readers as *const AtomicU32) }
-+                unsafe { &*(mtld3d_shared::raven_address::host(*readers as u64) as *const AtomicU32) }
++                unsafe { &*(mtld3d_shared::raven_address::host::<AtomicU32 >(*readers as u64, 1, true) as *const AtomicU32) }
              }
          }
      }
@@ -785,12 +1309,12 @@ index eab55d9..3819a07 100644
              PageOwnership::Guest { completion, .. } => {
                  // SAFETY: from_guest_lease keeps this cell alive until this final acknowledgment.
 -                let completion = unsafe { &*(completion.raw() as *const LeaseCompletion) };
-+                let completion = unsafe { &*(mtld3d_shared::raven_address::host(completion.raw() as u64) as *const LeaseCompletion) };
++                let completion = unsafe { &*(mtld3d_shared::raven_address::host::<LeaseCompletion >(completion.raw() as u64, 1, true) as *const LeaseCompletion) };
                  completion.publish();
                  return;
              }
 diff --git a/windows/core/src/perf/deferred.rs b/windows/core/src/perf/deferred.rs
-index 90b1b9a..0e6e631 100644
+index 90b1b9a..267a17e 100644
 --- a/windows/core/src/perf/deferred.rs
 +++ b/windows/core/src/perf/deferred.rs
 @@ -64,7 +64,7 @@ impl ClockedSamples {
@@ -798,12 +1322,12 @@ index 90b1b9a..0e6e631 100644
          }
          // SAFETY: creation retains this aligned source mailbox through final drain.
 -        let source = unsafe { &*(self.source as *const ClockCalibration) };
-+        let source = unsafe { &*(mtld3d_shared::raven_address::host(self.source as u64) as *const ClockCalibration) };
++        let source = unsafe { &*(mtld3d_shared::raven_address::host::<ClockCalibration >(self.source as u64, 1, false) as *const ClockCalibration) };
          let source = source.get().map_err(|_| "source calibration failed")?;
          let native = self.native.get().map_err(|_| "native calibration failed")?;
          Ok(source.zip(native))
 diff --git a/windows/core/src/scratch.rs b/windows/core/src/scratch.rs
-index 1794e24..cd413be 100644
+index 1794e24..0f1cfb3 100644
 --- a/windows/core/src/scratch.rs
 +++ b/windows/core/src/scratch.rs
 @@ -156,7 +156,7 @@ impl ScratchArena {
@@ -820,7 +1344,7 @@ index 1794e24..cd413be 100644
              }
              // SAFETY: perf_mut initializes this arena slot; clear resets the token before reuse.
 -            unsafe { &*(self.perf_address as *const crate::perf::FramePerfPayload) }
-+            unsafe { &*(mtld3d_shared::raven_address::host(self.perf_address as u64) as *const crate::perf::FramePerfPayload) }
++            unsafe { &*(mtld3d_shared::raven_address::host::<crate::perf::FramePerfPayload >(self.perf_address as u64, 1, false) as *const crate::perf::FramePerfPayload) }
          }
          #[cfg(not(perf_tracking))]
          {
@@ -829,12 +1353,12 @@ index 1794e24..cd413be 100644
          }
          // SAFETY: the exclusive arena borrow excludes clear, replacement and another payload borrow.
 -        unsafe { &mut *(self.perf_address as *mut crate::perf::FramePerfPayload) }
-+        unsafe { &mut *(mtld3d_shared::raven_address::host(self.perf_address as u64) as *mut crate::perf::FramePerfPayload) }
++        unsafe { &mut *(mtld3d_shared::raven_address::host::<crate::perf::FramePerfPayload >(self.perf_address as u64, 1, true) as *mut crate::perf::FramePerfPayload) }
      }
  
      /// Borrow the zero-sized local payload when telemetry is disabled.
 diff --git a/windows/core/src/visibility.rs b/windows/core/src/visibility.rs
-index dcdf25f..839f6a7 100644
+index dcdf25f..ed6a34a 100644
 --- a/windows/core/src/visibility.rs
 +++ b/windows/core/src/visibility.rs
 @@ -152,12 +152,12 @@ impl VisibilityQueryCore {
@@ -848,7 +1372,7 @@ index dcdf25f..839f6a7 100644
              QueryStorage::Guest { pointer, .. } => {
                  // SAFETY: from_guest pins the aligned mailbox through the final native core drop.
 -                unsafe { &*(*pointer as *const QueryMailbox) }
-+                unsafe { &*(mtld3d_shared::raven_address::host(*pointer as u64) as *const QueryMailbox) }
++                unsafe { &*(mtld3d_shared::raven_address::host::<QueryMailbox >(*pointer as u64, 1, true) as *const QueryMailbox) }
              }
          }
      }
@@ -857,7 +1381,7 @@ index dcdf25f..839f6a7 100644
          if let QueryStorage::Guest { completion, .. } = &self.mailbox {
              // SAFETY: from_guest retains the acknowledgment cell until this final publication.
 -            let completion = unsafe { &*(completion.raw() as *const LeaseCompletion) };
-+            let completion = unsafe { &*(mtld3d_shared::raven_address::host(completion.raw() as u64) as *const LeaseCompletion) };
++            let completion = unsafe { &*(mtld3d_shared::raven_address::host::<LeaseCompletion >(completion.raw() as u64, 1, true) as *const LeaseCompletion) };
              completion.publish();
          }
      }

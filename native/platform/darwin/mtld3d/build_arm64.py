@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build the pinned mtld3d unix side into a new private directory (no Wine SDK required)."""
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -37,13 +38,13 @@ def main():
     shutil.copy2(patch, destination / patch.name)
     subprocess.run(['git', 'apply', str(patch)], cwd=destination / 'src', check=True)
     # Capture every adapter input alongside the artifacts for review/rebuild.
-    adapter_inputs = ('mtld3d/presentation.m', 'dxmt/presentation.m', 'guest/protocol.h')
+    adapter_inputs = ('mtld3d/presentation.m', 'dxmt/presentation.m', 'guest/protocol.h', 'dxmt/macdrv_abi.h', 'dxmt/checked_memory.h', 'dxmt/checked_memory.c', 'unix_memory.h')
     for name in adapter_inputs:
         target = destination / 'adapter' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(HERE.parent / name, target)
     adapter_command = ['clang', '-arch', 'arm64', '-dynamiclib', '-O2', '-g', '-fblocks',
-                       str(destination / 'adapter/mtld3d/presentation.m'),
+                       str(destination / 'adapter/mtld3d/presentation.m'), str(destination / 'adapter/dxmt/checked_memory.c'),
                        '-framework', 'Foundation', '-framework', 'Metal', '-framework', 'IOSurface',
                        '-framework', 'QuartzCore', '-o', str(destination / 'raven-mtld3d.dylib')]
     subprocess.run(adapter_command, check=True)
@@ -51,13 +52,20 @@ def main():
                '-p', 'mtld3d-unix', '--release', '--locked', '-j8']
     with (destination / 'build.log').open('w') as log:
         subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True,
-                       env=dict(os.environ, RUSTFLAGS='-C link-arg=-Wl,-undefined,dynamic_lookup'))
+                       env=dict(os.environ, RUSTFLAGS=''))
     library = destination / 'mtld3d.so'
     shutil.copy2(destination / 'src/unix/target/release/libmtld3d_unix.dylib', library)
     architecture = subprocess.check_output(['lipo', '-archs', str(library)], text=True).strip()
     if architecture != 'arm64':
         raise SystemExit('expected arm64, got ' + architecture)
-    (destination / 'unix-call-count').write_text('22\n')
+    class Contract(ctypes.Structure):
+        _fields_ = [('version', ctypes.c_uint32), ('count', ctypes.c_uint32)]
+    module = ctypes.CDLL(str(library), mode=os.RTLD_LOCAL | os.RTLD_NOW)
+    module.raven_unix_get_contract.restype = ctypes.POINTER(Contract)
+    contract = module.raven_unix_get_contract().contents
+    if contract.version != 1 or contract.count != 22:
+        raise SystemExit('unexpected compiled mtld3d table contract')
+    (destination / 'unix-call-count').write_text(f'{contract.count}\n')
     shutil.copy2(source / 'LICENSE', destination / 'LICENSE')
     (destination / 'artifacts.json').write_text(json.dumps({
         'source': PIN, 'command': command, 'adapter_command': adapter_command,

@@ -12,6 +12,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+from harden_source import harden
 
 
 def main():
@@ -41,11 +42,16 @@ def main():
     entries = [v.strip() for v in table_text.split('const void *__wine_unix_call_funcs[] = {', 1)[1].split('};', 1)[0].split(',') if v.strip()]
     if len(entries) != 146 or hashlib.sha256('\n'.join(entries[:132]).encode()).hexdigest() != '8095cdebf07b394c726339570d1cc1471c1694d9dc2e55141ba77a59ec2317c9':
         raise SystemExit('expected the pinned 146-entry source overlay')
+    harden(root / 'src')
+    here = Path(__file__).resolve().parent
+    shutil.copy2(here / 'checked_memory.h', root / 'src/src/winemetal/unix/raven_checked_memory.h')
+    shutil.copy2(here / 'macdrv_abi.h', root / 'src/src/winemetal/unix/raven_macdrv_abi.h')
+    shutil.copy2(here.parent / 'unix_memory.h', root / 'src/src/winemetal/unix_memory.h')
     (root / 'unix-call-count').write_text(f'{len(entries)}\n')
     here = Path(__file__).resolve().parent
     adapter = root / 'raven-dxmt.dylib'
     subprocess.run(['/usr/bin/clang', '-arch', 'arm64', '-dynamiclib', '-O2', '-Wall', '-Wextra', '-fblocks',
-                    str(here / 'unix_adapter.m'), str(here / 'presentation.m'), '-framework', 'Foundation',
+                    str(here / 'unix_adapter.m'), str(here / 'presentation.m'), str(here / 'checked_memory.c'), '-framework', 'Foundation',
                     '-framework', 'Metal', '-framework', 'IOSurface',
                     '-Wl,-install_name,@rpath/raven-dxmt.dylib', '-o', str(adapter)], check=True)
 
@@ -78,7 +84,7 @@ def main():
     shutil.copy2(build / 'src/winemetal/unix/winemetal.so', library)
     subprocess.run(['install_name_tool', '-change', '@rpath/raven-dxmt.dylib',
                     '@loader_path/raven-dxmt.dylib', str(library)], check=True)
-    dependencies = subprocess.check_output(['otool', '-L', str(library)], text=True)
+    dependencies = '\n'.join(subprocess.check_output(['otool', '-L', str(library)], text=True).splitlines()[1:])
     if '@loader_path/raven-dxmt.dylib (' not in dependencies or str(root) in dependencies:
         raise SystemExit('winemetal dependency is not loader-relative')
     subprocess.run(['codesign', '--force', '--sign', '-', str(library)], check=True)
