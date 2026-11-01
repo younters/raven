@@ -651,7 +651,8 @@ NativeResult FexProcess::resume()
         dispatch_state.restore();
 		NativeJit::protect(previous);
 	}
-	if (std::getenv("RAVEN_FEX_TRACE"))
+	static const bool trace_stops = std::getenv("RAVEN_FEX_TRACE") != nullptr;
+	if (trace_stops)
 		std::cerr << "FEX stop rip=" << std::hex << last_stop.rip << " address=" << last_stop.exception.information[1] << std::dec << "\n";
 	state->thread.awaiting_syscall = last_stop.kind == NativeStop::syscall;
 	if (state->thread.awaiting_syscall) state->thread.context.registers.orig_rax = last_stop.value;
@@ -1226,7 +1227,8 @@ void FexProcess::return_api(uint64_t value)
 {
 	if (state->thread.translated_words && callback_depth() == state->thread.translated_depth) { state->thread.translated_result = value; return; }
 	if (!state->thread.awaiting_api) throw std::runtime_error("FEX has no pending API");
-	auto saved = context();
+	// API return changes only GPRs; preserve the live FP/YMM state in FEX.
+	auto saved = context(false);
 	if (wow64_module) {
 		uint32_t target; auto bytes = read_memory(saved.registers.rsp, 4); memcpy(&target, bytes.data(), 4);
 		saved.registers.rsp += 4 + state->traps.at(saved.registers.rip - 1);
