@@ -351,6 +351,8 @@ struct FexProcess::State {
 	}
 	struct Region { size_t size; bool image; };
 	std::map<uint64_t, Region> regions;
+	// A Windows-page-aligned shared view can begin inside a Darwin page.
+	std::map<uint64_t, uint64_t> shared_view_bases;
 	// Reserved pages have implicit PROT_NONE; store only explicit page overrides.
 	std::map<uint64_t, int> pages;
 	bool mapped_range(uint64_t address, uint64_t size) const {
@@ -960,6 +962,8 @@ bool FexProcess::has_protection(uint64_t address, size_t size, int protection) c
 }
 void FexProcess::unmap_memory(uint64_t address)
 {
+	const auto view = state->shared_view_bases.find(address);
+	if (view != state->shared_view_bases.end()) address = view->second;
 	auto found = state->regions.find(address);
 	if (found == state->regions.end()) throw std::runtime_error("FEX allocation not found");
 	const auto n = found->second.size;
@@ -973,6 +977,7 @@ void FexProcess::unmap_memory(uint64_t address)
 	});
 	state->pages.erase(state->pages.lower_bound(address), state->pages.lower_bound(address + n));
 	state->regions.erase(found);
+	if (view != state->shared_view_bases.end()) state->shared_view_bases.erase(view);
 }
 void FexProcess::unmap_image(uint64_t address)
 {
@@ -1415,7 +1420,11 @@ uint64_t FexProcess::end_translated_call()
 namespace raven {
 uint64_t FexProcess::map_shared(int descriptor, size_t size, uint64_t offset, uint64_t requested)
 {
-	if (offset % 16384) throw std::runtime_error("FEX shared mapping offset must be host-page aligned");
+	if (offset % 4096 || offset > INT64_MAX || !size || size > size_t(INT64_MAX - offset))
+		throw std::runtime_error("FEX invalid shared mapping offset or size");
+	const size_t delta = offset % 16384;
+	if (requested && (requested < delta || (requested - delta) % 16384))
+		throw std::runtime_error("FEX fixed shared mapping has incompatible page alignment");
 	// FEX translates KUSER_SHARED_DATA through this dedicated host page. Share
 	// the same descriptor as the clock writer, preserving the guest read-only policy.
 	if (requested == 0x7ffe0000 && size == 4096) {
@@ -1434,11 +1443,20 @@ uint64_t FexProcess::map_shared(int descriptor, size_t size, uint64_t offset, ui
 		state->pages[requested] = PROT_READ | PROT_WRITE;
 		return requested;
 	}
-	const auto address = map_memory(size, PROT_READ | PROT_WRITE, requested);
+	// Map the containing host pages and return the pixel/view start, not the
+	// preceding file header. Keep the reservation base for exact teardown.
+	const auto address = map_memory(size + delta, PROT_READ | PROT_WRITE, requested ? requested - delta : 0);
 	const auto n = state->regions.at(address).size;
-	void *mapped = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, descriptor, off_t(offset));
+	void *mapped = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, descriptor, off_t(offset - delta));
 	if (mapped == MAP_FAILED) { unmap_memory(address); throw std::runtime_error("FEX shared descriptor mapping failed"); }
-	return address;
+	if (delta) {
+		try {
+			protect_memory(address, delta, PROT_NONE);
+			state->shared_view_bases.emplace(address + delta, address);
+		}
+		catch (...) { unmap_memory(address); throw; }
+	}
+	return address + delta;
 }
 uint64_t FexProcess::map_descriptor(int descriptor, size_t size, uint64_t offset) { return map_shared(descriptor, size, offset); }
 }
