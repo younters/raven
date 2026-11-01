@@ -1,0 +1,31 @@
+{
+  "counts": {
+    "Failed": 4,
+    "Passed": 1576,
+    "Skipped": 8,
+    "Not Run": 1
+  },
+  "selected_counts": {
+    "Passed": 284,
+    "Skipped": 2
+  },
+  "failed": [
+    "native_darwin_desktop_dpi_x64",
+    "native_dwrite",
+    "native_darwin_desktop_dpi_x32",
+    "native_x86_dwrite"
+  ],
+  "skipped": [
+    "native_minesweeper_workflow",
+    "native_darwin_capture_authorized",
+    "native_darwin_installer_widl",
+    "native_darwin_fd_budget_low_hard",
+    "darwin_mtld3d32_fex",
+    "darwin_mtld3d64_fex",
+    "native_vulkan_descriptor_buffer_x64",
+    "native_vulkan_descriptor_buffer_x32"
+  ],
+  "runtime_commit": "3253955c1b026349190b0bb35306934875c67d2c",
+  "fixture_commit": "e7ad0fc1",
+  "full_suite_seconds": 201.0
+}

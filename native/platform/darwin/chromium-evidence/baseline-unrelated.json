@@ -1,0 +1,30 @@
+{
+  "source_head": "f9b3504803d7a23869d4a7cb900ad444fbd9bf80",
+  "runtime_sha256": "09bd505b771754efc2e269dc7d20666a4f6cd17c9937a82283e7471e5fb85fb5",
+  "tests": [
+    {
+      "fixture": "dwrite-client.exe",
+      "exit": 28,
+      "stdout": "Native entry returned 28 (process initialization not implemented)\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "dwrite-client32.exe",
+      "exit": 28,
+      "stdout": "Native entry returned 28 (process initialization not implemented)\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "desktop-dpi64.exe",
+      "exit": 11,
+      "stdout": "Native entry returned 11 (process initialization not implemented)\n",
+      "stderr": ""
+    },
+    {
+      "fixture": "desktop-dpi32.exe",
+      "exit": 11,
+      "stdout": "Native entry returned 11 (process initialization not implemented)\n",
+      "stderr": ""
+    }
+  ]
+}
