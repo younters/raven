@@ -6,6 +6,7 @@
 // and signal stack. A service thread handles memory and pthread operations, and a watcher ends the guest when the host goes away.
 
 #include "protocol.h"
+#include "../unix_guard.h"
 #include "x87sidecar.h"
 
 #include <architecture/i386/table.h>
@@ -58,6 +59,7 @@ struct unix_library {
 	void *module;
 	int32_t (**functions)(void *);
 	uint32_t count;
+	const struct raven_unix_contract *contract;
 };
 static struct unix_library unix_libraries[32];
 static uint32_t unix_library_count;
@@ -82,7 +84,7 @@ int32_t raven_dispatch_unix_call(uint64_t handle, uint32_t code, void *args)
             // callee-saved registers the gate pushed above it. The Windows stack pointer is the first value
             // the gate pushed, so it sits at the top of that block. See _raven_unix_call_gate in guest/unix_call.s.
             active_unix_guest_stack = *(uint64_t *)((char *)__builtin_frame_address(0) + 16 + 568 + 64);
-            result = library->functions[code](args);
+            result = raven_unix_invoke(library->functions[code], args, code, library->contract, raven_unix_mapped_range);
             active_unix_args = NULL;
         }
 		break;
@@ -595,6 +597,14 @@ static void serve(struct raven_service_channel *service)
 			ok = 0;
 			break;
 		}
+        const struct raven_unix_contract *(*get_contract)(void) = dlsym(module, "raven_unix_get_contract");
+        const struct raven_unix_contract *contract = get_contract ? get_contract() : NULL;
+        if (!contract || contract->version != RAVEN_UNIX_CONTRACT_VERSION || contract->count != a[0] ||
+            !contract->argument_sizes || !contract->validate || !contract->set_memory_check) {
+            fprintf(stderr, "raven-bootstrap: unixlib compiled contract/count mismatch; reprovision overlay\n");
+            dlclose(module); errno = ENOEXEC; ok = 0; break;
+        }
+        contract->set_memory_check(raven_unix_mapped_range);
 		const uint32_t index = unix_library_count;
 		void (*initialize)(struct raven_control *) = dlsym(module, "raven_unixlib_init");
 		void *(*wrap)(void *, uint32_t) = dlsym(module, "raven_unixlib_wrap_table");
@@ -616,7 +626,7 @@ static void serve(struct raven_service_channel *service)
 			dlclose(module);
 			break;
 		}
-		unix_libraries[index] = (struct unix_library){module, functions, (uint32_t)a[0]};
+		unix_libraries[index] = (struct unix_library){module, functions, (uint32_t)a[0], contract};
 		__atomic_store_n(&unix_library_count, index + 1, __ATOMIC_RELEASE);
 		result = (uint64_t)functions;
 		break;
@@ -800,6 +810,7 @@ static void load_context(ucontext_t *context, const struct raven_thread_channel 
 
 void raven_agent_stop(int signal, siginfo_t *info, void *raw, uint32_t index)
 {
+	raven_unix_recover(signal);
 	if (index >= RAVEN_GUEST_MAX_THREADS) {
 		// Native dispatch/Metal workers have no Windows channel or alternate stack. A stray scheduler signal has no work for them.
 		if (signal == SIGUSR1)

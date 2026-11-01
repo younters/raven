@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "context.h"
+#include "../../unix_guard.h"
 #include "signal_stack.h"
 #include <signal.h>
 #include <setjmp.h>
@@ -93,6 +94,8 @@ extern "C" void raven_fault_handler(int signal, siginfo_t *info, void *opaque) {
 			return;
 		}
 	}
+	// Preserve FEX repair priority; only declined native memory faults unwind a unix call.
+	raven_unix_recover(signal);
 	if (getenv("RAVEN_FEX_TRACE")) {
 		char detail[192];
 		const int length = snprintf(detail, sizeof(detail), "FEX native signal=%d code=%d esr=%x pc=%llx instruction=%x address=%llx entry=%p jit=%d\n",

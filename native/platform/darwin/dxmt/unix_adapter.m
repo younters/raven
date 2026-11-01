@@ -1,5 +1,6 @@
 // Darwin symbols expected by the pinned DXMT unixlib. No Wine runtime is loaded in the agent.
 #include "../guest/protocol.h"
+#include "checked_memory.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -110,7 +111,9 @@ static pthread_mutex_t buffers_lock = PTHREAD_MUTEX_INITIALIZER;
 static int32_t (*original_buffer)(void *), (*original_heap_buffer)(void *);
 static void register_buffer(uint64_t object, uint64_t *info)
 {
-    if (!object || !info[2] || !info[0]) return;
+    if (!object) return;
+    info = raven_unix_checked(info, 3, sizeof(*info), 0);
+    if (!info[2] || !info[0]) return;
     pthread_mutex_lock(&buffers_lock);
     if (!buffers) buffers = [[NSHashTable weakObjectsHashTable] retain];
     [buffers addObject:(id)object];
