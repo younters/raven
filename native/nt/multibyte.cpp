@@ -198,7 +198,7 @@ bool NativeEnvironment::multibyte_information(std::string_view name)
 	catch (const std::runtime_error &error) {
 		const std::string_view message=error.what();
 		if (message.find("readable")==message.npos && message.find("writable")==message.npos) throw;
-		NativeResult fault{NativeStop::exception,0xc0000005U,process.context().registers.rip-1,0};
+		NativeResult fault{NativeStop::exception,0xc0000005U,process.registers().rip-1,0};
 		fault.fault_address=fault_address;fault.exception_information={access,fault_address};throw fault;
 	}
 	process.return_api(result);

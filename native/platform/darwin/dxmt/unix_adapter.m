@@ -114,10 +114,12 @@ static void register_buffer(uint64_t object, uint64_t *info)
     if (!object) return;
     info = raven_unix_checked(info, 3, sizeof(*info), 0);
     if (!info[2] || !info[0]) return;
+    id retained = [(id)object retain]; // Fault before taking the registry lock.
     pthread_mutex_lock(&buffers_lock);
     if (!buffers) buffers = [[NSHashTable weakObjectsHashTable] retain];
-    [buffers addObject:(id)object];
+    [buffers addObject:retained];
     pthread_mutex_unlock(&buffers_lock);
+    [retained release];
 }
 static int32_t new_buffer(void *args)
 {
@@ -144,8 +146,10 @@ int raven_dxmt_read_memory(uint64_t address, void *destination, size_t size)
         uint64_t start = (uint64_t)[buffer contents];
         uint64_t length = [buffer length];
         if (start && address >= start && address - start <= length && size <= length - (address - start)) {
-            memcpy(destination, (void *)address, size);
-            found = 1;
+            // Kernel copy reports invalidated mappings without unwinding the pool.
+            mach_vm_size_t copied = 0;
+            found = mach_vm_read_overwrite(mach_task_self(), address, size,
+                (mach_vm_address_t)destination, &copied) == KERN_SUCCESS && copied == size;
             break;
         }
     }

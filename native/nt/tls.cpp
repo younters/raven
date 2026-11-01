@@ -91,7 +91,7 @@ NativeTLS::NativeTLS(NativeProcess &process, const NativeEnvironment &environmen
 	: process(process), environment(environment)
 {
 	main_teb = environment.teb();
-	if (process.active() || process.context().registers.gs_base != environment.teb() || order.size() > 10000)
+	if (process.active() || process.registers().gs_base != environment.teb() || order.size() > 10000)
 		throw std::runtime_error("invalid static TLS initialization state");
 	if (integer(process, environment.teb() + 0x58, 8))
 		throw std::runtime_error("initial thread static TLS already exists");

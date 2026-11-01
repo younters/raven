@@ -32,7 +32,12 @@ const struct raven_unix_contract *raven_unix_get_contract(void) {
 void raven_mtld3d_set_guest_base(uint64_t value) { base = value; }
 int raven_mtld3d_bind(const void *callbacks) { return callbacks ? 0 : -1; }
 uint32_t raven_mtld3d_protocol_version(void) { return RAVEN_GUEST_VERSION; }
-void raven_mtld3d_init(void *control) { (void)control; }
+void raven_mtld3d_init(void *control) {
+#if TABLE_COUNT != 22
+    __builtin_trap(); // A rejected contract must never initialize its adapter.
+#endif
+    (void)control;
+}
 void raven_mtld3d_layer_create(void) {}
 void raven_mtld3d_layer_release(void) {}
 void raven_mtld3d_present(void) {}

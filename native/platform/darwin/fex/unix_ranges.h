@@ -34,8 +34,13 @@ public:
         auto it = ranges.upper_bound(address);
         if (it != ranges.begin()) --it;
         const int required = 1 | (write ? 2 : 0);
-        for (; it != ranges.end() && it->first < address + size; ++it)
-            if (it->second.end > address && (it->second.protection & required) != required) return 0;
+        uint64_t covered = address;
+        for (; it != ranges.end() && it->first < address + size; ++it) {
+            if (it->second.end <= address) continue;
+            if ((it->second.protection & required) != required) return 0;
+            if (it->first <= covered) covered = it->second.end;
+            if (covered >= address + size) return 1;
+        }
         return raven_unix_mapped_range(address, size, write);
     }
 };

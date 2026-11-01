@@ -837,6 +837,17 @@ static void copy_x87_slots(uint8_t *destination, const uint8_t *source, bool to_
 	}
 }
 
+user_regs_struct NativeProcess::registers() const
+{
+#ifdef RAVEN_FEX_PROCESS
+	if (fex) return fex->context(false).registers;
+#endif
+	state->require_stopped();
+	user_regs_struct result{};
+	std::memcpy(&result, &state->registers(), sizeof result);
+	return result;
+}
+
 NativeContext NativeProcess::context() const
 {
 	FEX_RETURN(context);

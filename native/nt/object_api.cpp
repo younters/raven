@@ -117,7 +117,7 @@ bool NativeObjectAPI::dispatch(std::string_view name)
 			std::optional<int64_t> timeout;
 			if (uint32_t(args[1])!=UINT32_MAX) timeout=-int64_t(uint32_t(args[1]))*10000;
 			const auto waited=objects.wait(args[0],timeout,deadline);
-			if (waited.runtime_timeout) throw NativeResult{NativeStop::timeout,0,process.context().registers.rip,0};
+			if (waited.runtime_timeout) throw NativeResult{NativeStop::timeout,0,process.registers().rip,0};
 			status=waited.status;
 		}
 	} catch (const std::bad_alloc &) { status=0xc000009aU; }

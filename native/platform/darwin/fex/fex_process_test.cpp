@@ -94,6 +94,8 @@ int main(int argc, char **argv)
 			loaded.data()[image.entry] = 0xeb; loaded.data()[image.entry + 1] = 0xfe; loaded.data()[image.entry + 2] = 0xc3;
 		} else if (mode == "ud2") {
 			loaded.data()[image.entry] = 0x0f; loaded.data()[image.entry + 1] = 0x0b;
+		} else if (mode == "vector-context") {
+            // Snapshot-only test; no guest entry needed.
 		} else if (mode == "internal") {
 			// Tested in an isolated child: a host BRK must never become a guest exception.
 		} else if (mode == "debug-print") {
@@ -141,6 +143,23 @@ int main(int argc, char **argv)
 			return 0;
 		}
 		raven::FexProcess process(images, root);
+        if (mode == "vector-context") {
+            auto packet=process.context();
+            check(packet.xstate.size()==832, "YMM snapshot size");
+            uint64_t bv=0; memcpy(&bv,packet.xstate.data()+512,8);
+            check(bv==7, "XSAVE XSTATE_BV must describe legacy and YMM state");
+            for (unsigned i=0;i<256;++i) {
+                packet.xstate[160+i]=uint8_t(i^0x5a);
+                packet.xstate[576+i]=uint8_t(i^0xa5);
+            }
+            process.set_context(packet);
+            auto back=process.context();
+            check(std::equal(packet.xstate.begin()+160,packet.xstate.begin()+416,back.xstate.begin()+160), "XMM low halves overwritten by YMM restore");
+            check(std::equal(packet.xstate.begin()+576,packet.xstate.end(),back.xstate.begin()+576), "YMM upper halves differ");
+            check(process.context(false).xstate.empty(), "register-only accessor captured vector state");
+            return 0;
+        }
+
         if (mode == "sparse-reservation") {
             // snmalloc reserves 256 GiB. Reservation metadata must scale with
             // committed pages, and subpage decommit must preserve neighbours.

@@ -8,7 +8,7 @@ NativeResult native_raise_exception(NativeProcess &process)
 {
 	const auto arguments = process.api_arguments(4);
 	NativeResult result{NativeStop::exception, static_cast<uint32_t>(arguments[0]),
-		process.context().registers.rip - 1, 0};
+		process.registers().rip - 1, 0};
 	result.exception_flags = static_cast<uint32_t>(arguments[1]);
 	if (arguments[3]) {
 		const auto count = static_cast<uint32_t>(arguments[2]);
@@ -27,7 +27,7 @@ NativeResult native_raise_exception(NativeProcess &process)
 NativeResult native_raise_rtl_exception(NativeProcess &process, bool status_only)
 {
 	const auto arguments=process.api_arguments(1);
-	NativeResult result{NativeStop::exception,uint32_t(arguments[0]),process.context().registers.rip-1,0};
+	NativeResult result{NativeStop::exception,uint32_t(arguments[0]),process.registers().rip-1,0};
 	if (status_only) { result.exception_flags=1; return result; }
 	const auto bytes=process.read_memory(arguments[0],152);
 	const auto field=[&](size_t offset,size_t size) {

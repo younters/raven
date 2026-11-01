@@ -99,7 +99,7 @@ static void served_thread_result(const std::string &bootstrap)
 		process.return_api(sum);
 	});
 	process.set_time_slicing(std::chrono::milliseconds(1), [&] { return !nested; }, [&] {
-		check(process.context().registers.rip == stub + 110, "served thread yielded before its result was private");
+		check(process.registers().rip == stub + 110, "served thread yielded before its result was private");
 		const auto saved = process.save_thread();
 		nested = true;
 		process.load_thread(other);

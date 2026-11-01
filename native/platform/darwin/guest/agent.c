@@ -11,6 +11,7 @@
 
 #include <architecture/i386/table.h>
 #include <dlfcn.h>
+#include <mach-o/loader.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <i386/user_ldt.h>
@@ -63,6 +64,43 @@ struct unix_library {
 };
 static struct unix_library unix_libraries[32];
 static uint32_t unix_library_count;
+static struct { uintptr_t begin, end; } unix_code_ranges[256];
+static unsigned unix_code_count;
+static void register_unix_code(void *function) {
+    Dl_info info;
+    if (!dladdr(function,&info)) return;
+    const struct mach_header_64 *header=info.dli_fbase;
+    const struct load_command *command=(const void *)(header+1);
+    uintptr_t preferred=0;
+    for (unsigned i=0;i<header->ncmds;++i) {
+        if (command->cmd==LC_SEGMENT_64) {
+            const struct segment_command_64 *segment=(const void *)command;
+            if (!segment->fileoff && segment->filesize) preferred=segment->vmaddr;
+        }
+        command=(const void *)((const char *)command+command->cmdsize);
+    }
+    command=(const void *)(header+1);
+    for (unsigned i=0;i<header->ncmds;++i) {
+        if (command->cmd==LC_SEGMENT_64) {
+            const struct segment_command_64 *segment=(const void *)command;
+            if (segment->initprot&VM_PROT_EXECUTE) {
+                unsigned n=__atomic_load_n(&unix_code_count,__ATOMIC_RELAXED);
+                if (n==256) _Exit(1);
+                unix_code_ranges[n].begin=(uintptr_t)header+segment->vmaddr-preferred;
+                unix_code_ranges[n].end=unix_code_ranges[n].begin+segment->vmsize;
+                __atomic_store_n(&unix_code_count,n+1,__ATOMIC_RELEASE);
+            }
+        }
+        command=(const void *)((const char *)command+command->cmdsize);
+    }
+}
+static int unix_fault_pc(uintptr_t pc) {
+    unsigned n=__atomic_load_n(&unix_code_count,__ATOMIC_ACQUIRE);
+    for (unsigned i=0;i<n;++i)
+        if (pc>=unix_code_ranges[i].begin && pc<unix_code_ranges[i].end) return 1;
+    return 0;
+}
+
 static __thread uint32_t active_unix_code;
 static __thread void *active_unix_args;
 static __thread uint64_t active_unix_guest_stack;
@@ -626,6 +664,10 @@ static void serve(struct raven_service_channel *service)
 			dlclose(module);
 			break;
 		}
+        register_unix_code((void *)get_contract);
+        register_unix_code(((void **)functions)[0]);
+        void *checked_copy=dlsym(module,"raven_unix_copy");
+        if (checked_copy) register_unix_code(checked_copy);
 		unix_libraries[index] = (struct unix_library){module, functions, (uint32_t)a[0], contract};
 		__atomic_store_n(&unix_library_count, index + 1, __ATOMIC_RELEASE);
 		result = (uint64_t)functions;
@@ -810,7 +852,8 @@ static void load_context(ucontext_t *context, const struct raven_thread_channel 
 
 void raven_agent_stop(int signal, siginfo_t *info, void *raw, uint32_t index)
 {
-	raven_unix_recover(signal);
+	if ((raven_unix_explicit_fault(info,raw) || unix_fault_pc(((ucontext_t *)raw)->uc_mcontext->__ss.__rip)) &&
+        raven_unix_recover(signal, raw)) return;
 	if (index >= RAVEN_GUEST_MAX_THREADS) {
 		// Native dispatch/Metal workers have no Windows channel or alternate stack. A stray scheduler signal has no work for them.
 		if (signal == SIGUSR1)
