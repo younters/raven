@@ -26,5 +26,5 @@ with tempfile.TemporaryDirectory(prefix='raven-retranslation-test-') as prefix:
     page = int(marker[1], 16) & ~4095
     counters = re.search(rf'Raven translations page={page:x} unique=(\d+) repeated=(\d+) recompiled=(\d+)', output)
     assert counters, 'translation counters missing'
-    assert tuple(map(int, counters.groups())) == (1, 1, 1), counters[0]
-    print('PASS: neighbouring data and RX-only notifications retained code; changed bytes recompiled')
+    assert tuple(map(int, counters.groups())) == (1, 2, 1), counters[0]
+    print('PASS: neighbouring data and RX-only notifications retained code; changed bytes recompiled and real-self-handle flush invalidated unchanged code')

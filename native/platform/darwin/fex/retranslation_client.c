@@ -28,5 +28,9 @@ int raven_entry(void)
     if (!VirtualProtect(code, 4096, PAGE_EXECUTE_READ, &old) ||
         !FlushInstructionCache(GetCurrentProcess(), code, 6)) return 11;
     if (((unsigned (*)(void))code)() != 43) return 12;
+    HANDLE self = OpenProcess(PROCESS_ALL_ACCESS, FALSE, GetCurrentProcessId());
+    if (!self || !FlushInstructionCache(self, code, 6)) return 14;
+    if (((unsigned (*)(void))code)() != 43) return 15;
+    if (!CloseHandle(self)) return 16;
     return VirtualFree(code, 0, MEM_RELEASE) ? 0 : 13;
 }

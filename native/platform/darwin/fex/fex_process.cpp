@@ -970,10 +970,23 @@ uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 }
 void FexProcess::flush_instruction_cache(uint64_t address, size_t size)
 {
-	if (address && !size) return;
-	if (address > UINT64_MAX - size) throw std::runtime_error("FEX flush range overflow");
-	uint64_t args[8]{address ? state->host(address, size) : 0, size};
-	raven_ec_call(mapped_image->export_address(wow64_module ? "BTCpuFlushInstructionCache2" : "BTCpu64FlushInstructionCache"), args, state->environment()->teb.data());
+	const auto notify = [&](uint64_t start, size_t length) {
+		uint64_t args[8]{start ? state->host(start, length) : 0, length};
+		raven_ec_call(mapped_image->export_address(wow64_module ? "BTCpuFlushInstructionCache2" : "BTCpu64FlushInstructionCache"), args, state->environment()->teb.data());
+	};
+	if (!address) { notify(0, 0); return; }
+	if (!size) return;
+	const uint64_t end = size > UINT64_MAX - address ? UINT64_MAX : address + size;
+	// Ignore holes and out-of-window addresses rather than translating an
+	// arbitrary API range to a host pointer (which can throw in WoW64).
+	auto page = state->pages.lower_bound(address & ~uint64_t(4095));
+	while (page != state->pages.end() && page->first < end) {
+		const auto start = std::max(address, page->first);
+		auto stop = page->first + 4096;
+		while (++page != state->pages.end() && page->first == stop && stop < end) stop += 4096;
+		stop = std::min(end, stop);
+		if (start < stop && state->mapped_range(start, stop - start)) notify(start, stop - start);
+	}
 }
 void FexProcess::protect_memory(uint64_t address, size_t size, int protection)
 {
@@ -1529,6 +1542,11 @@ uint64_t FexProcess::map_shared(int descriptor, size_t size, uint64_t offset, ui
 	const auto n = state->regions.at(address).size;
 	void *mapped = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, descriptor, off_t(offset - delta));
 	if (mapped == MAP_FAILED) { unmap_memory(address); throw std::runtime_error("FEX shared descriptor mapping failed"); }
+	// Logical permissions remain unchanged. FEX must validate executable bytes
+	// in shared views because writes through aliases/other processes bypass
+	// this virtual address's dirty notifications and page faults.
+	uint64_t shared[8]{state->host(address, n), n};
+	raven_ec_call(mapped_image->export_address("RavenMarkSharedMemory"), shared, state->environment()->teb.data());
 	if (delta) {
 		try {
 			protect_memory(address, delta, PROT_NONE);

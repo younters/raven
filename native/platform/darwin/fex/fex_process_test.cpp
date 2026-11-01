@@ -89,7 +89,7 @@ int main(int argc, char **argv)
 			// Recovery/valid completion has its own deterministic result.
 			code.insert(code.end(), {0xb8, 42, 0, 0, 0, 0xc3});
 			memcpy(loaded.data().data() + image.entry, code.data(), code.size());
-		} else if (mode == "selfmodify") {
+		} else if (mode == "selfmodify" || mode == "flush-only") {
 			const uint8_t code[]{0xb8, 1, 0, 0, 0, 0xc3};
 			memcpy(loaded.data().data() + image.entry, code, sizeof(code));
 		} else if (mode == "timeout" || mode == "wait-unwind") {
@@ -312,7 +312,17 @@ int main(int argc, char **argv)
 			process.return_api(42);
 			result = process.resume();
 		}
-		if (mode == "selfmodify") {
+		if (mode == "flush-only") {
+			check(result.stop == raven::NativeStop::returned && result.value == 1, "initial flush code result mismatch");
+			const auto address = loaded.base() + image.entry;
+			// Mutate the loader's backing alias directly: no protect or dirty
+			// notification. Only the explicit flush may discard this RX block.
+			loaded.data()[image.entry + 1] = 42;
+			result = process.call(address, {});
+			check(result.stop == raven::NativeStop::returned && result.value == 1, "flush negative control did not retain old translation");
+			process.flush_instruction_cache(address, 6);
+			result = process.call(address, {});
+		} else if (mode == "selfmodify") {
 			check(result.stop == raven::NativeStop::returned && result.value == 1, "first code result mismatch");
 			const auto address = loaded.base() + image.entry;
 			process.protect_image(address & ~uint64_t(4095), 4096, PROT_READ | PROT_WRITE | PROT_EXEC);

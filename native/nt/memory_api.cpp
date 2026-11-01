@@ -515,18 +515,18 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// Wine ARM64EC forwards successful local flushes to the translator callback.
 	const auto flush = [&context](ApiCall &call, bool win32) {
-		if (call[0] != UINT64_MAX && !(call.pointer_width() == 4 && call[0] == UINT32_MAX) &&
-		    !context.objects.object_as<SelfProcessObject>(call[0])) {
+		const auto target = context.objects.object_as<ProcessObject>(call[0]);
+		const bool local = call[0] == UINT64_MAX || (call.pointer_width() == 4 && call[0] == UINT32_MAX) ||
+		    context.objects.object_as<SelfProcessObject>(call[0]) || (target && target->pid == ::getpid());
+		if (!local && !target) {
 			if (win32) { call.set_last_error(6); call.ret(0); }
 			else call.ret(0xc0000008);
 			return;
 		}
-		if (call[1] > UINT64_MAX - call[2]) {
-			if (win32) { call.set_last_error(87); call.ret(0); }
-			else call.ret(0xc000000d);
-			return;
-		}
-		context.process.flush_instruction_cache(call[1], call[2]);
+		// Remote WriteProcessMemory already notifies the target through its
+		// write_memory handler. A valid remote handle retains flush success.
+		// Windows also permits ranges containing unmapped addresses.
+		if (local) context.process.flush_instruction_cache(call[1], call[2]);
 		call.ret(win32 ? 1 : 0);
 	};
 	registry.add("FlushInstructionCache", 3, [flush](ApiCall &call) { flush(call, true); });
