@@ -1,4 +1,5 @@
 #include "host_names.h"
+#include "child_process.h"
 #include "firmware.h"
 #include "kernel_context.h"
 #include "section.h"
@@ -514,7 +515,8 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// Wine ARM64EC forwards successful local flushes to the translator callback.
 	const auto flush = [&context](ApiCall &call, bool win32) {
-		if (call[0] != UINT64_MAX && !(call.pointer_width() == 4 && call[0] == UINT32_MAX)) {
+		if (call[0] != UINT64_MAX && !(call.pointer_width() == 4 && call[0] == UINT32_MAX) &&
+		    !context.objects.object_as<SelfProcessObject>(call[0])) {
 			if (win32) { call.set_last_error(6); call.ret(0); }
 			else call.ret(0xc0000008);
 			return;
