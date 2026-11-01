@@ -1,0 +1,6 @@
+empty 0 10.78 ns/call
+empty 1 10.76 ns/call
+empty 2 11.20 ns/call
+copy16 0 31.28 ns/call
+copy16 1 27.80 ns/call
+copy16 2 28.38 ns/call

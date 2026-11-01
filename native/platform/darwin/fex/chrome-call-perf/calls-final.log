@@ -1,0 +1,47 @@
+FEX main image claimed inside image_pool
+FEX calls: resume count=1117 ns=115515967
+FEX calls: context count=3337 ns=797499
+FEX calls: arguments count=655 ns=147751
+FEX main image claimed inside image_pool
+FEX calls: resume count=7629 ns=266597501
+FEX calls: context count=23283 ns=5603718
+FEX calls: arguments count=5468 ns=1286814
+FEX main image claimed inside image_pool
+FEX calls: resume count=534 ns=90958171
+FEX calls: context count=1562 ns=580169
+FEX calls: arguments count=509 ns=208989
+FEX main image claimed inside image_pool
+FEX calls: resume count=123 ns=86669365
+FEX calls: context count=333 ns=207043
+FEX calls: arguments count=104 ns=38839
+FEX main image claimed inside image_pool
+FEX calls: resume count=123 ns=92615707
+FEX calls: context count=333 ns=181545
+FEX calls: arguments count=104 ns=54334
+FEX calls: resume count=2454 ns=174558634
+FEX calls: context count=7365 ns=874266
+FEX calls: arguments count=2462 ns=1118042
+FEX calls: resume count=16170 ns=694388811
+FEX calls: context count=48928 ns=5694789
+FEX calls: arguments count=16590 ns=8195000
+FEX calls: resume count=521 ns=94998635
+FEX calls: context count=1551 ns=332230
+FEX calls: arguments count=510 ns=450152
+FEX calls: resume count=116 ns=77008552
+FEX calls: context count=336 ns=91887
+FEX calls: arguments count=107 ns=63454
+FEX calls: resume count=116 ns=60626207
+FEX calls: context count=336 ns=20337
+FEX calls: arguments count=107 ns=27129
+machine=0x8664 sections=9 image_size=4341760 DIR64_relocations=19189
+CHPE native RavenProcessInit RVA=703c TLS_bytes=0 TEB/CPU-area prepared (not entered)
+auxiliary_iat_writes=127
+resolved=127
+PASS: native PE DllMain attach
+PASS: FEX host ABI v2 rejects v1 and truncated host tables
+PASS: RavenProcessInit
+PASS: ThreadInit
+FEX calls: resume count=181 ns=60301039
+FEX calls: context count=550 ns=142990
+FEX calls: arguments count=168 ns=34745
+Native entry returned 0 (process initialization not implemented)

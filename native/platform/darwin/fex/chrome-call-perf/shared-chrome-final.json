@@ -1,0 +1,70 @@
+{
+  "scope": "offline synthetic JS; headless; parallel; GPU enabled; milliseconds lower is better",
+  "raven_sha256": "508d2164add2ae97d4e171d3cbf415f82f6b55dbf051c9cee8111877fae17142",
+  "module_sha256": "eb5453abe7a5f41a0fed0bdb501b5992fa3209660fcb248152516b30a0eafa0d",
+  "page_sha256": "d5cf21232da5e8b8702d866dca075e7d1d522df2c54ccf5f9a0e5e5d176deeb1",
+  "samples": [
+    {
+      "engine": "native",
+      "sample": 0,
+      "command": [
+        "/Users/yount/.t3/worktrees/raven/t3-c067e4ec/build-perf/native/raven",
+        "--run-process",
+        "--execution=native",
+        "--timeout-ms=120000",
+        "--desktop=macos",
+        "--stdio=inherit",
+        "/private/tmp/raven-chrome-perf2/drive_c/Program Files/Google/Chrome/Application/chrome.exe",
+        "--",
+        "--headless=new",
+        "--no-sandbox",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-networking",
+        "--user-data-dir=Z:/private/tmp/raven-chrome-perf2/bench-profile-native-1793503019969509000",
+        "--dump-dom",
+        "file:///Z:/Users/yount/.t3/worktrees/raven/t3-c067e4ec/scripts/benchmarks/chrome-js.html"
+      ],
+      "log": "/tmp/raven-perf-evidence/shared-chrome-final.native-0.log",
+      "wall_seconds": 8.135695208999095,
+      "returncode": 0,
+      "result": {
+        "milliseconds": 1242.0999999642372,
+        "primes": 216816,
+        "length": 200000,
+        "items": 400000
+      }
+    },
+    {
+      "engine": "fex",
+      "sample": 0,
+      "command": [
+        "/Users/yount/.t3/worktrees/raven/t3-c067e4ec/build-perf/native/raven",
+        "--run-process",
+        "--execution=fex",
+        "--timeout-ms=120000",
+        "--desktop=macos",
+        "--stdio=inherit",
+        "/private/tmp/raven-chrome-perf2/drive_c/Program Files/Google/Chrome/Application/chrome.exe",
+        "--",
+        "--headless=new",
+        "--no-sandbox",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-networking",
+        "--user-data-dir=Z:/private/tmp/raven-chrome-perf2/bench-profile-fex-1793503028106442000",
+        "--dump-dom",
+        "file:///Z:/Users/yount/.t3/worktrees/raven/t3-c067e4ec/scripts/benchmarks/chrome-js.html"
+      ],
+      "log": "/tmp/raven-perf-evidence/shared-chrome-final.fex-0.log",
+      "wall_seconds": 49.4773329590098,
+      "returncode": 0,
+      "result": {
+        "milliseconds": 6831,
+        "primes": 216816,
+        "length": 200000,
+        "items": 400000
+      }
+    }
+  ]
+}

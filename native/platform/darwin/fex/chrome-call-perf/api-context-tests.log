@@ -1,0 +1,39 @@
+CTest lock acquired: api-context
+Test project /Users/yount/.t3/worktrees/raven/t3-c067e4ec/build-perf
+      Start  697: native_parity_contention_fex
+ 1/12 Test  #697: native_parity_contention_fex ..............................   Passed    4.76 sec
+      Start  699: native_parity_context_fex
+ 2/12 Test  #699: native_parity_context_fex .................................   Passed    3.60 sec
+      Start  746: native_ymm_snapshot_fex_0
+ 3/12 Test  #746: native_ymm_snapshot_fex_0 .................................   Passed    3.94 sec
+      Start  747: native_ymm_snapshot_fex_1
+ 4/12 Test  #747: native_ymm_snapshot_fex_1 .................................   Passed    4.16 sec
+      Start 1301: native_prefix_cleanup_725871b5eb4f804b0fe4ac21c4061763
+ 5/12 Test #1301: native_prefix_cleanup_725871b5eb4f804b0fe4ac21c4061763 ....   Passed    0.01 sec
+      Start 1303: native_prefix_cleanup_1a697b8994363b7885ed01c6ddc79d7a
+ 6/12 Test #1303: native_prefix_cleanup_1a697b8994363b7885ed01c6ddc79d7a ....   Passed    0.01 sec
+      Start 1518: native_prefix_cleanup_abb09ff476bc094140664324e2d783bd
+ 7/12 Test #1518: native_prefix_cleanup_abb09ff476bc094140664324e2d783bd ....   Passed    0.04 sec
+      Start 1519: native_prefix_cleanup_a3f136230ef7f5fdf112fb156b82430b
+ 8/12 Test #1519: native_prefix_cleanup_a3f136230ef7f5fdf112fb156b82430b ....   Passed    0.03 sec
+      Start 1532: native_kernel_threads32_fex
+ 9/12 Test #1532: native_kernel_threads32_fex ...............................   Passed    7.03 sec
+      Start 1542: native_kernel_threads32_parallel_fex
+10/12 Test #1542: native_kernel_threads32_parallel_fex ......................   Passed    5.92 sec
+      Start 1568: modhost_prefix_cleanup_ddcdaa310c5bd829c71151588883c0e8
+11/12 Test #1568: modhost_prefix_cleanup_ddcdaa310c5bd829c71151588883c0e8 ...   Passed    0.01 sec
+      Start 1569: modhost_prefix_cleanup_e39f56305a0bde051fad60561631026b
+12/12 Test #1569: modhost_prefix_cleanup_e39f56305a0bde051fad60561631026b ...   Passed    0.01 sec
+
+100% tests passed out of 12
+
+Label Time Summary:
+context           =   8.11 sec*proc (2 tests)
+engine-parity     =  16.46 sec*proc (4 tests)
+fex               =  12.96 sec*proc (2 tests)
+m4                =  12.96 sec*proc (2 tests)
+parallel          =  14.28 sec*proc (3 tests)
+prefix-cleanup    =   0.10 sec*proc (6 tests)
+process           =  12.96 sec*proc (2 tests)
+
+Total Test time (real) =  29.55 sec

@@ -1,0 +1,55 @@
+[70882:1:1031/211701.870:ERROR:net\base\network_change_notifier_win.cc:224] WSALookupServiceBegin failed with: 10108
+[70882:26:1031/211701.938:ERROR:net\dns\dns_config_service_win.cc:526] DNS registry watch failed to start.
+[70882:26:1031/211701.948:ERROR:net\dns\dns_config_service_win.cc:546] DNS hosts watch failed to start.
+[70901:14:1031/211702.926:ERROR:net\dns\dns_config_service_win.cc:526] DNS registry watch failed to start.
+[70901:30:1031/211702.926:ERROR:net\base\network_change_notifier_win.cc:224] WSALookupServiceBegin failed with: 10108
+[70901:14:1031/211702.940:ERROR:net\dns\dns_config_service_win.cc:546] DNS hosts watch failed to start.
+samples: 395 in the last period
+  6 raven-rtl.dll+3b00
+  2 chrome.dll+5a83e00
+  2 chrome.dll+5092e00
+  1 chrome.dll+d15f100
+  1 chrome.dll+d155500
+  1 chrome.dll+d09ec00
+  1 chrome.dll+cc65f00
+  1 chrome.dll+cc5c900
+  1 chrome.dll+ca8b800
+  1 chrome.dll+c24d500
+  1 chrome.dll+be63700
+  1 chrome.dll+be5fc00
+  1 chrome.dll+be12f00
+  1 chrome.dll+bd12800
+  1 chrome.dll+bc20600
+<!DOCTYPE html>
+<html><head><title>JS waiting</title></head><body>RAVEN_BENCH_RESULT={"milliseconds":1242.0999999642372,"primes":216816,"length":200000,"items":400000}</body></html>
+FEX calls: resume count=0 ns=0
+FEX calls: context count=0 ns=0
+FEX calls: arguments count=0 ns=0
+FEX calls: resume count=0 ns=0
+FEX calls: context count=0 ns=0
+FEX calls: arguments count=0 ns=0
+samples: 78 in the last period
+  2 chrome.dll+50a3300
+  2 chrome.dll+4ac9500
+  1 kernel32.dll+2900
+  1 chrome.dll+be5dd00
+  1 chrome.dll+acdd900
+  1 chrome.dll+705f700
+  1 chrome.dll+5a83300
+  1 chrome.dll+5a1e300
+  1 chrome.dll+5569800
+  1 chrome.dll+5539b00
+  1 chrome.dll+54e8100
+  1 chrome.dll+52d6500
+  1 chrome.dll+50c0e00
+  1 chrome.dll+509ac00
+  1 chrome.dll+509a900
+FEX calls: resume count=0 ns=0
+FEX calls: context count=0 ns=0
+FEX calls: arguments count=0 ns=0
+FEX calls: resume count=0 ns=0
+FEX calls: context count=0 ns=0
+FEX calls: arguments count=0 ns=0
+FEX calls: resume count=0 ns=0
+FEX calls: context count=0 ns=0
+FEX calls: arguments count=0 ns=0

@@ -1,0 +1,169 @@
+FEX Chrome call and cache investigation
+=======================================
+Branch: perf/fex-chrome-call-costs; base 8b1cfca21788cb18b68a9d43de931b09580c28d2.
+Committed logs normalize line endings/trailing whitespace; original output remains
+in /tmp/raven-perf-evidence.
+No push. Shared component and fixture roots were never modified.
+Private modules: /tmp/raven-fex-perf-modules, build-id chrome-perf-0050.
+Build: RelWithDebInfo, -j8, FEX modhost ON. Component, PNG and FONT_HASHES
+settings copied from the reference cache; Skia/font roots also enabled.
+Free space briefly fell to about 4.4 GiB during concurrent activity. I paused
+the module build; free space recovered, and disk pressure also required
+removing debug symbols from my executable outputs;
+instruction code was unchanged. Available space recovered above 6 GiB.
+No debugger, sample, or spindump used.
+
+Delivered
+---------
+* Timed FEX guest sampling: RAVEN_SAMPLE_GUEST no longer throws an unsupported
+  operation. Existing timeout tests now check sampled RIPs in serial/parallel.
+* RAVEN_FEX_PROFILE_CALLS=1 measures resume, context, argument-marshaling time.
+* API returns use context(false), leaving FP/YMM state live instead of taking
+  and restoring an 832-byte snapshot and crossing into RavenGetYmmHigh.
+  Cache the FEX stop-trace environment setting once.
+* Patch 0050 adds opt-in compilation timing, enabled by
+  RAVEN_FEX_PROFILE_COMPILE=1. Counts compilation attempts after L3 lookup,
+  including repeated compilation and races, not unique blocks. Disabled mode
+  does not read the clock. Core's existing FEX_RAVEN_DIVIDE host-build marker
+  guards this code because RAVEN_HOST is frontend-local.
+* Reused the other performance agent's checked Chrome harness and HTML exactly.
+  M5 runners support --smoke --samples 1, with no warmup in smoke mode.
+
+Comparable Chrome evidence (one sample; seconds, lower better)
+------------------------------------------------------------
+                    Parent baseline       This branch
+                  Rosetta     FEX       Rosetta     FEX
+JS workload          1.2232    6.8507       1.2421    6.8310
+Launch/run wall      7.321    49.008        8.136    49.477
+All final DOM checks passed: primes=216816, length=200000, items=400000.
+No statistically supported whole-browser gain. Final FEX run also enabled
+compilation timing, call timing, and 5ms guest sampling. Separate-process
+execution and shared-machine contention limit comparisons. 'Launch/run' is
+process completion with the checked DOM; it is NOT a first-paint measurement.
+Browser first paint was not independently measured.
+
+Software TSO
+------------
+Raven does not override the pinned frontend's memory-model defaults:
+TSOEnabled=true, VectorTSOEnabled=false, MemcpySetTSOEnabled=false,
+HalfBarrierTSOEnabled=true, StrictInProcessSplitLocks=false,
+KernelUnalignedAtomicBackpatching=true, VolatileMetadata=true.
+The Windows frontend attempts hardware TSO through FEXUnixLib; Raven returns
+unavailable, retaining software TSO. No paranoid or auto-migration setting was
+found in this pin. UpdateAtomicTSOEmulationConfig only checks hardware support
+and scalar/vector/REP flags; it has no per-page shared/private or live-thread
+classification. Do not assume RAVEN_PARALLEL=0 makes a Windows process
+single-threaded or unable to access memory shared with another process.
+Already-relaxed vector/REP defaults match upstream Linux FEX and its Windows
+ARM64EC frontend. No further relaxation shipped and no per-option differential
+cost was measured. Globally disabling scalar TSO would violate this workload's
+correctness requirements.
+Sources:
+https://github.com/FEX-Emu/FEX/blob/main/FEXCore/Source/Interface/Config/Config.json.in
+https://fex-emu.com/FEX-2406/
+Pinned Source/Windows/Common/TSOHandlerConfig.h and
+FEXCore/Source/Interface/Context/Context.h.
+
+Per-call results
+----------------
+Existing unix_microbench, bounded to three samples in a scratch copy:
+empty guarded call 10.78/10.76/11.20 ns; checked copy16 31.28/27.80/28.38 ns.
+No guard/copy safety checks weakened.
+File fixture RAVEN_PARALLEL=1, same call counts, inclusive host timers:
+                         Baseline          Final
+context: 550 calls       593324 ns        142990 ns
+arguments: 168 calls      70711 ns         34745 ns
+resume: 181 calls     144897879 ns      60301039 ns
+Context time fell about 76%; resume includes guest work and scheduling and is
+not an isolated effect estimate. Arguments were unchanged; their variation
+shows shared-machine noise. Do not attribute the full resume change to this fix.
+API registry, checked reads, VirtualQuery and marshaling were inspected but not
+changed; no isolated cost or speedup is claimed. QPC is frequent, but the existing
+native direct-counter calibration is intentionally disabled under FEX because
+FEX's RDTSC is scaled. Reusing the host's calibration would give incorrect time.
+Scheduler/doorbell time remains mixed into resume and was not separately fixed.
+
+Cross-process cache: measured, NOT implemented
+--------------------------------------------
+Across 17 exiting FEX processes: 8,535,720 compilation attempts (see JSON for
+exact counts) and 73.029 seconds aggregate compilation time. These overlap;
+never subtract their sum from browser wall time. Largest process: 3,868,993
+attempts / 32.854 seconds. Others ranged 0.359 to 15.136 seconds. The timer
+includes repeated translations; it does not distinguish DLL compilation from
+anonymous/V8 code and therefore is NOT an estimate of recoverable cache savings.
+
+Two distinct upstream mechanisms exist:
+1. EnableCodeCachingWIP/AOT: Windows ImageTracker loads offline-generated
+   caches; it does not save a live process's mixed JIT buffers. LoadAOTImages
+   still uses CodeCacheConfigId=0 (TODO). SaveData serializes a whole current
+   code buffer/lookup map and relocates it in place; it is not a safe module
+   cache writer to call on an active multithreaded process. LoadCache also
+   copies its header before establishing a full external-file bounds contract.
+2. DiskCache: real per-block fossilize databases, config/host-feature buckets,
+   guest-byte hashes, relocation-aware backend loading and file locks exist.
+   This is the better starting point; it is not inherently impossible on Tier 0.
+
+Raven's map_image currently uses NotifyMemoryAlloc/protect, not the frontend's
+HandleImageMap/NotifyMapViewOfSection path. Its ImageTracker is consequently not
+populated with guest DLL identity/section information for LookupExecutableFileSection.
+The frontend's PE helper RtlImageNtHeader is also restricted to the FEX module
+in RavenNT::image_nt_header. Merely enabling DiskCache would route guest DLLs
+through anonymous caching, not the requested module-hash/config/build contract.
+The Windows image FileId is based on basename, timestamp and image size, not a
+cryptographic module hash. Existing machine/process buckets do not themselves
+provide a Raven patched-build identity. A production integration needs:
+- validated registration/unregistration of loaded guest image sections and a
+  content-hash identity, including provider-modified image bytes;
+- an explicit patched-module/build namespace around config/host-feature keys;
+- validated NT file/mapping/locking paths, bounded file parsing, concurrent
+  publication and corrupt-cache recovery; same-root cross-process hit evidence;
+- ASLR, unload/reload and configuration-mismatch tests on the actual cached path.
+I did not ship an unvalidated cache or claim this area complete. The missing
+integration is substantial but feasible future work. Translation merits priority;
+the present counters justify further investigation but do not prove all of its
+cost is cross-process DLL retranslation. Multiblock and V8/SMC changes remain
+with the other agent; patches 0040-0049 were not touched.
+
+Correctness and limitations
+---------------------------
+Sampler targeted: 4/4 including cleanup; API context/FP/YMM/contention/thread
+checks: 12/12 including cleanup. Checked Chrome JS completed on both engines.
+Notepad++ produced editor windows/Scintilla children and captured painted
+screenshots on both engines, serial and parallel; final FEX parallel screenshot
+visually inspected. Steam smoke launch on a cloned prefix was inconclusive:
+missing msvcr120.dll, SDL2.dll and a Vulkan export, plus guest CEF CHECK failures.
+No claim of Steam correctness is made.
+
+M5 microbenchmarks and Notepad++ times are recorded in JSON. Baseline editor
+measurement failed before Skia roots were enabled, so no before/after startup
+comparison is valid. Final M5 measurements overlapped the correctness sweep
+and are load-contaminated; they are completion evidence, not speedup evidence.
+The initial own Chrome attempts missing DOM results were discarded. Shared
+harness baseline is the parent's instrumented run, copied with provenance.
+
+Area sweep: 606 tests, 5 failed, 2 skipped. Four missing fixtures were built
+explicitly (context_groups32_fixture, context_groups64_fixture,
+darwin_mtld3d_runtime32_fixture, darwin_mtld3d_runtime64_fixture). The compiled
+multiblock-disable contract was requalified by disassembly: only the BL
+displacement to Config::Set changed, from 0x9406167a to 0x9406169d; the call
+still passes option 0 and string_view("0",1). No multiblock change.
+
+ONE full suite: RAVEN_PREFIX_SETUP=1, -j8, 1593 registered tests; 7 failures:
+native_parallel_lifecycle_x32, native_darwin_desktop_dpi_x64,
+native_darwin_desktop_dpi_x32, and four darwin_x87sidecar tests. The sidecar
+fixtures were absent from default ALL and built explicitly before the one
+serial rerun. No FEX test failed in the full run. Eight skipped, one disabled.
+Full wall time 173.69 seconds. ONE serial rerun: 13 tests including six cleanup fixtures; 11 passed, two
+failed. native_parallel_lifecycle_x32 and all four sidecar cases passed.
+The remaining failures are native_darwin_desktop_dpi_x64 and
+native_darwin_desktop_dpi_x32, both guest return code 11. They are unresolved;
+no claim that the whole suite is green or that these failures predate this work.
+No further rerun was attempted.
+
+Commands:
+/tmp/raven-ctest-lock.sh final-fex-thread ctest --test-dir build-perf \
+ --output-on-failure -j8 -R 'fex|thread|parallel|tls|parity'
+RAVEN_PREFIX_SETUP=1 /tmp/raven-ctest-lock.sh final-full ctest \
+ --test-dir build-perf --output-on-failure -j8
+RAVEN_PREFIX_SETUP=1 /tmp/raven-ctest-lock.sh final-serial-rerun ctest \
+ --test-dir build-perf --rerun-failed --output-on-failure -j1
