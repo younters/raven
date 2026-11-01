@@ -23,6 +23,8 @@ def main():
     p.add_argument('--modules', type=Path, required=True)
     p.add_argument('--output', type=Path, required=True)
     p.add_argument('--samples', type=int, default=1, choices=range(1, 4))
+    p.add_argument('--engines', choices=('both', 'native', 'fex'), default='both',
+                   help='Run both engines in alternating order, or one engine only')
     p.add_argument('--timeout', type=float, default=120)
     a = p.parse_args()
     page = Path(__file__).resolve().parent / 'benchmarks/chrome-js.html'
@@ -33,7 +35,8 @@ def main():
               'page_sha256': hashlib.sha256(page.read_bytes()).hexdigest(), 'samples': []}
     a.output.parent.mkdir(parents=True, exist_ok=True)
     for sample in range(a.samples):
-        for engine in (('native', 'fex') if sample % 2 == 0 else ('fex', 'native')):
+        engines = (('native', 'fex') if sample % 2 == 0 else ('fex', 'native')) if a.engines == 'both' else (a.engines,)
+        for engine in engines:
             profile = a.prefix / f'bench-profile-{engine}-{time.time_ns()}'
             command = [str(a.raven.resolve()), '--run-process', '--execution=' + engine,
                        '--timeout-ms=' + str(int(a.timeout * 1000)), '--desktop=macos', '--stdio=inherit', str(chrome), '--',

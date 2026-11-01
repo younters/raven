@@ -21,6 +21,10 @@ R11 as its stack anchor; the exception handler consequently faults too, at
 steamui.dll+0x3f648 while reading R11-0x88. The crash handler terminates the
 main process with status 100. CEF's subsequent shutdown is a consequence.
 
+Update 2026-11-01: 0028 is removed and multiblock is on again, with 0041
+clearing every thread's call-ret stack when shared code is dropped. Steam
+reached its sign-in page 3/3 under FEX; see `chrome-perf/README.md`.
+
 Patch 0028 conservatively disables multiblock compilation in the Raven x64
 frontend. This removes the observed SHA fault and allows the main process to
 stay alive. This is a correctness workaround with a performance cost, not a
