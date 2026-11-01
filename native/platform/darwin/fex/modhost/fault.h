@@ -107,7 +107,7 @@ extern "C" void raven_fault_handler(int signal, siginfo_t *info, void *opaque) {
 	}
 	// Preserve FEX repair priority; only declined native memory faults unwind a unix call.
 	if (!dispatch_depth && raven_unix_fault_pc(native.pc) && raven_unix_recover(signal, opaque)) return;
-	if (getenv("RAVEN_FEX_TRACE")) {
+	{
 		char detail[192];
 		const int length = snprintf(detail, sizeof(detail), "FEX native signal=%d code=%d esr=%x pc=%llx address=%llx entry=%p jit=%d\n",
 			signal, info->si_code, uc->uc_mcontext->__es.__esr, native.pc,
