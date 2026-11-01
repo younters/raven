@@ -262,3 +262,11 @@ post-call bytes and flushes. The result depends on whether B returns into the
 new or the old translation. If confirmed, fix in 0041 by clearing every
 thread's call-ret stack on any invalidation (not only those with cached pages),
 then qualify with variant C's removed.
+
+`multiblock_callret_client.c` implements that test (coverage only). It returned 0
+under single-block (D), 0040, variant C and the native engine. So this shape
+does not reproduce a stale return. Thread B probably caches F through its own
+lookup, which clears its call-ret stack. The call-ret hypothesis remains
+unproven. Next variants: B enters F through a return (not a link); or F's
+continuation lies on a different page from F's entry, with only that page
+invalidated.
