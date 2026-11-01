@@ -141,3 +141,42 @@ No further test or benchmark reruns were made.
 Logs: /tmp/raven-retranslation-{targeted,targeted-setup,targeted-arguments,area,
 full,rerun}.log. Original Chrome logs and JSON are /tmp/raven-retranslation-*.
 Checked-in JSON retains hashes and commands; original detail log is about 51 MiB.
+
+Parent follow-up: deterministic x32 compiler failure resolved
+----------------------------------------------------------
+The diagnostic run with RAVEN_TRACE_X86=1 and RAVEN_TRACE_FAIL=1 showed:
+  LoadLibraryW("d3dcompiler_47.dll")
+  cannot load d3dcompiler_47.dll: PE preferred base is unavailable and image
+  has no relocation table
+The client never reached GetProcAddress or a FlushInstructionCache API.
+
+The fixture built here had image base 0x70040000 and relocation directory (0,0).
+The passing reference build's same fixture had base 0x6bdc0000, also no relocs.
+MinGW's default DLL image base depends on its output path; this worktree's build
+path placed the DLL in the native x86 API-provider region starting 0x70000000.
+The loader correctly rejected that relocation-free image. This was a deterministic
+fixture-placement difference, not a compiler lookup flake or flush-path failure.
+
+Fix: native/platform/darwin/app_compat.cmake gives only the 32-bit compiler DLL
+fixture an explicit 0x30000000 image base. Its existing native app-local compiler
+regression remains, checking the DLL's actual D3DCompile return value. The 64-bit
+fixture and runtime/flush/handle/API-registration code are unchanged.
+
+Rebuilt both app compiler fixture targets with -j8; inspected the new 32-bit PE:
+image base 0x30000000, relocation directory still (0,0).
+
+One post-fix requested selection, including the compiler test exactly once:
+  RAVEN_PREFIX_SETUP=1 /tmp/raven-ctest-lock.sh retranslation-compiler-x32-flush \
+    ctest --test-dir build-retranslation --output-on-failure -j8 \
+    -R 'compiler|x32|flush|retranslation'
+257 selected including cleanup fixtures: 254 passed, one skipped, two failed;
+49.09 seconds. native_darwin_app_compiler_x32 PASSED (1.02 seconds), the 64-bit
+compiler tests passed, and both retranslation regressions PASSED.
+
+Remaining failures in this selection:
+  native_kernel_threads_x32_default: native guest fault signal 5 at 0x401187
+  native_jit_stress_x32_native_0: native guest fault signal 5 at 0x4010ab
+These were not rerun under the parent's once-per-test constraint. Their causes
+and baseline status were not established; no claim of a fully green selection.
+No full suite or Chrome benchmark was run for this fixture-only fix.
+Logs: /tmp/raven-retranslation-compiler-{diagnose,fix-build,x32-flush}.log.
