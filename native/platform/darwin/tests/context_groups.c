@@ -149,7 +149,7 @@ int raven_entry(void) {
 #ifdef _WIN64
     CHECK(!SetThreadContext(thread,&invalid_debug));
 #endif
-    ctx.Dr0=0x12345000; ctx.Dr7=0x400;
+    ctx.Dr0=0x12345000; ctx.Dr7=0x155; // Windows WoW64 local-enable round trip, without forced bit 10.
     CHECK(SetThreadContext(thread,&ctx));
     CHECK(ntset(thread,&ctx)==0);
 #ifndef _WIN64

@@ -661,7 +661,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
                 }
                 for (unsigned i=0; i<4; ++i)
                     if (debug[i] >= (x86 ? call.environment.x86_user_limit() : native_user_limit)) { fail(87); return; }
-                debug[5] = (debug[5] & 0xffff0355u) | 0x400;
+                debug[5] &= 0xffff0755u;
             }
         }
 		if ((!x86 && (flags & 8)) || (x86 && (flags & 0x20))) {
