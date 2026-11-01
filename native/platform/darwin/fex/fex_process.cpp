@@ -1043,6 +1043,20 @@ void FexProcess::map_image(LoadedImage &image)
 	state->regions.emplace(address, State::Region{n, true});
 	unix_ranges.set(state->host(address, n), n, PROT_NONE);
 	state->images.push_back(&image);
+	if (std::getenv("RAVEN_FEX_PROFILE_COMPILE")) {
+		// Read only bounded PE metadata from the loader's image view.
+		auto bytes = image.data();
+		auto word = [&](size_t at) { uint32_t v = 0; if (at <= bytes.size() && bytes.size() - at >= 4) memcpy(&v, bytes.data() + at, 4); return v; };
+		auto pe = word(0x3c);
+		auto exp = word(size_t(pe) + 24 + (wow64_module ? 96 : 112));
+		auto name = exp ? word(size_t(exp) + 12) : 0;
+		std::string module = "<image>";
+		if (name && name < bytes.size()) {
+			auto end = std::find(bytes.begin() + name, bytes.end(), uint8_t(0));
+			if (end != bytes.end()) module.assign(reinterpret_cast<const char *>(bytes.data() + name), size_t(end - (bytes.begin() + name)));
+		}
+		fprintf(stderr, "Raven image base=%llx size=%zu module=%s\n", (unsigned long long)address, n, module.c_str());
+	}
 	for (size_t at = 0; at < n; at += 4096) state->pages[address + at] = PROT_NONE;
 	for (const auto &mapping : image.mappings())
 		for (uint64_t at = mapping.address; at < mapping.address + mapping.size; at += 4096) state->pages[at] = mapping.protection;
