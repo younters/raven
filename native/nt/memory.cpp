@@ -55,7 +55,7 @@ NativeMemory::NativeMemory(NativeProcess &process, NativeEnvironment &environmen
 		next=floor=0x20000000ULL;
 	}
 #ifdef RAVEN_FEX_PROCESS
-	else if (fex_execution_selected()) next=floor=0x20000000000ULL;
+	else if (fex_execution_selected()) next=floor=fex_guest_floor();
 #endif
 }
 
