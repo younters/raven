@@ -1424,6 +1424,45 @@ if(RAVEN_FEX_MODHOST AND TARGET raven_cpu AND RAVEN_MINGW64)
         --raven $<TARGET_FILE:raven> --fixture ${fixture} --modules "${RAVEN_FEX_MODULE_ROOT}")
     set_tests_properties(native_multiblock_callret_fex PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "fex;process"
         ENVIRONMENT RAVEN_PARALLEL=1)
+
+    # Opt-in code cache: two same-named, same-sized DLL variants and a JIT/SMC client.
+    set(code_cache_dir ${CMAKE_CURRENT_BINARY_DIR}/code-cache)
+    set(code_cache_outputs ${code_cache_dir}/codecache-client.exe)
+    add_custom_command(OUTPUT ${code_cache_dir}/codecache-client.exe
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${code_cache_dir}
+        COMMAND ${RAVEN_MINGW64} -O1 -nostdlib -fno-stack-protector -fno-builtin -mno-stack-arg-probe
+            -Wl,--entry,raven_entry,--no-insert-timestamp
+            -o ${code_cache_dir}/codecache-client.exe ${RAVEN_DARWIN_DIR}/fex/code-cache/codecache_client.c -lkernel32
+        DEPENDS ${RAVEN_DARWIN_DIR}/fex/code-cache/codecache_client.c VERBATIM)
+    foreach(variant a b)
+        if(variant STREQUAL "a")
+            set(number 1)
+        else()
+            set(number 2)
+        endif()
+        add_custom_command(OUTPUT ${code_cache_dir}/${variant}/codecache_lib.dll
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${code_cache_dir}/${variant}
+            COMMAND ${RAVEN_MINGW64} -O1 -shared -nostdlib -fno-stack-protector -fno-builtin -mno-stack-arg-probe
+                -DCODECACHE_VARIANT=${number}
+                -Wl,--entry,raven_dll_entry,--image-base,0x180000000,--no-insert-timestamp
+                -o ${code_cache_dir}/${variant}/codecache_lib.dll ${RAVEN_DARWIN_DIR}/fex/code-cache/codecache_lib.c -lkernel32
+            DEPENDS ${RAVEN_DARWIN_DIR}/fex/code-cache/codecache_lib.c VERBATIM)
+        list(APPEND code_cache_outputs ${code_cache_dir}/${variant}/codecache_lib.dll)
+    endforeach()
+    add_custom_target(code_cache_fex_fixtures ALL DEPENDS ${code_cache_outputs})
+    foreach(parallel 0 1)
+        add_test(NAME native_code_cache_fex_${parallel} COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/scripts/test-fex-code-cache.py --raven $<TARGET_FILE:raven>
+            --client ${code_cache_dir}/codecache-client.exe --library-a ${code_cache_dir}/a/codecache_lib.dll
+            --library-b ${code_cache_dir}/b/codecache_lib.dll --modules "${RAVEN_FEX_MODULE_ROOT}")
+        set_tests_properties(native_code_cache_fex_${parallel} PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77
+            LABELS "fex;jit;smc")
+        if(parallel)
+            set_tests_properties(native_code_cache_fex_${parallel} PROPERTIES ENVIRONMENT "RAVEN_PARALLEL=1")
+        else()
+            set_tests_properties(native_code_cache_fex_${parallel} PROPERTIES ENVIRONMENT_MODIFICATION "RAVEN_PARALLEL=unset:")
+        endif()
+    endforeach()
 endif()
 if(TARGET fex_modhost_substrate)
     add_test(NAME darwin_unix_declined_fault COMMAND ${Python3_EXECUTABLE}
