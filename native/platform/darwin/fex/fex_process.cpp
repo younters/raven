@@ -11,6 +11,7 @@ static bool raven_unix_fault_pc(uintptr_t pc);
 #define RAVEN_UNIX_PC_FILTER
 #define RAVEN_FEX_EMBEDDED
 #include "modhost/native_host.cpp"
+#include "code-cache/code_cache.h"
 #include <pthread.h>
 #include <mach/mach_vm.h>
 #include <libproc.h>
@@ -223,6 +224,7 @@ void notify_memory(const char *name, uint64_t *args, size_t after, const std::fu
 }
 void initialize_process(Bytes bytes, size_t opt)
 {
+	if (!wow64_module) raven_code_cache::configure(*process_environment);
 	initialize_image(bytes, opt, process_dispatch, process_exception);
 }
 }
@@ -474,8 +476,10 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 	std::string path = root + (wow64_module ? "/xtajit.dll" : "/xtajit64.dll");
 	char program[] = "raven-fex";
 	char *argv[]{program, path.data()};
+	if (!wow64_module) raven_code_cache::prepare(path);
 	if (map_module(2, argv, resolve, inspect_image, initialize_process, module_mapping))
 		throw std::runtime_error("FEX module initialization failed");
+	if (!wow64_module) raven_code_cache::started(thread_environment->teb.data());
 	if (!wow64_module && std::getenv("RAVEN_FEX_PROFILE_COMPILE")) {
         uint64_t args[8]{1, 0};
         raven_ec_call(mapped_image->export_address("RavenCompileProfile"), args, thread_environment->teb.data());
@@ -541,6 +545,7 @@ FexProcess::~FexProcess()
                 fprintf(stderr, "Raven profile pid=%d Raven invalidation reason=%llu start=%llx size=%llu count=%llu\n", getpid(), (unsigned long long)record[0], (unsigned long long)record[1], (unsigned long long)record[2], (unsigned long long)record[3]);
         }
     }
+	if (!wow64_module) raven_code_cache::finished(thread_environment->teb.data());
 	// Resident workers terminate their FEX thread before releasing private TLS.
 	state->workers.clear();
 	if (thread_environment) {
@@ -1116,6 +1121,8 @@ void FexProcess::map_image(LoadedImage &image)
 		protect_memory(address + at, end - at, protection);
 		at = end;
 	}
+	// After the final protections, so the loader's own writes do not mark it modified.
+	if (!wow64_module) raven_code_cache::register_image(state->host(address, n), n, thread_environment->teb.data());
 }
 std::pair<uint64_t, uint64_t> FexProcess::stack_bounds() const { return {state->guest(state->stack), state->stack_top}; }
 NativeMode FexProcess::mode() const { return state->mode; }

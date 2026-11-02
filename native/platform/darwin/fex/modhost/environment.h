@@ -50,6 +50,13 @@ struct ProcessEnvironment {
 	~ProcessEnvironment() {
 		munmap(code_bitmap, bitmap_size);
 	}
+	// NAME=value before the terminating empty entry; ProcessInit reads it through the CRT.
+	void add_environment(std::u16string_view entry) {
+		environment.insert(environment.size() - 1, entry);
+		environment.insert(environment.size() - 1, 1, u'\0');
+		auto *env = environment.data();
+		memcpy(parameters.data() + 0x80, &env, 8);
+	}
 	void mark_ec(uintptr_t begin, size_t size, bool present = true) {
 		if (begin >= (1ull << 47) || size > (1ull << 47) - begin)
 			throw std::runtime_error("EC address outside bitmap");

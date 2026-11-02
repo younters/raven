@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "xtajit64_sha256": "4de30d05d19cf5cbe2947c8d0b1fc9da6b615d12a5bff168e65bd0dae4f53409",
+  "xtajit64_sha256": "13cd2b9108e2a5d053be938c95f482d5d6f24083e7ad49fdaddaace1fd045f88",
   "raven_process_init_rva": 28764,
   "patches": {
     "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
@@ -32,9 +32,10 @@
     "0060-raven-retranslation-profile.patch": "f6eb04b83a6ec2522126419390d3edcfee43c6decf1446f68a0ee0607892f8e4",
     "0061-raven-retain-immutable-translations.patch": "a33ced96ff2e8ecb1440e917d4889fe0b2615a2521eee963071ebdd01f10ea74",
     "0062-raven-profile-records.patch": "ebc254f0503a74adbcc95cb48ffb71d7f51873de3af046061f57787adcaefdfc",
-    "0063-raven-shared-code-validation.patch": "9bc81740c9cca1b6f16d970d297bdef645499e4202581f5635bbf14b2ffefcf8"
+    "0063-raven-shared-code-validation.patch": "9bc81740c9cca1b6f16d970d297bdef645499e4202581f5635bbf14b2ffefcf8",
+    "0064-raven-code-cache.patch": "132f054b31bb9d8280abe182b03bc3d9f2a4341e1df3a65cc73bf59f4420e12f"
   },
-  "xtajit_sha256": "ac0ea9a69e8a304305681e449646540482edaadde785e3b310a602a3f7824579",
+  "xtajit_sha256": "40d93a9998d981a979d59e1aadf18df6dbd0fc07c01fc211771f97d63e750334",
   "raven_wow64_process_init_rva": 31180,
   "raven_wow64_process_init_instruction": 4162785278,
   "shared_patch12_xtajit_sha256": "5c785d47c43d8f2d0a444e82114ca731499b8a9e2ac408679b212db46c76bd6b",

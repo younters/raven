@@ -41,6 +41,8 @@ void *thread_start(void *opaque) {
 	c->pthread = pthread_self();
 	pthread_threadid_np(nullptr, &c->tid);
 	c->environment = std::make_unique<ThreadEnvironment>(*active_process);
+	if (active_image)
+		active_image->install_tls(*c->environment);
 	active_thread = c->environment.get();
 	{
 		std::lock_guard<std::mutex> guard(c->mutex);
@@ -71,7 +73,8 @@ int32_t create_thread(void **out, uint32_t access, ObjectAttributes *attributes,
 		*out = nullptr;
 	if (!out || !function || !active_process)
 		return invalid_parameter;
-	if (intptr_t(process) != -1 || attributes || zero || list || (flags & ~0x56u))
+	// 0x20 (skip loader init) is moot here: FEX's internal threads initialize their own CRT.
+	if (intptr_t(process) != -1 || attributes || zero || list || (flags & ~0x76u))
 		return not_supported;
 	auto h = std::make_shared<Handle>(Handle::thread);
 	h->access = access;

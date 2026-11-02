@@ -314,7 +314,11 @@ int32_t lock_file(void *handle, void *event, void *apc, void *, IoStatus *io, co
 	const int64_t *length, uint32_t key, uint64_t fail, uint64_t exclusive) {
 	fail = uint8_t(fail);
 	exclusive = uint8_t(exclusive);
-	if (!io || !offset || !length)
+	// FEX's LockFileEx passes no status block, as Wine requires.
+	IoStatus ignored{};
+	if (!io)
+		io = &ignored;
+	if (!offset || !length)
 		return invalid_parameter;
 	*io = {0, 0};
 	auto h = get_handle(handle);

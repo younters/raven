@@ -1,0 +1,765 @@
+--- a/FEXCore/include/FEXCore/Core/DiskCache.h
++++ b/FEXCore/include/FEXCore/Core/DiskCache.h
+@@ -66,6 +66,10 @@
+     fextl::shared_ptr<fextl::vector<uint8_t>> MemoryBlob;
+     fextl::vector<uint32_t> GuestExtents;
+     std::optional<fextl::list<MemoryLRUKey>::iterator> LRUEntry;
++#ifdef FEX_RAVEN_DIVIDE
++    // XXH3-64 of the stored blob up to its guest code, seeded with the lookup key.
++    uint64_t BlobHash = 0;
++#endif
+   };
+ 
+   struct IndexCacheHead {
+@@ -152,6 +156,9 @@
+     bool ReadAll(fextl::vector<uint8_t>& Out); // from first blob
+     bool ReadBlob(uint64_t Offset, std::span<uint8_t> OutBlob);
+     bool WriteBlob(const MesaFOZ::foz_payload_key& Key, std::span<const std::span<const uint8_t>> BlobChunks, uint64_t& OutBlobOffset);
++#ifdef FEX_RAVEN_DIVIDE
++    bool RavenTruncate(uint64_t Size);
++#endif
+ 
+   private:
+     static constexpr uint32_t OPEN_LOCK_TIMEOUT_MS = 100;
+@@ -172,6 +179,12 @@
+     bool Full() const {
+       return MaxSizeReached;
+     }
++#ifdef FEX_RAVEN_DIVIDE
++    void RavenPopulateIndex(Index& CacheIndex, bool& FoundMetadata);
++    bool Damaged() const {
++      return IsDamaged;
++    }
++#endif
+ 
+   private:
+     // stores run on the Writer, so returning quick isn't as important
+@@ -186,6 +199,12 @@
+     FOZFile IndexFOZ;
+     bool ReadOnly = false;
+     std::atomic<bool> MaxSizeReached {};
++#ifdef FEX_RAVEN_DIVIDE
++    bool IsDamaged = false;
++    // End of the last whole index record seen; appends follow it.
++    uint64_t IndexEnd = 0;
++    bool RavenTrimIndexTail();
++#endif
+ 
+     FEX_CONFIG_OPT(MaxFileSize, DISKCACHEMAXFILESIZE);
+     FEX_CONFIG_OPT(MapDiskCacheFiles, DISKCACHEFILEMAPPING);
+@@ -212,6 +231,12 @@
+     bool IsValidating() const {
+       return Validation;
+     }
++#ifdef FEX_RAVEN_DIVIDE
++    // Values: hits, misses, stores, rejected (integrity), skipped (writable/shared), damaged, reading.
++    void RavenStats(uint64_t* Values) const;
++    // Waits (bounded) until queued stores reach the file.
++    void RavenFlush();
++#endif
+ 
+   private:
+     bool OpenCacheDB(const fextl::string& CacheDBName, bool ReadOnly);
+@@ -229,6 +254,11 @@
+     std::mutex IndexLock;
+     bool FoundMetadata = false;
+     struct CacheStoreWorkItem;
++#ifdef FEX_RAVEN_DIVIDE
++    struct FlushWorkItem;
++    std::atomic<uint64_t> RavenHits {}, RavenMisses {}, RavenStores {}, RavenRejected {}, RavenSkipped {};
++    bool RavenDamaged = false;
++#endif
+ 
+     struct PruneMemoryLRUWorkItem;
+     std::atomic<uint64_t> MemoryLRUCurrentSize {};
+@@ -255,7 +285,12 @@
+   // TODO: This header is in global installed header path, but uses internal headers.
+   // Migrate this once that is fixed.
+   // Owned Darwin codegen, including operand spans and restartable string/gather operations.
++#ifdef FEX_RAVEN_DIVIDE
++  // Raven: index records carry a blob integrity hash.
++  static constexpr uint16_t FormatVersion = 0xA6E1;
++#else
+   static constexpr uint16_t FormatVersion = 0xA613;
++#endif
+   FEX_DEFAULT_VISIBILITY uint16_t GetFormatVersion();
+ 
+   static constexpr uint32_t LOOKUP_KEY_MAX_BUCKET_DEPTH = 500;
+--- a/FEXCore/Source/Interface/Core/DiskCache.cpp
++++ b/FEXCore/Source/Interface/Core/DiskCache.cpp
+@@ -21,6 +21,10 @@
+ #include <cstdint>
+ #include <cstring>
+ #include <atomic>
++#ifdef FEX_RAVEN_DIVIDE
++#include <chrono>
++#include <thread>
++#endif
+ 
+ #ifdef _WIN32
+ #include <winternl.h>
+@@ -61,6 +65,9 @@
+     uint64_t GuestFootprint;
+     uint32_t GuestSize;
+     uint32_t GuestExtentsCount;
++#ifdef FEX_RAVEN_DIVIDE
++    uint64_t BlobHash;
++#endif
+   };
+ 
+   static FileMapperFunc FileMapper = nullptr;
+@@ -176,6 +183,22 @@
+     return true;
+   }
+ 
++#ifdef FEX_RAVEN_DIVIDE
++  bool FOZFile::RavenTruncate(uint64_t Size) {
++    if (!FD) {
++      return false;
++    }
++#ifdef _WIN32
++    IO_STATUS_BLOCK IoStatus;
++    FILE_END_OF_FILE_INFORMATION Info {};
++    Info.EndOfFile.QuadPart = static_cast<LONGLONG>(Size);
++    return NtSetInformationFile(FD->GetHandle(), &IoStatus, &Info, sizeof(Info), FileEndOfFileInformation) >= 0;
++#else
++    return ftruncate(FD->GetHandle(), Size) == 0;
++#endif
++  }
++#endif
++
+   bool IndexedDB::Open(const fextl::string& CacheDBName, bool ReadOnly) {
+     if (!CacheFOZ.Open(CacheDBName + ".foz", ReadOnly)) {
+       return false;
+@@ -238,7 +261,14 @@
+     const uint8_t* IndexDataStart = Data.data();
+     const size_t IndexDataSize = Data.size();
+     size_t ReadOffset = 0;
++#ifdef FEX_RAVEN_DIVIDE
++    size_t WholeRecordsEnd = 0;
++    bool Stopped = false;
++#endif
+     while (ReadOffset + sizeof(MesaFOZ::foz_payload_key) + sizeof(MesaFOZ::foz_payload_header) <= IndexDataSize) {
++#ifdef FEX_RAVEN_DIVIDE
++      WholeRecordsEnd = ReadOffset;
++#endif
+       const auto* FOZKey = reinterpret_cast<const MesaFOZ::foz_payload_key*>(IndexDataStart + ReadOffset);
+       ReadOffset += sizeof(MesaFOZ::foz_payload_key);
+       const auto* FOZHeader = reinterpret_cast<const MesaFOZ::foz_payload_header*>(IndexDataStart + ReadOffset);
+@@ -247,6 +277,12 @@
+       uint64_t IndexBlobSize = sizeof(MesaFOZ::mesa_index_db_file_entry) + sizeof(IndexExtraBlobHeader);
+ 
+       if (FOZHeader->payload_size < IndexBlobSize || ReadOffset + FOZHeader->payload_size > IndexDataSize) {
++#ifdef FEX_RAVEN_DIVIDE
++        // A record cut short by a writer killed mid-append is a torn tail, not damage: the
++        // blob it would describe is complete or unreferenced. A record too small to be one is.
++        Stopped = true;
++        IsDamaged |= FOZHeader->payload_size < IndexBlobSize;
++#endif
+         break;
+       }
+       const auto* IndexBlobCommon = reinterpret_cast<const MesaFOZ::mesa_index_db_file_entry*>(IndexDataStart + ReadOffset);
+@@ -257,13 +293,26 @@
+       // skip corrupt (carefully) so we don't have to figure that out in the hot path later
+       if (IndexBlobCommon->cache_db_file_offset > (uint64_t)CacheFOZSize ||
+           IndexBlobCommon->size > (uint64_t)CacheFOZSize - IndexBlobCommon->cache_db_file_offset) {
++#ifdef FEX_RAVEN_DIVIDE
++        // Records are appended after their blob under both locks; this is truncation or damage.
++        IsDamaged = true;
++        ReadOffset = ReadOffset - sizeof(MesaFOZ::mesa_index_db_file_entry) - sizeof(IndexExtraBlobHeader) + FOZHeader->payload_size;
++#endif
+         continue;
+       }
+       if (IndexBlobExtra->GuestSize + sizeof(BlobFixedHeader) > IndexBlobCommon->size) {
++#ifdef FEX_RAVEN_DIVIDE
++        IsDamaged = true;
++        ReadOffset = ReadOffset - sizeof(MesaFOZ::mesa_index_db_file_entry) - sizeof(IndexExtraBlobHeader) + FOZHeader->payload_size;
++#endif
+         continue;
+       }
+       IndexBlobSize += IndexBlobExtra->GuestExtentsCount * sizeof(uint32_t);
+       if (FOZHeader->payload_size != IndexBlobSize) {
++#ifdef FEX_RAVEN_DIVIDE
++        Stopped = true;
++        IsDamaged = true;
++#endif
+         break;
+       }
+       const auto* GuestExtents = reinterpret_cast<const uint32_t*>(IndexDataStart + ReadOffset);
+@@ -271,6 +320,9 @@
+       if (FOZKey->bytes[39] != 0xFF) {
+         IndexEntry NewEntry {this, IndexBlobCommon->cache_db_file_offset, IndexBlobCommon->size, IndexBlobExtra->GuestSize,
+                              IndexBlobExtra->GuestHash};
++#ifdef FEX_RAVEN_DIVIDE
++        NewEntry.BlobHash = IndexBlobExtra->BlobHash;
++#endif
+         NewEntry.GuestExtents.resize(IndexBlobExtra->GuestExtentsCount);
+         memcpy(NewEntry.GuestExtents.data(), GuestExtents, IndexBlobExtra->GuestExtentsCount * sizeof(uint32_t));
+         bool ExtentsValid = true;
+@@ -281,6 +333,9 @@
+           }
+         }
+         if (!ExtentsValid) {
++#ifdef FEX_RAVEN_DIVIDE
++          IsDamaged = true;
++#endif
+           continue;
+         }
+         auto It = CacheIndex.find(IndexBlobCommon->hash);
+@@ -297,8 +352,58 @@
+       }
+     }
+     // could truncate/delete index if we don't end up perfectly at end here
++#ifdef FEX_RAVEN_DIVIDE
++    // Bytes after the last whole record (fewer than a header, or a cut-short record) are a torn tail.
++    IndexEnd = FOZ_REF_MAGIC_SIZE + (Stopped ? WholeRecordsEnd : ReadOffset);
++#endif
+   }
+ 
++#ifdef FEX_RAVEN_DIVIDE
++  // Under both locks: step over records other processes appended since IndexEnd, then cut a
++  // record a killed writer left unfinished, so later appends stay reachable by readers.
++  bool IndexedDB::RavenTrimIndexTail() {
++    constexpr uint64_t RecordHeader = sizeof(MesaFOZ::foz_payload_key) + sizeof(MesaFOZ::foz_payload_header);
++    const ssize_t Size = IndexFOZ.Size();
++    if (Size < FOZ_REF_MAGIC_SIZE) {
++      return false;
++    }
++    if (IndexEnd < FOZ_REF_MAGIC_SIZE || IndexEnd > static_cast<uint64_t>(Size)) {
++      IndexEnd = FOZ_REF_MAGIC_SIZE;
++    }
++    fextl::vector<uint8_t> Tail(static_cast<uint64_t>(Size) - IndexEnd);
++    if (!Tail.empty() && !IndexFOZ.ReadBlob(IndexEnd, Tail)) {
++      return false;
++    }
++    uint64_t Offset = 0;
++    while (Offset + RecordHeader <= Tail.size()) {
++      MesaFOZ::foz_payload_header Header;
++      memcpy(&Header, Tail.data() + Offset + sizeof(MesaFOZ::foz_payload_key), sizeof(Header));
++      if (Header.payload_size > Tail.size() - Offset - RecordHeader) {
++        break;
++      }
++      Offset += RecordHeader + Header.payload_size;
++    }
++    IndexEnd += Offset;
++    return IndexEnd == static_cast<uint64_t>(Size) || IndexFOZ.RavenTruncate(IndexEnd);
++  }
++
++  void IndexedDB::RavenPopulateIndex(Index& CacheIndex, bool& FoundMetadata) {
++    // Writers append under both locks; holding them gives a snapshot of whole records.
++    const bool Locked = CacheFOZ.Lock(STORE_LOCK_TIMEOUT_MS) && IndexFOZ.Lock(STORE_LOCK_TIMEOUT_MS);
++    PopulateIndex(CacheIndex, FoundMetadata);
++    CacheFOZ.Unlock();
++    IndexFOZ.Unlock();
++    if (!Locked) {
++      // A torn tail from a live writer is not damage.
++      IsDamaged = false;
++    }
++    // Stop appending after damage: new blobs could land where stale records point.
++    if (IsDamaged && !ReadOnly) {
++      MaxSizeReached = true;
++    }
++  }
++#endif
++
+   bool IndexedDB::ReadCacheBlob(uint64_t Offset, std::span<uint8_t> OutBlob) {
+     if (OutBlob.size() > UINT64_MAX - Offset) {
+       return false;
+@@ -329,10 +434,18 @@
+     }
+ 
+     if (!CacheFOZ.Lock(STORE_LOCK_TIMEOUT_MS) || !IndexFOZ.Lock(STORE_LOCK_TIMEOUT_MS)) {
++      CacheFOZ.Unlock();
++      IndexFOZ.Unlock();
++      return false;
++    }
++
++#ifdef FEX_RAVEN_DIVIDE
++    if (!RavenTrimIndexTail()) {
+       CacheFOZ.Unlock();
+       IndexFOZ.Unlock();
+       return false;
+     }
++#endif
+ 
+     // Account for the FOZ wrapper and other writers while holding the file lock.
+     const ssize_t FileSize = CacheFOZ.Size();
+@@ -370,6 +483,9 @@
+       IndexFOZ.Unlock();
+       return false;
+     }
++#ifdef FEX_RAVEN_DIVIDE
++    IndexEnd = UnusedIndexBlobOffset + sizeof(IndexEntry) + IndexBlob.size();
++#endif
+ 
+     CacheFOZ.Unlock();
+     IndexFOZ.Unlock();
+@@ -400,7 +516,12 @@
+       return false;
+     }
+ 
++#ifdef FEX_RAVEN_DIVIDE
++    CurDB->RavenPopulateIndex(Index, FoundMetadata);
++    RavenDamaged |= CurDB->Damaged();
++#else
+     CurDB->PopulateIndex(Index, FoundMetadata);
++#endif
+ 
+     if (ReadOnly) {
+       ROCacheDBs.push_back(std::move(CurDB));
+@@ -512,12 +633,19 @@
+       &SimpleCapture);
+   }
+ 
++#ifdef FEX_RAVEN_DIVIDE
++  static DiskCache* RavenActive = nullptr;
++#endif
++
+   void DiskCache::Init(FEXCore::Context::ContextImpl* CTX) {
+     this->CTX = CTX;
+ 
+     if (!EnableDiskCache) {
+       return;
+     }
++#ifdef FEX_RAVEN_DIVIDE
++    RavenActive = this;
++#endif
+ 
+     fextl::string SerializedConfig = FEXCore::Config::SerializeForCache();
+ 
+@@ -668,6 +796,12 @@
+     if (!IsReadingDiskCache()) {
+       return std::nullopt;
+     }
++#ifdef FEX_RAVEN_DIVIDE
++    // Only registered, unmodified file-backed image sections qualify; never anonymous or JIT memory.
++    if (!Region || !Region->FileStartVA) {
++      return std::nullopt;
++    }
++#endif
+     if (Region && Region->FileStartVA) {
+       struct __attribute__((packed)) {
+         uint64_t GuestOffset;
+@@ -706,6 +840,15 @@
+     }
+ 
+     auto RangeInfo = CTX->SyscallHandler->QueryGuestExecutableRange(Thread, GuestRIP);
++#ifdef FEX_RAVEN_DIVIDE
++    // Writable (RWX) and shared views need inline byte validation; neither is looked up nor stored.
++    if (RangeInfo.Size == 0 || RangeInfo.Base > GuestRIP || RangeInfo.Writable) {
++      RavenSkipped.fetch_add(1, std::memory_order_relaxed);
++      GuestCodeKey.reset();
++      return std::nullopt;
++    }
++    RavenMisses.fetch_add(1, std::memory_order_relaxed);
++#endif
+     if (RangeInfo.Size == 0 || RangeInfo.Base > GuestRIP) {
+       return std::nullopt;
+     }
+@@ -913,6 +1056,12 @@
+     if (EntrySizeWithoutGuestCode < sizeof(BlobFixedHeader)) {
+       return std::nullopt;
+     }
++#ifdef FEX_RAVEN_DIVIDE
++    if (XXH3_64bits_withSeed(HitData.Blob.data() + BlobOffset, EntrySizeWithoutGuestCode, LookupKey) != Entry.BlobHash) {
++      RavenRejected.fetch_add(1, std::memory_order_relaxed);
++      return std::nullopt;
++    }
++#endif
+     BlobFixedHeader Header;
+     memcpy(&Header, HitData.Blob.data() + BlobOffset, sizeof(Header));
+     BlobOffset += sizeof(Header);
+@@ -973,6 +1122,10 @@
+       return std::nullopt;
+     }
+ 
++#ifdef FEX_RAVEN_DIVIDE
++    RavenMisses.fetch_sub(1, std::memory_order_relaxed);
++    RavenHits.fetch_add(1, std::memory_order_relaxed);
++#endif
+     return HitData;
+   }
+ 
+@@ -1325,13 +1478,30 @@
+     }
+ 
+     auto RangeInfo = CTX->SyscallHandler->QueryGuestExecutableRange(Thread, GuestRIP);
++#ifdef FEX_RAVEN_DIVIDE
++    if (!Region || !Region->FileStartVA || RangeInfo.Size == 0 || RangeInfo.Writable) {
++      return false;
++    }
++    // Checked after hashing GuestCode: a write since compilation marks the section modified before
++    // the page becomes writable, so a hash of changed bytes is never paired with stale code.
++    const auto Current = CTX->SyscallHandler->LookupExecutableFileSection(Thread, GuestRIP);
++    if (!Current || Current->FileInfo.FileId != Region->FileInfo.FileId) {
++      return false;
++    }
++#endif
+     uint64_t LookupKey =
+       MakeLookupKey(Thread, GuestCodeKey, RangeInfo.Writable, GuestRIP == CTX->GetMonoBackPatcherBlock().load(std::memory_order_relaxed));
++#ifdef FEX_RAVEN_DIVIDE
++    const uint64_t BlobHash = XXH3_64bits_withSeed(BlobData, GuestCodeOffset, LookupKey);
++#endif
+ 
+     // blob done, publish to index as in-memory for now, flush to disk below
+     auto BlobRef = fextl::make_shared<fextl::vector<uint8_t>>(std::move(Blob));
+     struct IndexEntry NewEntry {nullptr, 0, (uint32_t)TotalSize, Header.GuestSize, Header.GuestHash, BlobRef};
+     NewEntry.GuestExtents = ExactGuestCodeExtents;
++#ifdef FEX_RAVEN_DIVIDE
++    NewEntry.BlobHash = BlobHash;
++#endif
+     {
+       std::lock_guard Guard(IndexLock);
+       auto It = Index.find(LookupKey);
+@@ -1372,7 +1542,11 @@
+     fextl::vector<uint8_t> IndexBlob;
+     IndexBlob.resize(sizeof(IndexExtraBlobHeader) + ExactGuestCodeExtents.size() * sizeof(uint32_t));
+ 
++#ifdef FEX_RAVEN_DIVIDE
++    IndexExtraBlobHeader IndexBlobHeader {Header.GuestHash, GuestFootprint, Header.GuestSize, (uint32_t)ExactGuestCodeExtents.size(), BlobHash};
++#else
+     IndexExtraBlobHeader IndexBlobHeader {Header.GuestHash, GuestFootprint, Header.GuestSize, (uint32_t)ExactGuestCodeExtents.size()};
++#endif
+     memcpy(IndexBlob.data(), &IndexBlobHeader, sizeof(IndexExtraBlobHeader));
+     memcpy(IndexBlob.data() + sizeof(IndexExtraBlobHeader), ExactGuestCodeExtents.data(), ExactGuestCodeExtents.size() * sizeof(uint32_t));
+ 
+@@ -1385,9 +1559,59 @@
+     // hand the rest off to the writer thread
+     Writer->QueueWork(fextl::make_unique<CacheStoreWorkItem>(this, RWCacheDB.get(), Key, LookupKey, std::move(BlobRef),
+                                                              std::move(IndexBlob), StoreDisk));
++#ifdef FEX_RAVEN_DIVIDE
++    RavenStores.fetch_add(1, std::memory_order_relaxed);
++#endif
+     return true;
+   }
+ 
++#ifdef FEX_RAVEN_DIVIDE
++  struct DiskCache::FlushWorkItem final : WorkQueueThread::WorkItem {
++    fextl::shared_ptr<std::atomic<bool>> Done;
++    explicit FlushWorkItem(fextl::shared_ptr<std::atomic<bool>> Done)
++      : Done(std::move(Done)) {}
++    void Run() override {
++      Done->store(true, std::memory_order_release);
++    }
++  };
++
++  void DiskCache::RavenFlush() {
++    if (!Writer) {
++      return;
++    }
++    // Poll rather than wait on a condition variable: this runs on a Raven host thread.
++    auto Done = fextl::make_shared<std::atomic<bool>>(false);
++    Writer->QueueWork(fextl::make_unique<FlushWorkItem>(Done));
++    // Bounded: exit must not wait long on a writer queued behind other processes' locks.
++    const auto Deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
++    while (!Done->load(std::memory_order_acquire) && std::chrono::steady_clock::now() < Deadline) {
++      std::this_thread::sleep_for(std::chrono::milliseconds(1));
++    }
++  }
++
++  // Op 2: copy stats into Values[0..6]. Op 3: flush queued stores, then copy stats.
++  extern "C" bool RavenDiskCacheControl(uint64_t Op, uint64_t* Values) {
++    if (!RavenActive || !Values || (Op != 2 && Op != 3)) {
++      return false;
++    }
++    if (Op == 3) {
++      RavenActive->RavenFlush();
++    }
++    RavenActive->RavenStats(Values);
++    return true;
++  }
++
++  void DiskCache::RavenStats(uint64_t* Values) const {
++    Values[0] = RavenHits.load(std::memory_order_relaxed);
++    Values[1] = RavenMisses.load(std::memory_order_relaxed);
++    Values[2] = RavenStores.load(std::memory_order_relaxed);
++    Values[3] = RavenRejected.load(std::memory_order_relaxed);
++    Values[4] = RavenSkipped.load(std::memory_order_relaxed);
++    Values[5] = RavenDamaged;
++    Values[6] = ReadingDiskCache;
++  }
++#endif
++
+   uint16_t GetFormatVersion() {
+     return FormatVersion;
+   }
+--- a/Source/Windows/Common/ImageTracker.h
++++ b/Source/Windows/Common/ImageTracker.h
+@@ -44,6 +44,15 @@
+ 
+   std::optional<FEXCore::ExecutableFileSectionInfo> LookupExecutableFileSection(uint64_t Address);
+ 
++#ifdef RAVEN_HOST
++  // Raven maps guest images itself. Registers each executable, non-writable section of the
++  // validated PE image at Address; FileId hashes those sections' bytes. Returns the section count.
++  size_t RegisterRavenImage(uint64_t Address, uint64_t Size);
++  // Sections overlapping a range whose bytes may change stop qualifying for the code cache.
++  void MarkRavenModified(uint64_t Address, uint64_t Size);
++  void UnregisterRavenRange(uint64_t Address, uint64_t Size);
++#endif
++
+   int OpenCodeMapFile() override;
+ 
+ private:
+@@ -53,6 +62,12 @@
+ 
+     MappedImageInfo(std::string_view Path, uint64_t Address, ArchImageNtHeaders* Nt,
+                     fextl::robin_map<uint32_t, FEXCore::GuestRelocationType> Relocations);
++#ifdef RAVEN_HOST
++    MappedImageInfo(uint64_t FileId, uint64_t Address, uint64_t EndVA, uint64_t SectionEnd);
++    // Lookups match only [key, SectionEnd); SectionInfo spans the image so in-image data relocates.
++    uint64_t SectionEnd = 0;
++    bool Modified = false;
++#endif
+   };
+ 
+   struct AOTImageInfo {
+--- a/Source/Windows/Common/ImageTracker.cpp
++++ b/Source/Windows/Common/ImageTracker.cpp
+@@ -20,6 +20,9 @@
+ #include <fcntl.h>
+ #include <io.h>
+ #include <winternl.h>
++#ifdef RAVEN_HOST
++#define XXH_STATIC_LINKING_ONLY
++#endif
+ #include <xxhash.h>
+ 
+ #include "Handle.h"
+@@ -124,7 +127,113 @@
+           .Filename = ToLower(Path), // Normalize path case as Windows paths are case-insensitive
+           .Relocations = std::move(Relocations)}
+   , SectionInfo {.FileInfo = Info, .FileStartVA = Address, .BeginVA = Address, .EndVA = Address + Nt->OptionalHeader.SizeOfImage} {}
++
++#ifdef RAVEN_HOST
++ImageTracker::MappedImageInfo::MappedImageInfo(uint64_t FileId, uint64_t Address, uint64_t EndVA, uint64_t SectionEnd)
++  : Info {.FileId = FileId, .Filename = "raven-image"}
++  , SectionInfo {.FileInfo = Info, .FileStartVA = Address, .BeginVA = Address, .EndVA = EndVA}
++  , SectionEnd {SectionEnd} {}
++
++size_t ImageTracker::RegisterRavenImage(uint64_t Address, uint64_t Size) {
++  // Raven's loader validated this image, but parse it again with every offset bounded by Size.
++  const auto* Base = reinterpret_cast<const uint8_t*>(Address);
++  const auto Read32 = [&](uint64_t Offset) {
++    uint32_t Value;
++    memcpy(&Value, Base + Offset, sizeof(Value));
++    return Value;
++  };
++  const auto Read16 = [&](uint64_t Offset) {
++    uint16_t Value;
++    memcpy(&Value, Base + Offset, sizeof(Value));
++    return Value;
++  };
++  if (!Address || Size < 0x40 || Read16(0) != IMAGE_DOS_SIGNATURE) {
++    return 0;
++  }
++  const uint64_t Nt = Read32(0x3c);
++  if (Nt > Size - sizeof(ArchImageNtHeaders) || Read32(Nt) != IMAGE_NT_SIGNATURE) {
++    return 0;
++  }
++  const auto* Headers = reinterpret_cast<const ArchImageNtHeaders*>(Base + Nt);
++#ifdef ARCHITECTURE_arm64ec
++  if (Headers->FileHeader.Machine != IMAGE_FILE_MACHINE_AMD64 || Headers->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
++    return 0;
++  }
++#else
++  if (Headers->FileHeader.Machine != IMAGE_FILE_MACHINE_I386 || Headers->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
++    return 0;
++  }
++#endif
++  const uint64_t ImageSize = Headers->OptionalHeader.SizeOfImage;
++  const uint64_t SectionTable = Nt + offsetof(ArchImageNtHeaders, OptionalHeader) + Headers->FileHeader.SizeOfOptionalHeader;
++  const uint64_t Count = Headers->FileHeader.NumberOfSections;
++  if (ImageSize > Size || SectionTable > Size || Count * sizeof(IMAGE_SECTION_HEADER) > Size - SectionTable) {
++    return 0;
++  }
++
++  struct Range {
++    uint64_t Begin, End;
++  };
++  fextl::vector<Range> Sections;
++  XXH3_state_t State;
++  XXH3_64bits_reset(&State);
++  const uint32_t Identity[2] = {Headers->FileHeader.TimeDateStamp, static_cast<uint32_t>(ImageSize)};
++  XXH3_64bits_update(&State, Identity, sizeof(Identity));
++  for (uint64_t I = 0; I < Count; ++I) {
++    IMAGE_SECTION_HEADER Section;
++    memcpy(&Section, Base + SectionTable + I * sizeof(Section), sizeof(Section));
++    if (!(Section.Characteristics & IMAGE_SCN_MEM_EXECUTE) || (Section.Characteristics & IMAGE_SCN_MEM_WRITE)) {
++      continue;
++    }
++    const uint64_t Begin = Section.VirtualAddress;
++    const uint64_t Length = std::max<uint64_t>(Section.Misc.VirtualSize, Section.SizeOfRawData);
++    if (!Length || Begin >= ImageSize || Length > ImageSize - Begin) {
++      continue;
++    }
++    const uint64_t Bounds[2] = {Begin, Length};
++    XXH3_64bits_update(&State, Bounds, sizeof(Bounds));
++    XXH3_64bits_update(&State, Base + Begin, Length);
++    Sections.push_back({Address + Begin, Address + Begin + Length});
++  }
++  if (Sections.empty()) {
++    return 0;
++  }
++  const uint64_t FileId = XXH3_64bits_digest(&State);
+ 
++  std::scoped_lock Lock(CTX.GetCodeInvalidationMutex());
++  std::unique_lock Lk {ImagesLock};
++  for (const auto& Section : Sections) {
++    MappedImages.erase(Section.Begin);
++    MappedImages.emplace(std::piecewise_construct, std::forward_as_tuple(Section.Begin),
++                         std::forward_as_tuple(FileId, Address - GuestBase, Address + ImageSize - GuestBase, Section.End));
++  }
++  return Sections.size();
++}
++
++void ImageTracker::MarkRavenModified(uint64_t Address, uint64_t Size) {
++  std::unique_lock Lk {ImagesLock};
++  auto It = MappedImages.upper_bound(Address);
++  if (It != MappedImages.begin()) {
++    --It;
++  }
++  for (; It != MappedImages.end() && It->first < Address + Size; ++It) {
++    if (It->second.SectionEnd > Address) {
++      It->second.Modified = true;
++    }
++  }
++}
++
++void ImageTracker::UnregisterRavenRange(uint64_t Address, uint64_t Size) {
++  // Lookups return references into these nodes; compilation holds the invalidation lock shared.
++  std::scoped_lock Lock(CTX.GetCodeInvalidationMutex());
++  std::unique_lock Lk {ImagesLock};
++  auto It = MappedImages.lower_bound(Address);
++  while (It != MappedImages.end() && It->first < Address + Size) {
++    It = MappedImages.erase(It);
++  }
++}
++#endif
++
+ FEXCore::ExecutableFileSectionInfo ImageTracker::HandleImageMap(std::string_view Path, uint64_t Address, bool MainImage) {
+   std::scoped_lock Lock(CTX.GetCodeInvalidationMutex());
+   const fextl::string ModuleName {BaseName(Path)};
+@@ -216,6 +325,11 @@
+   if (It == MappedImages.begin() || std::prev(It)->second.SectionInfo.EndVA + GuestBase <= Address) {
+     return {};
+   }
++#ifdef RAVEN_HOST
++  if (std::prev(It)->second.SectionEnd && (std::prev(It)->second.SectionEnd <= Address || std::prev(It)->second.Modified)) {
++    return {};
++  }
++#endif
+   return std::prev(It)->second.SectionInfo;
+ }
+ 
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -1079,6 +1079,16 @@
+   return STATUS_SUCCESS;
+ }
+ 
++#ifdef RAVEN_HOST
++// Any image byte that may change disqualifies its section from the code cache for this process.
++// A null flush has no range: live-byte validation on every cache hit still covers it.
++static void RavenMarkImageModified(const void* Address, SIZE_T Size) {
++  if (Address && Size) {
++    ImageTracker->MarkRavenModified(reinterpret_cast<uint64_t>(Address), static_cast<uint64_t>(Size));
++  }
++}
++#endif
++
+ void NotifyMemoryAlloc(void* Address, SIZE_T Size, ULONG Type, ULONG Prot, BOOL After, NTSTATUS Status) {
+   if (!InvalidationTracker || !GetCPUArea().ThreadState()) {
+     return;
+@@ -1102,9 +1112,17 @@
+ 
+   if (!After) {
+     ThreadCreationMutex.lock();
++#ifdef RAVEN_HOST
++    RavenMarkImageModified(Address, Size);
++#endif
+   } else {
+     if (!Status) {
+       InvalidationTracker->InvalidateAlignedInterval(reinterpret_cast<uint64_t>(Address), static_cast<uint64_t>(Size), true);
++#ifdef RAVEN_HOST
++      if (FreeType & MEM_RELEASE) {
++        ImageTracker->UnregisterRavenRange(reinterpret_cast<uint64_t>(Address), static_cast<uint64_t>(Size));
++      }
++#endif
+     }
+     ThreadCreationMutex.unlock();
+   }
+@@ -1117,6 +1135,12 @@
+ 
+   if (!After) {
+     ThreadCreationMutex.lock();
++#ifdef RAVEN_HOST
++    // Before the host change: a compile that has not stored yet must see the section as modified.
++    if (NewProt & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) {
++      RavenMarkImageModified(Address, Size);
++    }
++#endif
+   } else {
+     if (!Status) {
+       InvalidationTracker->HandleMemoryProtectionNotification(reinterpret_cast<uint64_t>(Address), static_cast<uint64_t>(Size), NewProt);
+@@ -1161,6 +1185,9 @@
+   }
+ 
+   std::scoped_lock Lock(ThreadCreationMutex);
++#ifdef RAVEN_HOST
++  RavenMarkImageModified(Address, Size);
++#endif
+   InvalidationTracker->InvalidateAlignedInterval(reinterpret_cast<uint64_t>(Address), static_cast<uint64_t>(Size), false);
+ }
+ 
+@@ -1170,6 +1197,9 @@
+   }
+ 
+   std::scoped_lock Lock(ThreadCreationMutex);
++#ifdef RAVEN_HOST
++  RavenMarkImageModified(Address, Size);
++#endif
+   InvalidationTracker->InvalidateAlignedInterval(reinterpret_cast<uint64_t>(Address), static_cast<uint64_t>(Size), false);
+ }
+ 
+@@ -1179,6 +1209,9 @@
+   }
+ 
+   std::scoped_lock Lock(ThreadCreationMutex);
++#ifdef RAVEN_HOST
++  RavenMarkImageModified(Address, Size);
++#endif
+   InvalidationTracker->InvalidateAlignedInterval(reinterpret_cast<uint64_t>(Address), static_cast<uint64_t>(Size), false);
+ }
+ 
+@@ -1384,5 +1417,23 @@
+   std::scoped_lock Lock(ThreadCreationMutex);
+   InvalidationTracker->MarkSharedMemory(Address, Size);
+ }
++extern "C" bool RavenDiskCacheControl(uint64_t Op, uint64_t* Values);
++// Op 1: register the guest image at (Address, Size); returns its qualifying section count.
++// Op 2: stats into Values[0..6]; op 3: flush queued stores first. Return 0 when the cache is off.
++extern "C" uint64_t RavenCodeCache(uint64_t Op, uint64_t Address, uint64_t Size) {
++  uint64_t Values[7] {};
++  if (!RavenDiskCacheControl(2, Values) || !Values[6]) {
++    return 0;
++  }
++  if (Op == 1) {
++    std::scoped_lock Lock(ThreadCreationMutex);
++    return ImageTracker->RegisterRavenImage(Address, Size);
++  }
++  if ((Op == 2 || Op == 3) && Address) {
++    RavenDiskCacheControl(Op, reinterpret_cast<uint64_t*>(Address));
++    return 1;
++  }
++  return 0;
++}
+ 
+ #endif
+--- a/Source/Windows/ARM64EC/libarm64ecfex.def
++++ b/Source/Windows/ARM64EC/libarm64ecfex.def
+@@ -30,3 +30,4 @@
+   RavenSetYmmHigh
+   RavenCompileProfile
+   RavenMarkSharedMemory
++  RavenCodeCache
