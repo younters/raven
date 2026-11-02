@@ -49,11 +49,14 @@ with tempfile.TemporaryDirectory(prefix='raven-code-cache-test-') as temp:
     check((apps['a'] / 'codecache_lib.dll').stat().st_size == (apps['b'] / 'codecache_lib.dll').stat().st_size)
     runs = 0
 
+    # One prefix for every run: the uncached baselines set it up, so later runs count only the client's lookups,
+    # not those of the prefix setup programs that would otherwise share the cache.
+    prefix = temp / 'prefix'
+    prefix.mkdir()
+
     def start(variant, cache):
         global runs
         runs += 1
-        prefix = temp / f'prefix-{runs}'
-        prefix.mkdir()
         env = dict(os.environ, RAVEN_PREFIX=str(prefix), RAVEN_FEX_MODULE_ROOT=str(modules), RAVEN_FEX_CODE_CACHE_STATS='1')
         if cache:
             env.update(RAVEN_FEX_CODE_CACHE='1', RAVEN_FEX_CODE_CACHE_DIR=str(cache))
@@ -77,8 +80,9 @@ with tempfile.TemporaryDirectory(prefix='raven-code-cache-test-') as temp:
         result = re.search(r'CODECACHE_RESULT=([0-9a-f]{8})', output)
         smc = re.search(r'CODECACHE_SMC=([0-9a-f]{8})', output)
         check(result and smc and smc[1] == '5ec0de02', f'{label}: missing result\n{output}')
-        stats = STATS.search(output)
-        stats = dict(zip(('hits', 'misses', 'stores', 'rejected', 'skipped', 'damaged', 'flush_timeout'), map(int, stats.groups()))) if stats else None
+        # Prefix setup runs helper programs first, each with its own line; the client's comes last.
+        stats = STATS.findall(output)
+        stats = dict(zip(('hits', 'misses', 'stores', 'rejected', 'skipped', 'damaged', 'flush_timeout'), map(int, stats[-1]))) if stats else None
         # The counts below assume every store reached the file before exit.
         check(not stats or not stats['flush_timeout'], f'{label}: exit flush timed out with stores still queued (machine overloaded?)\n{output}')
         print(f'{label}: result={result[1]} stats={stats}', flush=True)
