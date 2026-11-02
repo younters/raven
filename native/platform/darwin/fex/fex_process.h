@@ -103,6 +103,8 @@ std::string discover_fex_module_root();
 void select_fex_execution(bool enabled);
 bool fex_execution_selected();
 bool fex_address_available(uint64_t address, uint64_t size);
+// Where the x64 guest's own allocations start: 2 TiB, or above the dyld shared cache when its slide put it there.
+uint64_t fex_guest_floor();
 // Register the already-owned Mach-O pool before host startup.
 void fex_register_image_reservation(uint64_t address, uint64_t size);
 bool fex_image_pool_claimed(uint64_t address);

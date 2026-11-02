@@ -871,6 +871,26 @@ bool fex_address_available(uint64_t address, uint64_t size)
 	}
 	return status == KERN_INVALID_ADDRESS || (status == KERN_SUCCESS && base >= address + size);
 }
+uint64_t fex_guest_floor()
+{
+	// The dyld shared cache spans several GiB at a boot-time random slide and can sit at 2 TiB; a search that steps past it
+	// 64 KiB at a time gives up. Start at the first 4 GiB boundary from 2 TiB that has 4 GiB free above it.
+	constexpr uint64_t granule = 1ULL << 32;
+	uint64_t floor = 0x20000000000ULL;
+	for (int step = 0; step < 4096; ++step) {
+		mach_vm_address_t base = floor;
+		mach_vm_size_t length = 0;
+		vm_region_basic_info_data_64_t info{};
+		mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+		mach_port_t object = MACH_PORT_NULL;
+		const auto status = mach_vm_region(mach_task_self(), &base, &length, VM_REGION_BASIC_INFO_64,
+			reinterpret_cast<vm_region_info_t>(&info), &count, &object);
+		if (object) mach_port_deallocate(mach_task_self(), object);
+		if (status != KERN_SUCCESS || base >= floor + granule) return floor;
+		floor = (base + length + granule - 1) & ~(granule - 1);
+	}
+	return 0x20000000000ULL;
+}
 void fex_register_image_reservation(uint64_t address, uint64_t size)
 {
 	if (image_pool.size || !address || !size || mprotect(reinterpret_cast<void *>(address), size, PROT_NONE))
