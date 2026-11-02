@@ -79,7 +79,8 @@ def provision(destination, source_llvm=None, source_wine=None, hlsl_compiler="mi
     source = repository / "native/platform/darwin/dxmt/unix_adapter.m"
     adapter = native / "raven-dxmt.dylib"
     subprocess.run(["/usr/bin/clang", "-arch", "x86_64", "-dynamiclib", "-O2", "-Wall", "-Wextra", "-fblocks",
-                    str(source), str(source.with_name("presentation.m")), "-framework", "Foundation", "-framework", "Metal",
+                    str(source), str(source.with_name("presentation.m")), str(source.with_name("checked_memory.c")),
+                    "-framework", "Foundation", "-framework", "Metal",
                     "-framework", "IOSurface",
                     "-Wl,-install_name,@rpath/raven-dxmt.dylib", "-o", str(adapter)], check=True)
     with tarfile.open(destination / package["archive"], "r:gz") as archive:

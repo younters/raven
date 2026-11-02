@@ -35,6 +35,17 @@ done
 export PATH="$COMPONENTS/tools/bin:$(brew --prefix bison)/bin:$PATH"
 mkdir -p "$COMPONENTS/downloads" "$COMPONENTS/tools/bin"
 
+# DXMT's screen tests require Pillow at configure time. Keep Python packages out of Homebrew's managed environment.
+PYTHON="$COMPONENTS/python/bin/python3"
+if [ ! -x "$PYTHON" ]; then
+	step "Python environment"
+	python3 -m venv "$COMPONENTS/python"
+fi
+if ! "$PYTHON" -c 'import PIL' >/dev/null 2>&1; then
+	step "Pillow"
+	"$PYTHON" -m pip install Pillow
+fi
+
 # widl, the IDL compiler the ReactOS components need, is not packaged for macOS: Wine's own is built from its source.
 if [ ! -x "$COMPONENTS/tools/bin/widl" ]; then
 	step "widl from Wine $WINE_VERSION"
@@ -58,7 +69,6 @@ provision() { # name, then the provisioner and its arguments
 	touch "$COMPONENTS/$name/.provisioned"
 }
 provision rtl provision-rtl.py --output "$COMPONENTS/rtl"
-provision text provision-text.py --output "$COMPONENTS/text"
 provision controls provision-controls.py --output "$COMPONENTS/controls"
 provision controls32 provision-controls.py --arch x86 --output "$COMPONENTS/controls32"
 provision installer provision-installer.py --output "$COMPONENTS/installer"
@@ -95,7 +105,7 @@ skia_use_icu=false skia_use_libjpeg_turbo_decode=false skia_use_libjpeg_turbo_en
 skia_use_libpng_encode=false skia_use_libwebp_decode=false skia_use_libwebp_encode=false skia_use_zlib=false skia_use_expat=false \
 skia_use_piex=false skia_use_dng_sdk=false skia_use_wuffs=false skia_use_xps=false skia_enable_pdf=false skia_enable_skshaper=false \
 skia_enable_skunicode=false skia_enable_tools=false extra_cflags=[\"-I$(brew --prefix)/include/freetype2\"]"
-	ninja -C "$SKIA/out" skia
+	ninja -C "$SKIA/out" -j "${CMAKE_BUILD_PARALLEL_LEVEL:-2}" skia
 fi
 
 # The Liberation release's TTF files differ from the build the upstream hashes qualify, so their own hashes are what the build checks.
@@ -114,9 +124,10 @@ font_hash() { shasum -a 256 "$COMPONENTS/fonts/$1" | cut -d' ' -f1; }
 
 step "configure $BUILD"
 cmake -S "$SOURCE" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+	-DPython3_EXECUTABLE="$PYTHON" \
 	-DRAVEN_SKIA_SOURCE="$SKIA/src" -DRAVEN_SKIA_LIBRARY="$SKIA/out/libskia.a" -DRAVEN_FONT_DIRECTORY="$COMPONENTS/fonts" \
 	"-DFONT_HASHES=$(font_hash LiberationSans-Regular.ttf);$(font_hash LiberationMono-Regular.ttf);$(font_hash LiberationSerif-Regular.ttf)" \
-	-DRAVEN_RTL_COMPONENT_PATH="$COMPONENTS/rtl/raven-rtl.dll" -DRAVEN_TEXT_COMPONENT_PATH="$COMPONENTS/text/raven-text.dll" \
+	-DRAVEN_RTL_COMPONENT_PATH="$COMPONENTS/rtl/raven-rtl.dll" \
 	-DRAVEN_CONTROLS_COMPONENT_DIR="$COMPONENTS/controls" -DRAVEN_CONTROLS32_COMPONENT_DIR="$COMPONENTS/controls32" \
 	-DRAVEN_INSTALLER_COMPONENT_DIR="$COMPONENTS/installer" -DRAVEN_INSTALLER32_COMPONENT_DIR="$COMPONENTS/installer32" \
 	-DRAVEN_ROOT_CERTIFICATE_DIRECTORY="$COMPONENTS/roots" \
