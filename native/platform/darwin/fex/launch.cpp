@@ -19,6 +19,7 @@ namespace raven {
 // PE loader still validates the complete file and owns the reservation thereafter.
 #ifdef RAVEN_FEX_COMPANION_HOST
 extern "C" char raven_pe_reserve[];
+extern "C" char raven_pe_reserve_end[];
 #endif
 static void reserve_main_image(int argc, char **argv)
 {
@@ -26,14 +27,15 @@ static void reserve_main_image(int argc, char **argv)
 	// Keep the Mach-O segment reserved: dyld still describes it as part of the
 	// host image. Reusing its unused pages for host dylibs/JIT confuses ownership.
 	const auto pool = reinterpret_cast<uint64_t>(raven_pe_reserve);
-    if (pool > 0x140000000ULL || 0x140000000ULL - pool >= 0x100000000ULL) {
+    const auto pool_end = reinterpret_cast<uint64_t>(raven_pe_reserve_end);
+    if (pool_end <= pool || pool > 0x140000000ULL || 0x140000000ULL >= pool_end) {
         std::fprintf(stderr, "raven: FEX image pool does not cover 0x140000000\n");
         std::exit(1);
     }
 #ifdef RAVEN_FEX_PLACEMENT_TEST_HOOKS
     if (!std::getenv("RAVEN_FEX_DISABLE_IMAGE_POOL"))
 #endif
-        fex_register_image_reservation(pool, 0x100000000ULL);
+        fex_register_image_reservation(pool, pool_end - pool);
 #endif
 	if (argc < 4 || std::strcmp(argv[2], "--execution=fex")) return;
 	int index = 3;

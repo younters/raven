@@ -12,13 +12,20 @@ Tag 12 is `VM_MEMORY_MALLOC_MEDIUM`: a 128 MiB host malloc region, not a
 DXMT image or FEX JIT mapping. Both pool and geometry reproduced this.
 No debugger was used.
 
-`raven-fex-host` now has a 4 GiB zero-fill `RAVEN_PE` segment at link address
+`raven-fex-host` now has a 1 GiB zero-fill `RAVEN_PE` segment at link address
 `0x110000000`. The kernel owns that address space before dyld initializers
 or host malloc can use it. It occupies no file bytes and is not touched.
 The executable retains arm64 PIE/ASLR and its macOS 11 SDK contract.
 The current XNU arm64 slide is fewer than 16 MiB plus 0, 1, or 2 translation-table
 twigs (32 MiB each on this 16 KiB-page system); even the largest slide
 leaves `0x140000000` inside the reservation.
+
+The former 4 GiB reservation overlapped the macOS 26 shared cache near
+`0x180000000` and prevented dyld from loading AppKit before `main`. The smaller
+pool preserves the conventional EXE base while leaving that cache free. Its
+actual size comes from the assembly's start/end symbols. DLL bases outside the
+pool still require a non-overwriting reservation or relocation; a fixed DLL
+cannot occupy an address already used by the host shared cache.
 
 At the first companion launch step, before Cocoa startup, Raven registers the
 whole pool with `PROT_NONE` and reads the main PE header with `pread`. It

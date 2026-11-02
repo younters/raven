@@ -1444,7 +1444,7 @@ if(RAVEN_FEX_MODHOST AND TARGET raven_cpu AND RAVEN_MINGW64)
             COMMAND ${CMAKE_COMMAND} -E make_directory ${code_cache_dir}/${variant}
             COMMAND ${RAVEN_MINGW64} -O1 -shared -nostdlib -fno-stack-protector -fno-builtin -mno-stack-arg-probe
                 -DCODECACHE_VARIANT=${number}
-                -Wl,--entry,raven_dll_entry,--image-base,0x180000000,--no-insert-timestamp
+                -Wl,--entry,raven_dll_entry,--image-base,0x130000000,--no-insert-timestamp
                 -o ${code_cache_dir}/${variant}/codecache_lib.dll ${RAVEN_DARWIN_DIR}/fex/code-cache/codecache_lib.c -lkernel32
             DEPENDS ${RAVEN_DARWIN_DIR}/fex/code-cache/codecache_lib.c VERBATIM)
         list(APPEND code_cache_outputs ${code_cache_dir}/${variant}/codecache_lib.dll)

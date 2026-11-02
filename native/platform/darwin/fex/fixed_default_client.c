@@ -6,7 +6,7 @@
 int raven_entry(void)
 {
 #ifdef _WIN64
-    const uintptr_t image = 0x140000000ULL, allocation = 0x190000000ULL;
+    const uintptr_t image = 0x140000000ULL, allocation = 0x148000000ULL; // inside the 1 GiB image pool, below the shared cache
 #else
     const uintptr_t image = 0x400000, allocation = 0x600000;
 #endif
