@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -124,9 +125,30 @@ inline void prepare(const std::string &module_path)
 	config.mark = std::chrono::steady_clock::now();
 }
 
+// UTF-8 to UTF-16, so a cache directory under a non-ASCII home folder reaches FEX intact.
 inline std::u16string widen(const std::string &text)
 {
-	return std::u16string(text.begin(), text.end());
+	std::u16string wide;
+	for (size_t i = 0; i < text.size();) {
+		const unsigned char lead = text[i];
+		const size_t length = lead < 0x80 ? 1 : lead >> 5 == 6 ? 2 : lead >> 4 == 14 ? 3 : lead >> 3 == 30 ? 4 : 0;
+		if (!length || i + length > text.size()) {
+			wide += u'\ufffd';
+			++i;
+			continue;
+		}
+		char32_t code = length == 1 ? lead : lead & (0x7f >> length);
+		for (size_t k = 1; k < length; ++k)
+			code = code << 6 | (text[i + k] & 0x3f);
+		i += length;
+		if (code >= 0x10000) {
+			code -= 0x10000;
+			wide += char16_t(0xd800 + (code >> 10));
+			wide += char16_t(0xdc00 + (code & 0x3ff));
+		} else
+			wide += char16_t(code);
+	}
+	return wide;
 }
 
 // FEX's own DiskCache options, read by the module's config loader at ProcessInit.
@@ -140,8 +162,8 @@ inline void configure(RavenNT::ProcessEnvironment &environment)
 		environment.add_environment(widen(entry));
 }
 
-// Values: hits, misses, stores, rejected, skipped, damaged, reading. Op 3 flushes first.
-inline bool stats(uint64_t op, uint64_t (&values)[7], void *teb)
+// Values: hits, misses, stores, rejected, skipped, damaged, reading, flush timed out. Op 3 flushes first.
+inline bool stats(uint64_t op, uint64_t (&values)[8], void *teb)
 {
 	uint64_t args[8]{op, uintptr_t(values)};
 	return raven_ec_call(mapped_image->export_address("RavenCodeCache"), args, teb) != 0;
@@ -166,7 +188,7 @@ inline void started(void *teb)
 {
 	if (!config.enabled) return;
 	config.start_ms = since(config.mark);
-	uint64_t values[7]{};
+	uint64_t values[8]{};
 	if (!mapped_image->export_address("RavenCodeCache") || !stats(2, values, teb)) {
 		config.enabled = false;
 		if (unreadable_header(config.directory)) discard(config.directory, "damaged");
@@ -187,13 +209,13 @@ inline void register_image(uint64_t address, uint64_t size, void *teb)
 inline void finished(void *teb)
 {
 	if (!config.enabled) return;
-	uint64_t values[7]{};
+	uint64_t values[8]{};
 	const auto begin = std::chrono::steady_clock::now();
 	if (!stats(3, values, teb) || !std::getenv("RAVEN_FEX_CODE_CACHE_STATS")) return;
 	fprintf(stderr, "FEX code cache pid=%d hits=%llu misses=%llu stores=%llu rejected=%llu skipped=%llu damaged=%llu "
-		"prepare_ms=%.1f start_ms=%.1f register_ms=%.1f flush_ms=%.1f\n", getpid(),
+		"flush_timeout=%llu prepare_ms=%.1f start_ms=%.1f register_ms=%.1f flush_ms=%.1f\n", getpid(),
 		(unsigned long long)values[0], (unsigned long long)values[1], (unsigned long long)values[2],
-		(unsigned long long)values[3], (unsigned long long)values[4], (unsigned long long)values[5],
+		(unsigned long long)values[3], (unsigned long long)values[4], (unsigned long long)values[5], (unsigned long long)values[7],
 		config.prepare_ms, config.start_ms, config.register_ms, since(begin));
 }
 } // namespace raven_code_cache

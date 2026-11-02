@@ -41,6 +41,7 @@ void *thread_start(void *opaque) {
 	c->pthread = pthread_self();
 	pthread_threadid_np(nullptr, &c->tid);
 	c->environment = std::make_unique<ThreadEnvironment>(*active_process);
+	// Every thread gets the module's static TLS, as on Windows; the main thread already installed it from the same image.
 	if (active_image)
 		active_image->install_tls(*c->environment);
 	active_thread = c->environment.get();

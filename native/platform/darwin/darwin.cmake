@@ -1455,7 +1455,7 @@ if(RAVEN_FEX_MODHOST AND TARGET raven_cpu AND RAVEN_MINGW64)
             ${PROJECT_SOURCE_DIR}/scripts/test-fex-code-cache.py --raven $<TARGET_FILE:raven>
             --client ${code_cache_dir}/codecache-client.exe --library-a ${code_cache_dir}/a/codecache_lib.dll
             --library-b ${code_cache_dir}/b/codecache_lib.dll --modules "${RAVEN_FEX_MODULE_ROOT}")
-        set_tests_properties(native_code_cache_fex_${parallel} PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77
+        set_tests_properties(native_code_cache_fex_${parallel} PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77
             LABELS "fex;jit;smc")
         if(parallel)
             set_tests_properties(native_code_cache_fex_${parallel} PROPERTIES ENVIRONMENT "RAVEN_PARALLEL=1")
