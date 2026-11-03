@@ -5,6 +5,7 @@
 #include "x86_tls.h"
 #include "pe/module_set.h"
 
+#include <set>
 #include <functional>
 #include <map>
 #include <optional>
@@ -27,6 +28,9 @@ public:
 	// Gives one reference back; at the last one the library is told its process is done with it and a later load starts it afresh.
 	// False when the handle is not a library loaded from a path.
 	bool release(uint64_t handle);
+	// Whether a library is between being mapped and the end of its DLL_PROCESS_ATTACH. Windows holds the loader lock for that time, so
+	// a thread that starts meanwhile does not tell it DLL_THREAD_ATTACH.
+	bool starting(const PEModule &module) const { return attaching.contains(&module); }
 	// Where the program lives, in the guest's spelling: a library named without a path is looked for there first.
 	// Images with static thread local storage register there when they are mapped.
 	void set_tls(NativeX86Tls *value) { tls = value; }
@@ -46,7 +50,11 @@ private:
 	std::map<const PEModule *, uint64_t> entry_contexts;
 	uint64_t importer_context = 0;
 	bool mapping_only = false;
+	std::set<const PEModule *> attaching;
 	uint32_t library_flags = 0;
+	// LOAD_WITH_ALTERED_SEARCH_PATH / LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR: the folder of a library loaded by path, searched first for the
+	// dependencies that load brings in.
+	std::filesystem::path load_directory;
 	struct Held {
 		PEModule *module;
 		size_t references;

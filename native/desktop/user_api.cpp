@@ -144,6 +144,13 @@ void NativeWindows::register_api(ApiRegistry &registry)
 	registry.add("GetDoubleClickTime", 0, [](ApiCall &call) { call.ret(500); });
 	registry.add("GetCaretBlinkTime", 0, [](ApiCall &call) { call.ret(530); });
 	registry.add("GetKeyboardLayout", 1, [](ApiCall &call) { call.ret(0x04090409); });
+	// The one layout is always loaded and active: loading any KLID hands out its HKL, activating returns the previous (same) one, and
+	// unloading it is accepted. Source games load the US layout at startup to map keys.
+	registry.add("LoadKeyboardLayoutA", 2, [](ApiCall &call) { call.ret(0x04090409); });
+	registry.add("LoadKeyboardLayoutW", 2, [](ApiCall &call) { call.ret(0x04090409); });
+	registry.add("LoadKeyboardLayoutEx", 3, [](ApiCall &call) { call.ret(0x04090409); });
+	registry.add("ActivateKeyboardLayout", 2, [](ApiCall &call) { call.ret(0x04090409); });
+	registry.add("UnloadKeyboardLayout", 1, [](ApiCall &call) { call.ret(1); });
 	registry.add("GetMessageExtraInfo", 0, [](ApiCall &call) { call.ret(0); });
 	// The one keyboard layout, US English, by its KLID.
 	registry.add("GetKeyboardLayoutNameW", 1, [](ApiCall &call) {

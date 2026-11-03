@@ -178,6 +178,69 @@ CRT char *_ctime64(const long long *time)
 
 CRT double _difftime64(long long later, long long earlier) { return (double)(later - earlier); }
 
+/* The 32-bit time_t forms (UCRT's _gmtime32 family). The 32-bit msvcrt.dll exports them under the classic names (gmtime, time, ...),
+   which programs built against it import directly (libfreetype-6.dll in Source games imports msvcrt.dll!gmtime). */
+CRT RavenTime *_gmtime32(const long *time)
+{
+	if (!time)
+		return NULL;
+	const long long wide = *time;
+	return _gmtime64(&wide);
+}
+
+CRT int _gmtime32_s(RavenTime *out, const long *time)
+{
+	if (!time) {
+		if (out)
+			memset(out, 0xff, sizeof *out);
+		return 22;
+	}
+	const long long wide = *time;
+	return _gmtime64_s(out, &wide);
+}
+
+CRT RavenTime *_localtime32(const long *time)
+{
+	if (!time)
+		return NULL;
+	const long long wide = *time;
+	return _localtime64(&wide);
+}
+
+CRT int _localtime32_s(RavenTime *out, const long *time)
+{
+	if (!time) {
+		if (out)
+			memset(out, 0xff, sizeof *out);
+		return 22;
+	}
+	const long long wide = *time;
+	return _localtime64_s(out, &wide);
+}
+
+/* A time past 2038 does not fit the 32-bit forms; they report -1 for it, as Windows does. */
+CRT long _mktime32(RavenTime *time)
+{
+	const long long seconds = _mktime64(time);
+	return seconds < 0 || seconds > 0x7fffffffLL ? -1 : (long)seconds;
+}
+
+CRT long _mkgmtime32(RavenTime *time)
+{
+	const long long seconds = _mkgmtime64(time);
+	return seconds < 0 || seconds > 0x7fffffffLL ? -1 : (long)seconds;
+}
+
+CRT char *_ctime32(const long *time)
+{
+	if (!time)
+		return NULL;
+	const long long wide = *time;
+	return _ctime64(&wide);
+}
+
+CRT double _difftime32(long later, long earlier) { return (double)later - (double)earlier; }
+
 /* clock: milliseconds of wall time since the process started, as on Windows (CLOCKS_PER_SEC is 1000). */
 CRT long clock(void)
 {
@@ -639,6 +702,159 @@ CRT int _wfindnext64(intptr_t search, RavenFindWide *out)
 }
 
 CRT int _findclose(intptr_t search) { return FindClose((HANDLE)search) ? 0 : (set_errno(9), -1); }
+
+/* The 32-bit-time layouts that the 32-bit msvcrt.dll uses for _fstat, _stati64/_fstati64, _findfirst/_findnext and _ftime, under their
+   UCRT names (_fstat32, _stat32i64, _findfirst32, _ftime32); the 32-bit library also exports them under msvcrt's names. */
+typedef struct {
+	unsigned st_dev;
+	unsigned short st_ino, st_mode;
+	short st_nlink, st_uid, st_gid;
+	unsigned st_rdev;
+	long st_size;
+	long st_atime, st_mtime, st_ctime;
+} StatBuffer32;
+
+typedef struct {
+	unsigned st_dev;
+	unsigned short st_ino, st_mode;
+	short st_nlink, st_uid, st_gid;
+	unsigned st_rdev;
+	long long st_size;
+	long st_atime, st_mtime, st_ctime;
+} StatBuffer32i64;
+
+static long narrow_time(long long seconds) { return seconds < -0x80000000LL || seconds > 0x7fffffffLL ? -1 : (long)seconds; }
+
+static void to_stat32i64(const StatBuffer *from, StatBuffer32i64 *to)
+{
+	memset(to, 0, sizeof *to);
+	to->st_dev = from->st_dev;
+	to->st_ino = from->st_ino;
+	to->st_mode = from->st_mode;
+	to->st_nlink = from->st_nlink;
+	to->st_uid = from->st_uid;
+	to->st_gid = from->st_gid;
+	to->st_rdev = from->st_rdev;
+	to->st_size = from->st_size;
+	to->st_atime = narrow_time(from->st_atime);
+	to->st_mtime = narrow_time(from->st_mtime);
+	to->st_ctime = narrow_time(from->st_ctime);
+}
+
+CRT int _stat32i64(const char *path, StatBuffer32i64 *out)
+{
+	StatBuffer full;
+	if (!out || _stat64(path, &full))
+		return -1;
+	to_stat32i64(&full, out);
+	return 0;
+}
+
+CRT int _wstat32i64(const wchar_t *path, StatBuffer32i64 *out)
+{
+	StatBuffer full;
+	if (!out || stat_wide(path, &full))
+		return -1;
+	to_stat32i64(&full, out);
+	return 0;
+}
+
+CRT int _fstat32i64(int fd, StatBuffer32i64 *out)
+{
+	StatBuffer full;
+	if (!out || _fstat64(fd, &full))
+		return -1;
+	to_stat32i64(&full, out);
+	return 0;
+}
+
+CRT int _fstat32(int fd, StatBuffer32 *out)
+{
+	StatBuffer32i64 wide;
+	if (!out || _fstat32i64(fd, &wide))
+		return -1;
+	memset(out, 0, sizeof *out);
+	out->st_dev = wide.st_dev;
+	out->st_ino = wide.st_ino;
+	out->st_mode = wide.st_mode;
+	out->st_nlink = wide.st_nlink;
+	out->st_uid = wide.st_uid;
+	out->st_gid = wide.st_gid;
+	out->st_rdev = wide.st_rdev;
+	out->st_size = (long)wide.st_size;
+	out->st_atime = wide.st_atime;
+	out->st_mtime = wide.st_mtime;
+	out->st_ctime = wide.st_ctime;
+	return 0;
+}
+
+/* struct __timeb32 */
+typedef struct {
+	long time;
+	unsigned short milliseconds;
+	short zone, daylight;
+} RavenTimeB32;
+
+CRT void _ftime32(RavenTimeB32 *out)
+{
+	RavenTimeB wide;
+	if (!out)
+		return;
+	_ftime64(&wide);
+	out->time = narrow_time(wide.time);
+	out->milliseconds = wide.milliseconds;
+	out->zone = wide.zone;
+	out->daylight = wide.daylight;
+}
+
+CRT int _ftime32_s(RavenTimeB32 *out)
+{
+	if (!out)
+		return 22;
+	_ftime32(out);
+	return 0;
+}
+
+/* struct _finddata32_t: attributes, three 32-bit times, a 32-bit size and the ANSI name. */
+typedef struct {
+	unsigned attributes;
+	long created, accessed, written;
+	unsigned long size;
+	char name[260];
+} RavenFind32;
+
+static void fill_found32(RavenFind32 *out, const WIN32_FIND_DATAA *data)
+{
+	out->attributes = data->dwFileAttributes;
+	out->created = narrow_time(file_time_to_unix(data->ftCreationTime));
+	out->accessed = narrow_time(file_time_to_unix(data->ftLastAccessTime));
+	out->written = narrow_time(file_time_to_unix(data->ftLastWriteTime));
+	out->size = data->nFileSizeLow;
+	memcpy(out->name, data->cFileName, sizeof out->name);
+}
+
+CRT intptr_t _findfirst32(const char *pattern, RavenFind32 *out)
+{
+	WIN32_FIND_DATAA data;
+	HANDLE search = pattern && out ? FindFirstFileA(pattern, &data) : INVALID_HANDLE_VALUE;
+	if (search == INVALID_HANDLE_VALUE) {
+		windows_failure();
+		return -1;
+	}
+	fill_found32(out, &data);
+	return (intptr_t)search;
+}
+
+CRT int _findnext32(intptr_t search, RavenFind32 *out)
+{
+	WIN32_FIND_DATAA data;
+	if (!out || !FindNextFileA((HANDLE)search, &data)) {
+		set_errno(2);
+		return -1;
+	}
+	fill_found32(out, &data);
+	return 0;
+}
 
 /* ---- streams ---- */
 

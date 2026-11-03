@@ -174,7 +174,7 @@ constexpr std::string_view shared_allowed[] = {
 	"GetComputerNameW", "FileTimeToSystemTime", "SystemTimeToFileTime", "GetTimeZoneInformation", "SetFileAttributesA",
 	"SetFileAttributesW", "GetLongPathNameA", "GetLongPathNameW", "GetShortPathNameA", "GetShortPathNameW", "SearchPathA", "SearchPathW",
 	"GetModuleFileNameA", "IsDBCSLeadByte", "IsDBCSLeadByteEx", "GetCPInfoExA", "GetThreadLocale", "SetThreadLocale", "VerifyVersionInfoW",
-	"GetUserNameA", "GetUserNameW", "FlsAlloc", "FlsFree", "FlsGetValue", "FlsSetValue", "SetDefaultDllDirectories", "AddDllDirectory", "RemoveDllDirectory", "SetSearchPathMode", "GetLargePageMinimum", "ConvertDefaultLocale", "GetMachineTypeAttributes", "GetShellWindow", "PowerCreateRequest", "PowerSetRequest", "PowerClearRequest", "CreateTransaction", "CommitTransaction", "CommitTransactionAsync",
+	"GetGlyphOutlineA", "AddFontResourceA", "AddFontResourceW", "AddFontResourceExA", "AddFontResourceExW", "RemoveFontResourceA", "RemoveFontResourceW", "RemoveFontResourceExA", "RemoveFontResourceExW", "AddFontMemResourceEx", "RemoveFontMemResourceEx", "SetThreadIdealProcessor", "SetThreadIdealProcessorEx", "GetThreadIdealProcessorEx", "GetFileAttributesExA", "LoadKeyboardLayoutA", "LoadKeyboardLayoutW", "LoadKeyboardLayoutEx", "ActivateKeyboardLayout", "UnloadKeyboardLayout", "GetUserNameA", "GetUserNameW", "FlsAlloc", "FlsFree", "FlsGetValue", "FlsSetValue", "SetDefaultDllDirectories", "AddDllDirectory", "RemoveDllDirectory", "SetSearchPathMode", "GetLargePageMinimum", "ConvertDefaultLocale", "GetMachineTypeAttributes", "GetShellWindow", "PowerCreateRequest", "PowerSetRequest", "PowerClearRequest", "CreateTransaction", "CommitTransaction", "CommitTransactionAsync",
 	"RollbackTransaction", "RollbackTransactionAsync", "CreateFileTransactedW", "DeleteFileTransactedW", "MoveFileTransactedW", "CopyFileTransactedW",
 	"CreateDirectoryTransactedW", "RemoveDirectoryTransactedW", "GetFileAttributesTransactedW", "SetFileAttributesTransactedW", "SHGetFolderPathW", "SHGetFolderPathA", "SHChangeNotify", "SHPathPrepareForWriteW", "ShowOwnedPopups",
 	"UnrealizeObject", "EnableNonClientDpiScaling", "EnumFontsW", "DisableProcessWindowsGhosting", "ShutdownBlockReasonCreate", "ShutdownBlockReasonDestroy", "WNetOpenEnumW", "WNetOpenEnumA", "WNetEnumResourceW", "WNetEnumResourceA", "WNetCloseEnum", "WNetGetConnectionW",
@@ -1360,7 +1360,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				return NativeResult{NativeStop::timeout, 0, result.instruction, 0};
 			result = process.resume(budget);
 		}
-		if (result.stop == NativeStop::fault && getenv("RAVEN_TRACE_X86")) {
+		if (result.stop == NativeStop::fault && (getenv("RAVEN_TRACE_X86") || getenv("RAVEN_TRACE_FAULT"))) {
 			// What a crash needs: the registers, the bytes at the instruction and the top of the stack.
 			const auto context = process.context();
 			const auto &r = context.registers;
@@ -1370,10 +1370,37 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			try {
 				for (const auto byte : process.read_memory(r.rip - 64, 96))
 					std::cerr << ' ' << unsigned(byte);
-				std::cerr << "\nstack:";
-				for (const auto byte : process.read_memory(r.rsp, 256))
+			} catch (...) {}
+			// A thread that faults at once sits near the top of its stack: read only up to the end of the page.
+			const uint64_t stack_bytes = std::min<uint64_t>(256, 4096 - (r.rsp & 4095));
+			std::cerr << "\nstack:";
+			try {
+				for (const auto byte : process.read_memory(r.rsp, stack_bytes))
 					std::cerr << ' ' << unsigned(byte);
 			} catch (...) {}
+			// Name the module of the instruction and of every stack word that points into one (likely return addresses).
+			const auto describe = [&](uint64_t at) -> std::string {
+				for (const auto &[name, module] : modules.all())
+					if (at >= module->loaded.base() && at < module->loaded.base() + module->image.image_size) {
+						std::ostringstream text;
+						text << name << '+' << std::hex << at - module->loaded.base();
+						return text.str();
+					}
+				return {};
+			};
+			std::cerr << "\nat: " << describe(r.rip) << "\nframes:";
+			try {
+				const auto words = process.read_memory(r.rsp, std::min<uint64_t>(512, 4096 - (r.rsp & 4095)));
+				for (size_t at = 0; at + 4 <= words.size(); at += 4) {
+					uint32_t value = 0;
+					std::memcpy(&value, words.data() + at, 4);
+					if (const auto name = describe(value); !name.empty())
+						std::cerr << ' ' << std::hex << at << ':' << name;
+				}
+			} catch (...) {}
+			std::cerr << "\nmodules:";
+			for (const auto &[name, module] : modules.all())
+				std::cerr << ' ' << name << '@' << std::hex << module->loaded.base();
 			std::cerr << std::dec << '\n';
 		}
 		return result;
@@ -1384,6 +1411,8 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// Threads announce themselves to the images that keep per-thread state: TLS callbacks first, then the library entry points.
 	guest_threads.set_notifier([&](uint32_t reason) {
 		const auto notify = [&](const PEModule &module) {
+			if (library_loader.starting(module))
+				return;
 			for (const auto callback : static_tls.callbacks(module)) {
 				const uint64_t arguments[] = {module.loaded.base(), reason, 0};
 				const auto result = invoke(callback, arguments);

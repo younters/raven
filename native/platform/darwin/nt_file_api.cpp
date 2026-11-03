@@ -177,8 +177,11 @@ Inner run(const std::pair<uint32_t, raven::ApiHandler> &entry, ApiCall &call, st
 	return out;
 }
 
+// Outside the FILETIME range (see file_api.cpp) a host time reads as no time at all.
 uint64_t filetime(const timespec &time)
 {
+	if (int64_t(time.tv_sec) < -11644473600LL || int64_t(time.tv_sec) > int64_t(0x7fffffffffffffffULL / 10000000ULL) - 11644473600LL - 1)
+		return 0;
 	return (uint64_t(time.tv_sec) + 11644473600ULL) * 10000000ULL + uint64_t(time.tv_nsec) / 100;
 }
 

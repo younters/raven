@@ -34,6 +34,9 @@ constexpr std::array exported{
 	Export{"kernel32.dll", "SetProcessAffinityMask", 2}, Export{"kernel32.dll", "GetSystemInfo", 1}, Export{"kernel32.dll", "VirtualQuery", 3},
 	Export{"kernel32.dll", "DuplicateHandle", 7}, Export{"kernel32.dll", "VirtualQueryEx", 4}, Export{"kernel32.dll", "SetProcessDEPPolicy", 1},
 	Export{"user32.dll", "ChangeDisplaySettingsExW", 5},
+	Export{"user32.dll", "ChangeDisplaySettingsExA", 5},
+	Export{"user32.dll", "ChangeDisplaySettingsA", 2},
+	Export{"user32.dll", "ChangeDisplaySettingsW", 2},
 	Export{"user32.dll", "DisplayConfigGetDeviceInfo", 1}, Export{"user32.dll", "EnumDisplayDevicesA", 4},
 	Export{"user32.dll", "SetProcessDPIAware", 0},
 	Export{"gdi32.dll", "D3DKMTCloseAdapter", 1}, Export{"gdi32.dll", "D3DKMTCreateDCFromMemory", 1}, Export{"gdi32.dll", "D3DKMTCreateDevice", 1},
@@ -415,7 +418,8 @@ bool NativeX86System::dispatch(std::string_view name)
 				write32(args[3], uint32_t(made.value));
 			process.return_api(1);
 		}
-	} else if (name == "ChangeDisplaySettingsExW") {
+	} else if (name == "ChangeDisplaySettingsExW" || name == "ChangeDisplaySettingsExA" || name == "ChangeDisplaySettingsA" ||
+		name == "ChangeDisplaySettingsW") {
 		// A mode change is accepted without changing anything: the host shows the program's window at its own size.
 		process.return_api(0);
 	} else if (name == "DisplayConfigGetDeviceInfo") {

@@ -36,3 +36,17 @@ EXPORTS
 	raven_add_vectored_continue = raven_add_vectored_continue@8
 	raven_remove_vectored = raven_remove_vectored@4
 	?terminate@@YAXXZ = terminate
+	; msvcrt.dll's classic names, with 32-bit time_t in the 32-bit library
+	gmtime = _gmtime32
+	localtime = _localtime32
+	mktime = _mktime32
+	time = _time32
+	ctime = _ctime32
+	difftime = _difftime32
+	_fstat = _fstat32
+	_stati64 = _stat32i64
+	_wstati64 = _wstat32i64
+	_fstati64 = _fstat32i64
+	_findfirst = _findfirst32
+	_findnext = _findnext32
+	_ftime = _ftime32

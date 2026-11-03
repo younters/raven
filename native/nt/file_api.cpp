@@ -50,9 +50,27 @@ constexpr uint64_t invalid_handle = UINT64_MAX;
 constexpr uint32_t attribute_readonly = 0x1, attribute_hidden = 0x2, attribute_directory = 0x10, attribute_archive = 0x20,
 	attribute_normal = 0x80, attribute_reparse = 0x400;
 
+// A FILETIME runs from 1601 to the year 30828 (the largest value FileTimeToSystemTime accepts is 0x7fffffffffffffff). Host file systems
+// can report times outside it: OpenZFS on macOS with atime=off answers st_atime in the year 60056.
+bool representable(const timespec &time)
+{
+	constexpr int64_t earliest = -int64_t(filetime_epoch_offset / 10000000ULL);
+	constexpr int64_t latest = int64_t(0x7fffffffffffffffULL / 10000000ULL) - int64_t(filetime_epoch_offset / 10000000ULL) - 1;
+	return int64_t(time.tv_sec) >= earliest && int64_t(time.tv_sec) <= latest;
+}
+
 uint64_t filetime(const timespec &time)
 {
+	if (!representable(time))
+		return 0;
 	return (uint64_t(time.tv_sec) * 10000000ULL) + uint64_t(time.tv_nsec) / 100 + filetime_epoch_offset;
+}
+
+// The last access time, or the last write time when the host's access time is no time a FILETIME can hold: a program converting it
+// (the C runtime's stat does) would otherwise fail on a file that is fine.
+uint64_t access_filetime(const struct stat &metadata)
+{
+	return representable(metadata.st_atim) ? access_filetime(metadata) : filetime(metadata.st_mtim);
 }
 
 timespec timespec_from(uint64_t ticks)
@@ -153,7 +171,7 @@ FindObject::Entry entry_of(const std::filesystem::path &path, const std::u16stri
 	// A link reports what it points at, marked as the reparse point it is.
 	entry.attributes = attributes_of(metadata, path) | (link ? attribute_reparse : 0);
 	entry.creation = filetime(metadata.st_ctim);
-	entry.access = filetime(metadata.st_atim);
+	entry.access = access_filetime(metadata);
 	entry.write = filetime(metadata.st_mtim);
 	entry.size = S_ISDIR(metadata.st_mode) ? 0 : uint64_t(metadata.st_size);
 	return entry;
@@ -551,7 +569,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 					struct stat metadata{};
 					if (::fstatat(file->descriptor, item->d_name, &metadata, 0)) continue;
 					scan->entries.push_back({name, attributes_of(metadata, item->d_name), filetime(metadata.st_ctim),
-						filetime(metadata.st_atim), filetime(metadata.st_mtim), S_ISDIR(metadata.st_mode) ? 0 : uint64_t(metadata.st_size),
+						access_filetime(metadata), filetime(metadata.st_mtim), S_ISDIR(metadata.st_mode) ? 0 : uint64_t(metadata.st_size),
 						uint64_t(metadata.st_blocks) * 512, uint64_t(metadata.st_ino)});
 				}
 				file->directory_pattern = std::move(pattern);
@@ -1085,7 +1103,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		if (call[1]) call.store<uint64_t>(call[1], filetime(metadata.st_ctim));
-		if (call[2]) call.store<uint64_t>(call[2], filetime(metadata.st_atim));
+		if (call[2]) call.store<uint64_t>(call[2], access_filetime(metadata));
 		if (call[3]) call.store<uint64_t>(call[3], filetime(metadata.st_mtim));
 		call.ret(1);
 	});
@@ -1116,7 +1134,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		std::vector<uint8_t> bytes(52);
 		put32(bytes, 0, attributes_of(metadata, file->path));
 		put64(bytes, 4, filetime(metadata.st_ctim));
-		put64(bytes, 12, filetime(metadata.st_atim));
+		put64(bytes, 12, access_filetime(metadata));
 		put64(bytes, 20, filetime(metadata.st_mtim));
 		put32(bytes, 28, uint32_t(metadata.st_dev));
 		put32(bytes, 32, uint32_t(uint64_t(metadata.st_size) >> 32));
@@ -1308,7 +1326,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		case 0:
 			bytes.assign(40, 0);
 			put64(bytes, 0, filetime(metadata.st_ctim));
-			put64(bytes, 8, filetime(metadata.st_atim));
+			put64(bytes, 8, access_filetime(metadata));
 			put64(bytes, 16, filetime(metadata.st_mtim));
 			put64(bytes, 24, filetime(metadata.st_ctim));
 			put32(bytes, 32, attributes_of(metadata, file->path));

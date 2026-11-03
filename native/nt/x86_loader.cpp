@@ -6,6 +6,8 @@
 #include "system_exports.h"
 
 #include <algorithm>
+#include <functional>
+#include <set>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -83,6 +85,17 @@ std::optional<std::vector<uint8_t>> NativeX86Loader::read_library(const std::str
 			return std::nullopt;
 		identity = name;
 		return read_all(component);
+	}
+	// A dependency of a library loaded by its path with LOAD_WITH_ALTERED_SEARCH_PATH is looked for in that library's folder first
+	// (Steam's steamclient.dll and its tier0_s.dll, loaded from the Steam folder by a game in another one).
+	if (!load_directory.empty() && name.find_first_of("/\\:") == std::string::npos) {
+		std::error_code error;
+		for (const auto &entry : std::filesystem::directory_iterator(load_directory, error))
+			if (lowered(entry.path().filename().string()) == name && entry.is_regular_file(error)) {
+				identity = name;
+				file = entry.path();
+				return read_all(entry.path());
+			}
 	}
 	// A name alone that an assembly of the context in effect declares comes from that assembly's folder, as Windows redirects it.
 	if (name.find_first_of("/\\:") == std::string::npos)
@@ -181,6 +194,8 @@ PEModule *NativeX86Loader::bring(const std::string &requested)
 	auto &added = modules.add(identity, std::move(*bytes), [&](uint64_t base, uint64_t size) { return process.memory_available(base, size); });
 	added.file = file;
 	staged.push_back(&added);
+	if (staged.size() == 1 && (library_flags & 0x108) && name.find_first_of("/\\:") != std::string::npos && !file.empty())
+		load_directory = file.parent_path();
 	if (mapping_only && staged.size() == 1) {
 		added.imports.clear();
 		return &added;
@@ -267,6 +282,8 @@ uint64_t NativeX86Loader::load(std::string name, bool only_map, uint32_t search_
 			return found->second.module->loaded.base();
 		}
 	staged.clear();
+	load_directory.clear();
+	struct ClearDirectory { std::filesystem::path &value; ~ClearDirectory() { value.clear(); } } clear_directory{load_directory};
 	entry_contexts.clear();
 	importer_context = 0;
 	mapping_only = only_map;
@@ -291,8 +308,36 @@ uint64_t NativeX86Loader::load(std::string name, bool only_map, uint32_t search_
 			if (tls)
 				tls->add(**item);
 		}
+		// Start them in dependency order. The reversed discovery order is not one: when the root imports A then B and B also imports A,
+		// A was found first and B would start before it (Source's launcher -> tier0, vstdlib -> tier0 started vstdlib against an
+		// unconstructed tier0 allocator). A post-order walk over each staged image's imports puts every dependency first.
+		std::vector<PEModule *> starting;
+		{
+			const std::set<PEModule *> new_images(staged.begin(), staged.end());
+			std::set<PEModule *> visited;
+			std::function<void(PEModule *)> visit = [&](PEModule *image) {
+				if (!new_images.contains(image) || !visited.insert(image).second)
+					return;
+				std::set<std::string> libraries;
+				for (const auto &symbol : image->imports) {
+					if (!libraries.insert(lowered(symbol.module)).second)
+						continue;
+					try {
+						for (const auto *dependency : modules.resolution_path(symbol))
+							visit(const_cast<PEModule *>(dependency));
+					} catch (const std::exception &) {
+					}
+				}
+				starting.push_back(image);
+			};
+			for (auto item = staged.rbegin(); item != staged.rend(); ++item)
+				visit(*item);
+		}
+		attaching.insert(starting.begin(), starting.end());
+		struct ClearAttaching { std::set<const PEModule *> &set; const std::vector<PEModule *> &images; ~ClearAttaching() { for (auto *image : images) set.erase(image); } }
+			clear_attaching{attaching, starting};
 		std::vector<PEModule *> attached;
-		for (auto item = staged.rbegin(); item != staged.rend(); ++item) {
+		for (auto item = starting.begin(); item != starting.end(); ++item) {
 			if (tls && !(only_map && *item == root))
 				for (const auto callback : tls->callbacks(**item)) {
 					const uint64_t arguments[] = {(*item)->loaded.base(), 1, 0};
@@ -310,6 +355,7 @@ uint64_t NativeX86Loader::load(std::string name, bool only_map, uint32_t search_
 			const auto result = call((*item)->loaded.base() + (*item)->image.entry, arguments);
 			if (cookie)
 				contexts.deactivate(thread, cookie);
+
 			if (result.stop != NativeStop::returned)
 				throw result;
 			if (!uint32_t(result.value)) {
@@ -333,6 +379,7 @@ uint64_t NativeX86Loader::load(std::string name, bool only_map, uint32_t search_
 				return 0;
 			}
 			attached.push_back(*item);
+			attaching.erase(*item);
 		}
 		if (key)
 			held[*key] = {root, 1, only_map};

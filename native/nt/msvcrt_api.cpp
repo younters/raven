@@ -9,10 +9,34 @@ namespace raven {
 
 namespace {
 
-constexpr std::array<std::string_view, 17> names{"_XcptFilter", "__getmainargs", "__p__commode", "__p__fmode",
+constexpr std::array<std::string_view, 20> names{"_XcptFilter", "__getmainargs", "__lc_codepage", "__p__commode", "__p__fmode",
 	"__set_app_type", "__setusermatherr", "_acmdln", "_adjust_fdiv", "_c_exit", "_cexit", "_controlfp",
-	"_except_handler3", "_exit", "_initterm", "exit", "rand", "srand"};
-constexpr std::array<std::string_view, 2> variables{"_acmdln", "_adjust_fdiv"};
+	"_except_handler3", "_exit", "_initterm", "_pctype", "_winmajor", "exit", "rand", "srand"};
+// msvcrt.dll's data exports: libraries built against it (MinGW's libxml2 and freetype in Source games) read them directly.
+constexpr std::array<std::string_view, 5> variables{"__lc_codepage", "_acmdln", "_adjust_fdiv", "_pctype", "_winmajor"};
+
+// The "C" locale character classes of msvcrt's _ctype table: _UPPER 1, _LOWER 2, _DIGIT 4, _SPACE 8, _PUNCT 0x10, _CONTROL 0x20,
+// _BLANK 0x40, _HEX 0x80, _ALPHA 0x100.
+uint16_t c_locale_class(int c)
+{
+	if (c == '\t')
+		return 0x68;
+	if (c >= '\n' && c <= '\r')
+		return 0x28;
+	if (c < 32 || c == 127)
+		return 0x20;
+	if (c == ' ')
+		return 0x48;
+	if (c >= '0' && c <= '9')
+		return 0x84;
+	if (c >= 'A' && c <= 'Z')
+		return c <= 'F' ? 0x181 : 0x101;
+	if (c >= 'a' && c <= 'z')
+		return c <= 'f' ? 0x182 : 0x102;
+	if (c < 127)
+		return 0x10;
+	return 0;
+}
 
 }
 
@@ -59,6 +83,18 @@ void NativeCRT::initialize(const std::function<uint64_t(std::string_view)> &addr
 	// _acmdln points at the process ANSI command line; _adjust_fdiv reports a correct FDIV unit.
 	write32(address("_acmdln"), uint32_t(environment.command_line()));
 	write32(address("_adjust_fdiv"), 0);
+	// _pctype points one entry into the table, so that _pctype[-1] answers for EOF: globals + 64 holds EOF, then the 256 characters.
+	const uint64_t table = globals + 64;
+	std::array<uint8_t, 2 * 257> classes{};
+	for (int c = 0; c < 256; ++c) {
+		const auto value = c_locale_class(c);
+		classes[2 + 2 * c] = uint8_t(value);
+		classes[3 + 2 * c] = uint8_t(value >> 8);
+	}
+	process.write_memory(table, classes);
+	write32(address("_pctype"), uint32_t(table + 2));
+	write32(address("__lc_codepage"), 0);
+	write32(address("_winmajor"), 6);
 }
 
 bool NativeCRT::dispatch(std::string_view name)

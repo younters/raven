@@ -173,6 +173,17 @@ std::vector<FontScript> enumerated_scripts(const InstalledFamily &family, int ch
 
 }
 
+namespace {
+// A character of code page 1252 as UTF-16: Latin-1 except for the 0x80-0x9f block.
+uint16_t windows_1252(uint32_t code)
+{
+	static constexpr uint16_t high[32] = {0x20ac, 0x81, 0x201a, 0x192, 0x201e, 0x2026, 0x2020, 0x2021, 0x2c6, 0x2030, 0x160, 0x2039, 0x152, 0x8d,
+		0x17d, 0x8f, 0x90, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x2dc, 0x2122, 0x161, 0x203a, 0x153, 0x9d, 0x17e, 0x178};
+	code &= 0xffff;
+	return code >= 0x80 && code < 0xa0 ? high[code - 0x80] : uint16_t(code);
+}
+}
+
 void NativeDesktop::register_text_api(ApiRegistry &registry)
 {
 	const auto require_dc = [this](const ApiCall &call, size_t index) -> DesktopDC & {
@@ -607,7 +618,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 	// bitmap, rendered as text draws it: GGO_METRICS (0), GGO_BITMAP (1, a bit per pixel) and GGO_GRAY2, GRAY4 and GRAY8 (4, 5, 6: 4, 16
 	// and 64 levels a byte), rows padded to four bytes. Glyph indices, outlines and transforms other than the identity are not drawn:
 	// GDI_ERROR, as for a font that cannot give them.
-	registry.add("GetGlyphOutlineW", 7, [=, this](ApiCall &call) {
+	const auto glyph_outline = [=, this](ApiCall &call, bool ansi) {
 		guarded(call, 0xffffffffU, [&] {
 			auto &dc = require_dc(call, 0);
 			const uint32_t format = call.u32(2);
@@ -621,7 +632,7 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			}
 			const auto &font = selected_font(dc);
 			const auto info = objects.text().logical_metrics(font.definition);
-			const uint16_t character = uint16_t(call.u32(1));
+			const uint16_t character = ansi ? windows_1252(call.u32(1)) : uint16_t(call.u32(1));
 			const auto advance = objects.text().logical_advances(font.definition, std::span<const uint16_t>(&character, 1));
 			const int32_t cell = advance.empty() ? 0 : advance.back();
 			const int32_t pad = std::max(4, info.height / 2);
@@ -669,7 +680,10 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			call.write(call[5], bitmap);
 			call.ret(bitmap.size());
 		});
-	});
+	};
+	registry.add("GetGlyphOutlineW", 7, [=](ApiCall &call) { glyph_outline(call, false); });
+	// The ANSI form names its character in the ANSI code page (Windows-1252 here); a two-byte DBCS character is not decoded.
+	registry.add("GetGlyphOutlineA", 7, [=](ApiCall &call) { glyph_outline(call, true); });
 	// GetFontData(dc, table, offset, buffer, size): a table of the font file the selected font uses, its tag in file order (the bytes of
 	// "hhea" as they read); without a buffer the length from the offset. The whole file (table 0) is not handed out: GDI_ERROR, as for a
 	// table the font does not have.
@@ -861,6 +875,29 @@ void NativeDesktop::register_text_api(ApiRegistry &registry)
 			call.ret(uint64_t((cumulative.back() / 26 + 1) / 2));
 		});
 	});
+
+	// ---- font resources ----
+	// A program's own font files are accepted as one font each but are NOT registered with the text engine yet, so GDI text still
+	// draws with the bundled faces. Games that render their own fonts (Source's vgui through FreeType) need only the call to succeed.
+	const auto add_font_resource = [](ApiCall &call) { call.ret(call[0] ? 1 : 0); };
+	registry.add("AddFontResourceW", 1, add_font_resource);
+	registry.add("AddFontResourceA", 1, add_font_resource);
+	registry.add("AddFontResourceExW", 3, add_font_resource);
+	registry.add("AddFontResourceExA", 3, add_font_resource);
+	registry.add("RemoveFontResourceW", 1, add_font_resource);
+	registry.add("RemoveFontResourceA", 1, add_font_resource);
+	registry.add("RemoveFontResourceExW", 3, add_font_resource);
+	registry.add("RemoveFontResourceExA", 3, add_font_resource);
+	// AddFontMemResourceEx(data, size, reserved, count): a nonzero handle and one installed font.
+	registry.add("AddFontMemResourceEx", 4, [](ApiCall &call) {
+		if (!call[0] || !call.u32(1) || !call[3]) {
+			call.fail(87);
+			return;
+		}
+		call.store<uint32_t>(call[3], 1);
+		call.ret(call[0]);
+	});
+	registry.add("RemoveFontMemResourceEx", 1, [](ApiCall &call) { call.ret(call[0] ? 1 : 0); });
 
 	// ---- fonts ----
 	const auto add_font = [this](const std::array<uint8_t, 92> &definition) {

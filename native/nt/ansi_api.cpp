@@ -34,6 +34,8 @@ const Adapter adapters[] = {
 	{"FindAtomA", {0}},
 	{"CreateFileA", {0}},
 	{"GetFileAttributesA", {0}},
+	// WIN32_FILE_ATTRIBUTE_DATA holds no text or pointers: the wide call fills the same structure.
+	{"GetFileAttributesExA", {0}},
 	{"SetupDiGetClassDevsA", {1}},
 	{"SetFileAttributesA", {0}},
 	{"DeleteFileA", {0}},

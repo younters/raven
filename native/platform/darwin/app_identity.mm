@@ -169,6 +169,17 @@ void raven_macos_program_identity()
 				if (!product) product = version_string(data,0,@"ProductName",budget);
 				if (name) break;
 			}
+			// An executable without a version resource (Source games' hl2.exe) is named after its Steam game folder,
+			// steamapps/common/<Game>/..., so that Activity Monitor and the Dock show "Portal" rather than "hl2".
+			if (!name && !product) {
+				NSString *full = [NSString stringWithUTF8String:path];
+				const NSRange marker = [full rangeOfString:@"/steamapps/common/" options:NSCaseInsensitiveSearch | NSBackwardsSearch];
+				if (marker.location != NSNotFound) {
+					NSString *rest = [full substringFromIndex:NSMaxRange(marker)];
+					NSString *game = [rest componentsSeparatedByString:@"/"].firstObject;
+					if (game.length && ![game isEqualToString:rest]) product = game;
+				}
+			}
 			cached_name = name ?: product ?: cached_name;
 			cached_icon = program_icon(file);
 		} catch (...) {}
