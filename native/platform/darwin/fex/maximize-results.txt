@@ -1,0 +1,202 @@
+Maximize investigation, 2026-11-03, America/Denver
+
+Status: partial optimization; not a demonstrated fix for all seconds-long stalls.
+Baseline is fex-portal 5c6031d6, not the earlier matrix's 27cfa1ea.
+The intervening TLS expansion-slot fast path is a material source difference.
+No conclusions pool old matrix timings with the new baseline.
+
+Read: resize/ab RESULTS.txt, ANALYSIS.txt, METHOD.txt, cycles-final.json;
+feat/macos-resize RESIZE.md Dedicated window results; hang/firstmax results.json
+and NOTES.txt; FEX code-cache DESIGN.md and RESULTS.md. Upstream/main inspected
+at 2c3d4295, including e639e7fe and 9a091d54. No upstream merge or resize redesign.
+
+Attribution:
+- diag-off1 first maximize: post -> handler 2598.924 ms, final WM_SIZE
+  4084.996 ms, final-size DXMT submission 5790.509 ms. Its enclosing browser
+  counter interval was 5950.160 ms: user CPU 2666.233 ms, system CPU 2135.858 ms,
+  completed CompileBlock intervals 275.770 ms. GPU compile 114.074 ms.
+  The 1-second screenshot still shows the original narrow window.
+- diag-off2 first request entered the guest handler only after 9635.871 ms,
+  after the next restore request. Censored for frame timing. Not a permanent
+  hang: the original maximize and queued restore subsequently ran.
+  In the first enclosing 8464.767 ms browser interval: 4281.032 ms CPU and
+  71.319 ms CompileBlock; GPU 252.874 ms CPU and 12.290 ms CompileBlock.
+  Browser controller: 644/1110 sample leaves in receive_handles service,
+  95 invalidation, 46 other Raven API work, 56 host waits, 268 other host,
+  1 unresolved. GPU controller: 1127/1158 host waits. Renderer controllers
+  approximately 1134/1162-1167 host waits. Worker threads mostly wait on their
+  FexWorker condition variables; unresolved stacks may include translated code.
+- diag-api3: handler 1070.614 ms, final WM_SIZE 1995.112 ms; no final-size
+  producer frame before restore at ~8.3 s. The GPU/renderer samples mostly
+  wait during the sampled interval; no evidence here for seconds of Metal
+  pipeline/shader compilation. Browser API reports include 23,560 QPC calls
+  in a reporting period overlapping maximize. Inclusive API durations overlap
+  parked coroutines and must NOT be added as a wall-time decomposition.
+
+What is established: compilation does not account for the observed stalled
+browser intervals. There is substantial host API/service work and unnecessary
+translation-cache invalidation. A late DXMT endpoint does not locate all of its
+upstream delay in the GPU process. The existing warm-cache experiment also did
+not remove the multi-second first-maximize tail. Do not enable the cache by
+default on this evidence.
+
+What is not established: an exhaustive per-guest-thread critical path, exact
+Chromium lock/IPC ownership, or a universal cause of both historical stalls.
+Stack sampling is statistical, native workers overlap, and compile counters
+include elapsed time in CompileBlock (not pure compiler CPU). Page-fault counts
+are recorded but do not establish fault latency. Lazy DLL load, scheduling,
+handle-channel polling, and guest work remain possible contributors. No claim
+that all unidentified stacks are translated execution.
+
+Experiment: private non-executable x64 data writes bypass NotifyMemoryDirty.
+The original path walks every thread's translation cache even for API outputs
+on ordinary stacks. Executable pages, image mappings, shared mappings, WoW64,
+and unrecognized/cross-region ranges retain the original notification. Protection
+transitions still notify FEX. No new sleep, throttling, cache default, scheduler
+policy, or resize behavior. Production changes are Mac-only.
+
+Measurement: private worktree build; nice 10, two jobs, prebuilt components
+unchanged. Control-file reads limited to ten per second. Time starts when the
+probe consumes and posts WM_SYSCOMMAND; external write times are in runner logs.
+Clean runs disable compilation profiling, counter logging, samples and screenshots.
+Fresh Chrome profile per launch; about:blank, same flags; five max/restore cycles;
+50 s startup + restore + 10 s; first maximize observed for 20 s, later transitions
+8 s. A matching final WM_SIZE extent and root HWND/PID are required for the DXMT
+endpoint. Missing frames stay null/censored. This is layer submission, not scanout
+or proof of semantic repaint. Diagnostic runs are separate and more perturbing.
+No native macOS mouse/keyboard events were posted. In diag-off2, the control
+probe accounted for four fopen/fscanf samples out of 1110 browser controller
+samples, versus the earlier probe report of 130/700 (different runs; not a
+performance speedup measurement).
+
+Initial exclusions: before1 missing companion DLLs in snapshot (fixed); before2
+never opened a controllable window. Retained logs; neither is a latency sample.
+
+Tests: 26/26 targeted CTest entries passed (13 tests + 13 prefix cleanup fixtures),
+2.70 s, serial, on the final production build. New host-data-write serial/parallel, existing selfmodify,
+flush-only, shared-offset, shared alias flush/no-flush, retranslation. Three
+analyzer tests passed (final extent, unanswered request, frame crossing boundary).
+
+Artifacts: /Volumes/Storage/Projects/raven-wip/maximize/ contains raw logs,
+process snapshots, samples + PE-symbolized samples, sample-summary.json, cycles.json,
+control receipts, screenshots, manifests, diagnostic.patch, runner and analyzers.
+The diagnostic counter probe uses symbol offsets in module SHA256
+b324d5957e6f8a6f0406051cc75661aa7453221ed0792fade0de9c2423b49794;
+this probe is temporary and must not be shipped.
+
+Phase-local diagnostic detail (diag-off1; enclosing 100 ms counter snapshots,
+so phase bounds overlap and cannot be added):
+post -> handler, actual 2598.924 ms:
+  browser enclosing 2735 ms: CPU 2066.787 ms, compile 31.262 ms;
+  GPU CPU 58.810 ms, compile 0; two renderers CPU 47.357/46.604 ms, compile 0.
+handler -> final WM_SIZE, actual 1486.072 ms:
+  browser enclosing 1555 ms: CPU 1197.200 ms, compile 176.809 ms;
+  GPU CPU 146.060 ms, compile 14.274 ms;
+  renderer CPU 30.771/232.962 ms, compile 4.862/305.872 ms.
+final WM_SIZE -> submission, actual 1705.513 ms:
+  browser enclosing 1866 ms: CPU 1719.202 ms, compile 98.945 ms;
+  GPU CPU 350.843 ms, compile 99.800 ms;
+  renderer CPU 601.617/76.863 ms, compile 572.573/13.684 ms.
+Thus some renderer cold translation is real, but it is not the browser's
+multi-second message-delivery cost. The GPU itself is not continuously busy
+compiling shaders for the whole late-submission interval in these samples.
+Raw per-process first/later counters: process-intervals.json; phase detail:
+diag-off1-phases.json. No inference that residual CPU is all translated guest code.
+
+Later-maximize attribution (same diag-off1 launch, second maximize):
+  post -> handler 5.004 ms; final WM_SIZE 26.396 ms; submission 495.405 ms.
+  Browser enclosing 615.749 ms: CPU 411.393 ms, CompileBlock 0.
+  GPU enclosing 628.799 ms: CPU 140.597 ms, CompileBlock 0.
+  Renderer 24048 enclosing 629.750 ms: CPU 253.402 ms, CompileBlock 190.182 ms.
+  Renderer 24108 enclosing 633.788 ms: CPU 33.215 ms, CompileBlock 0.
+This explains part of the steady-state cost as continuing host/guest execution
+and, in one renderer, translation; it does not assign every millisecond to an
+API or a wait. The earlier software sample's 170/164/209 ms split is not a new
+measurement of this build. These overlapping per-process intervals must not be
+summed or subtracted into an exact running/compiling/waiting decomposition.
+Sampled worker waits are FexWorker condition variables and controller waits
+are host event/poll waits. Which guest lock/message/IPC dependency prevents
+progress while those workers wait is not established. In particular, the
+unaltered parallel scheduler has not been exonerated by this investigation.
+
+Clean paired Chrome measurements (milliseconds, in chronological pair order):
+                  first maximize       later maximizes (cycles 2 through 5)
+  before5         1049.111              401.819 442.210 462.706 461.298
+  after1          1227.029              407.967 386.449 419.478 409.075
+  before6         1815.287              477.113 480.096 446.334 452.247
+  after2           714.504              367.921 384.189 393.873 395.311
+  before7         3695.209              538.382 439.235 438.330 452.343
+  after3          1296.801              389.618 445.483 437.584 428.566
+  first median:   1815.287 -> 1227.029 (three independent launches per build)
+  later median:    452.295 ->  401.639 (12 transitions per build)
+Each launch has five maximize/restore cycles. These are alternating pairs with
+fresh Chrome profiles, RAVEN_PARALLEL=1 and the translated-code cache off.
+One first-maximize pair regressed; the small shared-machine sample supports a
+partial improvement, not statistical significance or removal of the long tail.
+The final production binaries were rebuilt after removing measurement probes;
+paired timings necessarily use the otherwise equivalent instrumented binaries.
+Manifests preserve their hashes; do not confuse final binary hashes with them.
+
+The clean before7 sample separately reproduces the second stall site: handler
+2.688 ms, final WM_SIZE 1011.469 ms, submission 3695.209 ms. Thus 2683.740 ms
+remain after final-size notification even without sampling/compile profiling.
+It proves delayed production, but not a GPU-specific cause or a fixed delay.
+
+Post-change diagnostic diag-after (not pooled with clean pairs): first handler
+2.758 ms, final WM_SIZE 294.271 ms, submission 566.372 ms; second submission
+343.815 ms. First browser controller: 642/719 host-wait leaves, 35 other API,
+34 other host, 7 handle-channel service, 1 invalidation. Second controller:
+520/1183 host waits, 215 other API, 114 handle-channel, 312 other host,
+21 invalidation, 1 unresolved. The conservative notification paths still run.
+These separate samples support reduced host work, not a matched causal estimate
+of how many milliseconds each removed invalidation saved.
+
+Screen evidence: diag-off1-cycle1.png shows the original narrow Chrome window
+about one second after posting; diag-after-cycle1.png shows maximized Chrome
+with about:blank about one second after posting. These are isolated diagnostic
+screenshots, not a continuous display-latency measurement or matched visual
+benchmark. DXMT submission can precede presentation or useful content repaint.
+
+Steam: attempted in the allocated window using its existing prefix, but the
+visible qualified window was 'Sign in to Steam' (700x440). A hidden 'Steam'
+window and renderer surface submissions are not the signed-in main-window
+benchmark. Both attempted Steam launches were stopped by owned PID trees;
+no qualified Steam latency result is reported. No sign-in was attempted.
+The firstmax warm2/off4 unresponsive cases were not resampled; the 9.636-second
+message-delivery case above is a new observation, not proof of their cause.
+
+Final validation:
+  nice -n 10 cmake --build build-maximize -j 2 --target raven raven-fex-host fex_process_test
+  PASS; final binaries dated 2026-11-03 15:16 local. Existing Cocoa deprecation
+  warning only. No FEX module or shared component rebuilt/modified.
+  RAVEN_PREFIX_SETUP=1 ctest --test-dir build-maximize -j 1 --output-on-failure
+    -R 'fex_host-data-write|native_(parallel_)?(selfmodify|flush-only)_fex|native_alias_flush_x64_fex|native_retranslation_fex|native_shared-offset_fex'
+  PASS: 26/26 entries = 13 functional tests + 13 cleanup fixtures, 2.70 seconds.
+  New host-data-write test runs serial and parallel: host-written data spanning
+  4K pages, data -> executable and executable -> data -> executable transitions,
+  plus a write through a non-executable shared alias of executable memory.
+  Existing SMC, explicit flush, alias flush/no-flush, shared-offset, retranslation
+  tests pass. Three measurement-analyzer unit tests pass. git diff --check passes.
+  Logs: final-build.log, tests-final.log, test-analyze.log.
+
+Scope and next work:
+  Production diff is exclusively native/platform/darwin/fex: fex_process.cpp,
+  fex_process_test.cpp, parity.cmake, and this report. Temporary shared-code
+  probes are removed; no production native/desktop or native/nt edits.
+  The private-write guard avoids a proven unnecessary path; it does not establish
+  that invalidation was the dominant cause. Its correctness depends on existing
+  protection notifications invalidating code before it can execute again.
+  Shared mappings are explicitly marked so aliases retain notification behavior.
+  Remaining candidate: very frequent QPC API exits amplify handle-channel polling
+  and host API work. native/nt/providers.cpp deliberately disables the guest QPC
+  prelude for FEX because guest RDTSC scaling differs from Darwin CNTVCT.
+  A future fast path needs calibration of FEX's actual guest clock and clock
+  correctness tests; blindly enabling the existing calibration is unsafe.
+  Event-driven handle-channel service is another candidate requiring attribution
+  and upstream coordination, not a reason to rewrite shared code in this patch.
+  Need a second reserved machine window to trace the remaining critical guest
+  thread/IPC dependency and measure the signed-in Steam main window. Do not
+  overrun the current 15:30 deadline or assume code-cache defaults solve this.
+
+Branch: fix/maximize-stalls, based on fex-portal 5c6031d6ea43ae3970b2085cdf1013ad2b7bacfa.
+No push. Final commit SHA is in the handoff and scratch FINAL_COMMIT.txt.
