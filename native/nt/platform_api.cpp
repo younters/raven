@@ -477,6 +477,18 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("ImmGetOpenStatus", 1, [](ApiCall &call) { call.ret(0); });
 	registry.add("ImmSetOpenStatus", 2, [](ApiCall &call) { call.ret(0); });
 	registry.add("ImmGetConversionStatus", 3, [](ApiCall &call) { call.ret(0); });
+	registry.add("ImmSetConversionStatus", 3, [](ApiCall &call) { call.ret(0); });
+	// No input method is active: no window is the UI of one, no candidate lists exist, and keys are never processed into one.
+	registry.add("ImmIsUIMessageA", 4, [](ApiCall &call) { call.ret(0); });
+	registry.add("ImmIsUIMessageW", 4, [](ApiCall &call) { call.ret(0); });
+	registry.add("ImmGetCandidateListCountW", 2, [](ApiCall &call) {
+		if (call[1])
+			call.store<uint32_t>(call[1], 0);
+		call.ret(0);
+	});
+	registry.add("ImmGetCandidateListW", 4, [](ApiCall &call) { call.ret(0); });
+	// With no input method processing keys, Windows answers VK_PROCESSKEY.
+	registry.add("ImmGetVirtualKey", 1, [](ApiCall &call) { call.ret(0xe5); });
 
 	// Network and certificate services: no network is reported, and certificates are found nowhere else than where crypt32 keeps them.
 	registry.add("IsNetworkAlive", 1, [](ApiCall &call) {
