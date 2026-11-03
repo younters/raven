@@ -1254,13 +1254,28 @@ CRT void _register_thread_local_exe_atexit_callback(void *callback) {}
 
 /* ---- locales ---- */
 
-/* Every locale is the C locale with the ANSI code page here, so a created locale is one shared object that formats as the default. */
-static struct { int code_page; } shared_locale = {1252};
+/* Every locale is the C locale with the ANSI code page here, so a created locale is one shared object that formats as the default.
+   A _locale_t points at { locinfo, mbcinfo }, and code built with the Windows headers reads the public head of each directly: the
+   inline character tests and MB_CUR_MAX of <ctype.h> (inlined into libc++, among others) take locinfo's character class table, indexed
+   from -1 as __pctype_func's is, its MB_CUR_MAX and its code page; mbcinfo begins with a count, the code page and whether it is one of
+   several bytes per character. */
+static struct { const unsigned short *pctype; int mb_cur_max; unsigned code_page; } locale_data = {NULL, 1, 1252};
+static struct { long references; int code_page; int multibyte; } multibyte_data = {1, 1252, 0};
+static struct { void *locinfo, *mbcinfo; } shared_locale = {&locale_data, &multibyte_data};
 
-CRT void *_create_locale(int category, const char *name) { return &shared_locale; }
-CRT void *_wcreate_locale(int category, const wchar_t *name) { return &shared_locale; }
+static void *locale_object(void)
+{
+	if (!locale_data.pctype) {
+		locale_data.code_page = multibyte_data.code_page = GetACP();
+		locale_data.pctype = __pctype_func();
+	}
+	return &shared_locale;
+}
+
+CRT void *_create_locale(int category, const char *name) { return locale_object(); }
+CRT void *_wcreate_locale(int category, const wchar_t *name) { return locale_object(); }
 CRT void _free_locale(void *locale) {}
-CRT void *_get_current_locale(void) { return &shared_locale; }
+CRT void *_get_current_locale(void) { return locale_object(); }
 
 CRT long _wcstol_l(const wchar_t *text, wchar_t **end, int base, _locale_t locale) { return wcstol(text, end, base); }
 CRT unsigned long _wcstoul_l(const wchar_t *text, wchar_t **end, int base, _locale_t locale) { return wcstoul(text, end, base); }

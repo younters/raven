@@ -260,6 +260,221 @@ CRT double _atof_l(const char *text, _locale_t locale) { return text ? raven_str
 CRT double _wtof_l(const wchar_t *text, _locale_t locale) { return text ? raven_wcstod(text, NULL) : 0.0; }
 CRT double _strtod_l(const char *text, char **end, _locale_t locale) { return raven_strtod(text, end); }
 
+/* The other locale forms of the number parsers and the character-width query, which libc++ builds (Strata Source's libcpp.dll) import.
+   The runtime has one locale, so each answers as its plain form does. */
+CRT float _strtof_l(const char *text, char **end, _locale_t locale) { (void)locale; return raven_strtof(text, end); }
+CRT long long _strtoi64_l(const char *text, char **end, int base, _locale_t locale) { (void)locale; return strtoll(text, end, base); }
+CRT unsigned long long _strtoui64_l(const char *text, char **end, int base, _locale_t locale) { (void)locale; return strtoull(text, end, base); }
+CRT int ___mb_cur_max_l_func(_locale_t locale) { (void)locale; return ___mb_cur_max_func(); }
+/* A long double is a double in the Windows ABI, as for strtold above. */
+__asm__(".section .drectve\n\t.ascii \" -export:_strtold_l=raven_strtold_l\"\n\t.text");
+double raven_strtold_l(const char *text, char **end, _locale_t locale) { (void)locale; return raven_strtod(text, end); }
+
+/* The handler set_terminate installed, or none. */
+CRT terminate_handler _get_terminate(void) { return current_terminate_handler; }
+
+/* wctob: the single byte of the ANSI code page a wide character is, or EOF when it takes more or none. */
+CRT int wctob(wint_t character)
+{
+	if (character < 0x80)
+		return (int)character;
+	const wchar_t wide = (wchar_t)character;
+	char byte = 0;
+	BOOL substituted = FALSE;
+	if (WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, &wide, 1, &byte, 1, NULL, &substituted) != 1 || substituted)
+		return -1;
+	return (unsigned char)byte;
+}
+
+/* ---- what GLib's Windows port imports (Strata Source's Panorama text renderer links it) ---- */
+
+/* A handler for invalid parameters on this thread alone, which _invalid_parameter_noinfo prefers to the process's. */
+static DWORD parameter_slot(void)
+{
+	if (thread_parameter_slot == TLS_OUT_OF_INDEXES) {
+		const DWORD slot = TlsAlloc();
+		if (InterlockedCompareExchange((LONG *)&thread_parameter_slot, (LONG)slot, (LONG)TLS_OUT_OF_INDEXES) != (LONG)TLS_OUT_OF_INDEXES)
+			TlsFree(slot);
+	}
+	return thread_parameter_slot;
+}
+CRT RavenInvalidParameterHandler _set_thread_local_invalid_parameter_handler(RavenInvalidParameterHandler handler)
+{
+	const DWORD slot = parameter_slot();
+	if (slot == TLS_OUT_OF_INDEXES)
+		return NULL;
+	RavenInvalidParameterHandler previous = (RavenInvalidParameterHandler)TlsGetValue(slot);
+	TlsSetValue(slot, (void *)handler);
+	return previous;
+}
+CRT RavenInvalidParameterHandler _get_thread_local_invalid_parameter_handler(void)
+{
+	return thread_parameter_slot == TLS_OUT_OF_INDEXES ? NULL : (RavenInvalidParameterHandler)TlsGetValue(thread_parameter_slot);
+}
+
+/* _wcreat: a file created, or emptied, and opened for reading and writing, as _creat is. */
+CRT int _wcreat(const wchar_t *path, int mode) { (void)mode; return _wopen(path, 0x2 | 0x100 | 0x200); }
+
+/* struct _wfinddata64i32_t: the times are 64-bit, the size 32-bit. */
+typedef struct {
+	unsigned attributes;
+	long long created, accessed, written;
+	unsigned long size;
+	wchar_t name[260];
+} RavenFindWide64i32;
+
+static void fill_found64i32(RavenFindWide64i32 *out, const WIN32_FIND_DATAW *data)
+{
+	out->attributes = data->dwFileAttributes;
+	out->created = file_time_to_unix(data->ftCreationTime);
+	out->accessed = file_time_to_unix(data->ftLastAccessTime);
+	out->written = file_time_to_unix(data->ftLastWriteTime);
+	out->size = data->nFileSizeLow;
+	memcpy(out->name, data->cFileName, sizeof out->name);
+}
+
+CRT intptr_t _wfindfirst64i32(const wchar_t *pattern, RavenFindWide64i32 *out)
+{
+	WIN32_FIND_DATAW data;
+	HANDLE search = FindFirstFileW(pattern, &data);
+	if (search == INVALID_HANDLE_VALUE) {
+		windows_failure();
+		return -1;
+	}
+	fill_found64i32(out, &data);
+	return (intptr_t)search;
+}
+
+CRT int _wfindnext64i32(intptr_t search, RavenFindWide64i32 *out)
+{
+	WIN32_FIND_DATAW data;
+	if (!FindNextFileW((HANDLE)search, &data)) {
+		set_errno(2);
+		return -1;
+	}
+	fill_found64i32(out, &data);
+	return 0;
+}
+
+/* _wspawnv and its forms: a program started with an argument vector, quoted into one command line as the C runtime parses it back.
+   _P_WAIT (0) returns its exit code, _P_NOWAIT and _P_NOWAITO (1, 3) its process handle, _P_OVERLAY (2) ends this process with it, and
+   _P_DETACH (4) starts it on its own. The p forms search for the program as CreateProcess does; e forms give it an environment. */
+static void quote_argument(wchar_t **at, wchar_t *end, const wchar_t *argument)
+{
+	const int plain = *argument && !wcspbrk(argument, L" \t\n\v\"");
+	if (plain) {
+		while (*argument && *at < end)
+			*(*at)++ = *argument++;
+		return;
+	}
+	if (*at < end)
+		*(*at)++ = L'"';
+	for (;; ++argument) {
+		size_t slashes = 0;
+		while (*argument == L'\\')
+			++argument, ++slashes;
+		/* Backslashes double before a quote or the closing quote, and stay as they are elsewhere. */
+		const size_t count = !*argument ? slashes * 2 : *argument == L'"' ? slashes * 2 + 1 : slashes;
+		for (size_t index = 0; index < count && *at < end; ++index)
+			*(*at)++ = L'\\';
+		if (!*argument)
+			break;
+		if (*at < end)
+			*(*at)++ = *argument;
+	}
+	if (*at < end)
+		*(*at)++ = L'"';
+}
+
+static intptr_t spawn_wide(int mode, const wchar_t *program, const wchar_t *const *arguments, const wchar_t *const *environment,
+	int search)
+{
+	if (!program || !arguments || mode < 0 || mode > 4) {
+		set_errno(22);
+		return -1;
+	}
+	wchar_t *line = (wchar_t *)HeapAlloc(GetProcessHeap(), 0, 32768 * sizeof(wchar_t)), *at = line, *const end = line + 32767;
+	if (!line) {
+		set_errno(12);
+		return -1;
+	}
+	for (const wchar_t *const *argument = arguments; *argument; ++argument) {
+		if (argument != arguments && at < end)
+			*at++ = L' ';
+		quote_argument(&at, end, *argument);
+	}
+	*at = 0;
+	/* An environment is a block of NAME=value strings, each ended by a zero, the block by one more. */
+	wchar_t *block = NULL;
+	if (environment) {
+		size_t length = 1;
+		for (const wchar_t *const *entry = environment; *entry; ++entry)
+			length += wcslen(*entry) + 1;
+		block = (wchar_t *)HeapAlloc(GetProcessHeap(), 0, length * sizeof(wchar_t));
+		if (block) {
+			wchar_t *put = block;
+			for (const wchar_t *const *entry = environment; *entry; ++entry) {
+				const size_t size = wcslen(*entry) + 1;
+				memcpy(put, *entry, size * sizeof(wchar_t));
+				put += size;
+			}
+			*put = 0;
+		}
+	}
+	STARTUPINFOW startup = {sizeof startup};
+	PROCESS_INFORMATION process = {0};
+	const BOOL started = CreateProcessW(search ? NULL : program, line, NULL, NULL, TRUE,
+		CREATE_UNICODE_ENVIRONMENT | (mode == 4 ? DETACHED_PROCESS : 0), block, NULL, &startup, &process);
+	HeapFree(GetProcessHeap(), 0, line);
+	if (block)
+		HeapFree(GetProcessHeap(), 0, block);
+	if (!started) {
+		windows_failure();
+		return -1;
+	}
+	CloseHandle(process.hThread);
+	if (mode == 1 || mode == 3)
+		return (intptr_t)process.hProcess;
+	if (mode == 4) {
+		CloseHandle(process.hProcess);
+		return 0;
+	}
+	DWORD code = 0;
+	WaitForSingleObject(process.hProcess, INFINITE);
+	GetExitCodeProcess(process.hProcess, &code);
+	CloseHandle(process.hProcess);
+	if (mode == 2)
+		ExitProcess(code);
+	return (intptr_t)code;
+}
+
+CRT intptr_t _wspawnv(int mode, const wchar_t *program, const wchar_t *const *arguments)
+{
+	return spawn_wide(mode, program, arguments, NULL, 0);
+}
+CRT intptr_t _wspawnve(int mode, const wchar_t *program, const wchar_t *const *arguments, const wchar_t *const *environment)
+{
+	return spawn_wide(mode, program, arguments, environment, 0);
+}
+CRT intptr_t _wspawnvp(int mode, const wchar_t *program, const wchar_t *const *arguments)
+{
+	return spawn_wide(mode, program, arguments, NULL, 1);
+}
+CRT intptr_t _wspawnvpe(int mode, const wchar_t *program, const wchar_t *const *arguments, const wchar_t *const *environment)
+{
+	return spawn_wide(mode, program, arguments, environment, 1);
+}
+
+/* The daylight saving bias in seconds, as the Universal CRT publishes it beside the time zone: its address, read after _tzset. */
+static long daylight_bias = -3600;
+CRT long *__dstbias(void)
+{
+	TIME_ZONE_INFORMATION zone;
+	if (GetTimeZoneInformation(&zone) != TIME_ZONE_ID_INVALID)
+		daylight_bias = zone.DaylightBias * 60;
+	return &daylight_bias;
+}
+
 /* The significant decimal digits of a positive finite value, rounded at `count`, and the power of ten of the first. The value is
    scaled into [1, 10) in extended precision, which keeps the digits a double holds. */
 static int decimal_digits(double value, int count, char *digits)
@@ -522,7 +737,7 @@ CRT wchar_t *_wcsrev(wchar_t *text)
 }
 
 CRT int _wcsicoll(const wchar_t *a, const wchar_t *b) { return _wcsicmp(a, b); }
-CRT int _isctype_l(int c, int mask, _locale_t locale) { return c >= -1 && c < 256 ? __pctype_func()[c + 1] & mask : 0; }
+CRT int _isctype_l(int c, int mask, _locale_t locale) { return c >= -1 && c < 256 ? __pctype_func()[c] & mask : 0; }
 #undef _iswdigit_l
 #undef _iswlower_l
 #undef _iswupper_l

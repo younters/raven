@@ -225,6 +225,29 @@ static int secure_scan(void)
 	return 0;
 }
 
+/* A _locale_t as code built with the Windows headers reads it inline: { locinfo, mbcinfo }, and locinfo begins with the character
+   class table (indexed from -1), MB_CUR_MAX and the code page. libc++ formats numbers through exactly these reads. */
+static int locale_layout(void)
+{
+	HMODULE crt = GetModuleHandleA("ucrtbase.dll");
+	void *(__cdecl *create)(int, const char *) = (void *)GetProcAddress(crt, "_create_locale");
+	int (__cdecl *is_class)(int, int, void *) = (void *)GetProcAddress(crt, "_isctype_l");
+	const unsigned short *(__cdecl *classes)(void) = (void *)GetProcAddress(crt, "__pctype_func");
+	if (!create || !is_class || !classes)
+		return 1;
+	struct public_data { const unsigned short *pctype; int mb_cur_max; unsigned code_page; };
+	struct locale { struct public_data *locinfo; void *mbcinfo; } *locale = create(0, "C");
+	if (!locale || !locale->locinfo || !locale->mbcinfo)
+		return 2;
+	const struct public_data *data = locale->locinfo;
+	if (data->pctype != classes() || !(data->pctype['9'] & 0x4) || (data->pctype['a'] & 0x4) || data->mb_cur_max != 1 || data->code_page != GetACP())
+		return 3;
+	/* The class of '9' is the digit's own, not the next character's. */
+	if (!is_class('9', 0x4, locale) || is_class(':', 0x4, locale) || !is_class('A', 0x1, locale))
+		return 4;
+	return 0;
+}
+
 int raven_entry(void)
 {
 	char line[64], big[64];
@@ -280,5 +303,7 @@ int raven_entry(void)
 	if ((count = office_helpers())) return 100 + (int)count;
 	if ((count = secure_scan()))
 		return 200 + (int)count;
+	if ((count = locale_layout()))
+		return 300 + (int)count;
 	return temp_names();
 }

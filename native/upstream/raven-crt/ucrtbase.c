@@ -657,6 +657,8 @@ CRT int *_errno(void) { return &thread_errors()->error; }
 CRT unsigned long *__doserrno(void) { return &thread_errors()->dos_error; }
 typedef void (__cdecl *RavenInvalidParameterHandler)(const wchar_t *, const wchar_t *, const wchar_t *, unsigned, uintptr_t);
 static RavenInvalidParameterHandler invalid_parameter_handler;
+/* The TLS slot of a thread's own handler, which _set_thread_local_invalid_parameter_handler allocates when first used. */
+static DWORD thread_parameter_slot = TLS_OUT_OF_INDEXES;
 CRT RavenInvalidParameterHandler _set_invalid_parameter_handler(RavenInvalidParameterHandler handler)
 {
 	RavenInvalidParameterHandler previous = invalid_parameter_handler;
@@ -665,7 +667,11 @@ CRT RavenInvalidParameterHandler _set_invalid_parameter_handler(RavenInvalidPara
 }
 CRT void _invalid_parameter_noinfo(void)
 {
-	if (invalid_parameter_handler) invalid_parameter_handler(NULL, NULL, NULL, 0, 0);
+	RavenInvalidParameterHandler handler = thread_parameter_slot == TLS_OUT_OF_INDEXES ? NULL :
+		(RavenInvalidParameterHandler)TlsGetValue(thread_parameter_slot);
+	if (!handler)
+		handler = invalid_parameter_handler;
+	if (handler) handler(NULL, NULL, NULL, 0, 0);
 }
 CRT void _invalid_parameter_noinfo_noreturn(void) { ExitProcess(3); }
 
