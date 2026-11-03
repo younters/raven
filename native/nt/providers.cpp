@@ -36,6 +36,7 @@
 #include "platform/darwin/dxmt/identity.h"
 #include "platform/darwin/dxmt/kernel_thunks.h"
 #include "platform/darwin/nt_file_api.h"
+#include "platform/darwin/screen_caps_prelude.h"
 #endif
 #ifdef RAVEN_OPENGL
 #include "graphics/opengl_bridge.h"
@@ -565,17 +566,7 @@ static const std::vector<uint8_t> &screen_device_caps_prelude()
 		0xc3, 0xb8, 0x60, 0x00, 0x00, 0x00, 0xc3, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x31, 0xc0, 0xc3, 0x89, 0xd0, 0x41, 0x8b, 0x84, 0x82, 0x00, 0x04,
 		0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
 #ifdef __APPLE__
-	// Window and memory DCs use the process's effective DPI. Keep other capabilities on the fast path.
-	static const auto scaled=[] {
-		auto result=code;
-		const std::array<uint8_t,6> fixed{0xb8,0x60,0,0,0,0xc3};
-		const auto at=std::search(result.begin(),result.end(),fixed.begin(),fixed.end());
-		if (at==result.end()) throw std::runtime_error("missing fixed DPI prelude");
-		const auto offset=size_t(at-result.begin());
-		std::fill_n(at,6,0x90);
-		result[offset]=0xeb; result[offset+1]=uint8_t(result.size()-5-offset-2);
-		return result;
-	}();
+	static const auto scaled = raven_darwin::screen_caps_prelude(code);
 	return scaled;
 #else
 	return code;
