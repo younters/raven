@@ -204,6 +204,26 @@ static UINT effective_codepage(const msi_db *db)
 }
 
 // Each id keeps its place: tables on disk refer to strings by it, and a hole in the pool is an empty entry.
+// Packages hold tens of thousands of strings, nearly all ASCII, and every custom action host reads them all.
+// Stateful code pages (50000 and up, except UTF-8) give plain bytes other meanings.
+static void pool_decode(pool_entry *entry, UINT codepage, const char *bytes, UINT length)
+{
+	BOOL plain = codepage < 50000 || codepage == CP_UTF8;
+	for (UINT i = 0; plain && i < length; i++)
+		plain = (BYTE)bytes[i] < 0x80;
+	if (plain) {
+		entry->text = msi_alloc((length + 1) * sizeof(WCHAR));
+		for (UINT i = 0; i < length; i++)
+			entry->text[i] = (BYTE)bytes[i];
+		entry->length = length;
+		return;
+	}
+	INT wide = MultiByteToWideChar(codepage, 0, bytes, length, NULL, 0);
+	entry->text = msi_alloc((wide + 1) * sizeof(WCHAR));
+	MultiByteToWideChar(codepage, 0, bytes, length, entry->text, wide);
+	entry->length = wide;
+}
+
 static BOOL pool_load(msi_db *db, UINT *ref_size)
 {
 	ULONG pool_size = 0, data_size = 0;
@@ -229,10 +249,7 @@ static BOOL pool_load(msi_db *db, UINT *ref_size)
 		}
 		UINT id = db->pool_count++;
 		if (length && offset + length <= data_size) {
-			INT wide = MultiByteToWideChar(effective_codepage(db), 0, (char *)data + offset, length, NULL, 0);
-			db->pool[id].text = msi_alloc((wide + 1) * sizeof(WCHAR));
-			MultiByteToWideChar(effective_codepage(db), 0, (char *)data + offset, length, db->pool[id].text, wide);
-			db->pool[id].length = wide;
+			pool_decode(&db->pool[id], effective_codepage(db), (char *)data + offset, length);
 			offset += length;
 		}
 	}
@@ -760,6 +777,39 @@ msi_blob *db_read_named_stream(msi_db *db, const WCHAR *name)
 	blob->data = data;
 	blob->size = size;
 	return blob;
+}
+
+/* A stream of the database written into a file a piece at a time, as an embedded cabinet of hundreds of megabytes is: FALSE when there is
+ * no such stream or the copy fails. */
+BOOL db_copy_named_stream(msi_db *db, const WCHAR *name, HANDLE file)
+{
+	DWORD put = 0;
+	db_stream *pending = stream_find(db, name);
+	if (pending)
+		return WriteFile(file, pending->blob->data, (DWORD)pending->blob->size, &put, NULL) && put == (DWORD)pending->blob->size;
+	WCHAR *encoded = msi_alloc((lstrlenW(name) + 2) * sizeof(WCHAR));
+	IStream *stream = NULL;
+	name_encode(name, FALSE, encoded);
+	HRESULT hr = IStorage_OpenStream(db->storage, encoded, NULL, STGM_READ | STGM_SHARE_EXCLUSIVE, 0, &stream);
+	msi_free(encoded);
+	if (FAILED(hr))
+		return FALSE;
+	enum { piece = 1 << 20 };
+	BYTE *buffer = msi_alloc(piece);
+	BOOL ok = buffer != NULL;
+	while (ok) {
+		ULONG done = 0;
+		hr = IStream_Read(stream, buffer, piece, &done);
+		if (FAILED(hr))
+			ok = FALSE;
+		else if (!done)
+			break;
+		else
+			ok = WriteFile(file, buffer, done, &put, NULL) && put == done;
+	}
+	msi_free(buffer);
+	IStream_Release(stream);
+	return ok;
 }
 
 UINT row_to_record(msi_db *db, db_table *table, const UINT *cells, const UINT *columns, UINT count, msi_record *record, UINT first)

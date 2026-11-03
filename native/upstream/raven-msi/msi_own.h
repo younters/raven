@@ -169,6 +169,7 @@ typedef struct {
 	WCHAR *applied_transforms;
 	void *summary_pending;
 	UINT media_transform_offset, media_transform_disk;
+	HANDLE remote;		// in a custom action host: the installer whose session this is a copy of
 } msi_db;
 
 #define DB_READONLY(db) ((db)->mode == (UINT)(ULONG_PTR)MSIDBOPEN_READONLY)
@@ -199,6 +200,7 @@ db_stream *stream_find(msi_db *db, const WCHAR *name);
 void stream_put(msi_db *db, const WCHAR *name, msi_blob *blob);
 void stream_remove(msi_db *db, const WCHAR *name);
 msi_blob *db_read_named_stream(msi_db *db, const WCHAR *name);
+BOOL db_copy_named_stream(msi_db *db, const WCHAR *name, HANDLE file);
 void name_encode(const WCHAR *in, BOOL table, WCHAR *out);
 BOOL name_decode(const WCHAR *in, WCHAR *out);
 UINT row_to_record(msi_db *db, db_table *table, const UINT *cells, const UINT *columns, UINT count, msi_record *record, UINT first);
@@ -298,10 +300,12 @@ typedef struct {
 	WCHAR *source, *target;
 } script_entry;
 
-typedef enum { UNDO_FILE, UNDO_DIRECTORY, UNDO_REGISTRY } undo_kind;
+// A rollback custom action is undone as the changes are: it runs, in reverse order, only when the installation fails after it.
+typedef enum { UNDO_FILE, UNDO_DIRECTORY, UNDO_REGISTRY, UNDO_ACTION } undo_kind;
 
 typedef struct {
 	undo_kind kind;
+	script_entry action;
 	WCHAR *path, *backup;
 	HKEY root;
 	WCHAR *key, *name;
@@ -331,6 +335,8 @@ typedef struct {
 	UINT script_count, script_room;
 	undo_entry *undo;
 	UINT undo_count, undo_room;
+	script_entry *commits;	// the commit custom actions the script passed, run once it succeeds
+	UINT commit_count;
 	BOOL in_script, scheduled, rollback, commit, reboot_at_end, reboot_now, nested;
 	BOOL removing, maintenance, prepared, patched;
 	WCHAR *command_line;	// kept: it beats what a patch brings to the Property table
@@ -384,6 +390,7 @@ UINT install_run(msi_package *package);
 void undo_file(msi_package *package, const WCHAR *path, const WCHAR *backup);
 void undo_directory(msi_package *package, const WCHAR *path);
 void undo_registry(msi_package *package, HKEY root, const WCHAR *key, const WCHAR *name);
+void script_entry_free(script_entry *entry);
 UINT reg_write(msi_package *package, HKEY root, const WCHAR *key, const WCHAR *name, DWORD type, const void *data, DWORD size);
 UINT reg_write_text(msi_package *package, HKEY root, const WCHAR *key, const WCHAR *name, const WCHAR *text);
 UINT reg_write_number(msi_package *package, HKEY root, const WCHAR *key, const WCHAR *name, DWORD number);
@@ -408,12 +415,15 @@ UINT component_cost(msi_package *package, const msi_component *component);
 UINT custom_action_run(msi_package *package, const WCHAR *name, const WCHAR *data, BOOL *handled);
 UINT custom_scripted_run(msi_package *package, const script_entry *entry);
 
+// script.c
+UINT vbscript_run(msi_package *package, MSIHANDLE session, const BYTE *data, SIZE_T size, const WCHAR *entry, const WCHAR *action);
+
 // remote.c
 enum {
 	REMOTE_GET_PROPERTY = 1, REMOTE_SET_PROPERTY, REMOTE_TARGET_PATH, REMOTE_SOURCE_PATH, REMOTE_SET_TARGET,
 	REMOTE_MODE, REMOTE_SET_MODE, REMOTE_LANGUAGE, REMOTE_CONDITION, REMOTE_MESSAGE, REMOTE_FILE_PATH,
 	REMOTE_COMPONENT_STATE, REMOTE_FEATURE_STATE, REMOTE_SET_COMPONENT, REMOTE_SET_FEATURE, REMOTE_DATABASE_PATH,
-	REMOTE_DO_ACTION, REMOTE_SEQUENCE,
+	REMOTE_DO_ACTION, REMOTE_SEQUENCE, REMOTE_INSERT_ROW,
 };
 UINT remote_call(HANDLE pipe, UINT op, const WCHAR *a, const WCHAR *b, INT number, WCHAR **text, INT *result);
 DWORD WINAPI remote_serve(void *context);

@@ -1,0 +1,21 @@
+[
+	uuid(5b8f3c2e-7a41-4d6e-9c13-2f0b8e6a4d71),
+	version(1.0),
+	pointer_default(unique)
+]
+interface rpc_replace
+{
+	typedef struct named
+	{
+		[string] wchar_t *name;
+	} named;
+
+	typedef struct holder
+	{
+		named *inner;
+	} holder;
+
+	void replace_name([in] handle_t binding, [in, out] named *item);
+	void take_name([in] handle_t binding, [in, unique] named *item);
+	void take_holder([in] handle_t binding, [in] holder *item);
+}

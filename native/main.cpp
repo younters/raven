@@ -254,10 +254,13 @@ int main(int argc, char **argv)
 		else if (option.starts_with("--diagnostics-fd=")) {
 			// The runtime's own messages go where the parent runtime writes its own; the program's standard error moves out of their way
 			// to a descriptor of its own, so nothing the runtime says ever lands in a pipe the program reads.
+			// RAVEN_TRACE_FILE already gave this process a file of its own, which the parent's descriptor would replace.
 			const int diagnostics=std::atoi(std::string(option.substr(17)).c_str());
-			const int moved=::fcntl(2,F_DUPFD_CLOEXEC,64);
-			if (moved>=0 && ::dup2(diagnostics,2)==2) guest_error_fd=moved;
-			else if (moved>=0) ::close(moved);
+			if (!std::getenv("RAVEN_TRACE_FILE")) {
+				const int moved=::fcntl(2,F_DUPFD_CLOEXEC,64);
+				if (moved>=0 && ::dup2(diagnostics,2)==2) guest_error_fd=moved;
+				else if (moved>=0) ::close(moved);
+			}
 			::close(diagnostics);
 		}
 #ifdef RAVEN_NATIVE_CPU
@@ -603,6 +606,31 @@ int main(int argc, char **argv)
 							visit(item.second->imports);
 							for (const auto &descriptor : item.second->image.delay_imports())
 								visit(descriptor.imports);
+						}
+						// A small launcher that loads its own libraries by name later, as an updater loads the one that does its work,
+						// needs what they import as much as what it imports itself. A program that uses the window manager already gets
+						// every component, so only one that does not looks at the libraries beside it; so does a .NET program, whose
+						// assemblies fill its folder.
+						const bool assembly = entry->image.directories[14].address && entry->image.directories[14].size;
+						if (!names.contains("user32.dll") && !assembly) {
+							std::error_code error;
+							size_t seen = 0;
+							for (const auto &item : std::filesystem::directory_iterator(std::filesystem::absolute(argv[first_file]).parent_path(), error)) {
+								if (++seen > 256)
+									break;
+								const auto file = lower(item.path().filename().string());
+								if (!file.ends_with(".dll") || !item.is_regular_file(error) || item.file_size(error) > 32 * 1024 * 1024)
+									continue;
+								try {
+									if (const auto bytes = source(file)) {
+										const raven::PEImage image(*bytes);
+										visit(image.imports());
+										for (const auto &descriptor : image.delay_imports())
+											visit(descriptor.imports);
+									}
+								} catch (const std::exception &) {
+								}
+							}
 						}
 						while (!pending.empty()) {
 							const auto name = pending.back();

@@ -76,6 +76,7 @@ static void sweep_windows(const std::filesystem::path &directory)
 				continue;
 			stale.push_back(path);
 			stale.push_back(std::filesystem::path(path).replace_extension(".pixels"));
+			stale.push_back(std::filesystem::path(path).replace_extension(".traits"));
 		} else if (path.extension() == ".pixels" && !std::filesystem::exists(std::filesystem::path(path).replace_extension(".window"), error)) {
 			stale.push_back(path);
 		}
@@ -106,6 +107,36 @@ void withdraw_window(uint64_t window)
 	std::filesystem::remove(directory / (window_name(window) + ".window"), error);
 	std::filesystem::remove(directory / (window_name(window) + ".pixels"), error);
 	std::filesystem::remove(directory / (window_name(window) + ".update"), error);
+	std::filesystem::remove(directory / (window_name(window) + ".traits"), error);
+}
+
+void publish_window_traits(uint64_t window, const ForeignWindowTraits &traits)
+{
+	const auto directory = window_directory();
+	const auto final_path = directory / (window_name(window) + ".traits");
+	const auto temporary = directory / (window_name(window) + ".traits." + std::to_string(::getpid()));
+	{
+		std::ofstream output(temporary, std::ios::trunc);
+		output << traits.style << ' ' << traits.ex_style << '\n' << traits.class_name;
+	}
+	std::error_code error;
+	std::filesystem::rename(temporary, final_path, error);
+}
+
+struct ForeignRecord {
+	long owner = 0;
+	uint32_t width = 0, height = 0;
+};
+
+static std::optional<ForeignRecord> foreign_record(uint64_t window)
+{
+	std::ifstream input(window_directory() / (window_name(window) + ".window"));
+	ForeignRecord record;
+	if (!(input >> record.owner >> record.width >> record.height) || record.owner <= 0 || record.owner == ::getpid())
+		return std::nullopt;
+	if (::kill(pid_t(record.owner), 0) != 0 && errno == ESRCH)
+		return std::nullopt;
+	return record;
 }
 
 std::optional<ForeignWindowInfo> foreign_window_info(uint64_t window)
@@ -174,9 +205,31 @@ std::optional<ForeignWindowUpdate> take_window_update(uint64_t window, bool cons
 
 std::optional<std::pair<uint32_t, uint32_t>> foreign_window_size(uint64_t window)
 {
-	if (const auto info = foreign_window_info(window))
-		return std::make_pair(info->width, info->height);
-	return std::nullopt;
+	const auto record = foreign_record(window);
+	if (!record)
+		return std::nullopt;
+	return std::make_pair(record->width, record->height);
+}
+
+std::optional<ForeignWindowTraits> foreign_window_traits(uint64_t window)
+{
+	if (!foreign_record(window))
+		return std::nullopt;
+	std::ifstream input(window_directory() / (window_name(window) + ".traits"));
+	ForeignWindowTraits traits;
+	if (!(input >> traits.style >> traits.ex_style))
+		return std::nullopt;
+	input.ignore(1);
+	std::getline(input, traits.class_name);
+	return traits;
+}
+
+std::optional<uint32_t> foreign_window_owner(uint64_t window)
+{
+	const auto record = foreign_record(window);
+	if (!record)
+		return std::nullopt;
+	return uint32_t(record->owner);
 }
 
 std::shared_ptr<ForeignSurface> ForeignSurface::open_for_drawing(uint64_t window, uint32_t width, uint32_t height)

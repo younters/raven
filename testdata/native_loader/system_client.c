@@ -144,6 +144,55 @@ int raven_entry(void)
 			offset+=entry->Size;
 		}
 		if(groups!=1) return 17;
+		USHORT count=0,array[2]={7,7};
+		if (GetProcessGroupAffinity(GetCurrentProcess(),&count,array) || GetLastError()!=ERROR_INSUFFICIENT_BUFFER || count!=1 || array[0]!=7)
+			return 18;
+		count=2;
+		if (!GetProcessGroupAffinity(GetCurrentProcess(),&count,array) || count!=1 || array[0]!=0)
+			return 19;
+		GROUP_AFFINITY affinity;
+		for (unsigned index=0;index<sizeof(affinity);++index) ((unsigned char *)&affinity)[index]=0xa5;
+		if (!GetThreadGroupAffinity(GetCurrentThread(),&affinity) || affinity.Mask!=system.dwActiveProcessorMask || affinity.Group ||
+			affinity.Reserved[0] || affinity.Reserved[1] || affinity.Reserved[2])
+			return 20;
+		if (GetActiveProcessorGroupCount()!=1 || GetMaximumProcessorGroupCount()!=1 ||
+			GetActiveProcessorCount(0)!=system.dwNumberOfProcessors || GetActiveProcessorCount(ALL_PROCESSOR_GROUPS)!=system.dwNumberOfProcessors ||
+			GetMaximumProcessorCount(0)!=system.dwNumberOfProcessors || GetActiveProcessorCount(1))
+			return 21;
+	}
+	{
+		/* SystemProcessInformation: SYSTEM_PROCESS_INFORMATION entries linked by their first field, each followed by its threads. */
+		static unsigned char list[65536];
+		ULONG needed=0;
+		if ((ULONG)NtQuerySystemInformation(5,list,16,&needed)!=0xc0000004UL || needed<0x100+0x50 || needed>sizeof(list))
+			return 40;
+		if (NtQuerySystemInformation(5,list,needed,&length)!=0 || length!=needed)
+			return 41;
+		ULONG offset=0,found=0;
+		for (;;) {
+			const unsigned char *entry=list+offset;
+			const ULONG next=*(const ULONG *)entry,threads=*(const ULONG *)(entry+4);
+			const USHORT name_length=*(const USHORT *)(entry+0x38);
+			const WCHAR *name=*(WCHAR *const *)(entry+0x40);
+			if (offset+0x100+threads*0x50>needed) return 42;
+			if (*(const ULONG_PTR *)(entry+0x50)==GetCurrentProcessId()) {
+				if (!threads || !name_length || (const unsigned char *)name<list || (const unsigned char *)name+name_length>list+needed ||
+					*(const ULONG *)(entry+0x64)!=1)
+					return 43;
+				ULONG own=0;
+				for (ULONG index=0;index<threads;++index) {
+					const unsigned char *thread=entry+0x100+index*0x50;
+					if (*(const ULONG_PTR *)(thread+0x28)!=GetCurrentProcessId()) return 44;
+					if (*(const ULONG_PTR *)(thread+0x30)==GetCurrentThreadId()) own=1;
+				}
+				if (!own) return 45;
+				found=1;
+			}
+			if (!next) break;
+			if (next<0x100 || next>needed-offset) return 46;
+			offset+=next;
+		}
+		if (!found) return 47;
 	}
 	{
 		const int licensing=check_licensing();

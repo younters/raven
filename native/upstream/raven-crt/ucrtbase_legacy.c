@@ -610,6 +610,11 @@ CRT int _finite(double x) { return x == x && x - x == 0; }
 CRT double nan(const char *tag) { return __builtin_nan(""); }
 CRT float nanf(const char *tag) { return __builtin_nanf(""); }
 CRT long double nanl(const char *tag) { return __builtin_nanl(""); }
+/* The single precision forms exist in the 64-bit runtime only, as programs for 32-bit x86 widen to double. */
+#ifdef _WIN64
+CRT int _isnanf(float x) { return x != x; }
+CRT int _finitef(float x) { return x == x && x - x == 0; }
+#endif
 
 /* The class of a value, as the _FPCLASS_ bits name it: signalling or quiet NaN, then infinite, normal, denormal or zero by sign. */
 CRT int _fpclass(double x)

@@ -43,7 +43,7 @@ size_t process_commit_limit()
 	if (const char *value = std::getenv("RAVEN_COMMIT_LIMIT_MB")) {
 		char *end = nullptr;
 		const auto mb = std::strtoull(value, &end, 10);
-		if (*value != '-' && end != value && !*end && mb <= std::numeric_limits<size_t>::max() / (1024*1024))
+		if (*value != '-' && end != value && !*end && mb && mb <= std::numeric_limits<size_t>::max() / (1024*1024))
 			return size_t(mb) * 1024*1024;
 	}
 	return system_commit_limit();

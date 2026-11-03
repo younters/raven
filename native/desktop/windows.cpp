@@ -117,8 +117,10 @@ void NativeWindows::refresh_screen()
 	}
 	for (const auto handle : top_level_windows()) {
 		const auto *window=objects.window(handle);
-		if ((window->style & 0x21000000U)==0x01000000U) reshape(handle,{0,0,size->first,size->second});
-		if (objects.window(handle)) post(handle,0x7e,32,uint16_t(size->first) | (uint64_t(uint16_t(size->second))<<16));
+		// Polling also runs while the scheduler checks another thread's wait, where no guest procedure may run: the program's own message
+		// loop takes the new size.
+		if ((window->style & 0x21000000U)==0x01000000U) pending_events.push_back({handle,0,0,0,DesktopEventKind::resize,size->first,size->second});
+		post(handle,0x7e,32,uint16_t(size->first) | (uint64_t(uint16_t(size->second))<<16));
 	}
 }
 
@@ -215,8 +217,9 @@ void NativeWindows::present(uint64_t handle, bool force)
 	handle=objects.window_root(handle);
 	if (!handle) throw uint32_t(1400);
 	if (const auto *node=objects.window(handle); node && node->parent && foreign_window_info(node->parent)) return;
-	if (!presentation.present) throw uint32_t(120);
 	dirty_roots.erase(handle);
+	// Without a display the frame has nowhere to go and is dropped; the window lives on as on a screen that is switched off.
+	if (!presentation.present) return;
 	// The compositor does not show a window or its controls as empty rectangles: while the window or a visible child of the same thread
 	// still waits for its first WM_PAINT, the frame is put off, for at most a quarter of a second (two seconds before the window first
 	// shows, as a program can take that long to paint it), so that everything appears painted together. A window that has painted once
@@ -1693,8 +1696,6 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 	const bool child=!message_only && (style & 0x40000000U)!=0;
 	const uint64_t owner_handle=message_only ? 0 : args[8];
 	const auto effective_style=message_only ? style & ~0x50000000U : style;
-	// A visible window needs somewhere to appear; headless runs can still create hidden windows.
-	if ((effective_style & 0x10000000U) && !presentation.present) throw uint32_t(120);
 	const auto *parent=child ? objects.window(args[8]) : nullptr;
 	if (child && (!parent || parent->destroying)) throw uint32_t(1400);
 	// An owner of a top-level window must be a top-level window; message-only parents (HWND_MESSAGE) are not modelled.
@@ -1855,6 +1856,7 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 		if (child) parent_notify(handle,1);
 		if (!objects.window(handle)) return 0;
 		if (const auto *created=objects.window(handle)) publish_window(handle,uint32_t(std::max(created->width,0)),uint32_t(std::max(created->height,0)),created->thread,created->parent);
+		if (const auto *created=objects.window(handle)) publish_window_traits(handle,{created->style,created->ex_style,objects.window_class(created->class_id)->name});
 		if (effective_style & 0x10000000U) {
 #ifdef __APPLE__
 			initialize_window_dpi(handle);

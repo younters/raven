@@ -71,12 +71,36 @@ static void delete_key_tree(HKEY root, const WCHAR *key)
 	RegDeleteKeyExW(root, key, reg_view, 0);
 }
 
+void script_entry_free(script_entry *entry)
+{
+	msi_free(entry->name);
+	msi_free(entry->data);
+	msi_free(entry->source);
+	msi_free(entry->target);
+}
+
+static void undo_entry_free(undo_entry *entry)
+{
+	msi_free(entry->path);
+	msi_free(entry->backup);
+	msi_free(entry->key);
+	msi_free(entry->name);
+	msi_free(entry->data);
+	script_entry_free(&entry->action);
+}
+
 void script_rollback(msi_package *package)
 {
 	package->rollback = TRUE;
 	while (package->undo_count) {
 		undo_entry *entry = &package->undo[--package->undo_count];
 		switch (entry->kind) {
+		case UNDO_ACTION: {
+			UINT status = custom_scripted_run(package, &entry->action);
+			if (status)
+				package_log(L"Rollback action %s failed with %u", entry->action.name, status);
+			break;
+		}
 		case UNDO_FILE:
 			if (entry->backup) {
 				SetFileAttributesW(entry->path, FILE_ATTRIBUTE_NORMAL);
@@ -110,13 +134,12 @@ void script_rollback(msi_package *package)
 			break;
 		}
 		}
-		msi_free(entry->path);
-		msi_free(entry->backup);
-		msi_free(entry->key);
-		msi_free(entry->name);
-		msi_free(entry->data);
+		undo_entry_free(entry);
 	}
 	package->rollback = FALSE;
+	for (UINT i = 0; i < package->commit_count; i++)
+		script_entry_free(&package->commits[i]);
+	package->commit_count = 0;
 }
 
 // A success leaves nothing to restore: only the backups of replaced files need clearing.
@@ -128,13 +151,19 @@ static void script_commit(msi_package *package)
 			SetFileAttributesW(entry->backup, FILE_ATTRIBUTE_NORMAL);
 			DeleteFileW(entry->backup);
 		}
-		msi_free(entry->path);
-		msi_free(entry->backup);
-		msi_free(entry->key);
-		msi_free(entry->name);
-		msi_free(entry->data);
+		undo_entry_free(entry);
 	}
 	package->undo_count = 0;
+	// The commit actions run once nothing can be rolled back any more; one that fails cannot undo the installation.
+	package->commit = TRUE;
+	for (UINT i = 0; i < package->commit_count; i++) {
+		UINT status = custom_scripted_run(package, &package->commits[i]);
+		if (status)
+			package_log(L"Commit action %s failed with %u", package->commits[i].name, status);
+		script_entry_free(&package->commits[i]);
+	}
+	package->commit_count = 0;
+	package->commit = FALSE;
 }
 
 UINT reg_write(msi_package *package, HKEY root, const WCHAR *key, const WCHAR *name, DWORD type, const void *data, DWORD size)
@@ -381,22 +410,19 @@ static UINT media_cabinet(extract_context *context, const WCHAR *cabinet)
 	WCHAR path[MAX_PATH * 2];
 	BOOL temporary = FALSE;
 	if (cabinet[0] == '#') {
-		msi_blob *blob = db_read_named_stream(package->db, cabinet + 1);
-		if (!blob) {
-			package_log(L"No embedded cabinet %s", cabinet);
-			context->status = ERROR_INSTALL_FAILURE;
-			return context->status;
-		}
 		WCHAR folder[MAX_PATH];
-		DWORD put;
 		GetTempPathW(MAX_PATH, folder);
 		GetTempFileNameW(folder, L"cab", 0, path);
 		HANDLE out = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
-		if (out != INVALID_HANDLE_VALUE) {
-			WriteFile(out, blob->data, (DWORD)blob->size, &put, NULL);
+		const BOOL copied = out != INVALID_HANDLE_VALUE && db_copy_named_stream(package->db, cabinet + 1, out);
+		if (out != INVALID_HANDLE_VALUE)
 			CloseHandle(out);
+		if (!copied) {
+			package_log(L"No embedded cabinet %s", cabinet);
+			DeleteFileW(path);
+			context->status = ERROR_INSTALL_FAILURE;
+			return context->status;
 		}
-		blob_unref(blob);
 		temporary = TRUE;
 	} else {
 		WCHAR *source = package_get(package, L"SourceDir");
@@ -727,16 +753,21 @@ UINT script_run(msi_package *package)
 		package_log(L"Script: %s", entry->name);
 		if (entry->action)
 			status = ((const extra_action *)entry->action)->call(package);
-		else
+		else if (entry->type & 0x100) {
+			// Passing a rollback action arms it; the entry now belongs to the undo list.
+			undo_entry undo = { .kind = UNDO_ACTION, .action = *entry };
+			undo_push(package, &undo);
+			*entry = (script_entry){0};
+		} else if (entry->type & 0x200) {
+			package->commits = msi_grow(package->commits, (package->commit_count + 1) * sizeof(script_entry));
+			package->commits[package->commit_count++] = *entry;
+			*entry = (script_entry){0};
+		} else
 			status = custom_scripted_run(package, entry);
 	}
 	package->scheduled = FALSE;
-	for (UINT i = 0; i < package->script_count; i++) {
-		msi_free(package->script[i].name);
-		msi_free(package->script[i].data);
-		msi_free(package->script[i].source);
-		msi_free(package->script[i].target);
-	}
+	for (UINT i = 0; i < package->script_count; i++)
+		script_entry_free(&package->script[i]);
 	package->script_count = 0;
 	if (status) {
 		package_log(L"Rolling back: %u", status);

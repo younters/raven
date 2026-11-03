@@ -846,6 +846,18 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.put_wide(call[3], form, form_size / 2);
 		call.ret(0);
 	});
+	// The same as numbers: the version packed as major, minor, build and revision words, DEVICEFAMILYINFOENUM_DESKTOP and
+	// DEVICEFAMILYDEVICEFORM_UNKNOWN. Each pointer may be null.
+	registry.add("RtlGetDeviceFamilyInfoEnum", 3, [](ApiCall &call) {
+		const auto version = activation_contexts().system_version();
+		if (call[0])
+			call.store<uint64_t>(call[0], uint64_t(version.major) << 48 | uint64_t(version.minor) << 32 | uint64_t(version.build & 0xffff) << 16);
+		if (call[1])
+			call.store<uint32_t>(call[1], 3);
+		if (call[2])
+			call.store<uint32_t>(call[2], 0);
+		call.ret(0);
+	});
 	// The licensing policy store holds no values: every query answers SL_E_VALUE_NOT_FOUND.
 	const auto policy_value = [](ApiCall &call) { call.ret(call[0] ? 0xc004f012U : 0x80070057U); };
 	registry.add("SLGetWindowsInformation", 4, policy_value);
@@ -1185,6 +1197,42 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.store_pointer(call[2], processor_mask(call.pointer_width()));
 		call.ret(1);
 	});
+	// The process runs in group 0 alone: the count goes back even when the array is too small for it.
+	registry.add("GetProcessGroupAffinity", 3, [](ApiCall &call) {
+		if (!call[1]) {
+			call.fail(87);
+			return;
+		}
+		const uint16_t capacity = call.load<uint16_t>(call[1]);
+		call.store<uint16_t>(call[1], 1);
+		if (!capacity || !call[2]) {
+			call.fail(122);
+			return;
+		}
+		call.store<uint16_t>(call[2], 0);
+		call.ret(1);
+	});
+	// GROUP_AFFINITY: a pointer-sized mask, the group and three reserved words.
+	registry.add("GetThreadGroupAffinity", 2, [processor_mask](ApiCall &call) {
+		if (!call[1]) {
+			call.fail(87);
+			return;
+		}
+		std::vector<uint8_t> affinity(call.pointer_width() + 8, 0);
+		const uint64_t mask = processor_mask();
+		for (size_t index = 0; index < call.pointer_width(); ++index)
+			affinity[index] = uint8_t(mask >> (index * 8));
+		call.write(call[1], affinity);
+		call.ret(1);
+	});
+	registry.add("GetActiveProcessorGroupCount", 0, [](ApiCall &call) { call.ret(1); });
+	registry.add("GetMaximumProcessorGroupCount", 0, [](ApiCall &call) { call.ret(1); });
+	// Group 0, or every group (0xffff), holds all the processors; any other group has none.
+	for (const char *name : {"GetActiveProcessorCount", "GetMaximumProcessorCount"})
+		registry.add(name, 1, [](ApiCall &call) {
+			const uint16_t group = uint16_t(call[0]);
+			call.ret(group && group != 0xffff ? 0 : uint32_t(std::clamp<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1, 64)));
+		});
 	// Affinity is not enforced: the call reports the mask the thread had, which is every processor.
 	registry.add("SetProcessAffinityMask", 2, [](ApiCall &call) { call.ret(1); });
 	registry.add("SetProcessShutdownParameters", 2, [](ApiCall &call) { call.ret(1); });
@@ -1206,6 +1254,16 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 #endif
+	// The level a process starts with (0x280) and no flags, as nothing changes them here.
+	registry.add("GetProcessShutdownParameters", 2, [](ApiCall &call) {
+		if (!call[0] || !call[1]) {
+			call.fail(998);
+			return;
+		}
+		call.store<uint32_t>(call[0], 0x280);
+		call.store<uint32_t>(call[1], 0);
+		call.ret(1);
+	});
 	// Processor topology: one package, one core per logical processor, no cache or NUMA records beyond the single node.
 	registry.add("GetLogicalProcessorInformationEx", 3, [processor_mask](ApiCall &call) {
 		constexpr uint32_t core = 0, node = 1, package = 3, group = 4, all = 0xffff;
@@ -1978,7 +2036,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(context.allocator.release(call[0]));
 	});
 
-	// TLS and FLS indexes are process-wide; values belong to the thread whose TEB asks.
+	// TLS and FLS indexes are process-wide; values belong to the thread that asks, by its id: a new thread may get the thread block of one
+	// that ended, and must not find that thread's values.
 	struct Slots {
 		std::vector<bool> used;
 		std::vector<uint64_t> callbacks;
@@ -2073,7 +2132,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 				call.fail(87);
 				return;
 			}
-			auto &values = slots->values[environment.teb()];
+			auto &values = slots->values[environment.thread_id()];
 			call.set_last_error(0);
 			call.ret(index < values.size() ? values[index] : 0);
 		};
@@ -2091,7 +2150,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 				call.fail(87);
 				return;
 			}
-			auto &values = slots->values[environment.teb()];
+			auto &values = slots->values[environment.thread_id()];
 			if (values.size() < slots->used.size())
 				values.resize(slots->used.size());
 			values[index] = call[1];
