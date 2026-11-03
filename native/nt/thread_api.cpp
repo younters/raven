@@ -453,6 +453,36 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		const auto woken = sleep(native_wake(call, call[1]), call.u32(0) & 0xff, true);
 		call.ret(woken == Woken::apcs ? status_user_apc : woken == Woken::alerted ? status_alerted : 0);
 	});
+	// The system timer's resolution, in 100 ns units: Windows ranges from 15.625 ms down to 0.5 ms. Waits here already use the host's
+	// precise clocks, so a request changes nothing about them; the process's request is kept so the calls answer as Windows does.
+	// Games ask for 0.5 ms at startup through ntdll (Source's tier0 calls the result of GetProcAddress unchecked).
+	static constexpr uint32_t coarsest_resolution = 156250, finest_resolution = 5000;
+	static std::atomic<uint32_t> requested_resolution{0};
+	registry.add("NtQueryTimerResolution", 3, [](ApiCall &call) {
+		if (!call[0] || !call[1] || !call[2]) {
+			call.ret(0xc0000005U);
+			return;
+		}
+		const uint32_t requested = requested_resolution.load();
+		call.store<uint32_t>(call[0], coarsest_resolution);
+		call.store<uint32_t>(call[1], finest_resolution);
+		call.store<uint32_t>(call[2], requested ? requested : coarsest_resolution);
+		call.ret(0);
+	});
+	registry.add("NtSetTimerResolution", 3, [](ApiCall &call) {
+		if (!call[2]) {
+			call.ret(0xc0000005U);
+			return;
+		}
+		uint32_t status = 0;
+		if (call.u32(1) & 0xff)
+			requested_resolution.store(std::clamp(call.u32(0), finest_resolution, coarsest_resolution));
+		else if (!requested_resolution.exchange(0))
+			status = 0xc0000245U; // STATUS_TIMER_RESOLUTION_NOT_SET: this process never asked for one.
+		const uint32_t current = requested_resolution.load();
+		call.store<uint32_t>(call[2], current ? current : coarsest_resolution);
+		call.ret(status);
+	});
 	registry.add("NtAlertThread", 1, [thread_from](ApiCall &call) {
 		const auto thread = thread_from(call[0]);
 		if (!thread) {

@@ -1675,6 +1675,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"NtWriteFile", "NtQueryDirectoryFile", "ZwQueryDirectoryFile", "RtlNtStatusToDosError", "NtQueryObject", "NtMapViewOfSection", "NtUnmapViewOfSection",
 		"RtlAcquireSRWLockExclusive", "RtlAcquireSRWLockShared", "RtlWakeConditionVariable", "RtlWakeAllConditionVariable", "RtlWaitOnAddress",
 		"RtlWakeAddressSingle", "RtlWakeAddressAll",
+		// The system timer's resolution, which games request at startup.
+		"NtQueryTimerResolution", "NtSetTimerResolution",
 		// The processor a thread runs on.
 		"NtGetCurrentProcessorNumber", "NtGetCurrentProcessorNumberEx", "RtlGetCurrentProcessorNumber", "RtlGetCurrentProcessorNumberEx",
 		// The C runtime string functions ntdll exports.
