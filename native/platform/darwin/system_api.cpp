@@ -35,17 +35,6 @@ void register_firmware_api(raven::ApiRegistry &registry)
 	});
 }
 
-// All processor queries share the guest group model.
-void register_processor_count_api(raven::ApiRegistry &registry)
-{
-	for (const auto *name : {"GetActiveProcessorCount", "GetMaximumProcessorCount"})
-		registry.add(name, 1, [](raven::ApiCall &call) {
-			const auto group = call.u32(0) & 0xffff;
-			if (group && group != 0xffff) { call.fail(87); return; }
-			call.ret(raven::darwin::processor_count(call.pointer_width() == 4));
-		});
-}
-
 // No approximate SID hashing: callers must observe that this service is absent.
 void register_appcontainer_api(raven::ApiRegistry &registry)
 {

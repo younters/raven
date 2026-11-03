@@ -18,7 +18,6 @@ CpuFrequency cpu_frequency(unsigned processor);
 bool wireless_interface(const char *name);
 std::vector<uint8_t> smbios_table();
 void register_appcontainer_api(raven::ApiRegistry &registry);
-void register_processor_count_api(raven::ApiRegistry &registry);
 void register_firmware_api(raven::ApiRegistry &registry);
 void seed_hardware_registry(raven::NativeRegistry &hive);
 

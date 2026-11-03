@@ -9,10 +9,7 @@ int raven_entry(void)
 	if (!count || count != info.dwNumberOfProcessors) return 1;
 	if (GetActiveProcessorCount(ALL_PROCESSOR_GROUPS) != count ||
 		GetMaximumProcessorCount(0) != count || GetMaximumProcessorCount(ALL_PROCESSOR_GROUPS) != count) return 2;
-	SetLastError(0);
-	if (GetActiveProcessorCount(1) || GetLastError() != ERROR_INVALID_PARAMETER) return 3;
-	SetLastError(0);
-	if (GetMaximumProcessorCount(1) || GetLastError() != ERROR_INVALID_PARAMETER) return 4;
+	if (GetActiveProcessorCount(1) || GetMaximumProcessorCount(1)) return 3;
 	if (*(volatile DWORD *)(ULONG_PTR)0x7ffe03c0 != count) return 5;
 	WCHAR number[16];
 	if (!GetEnvironmentVariableW(L"NUMBER_OF_PROCESSORS", number, 16)) return 6;

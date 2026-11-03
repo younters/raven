@@ -146,7 +146,6 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 {
 #ifdef __APPLE__
 	raven_darwin::register_firmware_api(registry);
-	raven_darwin::register_processor_count_api(registry);
 	raven_darwin::register_appcontainer_api(registry);
 #endif
 	auto &objects = context.objects;
