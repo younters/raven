@@ -1,4 +1,4 @@
-target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/audio/api.cpp ${RAVEN_DARWIN_DIR}/audio/playsound.cpp)
+target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/audio/api.cpp ${RAVEN_DARWIN_DIR}/audio/playsound.cpp ${RAVEN_DARWIN_DIR}/audio/wave_input.cpp)
 add_library(raven_darwin_audio STATIC ${RAVEN_DARWIN_DIR}/audio/output.cpp ${RAVEN_DARWIN_DIR}/audio/mixer.cpp ${RAVEN_DARWIN_DIR}/audio/input.mm)
 target_link_libraries(raven_darwin_audio PUBLIC "-framework AudioToolbox" "-framework CoreAudio" "-framework AVFoundation")
 target_compile_options(raven_darwin_audio PRIVATE -Wall -Wextra)
