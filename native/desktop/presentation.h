@@ -107,6 +107,9 @@ struct DesktopPresentation {
 	std::function<void(uint64_t,const DesktopObjects &)> window_state;
 	std::function<void(uint64_t,bool)> visibility;
 	std::function<void(uint64_t)> foreground;
+	// Acknowledges a host resize after guest placement, including adjusted/vetoed sizes.
+	// Resize events carry their optional generation in wparam.
+	std::function<void(uint64_t,uint64_t,uint32_t,uint32_t)> resize_complete;
 };
 
 }
