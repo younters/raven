@@ -45,6 +45,8 @@ const Adapter adapters[] = {
 	{"RemoveDirectoryA", {0}},
 	{"FindFirstFileA", {0}, -1, -1, -1, 1},
 	{"FindNextFileA", {}, -1, -1, -1, 1},
+	// The extended search takes the same pattern and fills the same record, at its third argument (Source's filesystem uses it).
+	{"FindFirstFileExA", {0}, -1, -1, -1, 2},
 	{"GetModuleFileNameA", {}, 1, 2},
 	{"GetEnvironmentVariableA", {0}, 1, 2},
 	{"SetEnvironmentVariableA", {0, 1}},
