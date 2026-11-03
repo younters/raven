@@ -88,3 +88,20 @@ void seed_hardware_registry(raven::NativeRegistry &hive)
 }
 
 }
+
+namespace raven_darwin {
+void register_host_extensions(raven::ApiRegistry &registry)
+{
+	// The macOS network adapter set is currently a snapshot. Allow callers to subscribe and
+	// cancel without claiming a change; this also lets browsers continue their audio startup.
+	for (const auto *name : {"NotifyIpInterfaceChange","NotifyUnicastIpAddressChange","NotifyRouteChange2"})
+		registry.add(name,5,[](raven::ApiCall &call) {
+			if (!call[1] || !call[4]) { call.ret(87); return; }
+			call.store_pointer(call[4],1); call.ret(0);
+		});
+	registry.add("CancelMibChangeNotify2",1,[](raven::ApiCall &call) { call.ret(call[0]?0:87); });
+	// There is no Windows IME installed in a Darwin prefix.
+	registry.add("ImmGetDescriptionW", 3, [](raven::ApiCall &call) { call.ret(0); });
+	registry.add("ImmGetDescriptionA", 3, [](raven::ApiCall &call) { call.ret(0); });
+}
+}

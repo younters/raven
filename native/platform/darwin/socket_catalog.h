@@ -8,6 +8,16 @@ namespace raven::darwin {
 // report through lpErrno, preserving the calling thread's Winsock last error.
 inline void register_socket_catalog(ApiRegistry &registry)
 {
+	for (const auto *name : {"WSCGetProviderPath","WSCGetProviderPath32"})
+		registry.add(name,4,[](ApiCall &call) {
+			if (call[3]) call.store<uint32_t>(call[3],10022); // Synthetic protocols have no provider DLL.
+			call.fail(10022,UINT32_MAX);
+		});
+	for (const auto *name : {"WSCGetProviderInfo","WSCGetProviderInfo32"})
+		registry.add(name,6,[](ApiCall &call) {
+			if (call[5]) call.store<uint32_t>(call[5],10022);
+			call.fail(10022,UINT32_MAX);
+		});
     const auto enumerate = registry.find("WSAEnumProtocolsW")->second;
     registry.add("WSCEnumProtocols", 4, [enumerate](ApiCall &call) {
         const auto saved_error = call.last_error();

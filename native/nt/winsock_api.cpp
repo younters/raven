@@ -2403,19 +2403,6 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			call.write(call[3], address);
 			call.ret(0);
 		});
-#ifdef __APPLE__
-	for (const auto *name : {"WSCGetProviderPath","WSCGetProviderPath32"})
-		registry.add(name,4,[](ApiCall &call) {
-			if (call[3]) call.store<uint32_t>(call[3],10022); // Synthetic protocols have no provider DLL.
-			call.fail(10022,UINT32_MAX);
-		});
-	for (const auto *name : {"WSCGetProviderInfo","WSCGetProviderInfo32"})
-		registry.add(name,6,[](ApiCall &call) {
-			if (call[5]) call.store<uint32_t>(call[5],10022);
-			call.fail(10022,UINT32_MAX);
-		});
-	// WSAEnumProtocols uses the upstream provider records below.
-#endif
 	// WSAEnumProtocols(protocols, buffer, length): the base TCP and UDP providers of IPv4 and IPv6, each as a WSAPROTOCOL_INFO with
 	// the service flags, provider identifiers and names the Microsoft provider publishes; a list of protocol numbers narrows them.
 	const auto enumerate_protocols = [](ApiCall &call, bool wide) {
