@@ -417,7 +417,36 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("GetTickCount", 0, [](ApiCall &call) { call.ret(uint32_t(counter_ticks() / 10000)); });
 	// winmm timers: the host clock already has millisecond resolution, so periods are accepted and change nothing.
 	registry.add("timeGetTime", 0, [](ApiCall &call) { call.ret(uint32_t(counter_ticks() / 10000)); });
-	registry.add("timeBeginPeriod", 1, [](ApiCall &call) { call.ret(call.u32(0) ? 0 : 97); });
+	// XInput: no game controller is connected. Each query answers ERROR_DEVICE_NOT_CONNECTED for the four controller slots and
+	// ERROR_BAD_ARGUMENTS for any other index, as Windows does with no controller plugged in; games then fall back to mouse and keyboard.
+	// XInputGetKeystroke also takes XUSER_INDEX_ANY (0xff).
+	const auto no_controller = [](ApiCall &call) {
+		const uint32_t index = call.u32(0);
+		call.ret(index < 4 || index == 0xff ? 1167 : 160);
+	};
+	for (const auto name : {"XInputGetState", "XInputGetStateEx", "XInputSetState", "XInputGetBaseBusInformation", "XInputCancelGuideButtonWait",
+		"XInputPowerOffController"})
+		registry.add(name, std::string_view(name) == "XInputCancelGuideButtonWait" || std::string_view(name) == "XInputPowerOffController" ? 1 : 2,
+			no_controller);
+	for (const auto name : {"XInputGetCapabilities", "XInputGetBatteryInformation", "XInputGetKeystroke", "XInputGetDSoundAudioDeviceGuids",
+		"XInputWaitForGuideButton"})
+		registry.add(name, 3, no_controller);
+	registry.add("XInputGetCapabilitiesEx", 4, [](ApiCall &call) { call.ret(call.u32(1) < 4 ? 1167 : 160); });
+	registry.add("XInputGetAudioDeviceIds", 5, no_controller);
+	registry.add("XInputEnable", 1, [](ApiCall &call) { call.ret(0); });
+	// The winmm joystick functions: the driver has its sixteen slots and nothing is plugged into them, as on a Windows machine with no
+	// joystick, so games enumerating controllers this way find none and go on (Strata Source's input system asks at startup).
+	static constexpr uint32_t joystick_slots = 16, joystick_bad_parameter = 165, joystick_unplugged = 167;
+	registry.add("joyGetNumDevs", 0, [](ApiCall &call) { call.ret(joystick_slots); });
+	for (const auto name : {"joyGetPos", "joyGetPosEx"})
+		registry.add(name, 2, [](ApiCall &call) { call.ret(call.u32(0) < joystick_slots ? joystick_unplugged : joystick_bad_parameter); });
+	for (const auto name : {"joyGetDevCapsA", "joyGetDevCapsW"})
+		registry.add(name, 3, [](ApiCall &call) { call.ret(call.u32(0) < joystick_slots ? joystick_unplugged : joystick_bad_parameter); });
+	registry.add("joyGetThreshold", 2, [](ApiCall &call) { call.ret(joystick_bad_parameter); });
+	registry.add("joySetThreshold", 2, [](ApiCall &call) { call.ret(joystick_bad_parameter); });
+	registry.add("joySetCapture", 4, [](ApiCall &call) { call.ret(call.u32(1) < joystick_slots ? joystick_unplugged : joystick_bad_parameter); });
+	registry.add("joyReleaseCapture", 1, [](ApiCall &call) { call.ret(call.u32(0) < joystick_slots ? 0 : joystick_bad_parameter); });
+	registry.add("timeBeginPeriod", 1,[](ApiCall &call) { call.ret(call.u32(0) ? 0 : 97); });
 	registry.add("timeEndPeriod", 1, [](ApiCall &call) { call.ret(call.u32(0) ? 0 : 97); });
 	registry.add("timeGetDevCaps", 2, [](ApiCall &call) {
 		if (!call[0] || call.u32(1) < 8) {
