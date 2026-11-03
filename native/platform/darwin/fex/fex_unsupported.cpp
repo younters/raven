@@ -12,12 +12,6 @@ void FexProcess::trace_instructions(size_t count, std::function<void(uint64_t)> 
 	(void)sink;
 	throw std::runtime_error("FEX trace_instructions is not implemented");
 }
-void FexProcess::set_api_argument(size_t index, uint32_t value)
-{
-	(void)index;
-	(void)value;
-	throw std::runtime_error("FEX set_api_argument is not implemented");
-}
 void FexProcess::decline_served()
 {
 	throw std::runtime_error("FEX decline_served is not implemented");

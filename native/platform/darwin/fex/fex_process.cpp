@@ -153,18 +153,33 @@ uint64_t process_dispatch(uint64_t number, void *packet)
 		if (wow64_module) {
 			uint32_t esp;
 			memcpy(&esp, static_cast<uint8_t *>(packet) + 0xc4, 4);
-			if (esp > UINT32_MAX - 20) return 0xc000000du;
-			std::vector<uint8_t> words;
-			try { words = unix_read_memory(uint64_t(esp) + 4, 16); }
-			catch (const std::runtime_error &) { return 0xc0000005u; }
+			if (esp > UINT32_MAX - 20) {
+				if (trace_unix) fprintf(stderr, "unix wow64 call rejected: esp=%#x\n", esp);
+				return 0xc000000du;
+			}
+			// The stdcall header (handle, ordinal, args) is on the calling guest thread's own stack. Read it through the WoW64 window
+			// after the same range check the unix libraries use: in parallel mode this runs on a FEX worker, not the thread that owns
+			// the process object, and read_memory would refuse it.
+			std::vector<uint8_t> words(16);
+			const uint64_t header = wow64_guest_base + uint64_t(esp) + 4;
+			if (!unix_check_range(header, words.size(), 0)) {
+				if (trace_unix) fprintf(stderr, "unix wow64 call: unreadable stack at esp=%#x\n", esp);
+				return 0xc0000005u;
+			}
+			memcpy(words.data(), reinterpret_cast<const void *>(header), words.size());
 			memcpy(&handle, words.data(), 8);
 			memcpy(&ordinal, words.data() + 8, 4);
 			uint32_t guest_args;
 			memcpy(&guest_args, words.data() + 12, 4);
-			if (!guest_args) return 0xc0000005u;
+			if (!guest_args) {
+				if (trace_unix) fprintf(stderr, "unix wow64 call: null args (esp=%#x handle=%llu ordinal=%u)\n", esp, (unsigned long long)handle, ordinal);
+				return 0xc0000005u;
+			}
 			args = wow64_guest_base + guest_args;
 		}
 		uint64_t status = 0xc0000008u;
+		if (trace_unix && !(handle && handle <= unix_libraries.size()))
+			fprintf(stderr, "unix call: unknown handle %llu (%zu libraries)\n", (unsigned long long)handle, unix_libraries.size());
 		if (handle && handle <= unix_libraries.size()) {
 			const auto &library = unix_libraries[handle - 1];
 			if (wow64_module && ordinal < library.count &&
@@ -1281,6 +1296,17 @@ std::vector<uint64_t> FexProcess::api_arguments(size_t count) const
 		else { auto bytes = read_memory(r.rsp + 40 + (i - 4) * 8, 8); uint64_t value; memcpy(&value, bytes.data(), 8); words.push_back(value); }
 	}
 	return words;
+}
+// A pending 32-bit API's stack argument, rewritten before the call goes on (an ANSI entry point that passes a widened string to the
+// wide handler); the same words api_arguments reads.
+void FexProcess::set_api_argument(size_t index, uint32_t value)
+{
+	if (!wow64_module || !state->thread.awaiting_api || index > 127)
+		throw std::runtime_error("FEX argument rewrite requires a pending x86 API call");
+	if (auto &words = state->thread.translated_words; words && index < words->size())
+		(*words)[index] = value;
+	const uint8_t bytes[4] = {uint8_t(value), uint8_t(value >> 8), uint8_t(value >> 16), uint8_t(value >> 24)};
+	write_memory(context(false).registers.rsp + 4 + index * 4, bytes);
 }
 std::array<uint64_t, 4> FexProcess::api_float_arguments() const
 {

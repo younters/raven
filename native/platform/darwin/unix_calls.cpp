@@ -93,6 +93,13 @@ bool DarwinUnixCalls::dispatch(std::string_view name)
 	else {
 		auto found = modules.all().find("mtld3d.dll");
 		const bool mtld3d = found != modules.all().end() && found->second->loaded.base() == args[1];
+		if (std::getenv("RAVEN_TRACE_UNIX")) {
+			std::cerr << "raven: unixlib discovery class " << args[2] << " for 0x" << std::hex << args[1] << ':';
+			for (const auto &[module_name, module] : modules.all())
+				if (module->loaded.base() == args[1])
+					std::cerr << ' ' << module_name;
+			std::cerr << std::dec << (mtld3d ? " (mtld3d)" : "") << '\n';
+		}
 		if (!mtld3d) found = modules.all().find("winemetal.dll");
 		const char *mtld_root = std::getenv("RAVEN_MTLD3D_ARM64_ROOT");
 		const auto root = mtld3d ? std::filesystem::path(mtld_root ? mtld_root : "") : dxmt_root();

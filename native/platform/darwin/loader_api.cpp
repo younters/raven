@@ -1,5 +1,7 @@
 #include "nt/module_api.h"
+#include <cstdlib>
 #include <cstring>
+#include <iostream>
 
 namespace raven {
 
@@ -11,6 +13,12 @@ bool NativeModuleAPI::dispatch_darwin(std::string_view name)
     if (name == "RtlFindExportedRoutineByName") {
         const auto args = process.api_arguments(2);
         const auto address = args[1] > UINT16_MAX ? procedure(args[0], args[1]) : 0;
+        if (std::getenv("RAVEN_TRACE_UNIX") && args[1] > UINT16_MAX) {
+            const auto bytes = process.read_memory(args[1], 48);
+            std::cerr << "raven: RtlFindExportedRoutineByName(0x" << std::hex << args[0] << ", "
+                      << std::string(reinterpret_cast<const char *>(bytes.data()), strnlen(reinterpret_cast<const char *>(bytes.data()), bytes.size()))
+                      << ") = 0x" << address << std::dec << '\n';
+        }
         environment.set_last_error(saved);
         process.return_api(address);
         return true;
