@@ -340,6 +340,17 @@ static const char tools_output[] = "\r\n"
 	"taskkill none\r\n"
 	"taskkill windowless\r\n";
 
+/* START as installer scripts write it (Steam's redistributable .cmd files: start /w "" "%~dp0\\setup.exe" ... & EXIT /B %ERRORLEVEL%): the
+   title may follow the options, /W waits, the started program's code becomes ERRORLEVEL, and a program that cannot start is an error. */
+static const char starts_script[] = "@echo off\r\n"
+	"start /w \"\" \"C:\\Windows\\System32\\cmd.exe\" /c exit 6\r\n"
+	"echo start %ERRORLEVEL%\r\n"
+	"start \"\" /wait cmd /c exit 4\r\n"
+	"echo wait %ERRORLEVEL%\r\n"
+	"start /w \"\" \"C:\\raven-no-such-folder\\setup.exe\"\r\n"
+	"echo missing %ERRORLEVEL%\r\n"
+	"exit /b %ERRORLEVEL%\r\n";
+
 int raven_entry(void)
 {
 	static char text[8192];
@@ -406,6 +417,19 @@ int raven_entry(void)
 		return 13;
 	}
 	DeleteFileW(tools_path);
+	WCHAR starts_path[MAX_PATH] = {0};
+	append(starts_path, folder);
+	append(starts_path, L"\\starts.cmd");
+	file = CreateFileW(starts_path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+	if (file == INVALID_HANDLE_VALUE || !WriteFile(file, starts_script, sizeof starts_script - 1, &written, NULL))
+		return 14;
+	CloseHandle(file);
+	if (!run(processor, L"cmd.exe /c starts.cmd", NULL, text, sizeof text, &code) || code != 9059 || !contains(text, "start 6\r\n") ||
+		!contains(text, "wait 4\r\n") || !contains(text, "missing 9059\r\n") || !contains(text, "cannot find the file")) {
+		WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), text, length_of(text), &written, NULL);
+		return 15;
+	}
+	DeleteFileW(starts_path);
 	DeleteFileW(path);
 	RemoveDirectoryW(folder);
 	return 0;

@@ -3659,25 +3659,30 @@ static DWORD command_start(const WCHAR *rest)
 	const WCHAR *at = rest;
 	BOOL wait = FALSE;
 	WCHAR *folder = NULL;
-	while (blank(*at))
-		++at;
-	if (*at == L'"') {
-		++at;
-		while (*at && *at != L'"')
-			++at;
-		if (*at)
-			++at;
-	}
+	BOOL titled = FALSE;
 	for (;;) {
 		while (blank(*at))
 			++at;
+		/* The first quoted word among the options is the window's title, before or after them: scripts write both
+		   START "" /WAIT "program" and START /WAIT "" "program". */
+		if (*at == L'"' && !titled) {
+			titled = TRUE;
+			++at;
+			while (*at && *at != L'"')
+				++at;
+			if (*at)
+				++at;
+			continue;
+		}
 		if (*at != L'/')
 			break;
 		const WCHAR *start = at;
 		while (*at && !blank(*at))
 			++at;
 		WCHAR *option = duplicate(start, (DWORD)(at - start));
-		if (equal(option, L"/WAIT"))
+		/* /W is the short form scripts commonly use, as Steam's redistributable installers do ("start /w ... & exit /b %ERRORLEVEL%");
+		   without it START returned at once and the script reported the program's success before it had run. */
+		if (equal(option, L"/WAIT") || equal(option, L"/W"))
 			wait = TRUE;
 		else if (starts(option, L"/D")) {
 			release(folder);
@@ -3728,8 +3733,13 @@ static DWORD command_start(const WCHAR *rest)
 		} else
 			started = launch(path, at, folder, &process);
 		if (!started) {
+			/* A program that cannot be started is an error the script sees, not the last command's level. */
 			release(folder);
-			return errorlevel;
+			complain(L"The system cannot find the file ");
+			complain(program);
+			complain(L".\r\n");
+			errorlevel = 9059;
+			return 9059;
 		}
 		if (wait) {
 			WaitForSingleObject(process, INFINITE);
@@ -3744,7 +3754,7 @@ static DWORD command_start(const WCHAR *rest)
 	Execute open = shell ? (Execute)(void (*)(void))GetProcAddress(shell, "ShellExecuteW") : NULL;
 	while (blank(*arguments))
 		++arguments;
-	if (open && (INT_PTR)open(NULL, NULL, program, *arguments ? arguments : NULL, folder, SW_SHOWNORMAL) > 32) {
+	if (*program && open && (INT_PTR)open(NULL, NULL, program, *arguments ? arguments : NULL, folder, SW_SHOWNORMAL) > 32) {
 		release(folder);
 		return 0;
 	}
