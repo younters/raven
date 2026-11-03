@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <mach-o/dyld.h>
 #include <span>
 #include <spawn.h>
@@ -140,53 +141,90 @@ NSImage *program_icon(std::span<const uint8_t> file)
 }
 }
 
-void raven_macos_program_identity()
+namespace {
+// What a program is called, and the icon it shows, read once from its executable: the version resource's FileDescription, its
+// ProductName, the Steam game folder, or the file name. The icon is decoded only when the program first shows a window.
+struct ProgramIdentity {
+	std::string path;
+	NSString *name = nil;
+	NSImage *icon = nil;
+	bool icon_read = false;
+};
+
+std::optional<std::vector<uint8_t>> read_program(const char *path)
 {
-	if (std::getenv("RAVEN_APP_NAME") && std::getenv("RAVEN_APP_ICON")) return;
+	std::ifstream stream(path,std::ios::binary|std::ios::ate);
+	if (!stream || stream.tellg() <= 0) return std::nullopt;
+	std::vector<uint8_t> file(size_t(stream.tellg()));
+	stream.seekg(0);
+	if (!stream.read(reinterpret_cast<char *>(file.data()),std::streamsize(file.size()))) return std::nullopt;
+	return file;
+}
+
+ProgramIdentity *program_identity(bool with_icon)
+{
+	if (std::getenv("RAVEN_APP_NAME") && std::getenv("RAVEN_APP_ICON")) return nullptr;
 	const char *path = std::getenv("RAVEN_PROGRAM_IMAGE");
-	if (!path) return;
-	static std::string cached_path;
-	static NSString *cached_name = nil;
-	static NSImage *cached_icon = nil;
-	if (cached_path != path) {
-		cached_path = path;
-		cached_name = [NSString stringWithUTF8String:path].lastPathComponent.stringByDeletingPathExtension;
-		cached_icon = nil;
+	if (!path) return nullptr;
+	static ProgramIdentity identity;
+	if (identity.path != path) {
+		identity = ProgramIdentity{path,[NSString stringWithUTF8String:path].lastPathComponent.stringByDeletingPathExtension};
 		try {
-			std::ifstream stream(path,std::ios::binary|std::ios::ate);
-			if (!stream || stream.tellg() <= 0) throw std::runtime_error("unreadable executable identity");
-			std::vector<uint8_t> file(size_t(stream.tellg()));
-			stream.seekg(0);
-			if (!stream.read(reinterpret_cast<char *>(file.data()),std::streamsize(file.size())))
-				throw std::runtime_error("short executable identity read");
-			raven::PEImage image(file);
-			NSString *name = nil, *product = nil;
-			size_t budget = 8192;
-			for (const auto &resource : image.resources()) {
-				if (resource.type != raven::ResourceKey(uint32_t(16)) || !budget) continue;
-				const auto data = image.file_span(resource.data_address,resource.size);
-				name = version_string(data,0,@"FileDescription",budget);
-				if (!product) product = version_string(data,0,@"ProductName",budget);
-				if (name) break;
-			}
-			// An executable without a version resource (Source games' hl2.exe) is named after its Steam game folder,
-			// steamapps/common/<Game>/..., so that Activity Monitor and the Dock show "Portal" rather than "hl2".
-			if (!name && !product) {
-				NSString *full = [NSString stringWithUTF8String:path];
-				const NSRange marker = [full rangeOfString:@"/steamapps/common/" options:NSCaseInsensitiveSearch | NSBackwardsSearch];
-				if (marker.location != NSNotFound) {
-					NSString *rest = [full substringFromIndex:NSMaxRange(marker)];
-					NSString *game = [rest componentsSeparatedByString:@"/"].firstObject;
-					if (game.length && ![game isEqualToString:rest]) product = game;
+			if (const auto file = read_program(path)) {
+				raven::PEImage image(*file);
+				NSString *name = nil, *product = nil;
+				size_t budget = 8192;
+				for (const auto &resource : image.resources()) {
+					if (resource.type != raven::ResourceKey(uint32_t(16)) || !budget) continue;
+					const auto data = image.file_span(resource.data_address,resource.size);
+					name = version_string(data,0,@"FileDescription",budget);
+					if (!product) product = version_string(data,0,@"ProductName",budget);
+					if (name) break;
 				}
+				// An executable without a version resource (Source games' hl2.exe) is named after its Steam game folder,
+				// steamapps/common/<Game>/..., so that Activity Monitor and the Dock show "Portal" rather than "hl2".
+				if (!name && !product) {
+					NSString *full = [NSString stringWithUTF8String:path];
+					const NSRange marker = [full rangeOfString:@"/steamapps/common/" options:NSCaseInsensitiveSearch | NSBackwardsSearch];
+					if (marker.location != NSNotFound) {
+						NSString *rest = [full substringFromIndex:NSMaxRange(marker)];
+						NSString *game = [rest componentsSeparatedByString:@"/"].firstObject;
+						if (game.length && ![game isEqualToString:rest]) product = game;
+					}
+				}
+				identity.name = name ?: product ?: identity.name;
 			}
-			cached_name = name ?: product ?: cached_name;
-			cached_icon = program_icon(file);
 		} catch (...) {}
 	}
-	NSProcessInfo.processInfo.processName = cached_name;
-	update_registered_name(cached_name);
-	if (cached_icon) NSApp.applicationIconImage = cached_icon;
+	if (with_icon && !identity.icon_read) {
+		identity.icon_read = true;
+		try {
+			if (const auto file = read_program(path))
+				identity.icon = program_icon(*file);
+		} catch (...) {}
+	}
+	return &identity;
+}
+}
+
+// A program that shows a window: its name, and its icon in the Dock and the application switcher.
+void raven_macos_program_identity()
+{
+	auto *identity = program_identity(true);
+	if (!identity) return;
+	NSProcessInfo.processInfo.processName = identity->name;
+	update_registered_name(identity->name);
+	if (identity->icon) NSApp.applicationIconImage = identity->icon;
+}
+
+// Every program from its start, windows or not: background helpers (a browser's GPU, network and renderer processes, a crash
+// reporter, a service) show their own names in Activity Monitor instead of the runtime's.
+static void raven_macos_program_name()
+{
+	auto *identity = program_identity(false);
+	if (!identity) return;
+	NSProcessInfo.processInfo.processName = identity->name;
+	update_registered_name(identity->name);
 }
 
 void raven_macos_prepare_identity()
@@ -290,6 +328,7 @@ void raven_macos_prepare_foreground()
 	}
 	[NSApplication sharedApplication];
 	[NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+	raven_macos_program_name();
 	if (!std::getenv("RAVEN_FOREGROUND_TICKET") && !std::getenv("RAVEN_FOREGROUND_CHILD")) {
 		// This is a host activation ticket, shared by the initial host and its descendants.
 		char path[] = "/tmp/raven-foreground-XXXXXX";
