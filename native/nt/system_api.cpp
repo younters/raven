@@ -446,7 +446,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("joySetThreshold", 2, [](ApiCall &call) { call.ret(joystick_bad_parameter); });
 	registry.add("joySetCapture", 4, [](ApiCall &call) { call.ret(call.u32(1) < joystick_slots ? joystick_unplugged : joystick_bad_parameter); });
 	registry.add("joyReleaseCapture", 1, [](ApiCall &call) { call.ret(call.u32(0) < joystick_slots ? 0 : joystick_bad_parameter); });
-	registry.add("timeBeginPeriod", 1,[](ApiCall &call) { call.ret(call.u32(0) ? 0 : 97); });
+	registry.add("timeBeginPeriod", 1, [](ApiCall &call) { call.ret(call.u32(0) ? 0 : 97); });
 	registry.add("timeEndPeriod", 1, [](ApiCall &call) { call.ret(call.u32(0) ? 0 : 97); });
 	registry.add("timeGetDevCaps", 2, [](ApiCall &call) {
 		if (!call[0] || call.u32(1) < 8) {
