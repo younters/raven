@@ -1219,7 +1219,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		std::vector<uint8_t> affinity(call.pointer_width() + 8, 0);
-		const uint64_t mask = processor_mask();
+		const uint64_t mask = processor_mask(call.pointer_width());
 		for (size_t index = 0; index < call.pointer_width(); ++index)
 			affinity[index] = uint8_t(mask >> (index * 8));
 		call.write(call[1], affinity);
