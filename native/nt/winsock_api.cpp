@@ -2306,6 +2306,54 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 #endif
 		service(call, found);
 	});
+	// getprotobyname and getprotobynumber answer from the protocols database into one PROTOENT the process reuses, as the SERVENT above
+	// is: the name and its aliases are pointers, so the record keeps the 32-bit and 64-bit layouts apart.
+	auto protocol_block = std::make_shared<uint64_t>(0);
+#ifdef __APPLE__
+	// macOS has no reentrant forms; both lookups share libc's one record, so one lock covers them and the copy into the guest's record.
+	static std::mutex protocols_mutex;
+#endif
+	const auto protocol_entry = [&context, protocol_block](ApiCall &call, const protoent *found) {
+		if (!found) {
+			call.fail(11004, 0);
+			return;
+		}
+		if (!*protocol_block)
+			*protocol_block = context.allocator.allocate(256, true);
+		const uint64_t block = *protocol_block;
+		const bool narrow = call.pointer_width() == 4;
+		// The name sits past the record and the empty list of aliases it points at.
+		const uint64_t aliases = block + (narrow ? 12 : 24), name = aliases + (narrow ? 4 : 8);
+		call.put_narrow(name, std::string(found->p_name).substr(0, 111), 112);
+		call.store_pointer(block, name);
+		call.store_pointer(block + (narrow ? 4 : 8), aliases);
+		call.store_pointer(aliases, 0);
+		call.store<uint16_t>(block + (narrow ? 8 : 16), uint16_t(found->p_proto));
+		call.ret(block);
+	};
+	registry.add("getprotobyname", 1, [protocol_entry](ApiCall &call) {
+		const auto name = call.narrow(call[0], 256);
+		protoent entry{}, *found = nullptr;
+		std::array<char, 1024> buffer{};
+#ifdef __APPLE__
+		const std::lock_guard lock(protocols_mutex);
+		found = ::getprotobyname(name.c_str());
+#else
+		getprotobyname_r(name.c_str(), &entry, buffer.data(), buffer.size(), &found);
+#endif
+		protocol_entry(call, found);
+	});
+	registry.add("getprotobynumber", 1, [protocol_entry](ApiCall &call) {
+		protoent entry{}, *found = nullptr;
+		std::array<char, 1024> buffer{};
+#ifdef __APPLE__
+		const std::lock_guard lock(protocols_mutex);
+		found = ::getprotobynumber(int(call.u32(0)));
+#else
+		getprotobynumber_r(int(call.u32(0)), &entry, buffer.data(), buffer.size(), &found);
+#endif
+		protocol_entry(call, found);
+	});
 	registry.add("htons", 1, [](ApiCall &call) { call.ret(uint16_t(call.u32(0) << 8 | (call.u32(0) >> 8 & 0xff))); });
 	registry.add("ntohs", 1, [](ApiCall &call) { call.ret(uint16_t(call.u32(0) << 8 | (call.u32(0) >> 8 & 0xff))); });
 	registry.add("htonl", 1, [](ApiCall &call) { call.ret(__builtin_bswap32(call.u32(0))); });

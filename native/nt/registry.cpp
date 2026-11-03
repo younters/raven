@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <initializer_list>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 #ifdef __APPLE__
 #include "../platform/darwin/dxmt/identity.h"
@@ -133,8 +135,8 @@ NativeRegistry::NativeRegistry(std::filesystem::path file) : file(std::move(file
 // hosts, meta host and strong names in mscoree, which programs and the Framework's own libraries create through COM, and the Task
 // Scheduler, which installers use to start a program once they finish, the accessibility annotation services of oleacc, which
 // programs create for their windows' controls, the MSXML 6.0 classes, which the XML component serves beside its own, the network list,
-// which programs ask whether they are online, and the package manager of the Windows Runtime. A hive that lacks them, a new one or one
-// made before they were registered, gets them.
+// which programs ask whether they are online, the package manager of the Windows Runtime, and the factories of the packaging API, which
+// package managers read .appx and .msix packages with. A hive that lacks them, a new one or one made before they were registered, gets them.
 void NativeRegistry::register_runtime_classes()
 {
 	static constexpr std::pair<const char16_t *, const char16_t *> classes[] = {{u"{E5CB7A31-7512-11D2-89CE-0080C792E5D8}", u"mscoree.dll"},
@@ -146,7 +148,8 @@ void NativeRegistry::register_runtime_classes()
 		{u"{88D96A08-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{88D96A0A-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"},
 		{u"{88D96A0B-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{88D96A0C-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"},
 		{u"{88D96A0E-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{88D96A0F-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"},
-		{u"{88D96A11-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{DCB00C01-570F-4A9B-8D69-199FDBA5723B}", u"raven-netlist.dll"}};
+		{u"{88D96A11-F192-11D4-A65F-0040963251E5}", u"msxml3.dll"}, {u"{DCB00C01-570F-4A9B-8D69-199FDBA5723B}", u"raven-netlist.dll"},
+		{u"{5842A140-FF9F-4166-8F5C-62F5B7B0C781}", u"raven-appx.dll"}, {u"{378E0446-5384-43B7-8877-E7DBDD883446}", u"raven-appx.dll"}};
 	register_animation_classes();
 	const auto store = [&](uint64_t key, const char16_t *name, std::u16string_view value) {
 		std::vector<uint8_t> data;
@@ -191,7 +194,7 @@ void NativeRegistry::register_runtime_classes()
 	// The Windows Runtime classes the runtime brings, in-process (activation type 0) and callable from any apartment (threading 0):
 	// installers ask the package manager whether a packaged version of what they install is present, and Office asks the UI settings
 	// for the theme's colours and the text scale while it starts, along with the network, the device's profile, the system's accounts
-	// and the application model; programs ask the analytics information which Windows they run on.
+	// and the application model; programs ask the analytics information which Windows they run on and make HTTP requests to the URIs they go to.
 	static constexpr std::pair<const char16_t *, const char16_t *> runtime_classes[] = {
 		{u"Windows.Management.Deployment.PackageManager", u"raven-deployment.dll"},
 		{u"Windows.UI.ViewManagement.UISettings", u"raven-uisettings.dll"},
@@ -202,7 +205,11 @@ void NativeRegistry::register_runtime_classes()
 		{u"Windows.Security.Authentication.OnlineId.OnlineIdSystemAuthenticator", u"raven-twinapi.dll"},
 		{u"Windows.Security.Authentication.OnlineId.OnlineIdServiceTicketRequest", u"raven-twinapi.dll"},
 		{u"Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager", u"raven-twinapi.dll"},
-		{u"Windows.ApplicationModel.Core.CoreApplication", u"raven-twinapi.dll"}};
+		{u"Windows.ApplicationModel.Core.CoreApplication", u"raven-twinapi.dll"},
+		{u"Windows.Foundation.Uri", u"raven-web.dll"}, {u"Windows.Web.Http.HttpClient", u"raven-web.dll"},
+		{u"Windows.Web.Http.HttpMethod", u"raven-web.dll"}, {u"Windows.Web.Http.HttpRequestMessage", u"raven-web.dll"},
+		{u"Windows.Web.Http.HttpResponseMessage", u"raven-web.dll"}, {u"Windows.Web.Http.Filters.HttpBaseProtocolFilter", u"raven-web.dll"},
+		{u"Windows.Web.Http.Headers.HttpDateOrDeltaHeaderValue", u"raven-web.dll"}};
 	for (const bool wow : {false, true})
 		for (const auto &[name, library] : runtime_classes) {
 			const std::u16string path = std::u16string(wow ? u"SOFTWARE\\Wow6432Node" : u"SOFTWARE") +
@@ -401,6 +408,24 @@ void NativeRegistry::seed()
 		uint32_t disposition = 0;
 		if (!create(0x80000002ULL, service, key, disposition)) {
 			fill(key, u"ImagePath", 2, bytes_of(u"%systemroot%\\system32\\msiexec.exe /V"));
+			close(key);
+		}
+	}
+	// Services that every Windows has and that installers look for; nothing runs them here, so starting one fails as a missing file does.
+	for (const auto &[name, display, image] : std::initializer_list<std::tuple<std::u16string, std::u16string, std::u16string>>{
+		{u"wuauserv", u"Windows Update", u"%systemroot%\\system32\\svchost.exe -k netsvcs -p"},
+		{u"TrustedInstaller", u"Windows Modules Installer", u"%SystemRoot%\\servicing\\TrustedInstaller.exe"},
+		{u"BITS", u"Background Intelligent Transfer Service", u"%SystemRoot%\\System32\\svchost.exe -k netsvcs -p"}}) {
+		const auto service = u"SYSTEM\\CurrentControlSet\\Services\\" + name;
+		text(service.c_str(), u"DisplayName", display);
+		text(service.c_str(), u"ObjectName", u"LocalSystem");
+		number(service.c_str(), u"Type", 0x20);
+		number(service.c_str(), u"Start", 3);
+		number(service.c_str(), u"ErrorControl", 1);
+		uint64_t key = 0;
+		uint32_t disposition = 0;
+		if (!create(0x80000002ULL, service, key, disposition)) {
+			fill(key, u"ImagePath", 2, bytes_of(image));
 			close(key);
 		}
 	}

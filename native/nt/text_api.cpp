@@ -435,7 +435,8 @@ std::u16string insert_arguments(std::u16string_view text, const std::function<st
 }
 
 // The text of message `id` in a module's message table, the RT_MESSAGETABLE resource named 1: blocks of consecutive identifiers, each
-// pointing at entries that carry their length and whether they are UTF-16. The language asked for is preferred, any other serves.
+// pointing at entries that carry their length and whether they are UTF-16. The language asked for goes first, then its neutral form,
+// its other regions, the unmarked table and English; only then does any other serve.
 std::optional<std::u16string> module_message(KernelContext &context, uint64_t base, uint32_t id, uint32_t language)
 {
 	const PEModule *image = !base || base == context.entry.loaded.base() ? &context.entry : nullptr;
@@ -449,10 +450,26 @@ std::optional<std::u16string> module_message(KernelContext &context, uint64_t ba
 		return std::nullopt;
 	const auto resources = read_resources(directory, context.process.read_memory(image->loaded.base() + directory.address, directory.size),
 		image->image.image_size);
+	const uint32_t wanted = language ? language : 0x409;
+	const auto rank = [&](uint32_t candidate) {
+		if (candidate == wanted)
+			return 0;
+		if (candidate == (wanted & 0x3ff))
+			return 1;
+		if ((candidate & 0x3ff) == (wanted & 0x3ff))
+			return 2;
+		if (!candidate)
+			return 3;
+		if (candidate == 0x409)
+			return 4;
+		if (candidate == 9)
+			return 5;
+		return (candidate & 0x3ff) == 9 ? 6 : 7;
+	};
 	const PEResource *table = nullptr;
 	for (const auto &resource : resources)
 		if (resource.type == ResourceKey(uint32_t(11)) && resource.name == ResourceKey(uint32_t(1)) &&
-			(!table || (language && resource.language == language)))
+			(!table || rank(resource.language) < rank(table->language)))
 			table = &resource;
 	if (!table || table->size < 4)
 		return std::nullopt;
@@ -1274,6 +1291,24 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		locale_info(call, call.u32(1), call[2], call.i32(3), true);
+	});
+	// The one user interface language: by number unless the flags ask for its name.
+	registry.add("EnumUILanguagesW", 3, [&](ApiCall &call) {
+		const auto scratch = memory.allocate(0, 4096, 0x3000, 4);
+		if (scratch.status) {
+			call.fail(8);
+			return;
+		}
+		const std::u16string name = call.u32(1) & 8 ? u"en-US" : u"0409";
+		std::vector<uint8_t> bytes((name.size() + 1) * 2);
+		std::memcpy(bytes.data(), name.data(), name.size() * 2);
+		call.write(scratch.address, bytes);
+		const uint64_t arguments[] = {scratch.address, call[2]};
+		const auto result = context.call(call[0], arguments);
+		memory.free(scratch.address, 0, 0x8000);
+		if (result.stop != NativeStop::returned)
+			throw result;
+		call.ret(1);
 	});
 	registry.add("EnumSystemLocalesW", 2, [&](ApiCall &call) {
 		const auto scratch = memory.allocate(0, 4096, 0x3000, 4);

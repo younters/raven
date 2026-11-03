@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <msi.h>
+#include <msiquery.h>
 
 /* A Windows Installer package installed without a user interface, as setup programs and redistributables run it, and removed again:
    the product is registered, its file is in place and readable, its registry value is written, and removal takes all of it away. */
@@ -32,10 +33,43 @@ int raven_entry(void)
 	beside(package, L"basic.msi");
 	MsiSetInternalUI(INSTALLUILEVEL_NONE, NULL);
 	/* A prefix used before starts without the product. */
-	if (MsiQueryProductStateW(product) == INSTALLSTATE_DEFAULT)
+	if (MsiQueryProductStateW(product) != INSTALLSTATE_UNKNOWN)
 		MsiConfigureProductW(product, INSTALLLEVEL_DEFAULT, INSTALLSTATE_ABSENT);
 	if (MsiQueryProductStateW(product) != INSTALLSTATE_UNKNOWN)
 		return 1;
+	/* Advertised: published with the feature on offer; removal forgets it, a configure installs it. */
+	if (MsiAdvertiseProductW(package, L"x.aas", NULL, 0) != ERROR_CALL_NOT_IMPLEMENTED)
+		return 20;
+	if (MsiAdvertiseProductW(package, (LPCWSTR)0, NULL, 0) != ERROR_SUCCESS)
+		return 21;
+	if (MsiQueryProductStateW(product) != INSTALLSTATE_ADVERTISED)
+		return 22;
+	if (MsiQueryFeatureStateW(product, L"Main") != INSTALLSTATE_ADVERTISED)
+		return 23;
+	if (MsiConfigureProductW(product, INSTALLLEVEL_DEFAULT, INSTALLSTATE_ABSENT) != ERROR_SUCCESS)
+		return 24;
+	if (MsiQueryProductStateW(product) != INSTALLSTATE_UNKNOWN)
+		return 25;
+	if (MsiAdvertiseProductW(package, (LPCWSTR)0, NULL, 0) != ERROR_SUCCESS)
+		return 26;
+	if (MsiConfigureProductW(product, INSTALLLEVEL_DEFAULT, INSTALLSTATE_DEFAULT) != ERROR_SUCCESS)
+		return 27;
+	if (MsiQueryProductStateW(product) != INSTALLSTATE_DEFAULT || MsiQueryFeatureStateW(product, L"Main") != INSTALLSTATE_LOCAL)
+		return 28;
+	if (MsiConfigureProductW(product, INSTALLLEVEL_DEFAULT, INSTALLSTATE_ABSENT) != ERROR_SUCCESS)
+		return 29;
+	/* After costing, a directory is the property of its name: text like [INSTALLDIR] depends on it. */
+	MSIHANDLE session = 0;
+	if (MsiOpenPackageW(package, &session) != ERROR_SUCCESS)
+		return 30;
+	WCHAR folder[MAX_PATH];
+	DWORD folder_size = MAX_PATH;
+	if (MsiDoActionW(session, L"CostInitialize") != ERROR_SUCCESS || MsiDoActionW(session, L"CostFinalize") != ERROR_SUCCESS)
+		return 31;
+	if (MsiGetPropertyW(session, L"INSTALLDIR", folder, &folder_size) != ERROR_SUCCESS || folder_size < 13 ||
+		lstrcmpiW(folder + folder_size - 13, L"\\RavenSample\\"))
+		return 32;
+	MsiCloseHandle(session);
 	UINT result = MsiInstallProductW(package, L"");
 	if (result != ERROR_SUCCESS)
 		return 100 + (int)(result % 100);

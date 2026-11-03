@@ -14,9 +14,18 @@ The program's code runs directly on your CPU, inside a sandbox where it cannot r
 
 - Linux on x86_64
 - CMake 3.20 or newer, a C++20 compiler and Python 3.11 or newer
-- MinGW-w64 for x86_64 and i686, to build the Windows test programs
+- MinGW-w64 13 or newer for x86_64 and i686, to build the Windows test programs
+- To build the installer components: clang, widl, bison and patch
+- Optionally, OpenSSL for crypt32's certificate chains, Schannel, HTTPS and the CryptoAPI ciphers
 - For desktop applications: Wayland, xkbcommon, pixman, FreeType and Vulkan
 - Optionally, for the experimental X11 desktop: libxcb with its xkb, xfixes and xinput extensions, and xkbcommon-x11
+
+On Fedora these are:
+
+```sh
+sudo dnf install cmake gcc-c++ clang python3 bison patch wine-devel mingw64-gcc mingw64-gcc-c++ mingw32-gcc mingw32-gcc-c++ \
+    wayland-devel libxkbcommon-devel pixman-devel freetype-devel vulkan-loader-devel vulkan-headers openssl-devel
+```
 
 The tested setup also uses libpng 1.6.59, a CPU build of Skia with the Liberation fonts, DXVK and vkd3d-proton; the `scripts/provision-*.py` tools download the pinned versions.
 
@@ -48,13 +57,16 @@ python3 scripts/provision-installer.py --output components/installer
 python3 scripts/provision-installer.py --arch x86 --output components/installer32
 python3 scripts/provision-graphics.py --destination components/graphics
 python3 scripts/provision-roots.py --output components/roots
+python3 scripts/provision-text.py --output components/text
 cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DRAVEN_RTL_COMPONENT_PATH=$PWD/components/rtl/raven-rtl.dll \
     -DRAVEN_CONTROLS_COMPONENT_DIR=$PWD/components/controls -DRAVEN_CONTROLS32_COMPONENT_DIR=$PWD/components/controls32 \
     -DRAVEN_INSTALLER_COMPONENT_DIR=$PWD/components/installer -DRAVEN_INSTALLER32_COMPONENT_DIR=$PWD/components/installer32 \
     -DRAVEN_DXVK_PE64_DIR=$PWD/components/graphics/dxvk/pe64 -DRAVEN_DXVK_PE32_DIR=$PWD/components/graphics/dxvk/pe32 \
     -DRAVEN_VKD3D_PE64_DIR=$PWD/components/graphics/vkd3d-proton/pe64 \
-    -DRAVEN_ROOT_CERTIFICATE_DIRECTORY=$PWD/components/roots
+    -DRAVEN_ROOT_CERTIFICATE_DIRECTORY=$PWD/components/roots \
+    -DRAVEN_SKIA_SOURCE=$PWD/components/text/skia -DRAVEN_SKIA_LIBRARY=$PWD/components/text/cpu-fonts/libskia.a \
+    -DRAVEN_FONT_DIRECTORY=$PWD/components/text/fonts
 cmake --build build -j2
 ```
 

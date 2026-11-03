@@ -6,9 +6,7 @@ installs with from the pinned ReactOS archive the common controls component uses
 `5373bbbb60541cb2a49e0acb53360e1218d4f5d56c31f9187b341b9fc16daa69`), for 64-bit
 programs and, with `--arch x86`, for 32-bit ones:
 
-- `msi.dll` (`dll/win32/msi`): the installer engine, its SQL and condition grammars
-  (bison) and the RPC stubs of its custom action server (widl);
-- `msiexec.exe` (`base/system/msiexec`),
+- `msi.dll` and `msiexec.exe`: Raven's own from [`native/upstream/raven-msi`](../raven-msi/README.md),
   which each prefix also keeps in its system directories;
 - `sxs.dll`: Raven's own side-by-side assembly cache from [`native/upstream/raven-sxs`](../raven-sxs/README.md);
 - `rpcrt4.dll`: Raven's own from [`native/upstream/raven-rpcrt4`](../raven-rpcrt4/README.md): remote
@@ -27,7 +25,10 @@ programs and, with `--arch x86`, for 32-bit ones:
   [`native/upstream/raven-gdiplus`](../raven-gdiplus/README.md)), `mlang.dll` (Raven's own, from
   [`native/upstream/raven-mlang`](../raven-mlang/README.md)) and `libpng.dll`, `libjpeg.dll`, `libtiff.dll` (`dll/3rdparty`);
 - `advpack.dll`: Raven's own from [`native/upstream/raven-advpack`](../raven-advpack/README.md): the setup helpers IExpress packages and the
-  DirectX setup run INF files through.
+  DirectX setup run INF files through;
+- `raven-appx.dll` (`native/upstream/raven-appx`, Raven code on the same zlib): the
+  packaging API, whose AppxFactory and AppxBundleFactory classes package managers read
+  `.appx` and `.msix` packages with.
 
 The runtime takes these libraries from beside itself whatever copies a program ships or
 an installer leaves in the system directory. Each new prefix registers the classes of

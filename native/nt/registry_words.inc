@@ -1494,6 +1494,7 @@
 {"SHGetKnownFolderPath", 4},
 {"SHGetPathFromIDListA", 2},
 {"SHGetPathFromIDListW", 2},
+{"SHGetPathFromIDListEx", 4},
 {"SHGetSettings", 2},
 {"SHGetSpecialFolderLocation", 3},
 {"SHGetSpecialFolderPathA", 4},
