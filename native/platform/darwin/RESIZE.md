@@ -160,3 +160,100 @@ After all owned measurement processes stop, the continuation will write the
 requested one-line scratch `MEASUREMENTS_DONE` marker, including partial results
 if the reserved window cannot complete all runs. The marker is not written during
 preparation, since the measurement window has not begun.
+
+## Dedicated window results (supersedes pending measurements above)
+
+The 23:15 continuation disabled its recurring schedule before launching anything.
+Raw `pgrep -f` initially matched the owner's shell waiting for MEASUREMENTS_DONE,
+not a runtime. The runner therefore anchored the match to actual Raven executable
+command lines. All launches passed the no-other-runtime check and had 49–53% free
+memory. Only owned process groups/snapshot executables were stopped.
+
+Both applications used FEX, parallel scheduling and normal GPU rendering. The
+measured producer route was DXMT IOSurface presentation, not foreign GDI. The
+endpoint below is a matching-size DXMT layer submission after the first native
+frame change; it is **not screen scanout or proof that all page content finished**.
+Steam renderer-child HWNDs were associated with their root through saved published
+window metadata. GDI root submissions containing copied old content were excluded.
+
+Each row lists maximize samples in chronological order, in milliseconds:
+
+| Run | Host frame change → matching producer submission |
+|---|---|
+| Chrome baseline | 1372.770; no matching frame for 4797.215 before next request; 555.556 |
+| Chrome after | 478.920; 597.802; 612.503 |
+| Chrome after, repeat | 703.487; 601.236; 601.912 |
+| Chrome baseline, reverse-order attempts | Both exited during startup with c0000005 at address 0, before a producer frame; no samples |
+| Steam baseline, settled main window | 1202.564; no matching frame for 9918.810 before next request; 601.382 |
+| Steam after, settled main window | 593.154; 1563.006; 3237.205 |
+
+Missing-frame observations are censored, not zeroes and not completed latencies.
+Do not compare medians calculated only from successful samples. The initial Steam
+pilot mixed sign-in and main windows and is excluded; it is preserved separately.
+Main-window runs waited for a visible main Steam window and another 30 seconds
+before issuing restore/maximize cycles. The Store page remained black/loading in
+screenshots, so Steam results qualify shell submission timing, not complete Store
+rendering. Chrome used about:blank in a dedicated profile, with background networking
+and extensions disabled. Repeated startup failures prevent a clean reverse-order
+baseline comparison.
+
+### What the traces establish
+
+- Chrome baseline request 4 waited **5138.513 ms** from probe posting to entry into
+  the guest WM_SYSCOMMAND handler. This is before the host frame change; the
+  adaptive Cocoa paint timer cannot explain this portion. The trace localizes a
+  message-delivery/guest-progress delay but does not prove its scheduler root cause.
+- Steam after request 6 entered the guest handler after **9.943 ms**, yet the
+  matching DXMT submission came **3323.545 ms after WM_SIZE entry** and 3237.205 ms
+  after the host frame change. Faster notification alone does not solve this stall.
+- The after screenshot captured old-sized hosted Metal content with uncovered
+  black area. `host_surface` sets `pending.view.frame` from guest geometry and
+  does not give that view an autoresizing policy. Scaling the root layer's GDI
+  contents does not scale this separate hosted Metal subtree. This remains a
+  concrete gap in the chosen presentation design.
+
+### Assessment
+
+The geometry transaction replacement passes its focused contracts, but these runs
+**do not establish a complete responsiveness fix**. Chrome's successful after
+samples cluster near 0.6 seconds; Steam still has multi-second producer delays and
+hosted-layer continuity is incomplete. No percentage speedup is claimed from these
+small, trace-enabled, partially censored samples. The clock/DXMT pacing test failures
+also remain relevant limitations when interpreting timing inside the guest; host
+probe timestamps use steady_clock consistently across processes.
+
+A follow-up should separate host visual bounds from guest drawable allocation for
+hosted Metal views, preserving child positions, clipping and composition transforms,
+and profile guest message delivery and producer progress independently. This needs
+another dedicated validation window after implementation; merely rerunning these
+samples is not a substitute for those changes. No additional runtime change was
+made during this measurement window.
+
+### Profiler evidence and measurement validity
+
+A final, separately labeled after-Steam diagnostic run collected three CEF-host
+samples and one sample of its separate `--type=gpu-process` host. Those sampled
+cycles are excluded from the comparison above. The CEF host sample at 23:34:47
+recorded a 942.8 MiB physical footprint (987.3 MiB peak), scheduler/queue polling,
+and repeated presentation work. The GPU-host sample contains event/condition waits
+and command submissions; aggregate sleeping-thread counts do not establish the
+critical-path bottleneck.
+
+Crucially, the temporary probe opened and scanned its control file on every Cocoa
+poll. In the first CEF host sample, **130 of 700 main-thread samples** were within
+that control polling path (including 81 in fopen and 41 in fscanf). This is a
+material instrumentation cost, not production resize code. Identical probes on
+both builds do not eliminate its scheduling perturbation. Consequently the numeric
+results above are **diagnostic observations, not qualified performance benchmarks**.
+Before claiming an improvement, replace the trigger with an event-driven or
+rate-limited low-overhead control path, verify its overhead, and repeat the paired
+runs in a second dedicated window. The raw traces still demonstrate what happened
+in these instrumented runs, and the hosted-view scaling gap is independently
+supported by source inspection and the screenshot.
+
+All owned runtime processes were verified stopped, and the requested one-line
+`MEASUREMENTS_DONE` marker was written at approximately 23:37, before the 23:45
+cutoff. No further application launches were made. Comparison data is preserved in
+`resize-results.json`; raw logs, receipts, HWND parent maps, screenshots, and sample
+reports remain in the requested scratch directory. A second window is required
+for valid low-overhead qualification and validation of the remaining fixes.
