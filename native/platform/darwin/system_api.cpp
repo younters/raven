@@ -38,6 +38,23 @@ void register_firmware_api(raven::ApiRegistry &registry)
 // All processor queries share the guest group model.
 void register_processor_count_api(raven::ApiRegistry &registry)
 {
+	registry.add("GetSystemCpuSetInformation",5,[](raven::ApiCall &call) {
+		if (!call[2]) { call.fail(87,0); return; }
+		const auto count=raven::darwin::processor_count(call.pointer_width() == 4);
+		const uint32_t needed=count*32;
+		call.store<uint32_t>(call[2],needed);
+		if (!call[0] || call.u32(1)<needed) { call.fail(122,0); return; }
+		for (uint32_t i=0;i<count;++i) {
+			const auto at=call[0]+i*32;
+			call.write(at,std::vector<uint8_t>(32));
+			call.store<uint32_t>(at,32); // SYSTEM_CPU_SET_INFORMATION.Size
+			call.store<uint32_t>(at+8,i); // CpuSet.Id
+			call.store<uint8_t>(at+14,uint8_t(i)); // LogicalProcessorIndex
+			call.store<uint8_t>(at+15,uint8_t(i)); // CoreIndex
+		}
+		call.ret(1);
+	});
+
 	for (const auto *name : {"GetActiveProcessorCount", "GetMaximumProcessorCount"})
 		registry.add(name, 1, [](raven::ApiCall &call) {
 			const auto group = call.u32(0) & 0xffff;
