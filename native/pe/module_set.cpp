@@ -74,9 +74,7 @@ PEModule &ModuleSet::add(std::string name, ModuleBytes bytes, std::function<bool
 			return candidate + 65536;
 		return uint64_t(0);
 	};
-	const auto has_relocs = [](const PEImage &candidate) {
-		return !(candidate.characteristics & 1) && candidate.directories[5].address && candidate.directories[5].size;
-	};
+	const auto has_relocs = [](const PEImage &candidate) { return candidate.relocatable(); };
 	if (!adding_data && !available && !bound_any && !has_relocs(image) && overlap_for(base, image.image_size)) {
 		std::vector<PEModule *> blockers;
 		bool all_movable = true;

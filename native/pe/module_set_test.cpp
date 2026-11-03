@@ -214,6 +214,20 @@ int main()
 				check(data.loaded.base() != target_base && read(data.loaded.data(), 0x1020, width) == target_base + 0x1000,
 					"explicit data view was rejected or had code fixups applied");
 			}
+			{
+				// The same image declaring DYNAMIC_BASE, as a linker marks a stub DLL it left without a relocation table because nothing
+				// needed fixing up: it moves, as it is, when its preferred base is taken. Stripped relocations still pin it.
+				auto dynamic = fixed_exports;
+				put(dynamic, 0xde, 0x40, 2);
+				raven::ModuleSet conflict;
+				conflict.add("occupant", target);
+				auto &moved = conflict.add("dynamic-base", dynamic);
+				check(moved.loaded.base() != target_base && read(moved.loaded.data(), 0x1020, width) == target_base + 0x1000,
+					"a DYNAMIC_BASE image without relocations was pinned to an occupied base or had fixups applied");
+				auto stripped = dynamic;
+				put(stripped, 0x96, 0x2003, 2);
+				rejected([&] { conflict.add("stripped", stripped); });
+			}
 			rejected([&] { modules.resolve({"facade", "function", 0, false, 0}); });
 			rejected([&] { modules.resolve({"facade", "", 8, true, 0}); });
 			rejected([&] { modules.add("facade.dll", facade, facade_base); });

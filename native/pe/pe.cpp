@@ -61,6 +61,8 @@ PEImage::PEImage(std::span<const uint8_t> bytes) : bytes(bytes)
 	entry = read32(bytes, optional + 16);
 	image_base = read_le(bytes, optional + (is_64 ? 24 : 28), is_64 ? 8 : 4);
 	subsystem = uint16_t(read_le(bytes, optional + 68, 2));
+	if (optional_size >= 72)
+		dll_characteristics = uint16_t(read_le(bytes, optional + 70, 2));
 	stack_reserve = read_le(bytes, optional + 72, is_64 ? 8 : 4);
 	heap_reserve = read_le(bytes, optional + (is_64 ? 88 : 80), is_64 ? 8 : 4);
 	heap_commit = read_le(bytes, optional + (is_64 ? 96 : 84), is_64 ? 8 : 4);
@@ -171,6 +173,13 @@ bool PEImage::il_only() const
 	if (!directory.address || directory.size < 20)
 		return false;
 	return read32(file_span(directory.address, 20), 16) & 1;
+}
+
+bool PEImage::relocatable() const
+{
+	if (characteristics & 1)
+		return false;
+	return (directories.size() > 5 && directories[5].address && directories[5].size) || (dll_characteristics & 0x40);
 }
 
 std::vector<PEImport> PEImage::imports() const
