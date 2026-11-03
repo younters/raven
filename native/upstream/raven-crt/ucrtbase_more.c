@@ -1716,6 +1716,8 @@ overflow:
 
 CRT int isblank(int c) { return c == ' ' || c == '\t'; }
 CRT int isgraph(int c) { return c > 0x20 && c < 0x7f; }
+CRT double nan(const char *payload) { return __builtin_nan(""); }
+
 /* The bounded conversions: the count includes the terminator, _TRUNCATE keeps what fits and reports STRUNCATE (80), and a result that
    does not fit otherwise empties the destination. */
 static int bounded_result(size_t *converted, size_t length, size_t size, size_t count, size_t *kept)
