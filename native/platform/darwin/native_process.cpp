@@ -1889,6 +1889,7 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 	const auto execution_deadline = std::chrono::steady_clock::now() + timeout;
 	int signal = 0, code = 0;
 	uint64_t fault_address = 0;
+	unsigned spurious_traps = 0;
 	for (;;) {
 		const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(execution_deadline - std::chrono::steady_clock::now());
 		if (remaining.count() <= 0) {
@@ -1916,6 +1917,7 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 			child.clear_slice();
 		if (state->resume_hook)
 			state->resume_hook();
+		const raven_registers resumed = thread.registers;
 		child.resume(state->steps_left > 0);
 		state->stopped = false;
 		int status = 0;
@@ -2020,6 +2022,26 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 			}
 			state->slice_started = std::chrono::steady_clock::now();
 			continue;
+		}
+		// WORKAROUND, root cause not yet found: under load a breakpoint stop is sometimes reported for a thread that has not executed a
+		// single instruction since it was resumed (seen at the first instruction of DLL_THREAD_ATTACH callbacks and served stubs). A real
+		// INT3 always executes first, so every register still equal to the resumed context means the stop is stale: resume again rather
+		// than turn it into an off-by-one 0x80000003 exception in the guest.
+		// Raven's own traps (API stubs, the return gate) are excluded: a thread parked on one legitimately stops there unchanged.
+		if (signal == SIGTRAP && code == TRAP_BRKPT && !state->steps_left && spurious_traps < 64 &&
+			thread.registers.rip != (state->mode == NativeMode::x86 ? state->return_gate : child.gate) + 1 &&
+			!state->api_traps.contains(thread.registers.rip - 1)) {
+			const auto &now = thread.registers;
+			if (now.rip == resumed.rip && now.rsp == resumed.rsp && now.rax == resumed.rax && now.rbx == resumed.rbx &&
+				now.rcx == resumed.rcx && now.rdx == resumed.rdx && now.rsi == resumed.rsi && now.rdi == resumed.rdi &&
+				now.rbp == resumed.rbp && now.r8 == resumed.r8 && now.r9 == resumed.r9 && now.r10 == resumed.r10 &&
+				now.r11 == resumed.r11 && now.r12 == resumed.r12 && now.r13 == resumed.r13 && now.r14 == resumed.r14 &&
+				now.r15 == resumed.r15) {
+				++spurious_traps;
+				if (std::getenv("RAVEN_TRACE_FAULT"))
+					std::cerr << "raven: ignored stale breakpoint stop at 0x" << std::hex << now.rip << std::dec << '\n';
+				continue;
+			}
 		}
 		if (state->steps_left && signal == SIGTRAP) {
 			const bool breakpoint = state->covers(registers.rip - 1, 1, PROT_EXEC) && read_memory(registers.rip - 1, 1)[0] == 0xcc;

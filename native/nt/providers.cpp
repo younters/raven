@@ -2051,8 +2051,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 							return std::string("?");
 						};
 						const auto registers=process.registers();
-						std::cerr << "fault: signal " << result.signal << " at " << std::hex << result.instruction << " (" << describe(result.instruction) << ")"
-							<< " address=" << result.fault_address << " rax=" << registers.rax << " rbx=" << registers.rbx
+						std::cerr << "fault: signal " << result.signal << " code=" << std::dec << result.signal_code << " at " << std::hex << result.instruction << " (" << describe(result.instruction) << ")"
+							<< " eflags=" << registers.eflags << " address=" << result.fault_address << " rax=" << registers.rax << " rbx=" << registers.rbx
 							<< " rcx=" << registers.rcx << " rdx=" << registers.rdx << " rsp=" << registers.rsp
 							<< " r8=" << registers.r8 << " r9=" << registers.r9 << " r10=" << registers.r10
 							<< " r11=" << registers.r11 << " r12=" << registers.r12 << " r13=" << registers.r13

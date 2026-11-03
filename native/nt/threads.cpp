@@ -197,6 +197,10 @@ void NativeThreads::thread_main(GuestThread &thread)
 				std::rethrow_exception(pending);
 			} catch (const std::exception &error) {
 				std::cerr << "raven: guest thread " << thread.id << " failed in " << api_in_progress << ": " << error.what() << "\n";
+			} catch (const NativeResult &stop) {
+				std::cerr << "raven: guest thread " << thread.id << " ended with stop " << int(stop.stop) << " signal " << stop.signal
+					<< " code " << stop.signal_code << " at 0x" << std::hex << stop.instruction << " value 0x" << stop.value
+					<< " address 0x" << stop.fault_address << std::dec << " in " << api_in_progress << "\n";
 			} catch (...) {
 				std::cerr << "raven: guest thread " << thread.id << " ended with a stop\n";
 			}

@@ -984,10 +984,42 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(6);
 			return;
 		}
-		thread->priority = call.i32(1);
+		const auto priority = call.i32(1);
+		// Background mode is a resource-scheduling mode, not a priority value.
+		// Expose a background priority while it is active and restore the old one.
+		if (priority == 0x10000) {
+			if (!thread->background_mode) {
+				thread->priority_before_background = thread->priority;
+				thread->background_mode = true;
+				thread->priority = -2;
+			}
+		} else if (priority == 0x20000) {
+			if (thread->background_mode) {
+				thread->priority = thread->priority_before_background;
+				thread->background_mode = false;
+			}
+		} else {
+			thread->priority = priority;
+		}
 		call.ret(1);
 	});
 	registry.add("SetThreadAffinityMask", 2, [](ApiCall &call) { call.ret(1); });
+	// The host schedules guest threads itself, so an ideal-processor hint changes nothing: every thread reports processor 0 of group 0,
+	// the value SetThreadIdealProcessor also returns as the previous one (MAXIMUM_PROCESSORS only queries it).
+	registry.add("SetThreadIdealProcessor", 2, [](ApiCall &call) { call.ret(0); });
+	registry.add("SetThreadIdealProcessorEx", 3, [](ApiCall &call) {
+		if (call[2])
+			call.store<uint32_t>(call[2], 0);
+		call.ret(1);
+	});
+	registry.add("GetThreadIdealProcessorEx", 2, [](ApiCall &call) {
+		if (!call[1]) {
+			call.fail(87);
+			return;
+		}
+		call.store<uint32_t>(call[1], 0);
+		call.ret(1);
+	});
 	registry.add("SetThreadStackGuarantee", 1, [](ApiCall &call) { call.ret(1); });
 	registry.add("OpenThread", 3, [&threads, &objects, handle_of](ApiCall &call) {
 		const auto thread = threads.find(call.u32(2));

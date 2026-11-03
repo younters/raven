@@ -54,6 +54,8 @@ struct GuestThread {
 	// the next one. Each is taken by the wait it ends.
 	bool alerted = false, alerted_by_id = false;
 	int priority = 0;
+	bool background_mode = false;
+	int priority_before_background = 0;
 	std::shared_ptr<AccessToken> impersonation;
 	// Pipes to the processes that hold a handle to this thread: each gets the exit code when the thread ends.
 	std::vector<int> exit_reports;
