@@ -21,9 +21,11 @@ inline constexpr std::string_view core_system_libraries[]{"ntdll.dll", "kernel32
 	"comctl32.dll", "advapi32.dll", "msvcrt.dll", "ucrtbase.dll", "ole32.dll", "oleaut32.dll", "combase.dll", "rpcrt4.dll",
 	"shell32.dll", "shlwapi.dll", "setupapi.dll", "comdlg32.dll"};
 // The system libraries that graphics wrappers (DXVK, ReShade) and mod loaders ship beside a program, whose copy there loads instead of the
-// runtime's own.
+// runtime's own. ICU too: Windows keeps it in System32, but programs that embed a browser engine or UI toolkit ship their own build beside
+// themselves (Strata Source's Panorama UI imports icuuc.dll with its own versioned names), and as none of these is a KnownDLL, the copy in
+// the program's folder is the one Windows loads.
 inline constexpr std::string_view program_replaceable_libraries[]{"d3d8.dll", "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll", "ddraw.dll",
-	"dinput.dll", "dinput8.dll", "winmm.dll", "version.dll", "xinput1_3.dll", "xinput1_4.dll"};
+	"dinput.dll", "dinput8.dll", "winmm.dll", "version.dll", "xinput1_3.dll", "xinput1_4.dll", "icu.dll", "icuuc.dll", "icuin.dll"};
 // Whether a copy of the library in the program's folder loads instead of the runtime's: one of program_replaceable_libraries, or, with
 // RAVEN_PREFER_LOCAL_DLLS=1, any other system library outside core_system_libraries.
 bool program_may_replace(std::string_view dll);
