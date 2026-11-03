@@ -94,6 +94,14 @@ static int native_result(const raven::NativeResult &result,bool process_exit=fal
 {
 	if (result.stop==raven::NativeStop::exited || (process_exit && result.exception_code)) {
 		const auto code=result.exception_code ? result.exception_code : uint32_t(result.value);
+		// A fault nothing handled ends the process with its code. A child started with inherited stdio prints no status line, so name
+		// the fault in the runtime's own diagnostics; otherwise a crashed game simply vanishes (RAVEN_TRACE_FAULT adds the registers).
+		if (result.stop!=raven::NativeStop::exited && result.exception_code) {
+			std::cerr << "raven: unhandled exception " << std::hex << std::setw(8) << std::setfill('0') << code << std::setfill(' ') << " ended the process at 0x" << result.instruction;
+			if (result.fault_address)
+				std::cerr << " (address 0x" << result.fault_address << ")";
+			std::cerr << std::dec << '\n';
+		}
 		leave_exit_code(code);
 		if (!inherited_stdio) std::cout << "Native process exited with status " << code << '\n';
 		return !code ? 0 : (code & 0xff) ? int(code & 0xff) : 1;
