@@ -1994,7 +1994,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	// TLS slot 0 is taken before the program runs, as the system libraries of a Windows process take it: programs (older Rust runtimes
 	// among them) take an index of 0 for "not allocated" and stop when TlsAlloc gives it.
 	tls->used[0] = true;
-	// The thread block mirrors values for the guest-side fast paths of Tls/FlsGetValue (and TlsSetValue).
+	// The thread block mirrors values for the guest-side fast paths of Tls/FlsGetValue (and TlsSetValue): TLS slots below 64 in
+	// TlsSlots, the expansion slots up to 1088 in the TlsExpansionSlots array, and FLS slots in the array at 0x17c8.
 	const auto bind = [&](const char *prefix, std::shared_ptr<Slots> slots, bool callback) {
 		const std::string base = prefix;
 		const bool is_tls = base == "Tls";
@@ -2003,6 +2004,10 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			for (const auto block : context.threads.thread_blocks()) {
 				if (is_tls && index < 64) {
 					call.process.write_memory(block + 0x1480 + index * 8, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&zero), 8));
+				} else if (is_tls && index < 1088) {
+					const auto array = call.load<uint64_t>(block + 0x1780);
+					if (array)
+						call.process.write_memory(array + (index - 64) * 8, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&zero), 8));
 				} else if (!is_tls && index < 4080) {
 					const auto array = call.load<uint64_t>(block + 0x17c8);
 					if (array)
@@ -2012,8 +2017,18 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		};
 		const auto mirror_set = [is_tls](ApiCall &call, uint64_t block, size_t index, uint64_t value) {
 			if (is_tls) {
-				if (index < 64)
+				if (index < 64) {
 					call.store<uint64_t>(block + 0x1480 + index * 8, value);
+				} else if (index < 1088) {
+					// Slots 64 to 1087 live where Windows keeps them, in the thread's TlsExpansionSlots array, which TlsGetValue's
+					// guest path reads; it is made when the thread first sets one.
+					auto array = call.load<uint64_t>(block + 0x1780);
+					if (!array) {
+						array = call.process.map_memory(1024 * 8, PROT_READ | PROT_WRITE);
+						call.store<uint64_t>(block + 0x1780, array);
+					}
+					call.store<uint64_t>(array + (index - 64) * 8, value);
+				}
 				return;
 			}
 			if (index >= 4080)
