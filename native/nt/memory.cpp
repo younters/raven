@@ -159,10 +159,15 @@ std::map<uint64_t,NativeMemory::Region>::iterator NativeMemory::region(uint64_t 
 	return address-found->first<found->second.size && size<=found->second.size-(address-found->first) ? found : regions.end();
 }
 
+// PAGE_TARGETS_INVALID (allocations) and PAGE_TARGETS_NO_UPDATE (protection changes) share 0x40000000: they say how Control Flow Guard
+// treats the executable pages, and there is no Control Flow Guard here, so the protection is what remains. JIT compilers set it on their
+// code pages (V8, which Strata Source's Panorama UI runs, stops on an allocation that refuses it).
+static constexpr uint32_t control_flow_targets = 0x40000000U;
+
 NativeMemoryRange NativeMemory::allocate(uint64_t address, uint64_t size, uint32_t type, uint32_t access)
 {
 	// Fork hook; retain the upstream body for merge compatibility.
-	return commit_allocate(address,size,type,access);
+	return commit_allocate(address,size,type,access & ~control_flow_targets);
 	settle();
 	if (!range(address,size,user_limit))
 		return {0,0,invalid};
@@ -368,6 +373,7 @@ std::map<uint64_t,NativeMemory::Image>::iterator NativeMemory::image_of(uint64_t
 
 NativeMemoryRange NativeMemory::protect(uint64_t address, uint64_t size, uint32_t access)
 {
+	access &= ~control_flow_targets;
 	auto lock=lock_commits(); // Serialize this transaction with guest commit preludes.
 	settle();
 	if (!range(address,size,user_limit))
