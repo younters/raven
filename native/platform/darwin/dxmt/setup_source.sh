@@ -11,7 +11,7 @@ dxmt_llvm_default=$dxmt_build_root/llvm15
 
 dxmt_x64_llvm() {
     [ -f "$1/lib/libLLVMCore.a" ] &&
-        /usr/bin/lipo -verify_arch x86_64 "$1/lib/libLLVMCore.a" >/dev/null 2>&1 &&
+        /usr/bin/lipo "$1/lib/libLLVMCore.a" -verify_arch x86_64 >/dev/null 2>&1 &&
         /usr/bin/grep -q '#define LLVM_VERSION_MAJOR 15' "$1/include/llvm/Config/llvm-config.h"
 }
 
@@ -60,7 +60,7 @@ RAVEN_DXMT_WINE_BUILD=${RAVEN_DXMT_WINE_BUILD:-$dxmt_build_root/dxmt-wine}
 mkdir -p "$RAVEN_DXMT_WINE_BUILD"
 if [ ! -f "$RAVEN_DXMT_WINE_BUILD/Makefile" ]; then
     (cd "$RAVEN_DXMT_WINE_BUILD" &&
-        CC='clang -arch x86_64' CXX='clang++ -arch x86_64' "$COMPONENTS/tools/wine-src/configure" \
+        CC='clang -arch x86_64' CXX='clang++ -arch x86_64' BISON="$(brew --prefix bison)/bin/bison" "$COMPONENTS/tools/wine-src/configure" \
         --host=x86_64-apple-darwin --enable-win64 --disable-tests --without-x --without-freetype \
         --without-gstreamer --without-pcap --without-sdl --without-usb --without-vulkan --without-cups --without-gnutls)
 fi
