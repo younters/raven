@@ -446,7 +446,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("joySetThreshold", 2, [](ApiCall &call) { call.ret(joystick_bad_parameter); });
 	registry.add("joySetCapture", 4, [](ApiCall &call) { call.ret(call.u32(1) < joystick_slots ? joystick_unplugged : joystick_bad_parameter); });
 	registry.add("joyReleaseCapture", 1, [](ApiCall &call) { call.ret(call.u32(0) < joystick_slots ? 0 : joystick_bad_parameter); });
-	registry.add("timeBeginPeriod", 1,[](ApiCall &call) { call.ret(call.u32(0) ? 0 : 97); });
+	registry.add("timeBeginPeriod", 1, [](ApiCall &call) { call.ret(call.u32(0) ? 0 : 97); });
 	registry.add("timeEndPeriod", 1, [](ApiCall &call) { call.ret(call.u32(0) ? 0 : 97); });
 	registry.add("timeGetDevCaps", 2, [](ApiCall &call) {
 		if (!call[0] || call.u32(1) < 8) {
@@ -1236,24 +1236,6 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	// Affinity is not enforced: the call reports the mask the thread had, which is every processor.
 	registry.add("SetProcessAffinityMask", 2, [](ApiCall &call) { call.ret(1); });
 	registry.add("SetProcessShutdownParameters", 2, [](ApiCall &call) { call.ret(1); });
-#ifdef __APPLE__
-	registry.add("GetSystemCpuSetInformation",5,[](ApiCall &call) {
-		if (!call[2]) { call.fail(87,0); return; }
-		const auto count=guest_processor_count(call.pointer_width());
-		const uint32_t needed=count*32;
-		call.store<uint32_t>(call[2],needed);
-		if (!call[0] || call.u32(1)<needed) { call.fail(122,0); return; }
-		for (uint32_t i=0;i<count;++i) {
-			const auto at=call[0]+i*32;
-			call.write(at,std::vector<uint8_t>(32));
-			call.store<uint32_t>(at,32); // SYSTEM_CPU_SET_INFORMATION.Size
-			call.store<uint32_t>(at+8,i); // CpuSet.Id
-			call.store<uint8_t>(at+14,uint8_t(i)); // LogicalProcessorIndex
-			call.store<uint8_t>(at+15,uint8_t(i)); // CoreIndex
-		}
-		call.ret(1);
-	});
-#endif
 	// The level a process starts with (0x280) and no flags, as nothing changes them here.
 	registry.add("GetProcessShutdownParameters", 2, [](ApiCall &call) {
 		if (!call[0] || !call[1]) {

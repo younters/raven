@@ -5258,7 +5258,6 @@ foreach(native_test IN LISTS native_tests)
     get_test_property(${native_test} ENVIRONMENT native_test_environment)
     if(NOT "${native_test_environment}" MATCHES "(^|;)RAVEN_PREFIX=")
         set_property(TEST ${native_test} APPEND PROPERTY ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/test-prefixes/${native_test}")
-
     endif()
 endforeach()
 

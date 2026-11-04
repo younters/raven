@@ -35,6 +35,27 @@ void register_firmware_api(raven::ApiRegistry &registry)
 	});
 }
 
+// The processor set query follows the guest group model.
+void register_processor_count_api(raven::ApiRegistry &registry)
+{
+	registry.add("GetSystemCpuSetInformation",5,[](raven::ApiCall &call) {
+		if (!call[2]) { call.fail(87,0); return; }
+		const auto count=raven::darwin::processor_count(call.pointer_width() == 4);
+		const uint32_t needed=count*32;
+		call.store<uint32_t>(call[2],needed);
+		if (!call[0] || call.u32(1)<needed) { call.fail(122,0); return; }
+		for (uint32_t i=0;i<count;++i) {
+			const auto at=call[0]+i*32;
+			call.write(at,std::vector<uint8_t>(32));
+			call.store<uint32_t>(at,32); // SYSTEM_CPU_SET_INFORMATION.Size
+			call.store<uint32_t>(at+8,i); // CpuSet.Id
+			call.store<uint8_t>(at+14,uint8_t(i)); // LogicalProcessorIndex
+			call.store<uint8_t>(at+15,uint8_t(i)); // CoreIndex
+		}
+		call.ret(1);
+	});
+}
+
 // No approximate SID hashing: callers must observe that this service is absent.
 void register_appcontainer_api(raven::ApiRegistry &registry)
 {
@@ -76,4 +97,21 @@ void seed_hardware_registry(raven::NativeRegistry &hive)
 	}
 }
 
+}
+
+namespace raven_darwin {
+void register_host_extensions(raven::ApiRegistry &registry)
+{
+	// The macOS network adapter set is currently a snapshot. Allow callers to subscribe and
+	// cancel without claiming a change; this also lets browsers continue their audio startup.
+	for (const auto *name : {"NotifyIpInterfaceChange","NotifyUnicastIpAddressChange","NotifyRouteChange2"})
+		registry.add(name,5,[](raven::ApiCall &call) {
+			if (!call[1] || !call[4]) { call.ret(87); return; }
+			call.store_pointer(call[4],1); call.ret(0);
+		});
+	registry.add("CancelMibChangeNotify2",1,[](raven::ApiCall &call) { call.ret(call[0]?0:87); });
+	// There is no Windows IME installed in a Darwin prefix.
+	registry.add("ImmGetDescriptionW", 3, [](raven::ApiCall &call) { call.ret(0); });
+	registry.add("ImmGetDescriptionA", 3, [](raven::ApiCall &call) { call.ret(0); });
+}
 }
