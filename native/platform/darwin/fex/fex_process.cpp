@@ -393,7 +393,7 @@ struct FexProcess::State {
 		workers.emplace(id, std::make_unique<FexWorker>(execution));
 		return id;
 	}
-	struct Region { size_t size; bool image; };
+	struct Region { size_t size; bool image; bool shared = false; };
 	std::map<uint64_t, Region> regions;
 	// A Windows-page-aligned shared view can begin inside a Darwin page.
 	std::map<uint64_t, uint64_t> shared_view_bases;
@@ -979,6 +979,24 @@ void FexProcess::write_memory(uint64_t address, std::span<const uint8_t> bytes)
 	validate_write_memory(address, bytes.size());
 	auto *p = !state->window && address >= 0x7ffe0000 && address + bytes.size() <= 0x7ffe1000 ? user_shared_data.data() + address - 0x7ffe0000 : reinterpret_cast<uint8_t *>(state->host(address, bytes.size()));
 	memcpy(p, bytes.data(), bytes.size());
+	// A private non-executable x64 allocation cannot contain translated code.
+	// API outputs (notably QPC on a stack) need no cross-thread cache walk.
+	// Protection transitions still notify FEX before the memory can execute.
+	// Keep image/shared aliases and WoW64's implicit-execute policy conservative.
+	if (!wow64_module && !bytes.empty()) {
+		auto region = state->regions.upper_bound(address);
+		if (region != state->regions.begin()) {
+			--region;
+			const auto offset = address - region->first;
+			if (!region->second.image && !region->second.shared && offset < region->second.size &&
+				bytes.size() <= region->second.size - offset) {
+				bool executable = false;
+				for (auto page = address & ~uint64_t(4095); page < address + bytes.size(); page += 4096)
+					executable |= (state->pages.at(page) & PROT_EXEC) != 0;
+				if (!executable) return;
+			}
+		}
+	}
 	uint64_t args[8]{state->host(address, bytes.size()), bytes.size()};
 	raven_ec_call(mapped_image->export_address(wow64_module ? "BTCpuNotifyMemoryDirty" : "BTCpu64NotifyMemoryDirty"), args, state->environment()->teb.data());
 }
@@ -1619,6 +1637,7 @@ uint64_t FexProcess::map_shared(int descriptor, size_t size, uint64_t offset, ui
 	const auto n = state->regions.at(address).size;
 	void *mapped = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, descriptor, off_t(offset - delta));
 	if (mapped == MAP_FAILED) { unmap_memory(address); throw std::runtime_error("FEX shared descriptor mapping failed"); }
+	state->regions.at(address).shared = true;
 	// Logical permissions remain unchanged. FEX must validate executable bytes
 	// in shared views because writes through aliases/other processes bypass
 	// this virtual address's dirty notifications and page faults.

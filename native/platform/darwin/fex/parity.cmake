@@ -7,7 +7,7 @@ endfunction()
 
 # Use identical PE bytes and isolated prefixes under both execution engines.
 if(RAVEN_FEX_MODHOST AND TARGET fex_process_test)
-    foreach(mode nt-service unaligned debug-print)
+    foreach(mode nt-service unaligned debug-print host-data-write)
         add_test(NAME fex_${mode} COMMAND fex_process_test ${FEX_ENTRY_FIXTURE} ${mode})
         set_tests_properties(fex_${mode} PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77
             LABELS "fex" ENVIRONMENT "RAVEN_FEX_MODULE_ROOT=${RAVEN_FEX_MODULE_ROOT}")

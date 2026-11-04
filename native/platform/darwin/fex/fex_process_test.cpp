@@ -123,7 +123,7 @@ int main(int argc, char **argv)
 		} else if (mode == "breakpoint") {
 			loaded.data()[image.entry] = 0xcc;
 			loaded.data()[image.entry + 1] = 0xc3;
-		} else check(mode == "shared-offset" || mode == "sparse-reservation" || mode == "entry" || mode == "lifetime" || mode == "served-malformed" || mode == "teb-switch", "unknown mode");
+		} else check(mode == "host-data-write" || mode == "shared-offset" || mode == "sparse-reservation" || mode == "entry" || mode == "lifetime" || mode == "served-malformed" || mode == "teb-switch", "unknown mode");
 		raven::LoadedImage *images[]{&loaded};
 		if (mode == "lifetime") {
 			auto second_rejected = [&] {
@@ -145,6 +145,39 @@ int main(int argc, char **argv)
 			return 0;
 		}
 		raven::FexProcess process(images, root);
+		if (mode == "host-data-write") {
+			const auto data = process.map_memory(16384, PROT_READ | PROT_WRITE, 0);
+			const auto code = process.map_memory(16384, PROT_READ | PROT_WRITE | PROT_EXEC, 0);
+			const uint8_t load[]{0x8b, 0x01, 0xc3}; // mov eax,[rcx]; ret
+			process.write_memory(code, load);
+			const uint64_t args[]{data + 4094}; // Write across a logical page boundary.
+			for (const uint32_t value : {41U, 42U}) {
+				process.write_memory(args[0], {reinterpret_cast<const uint8_t *>(&value), sizeof(value)});
+				const auto result = process.call(code, args);
+				check(result.stop == raven::NativeStop::returned && result.value == value, "host data write not visible to translated load");
+			}
+			// Code first written as data, then made executable, must use the new bytes.
+			const uint8_t initial[]{0xb8, 43, 0, 0, 0, 0xc3};
+			process.write_memory(data, initial);
+			process.protect_memory(data, 16384, PROT_READ | PROT_EXEC);
+			check(process.call(data, {}).value == 43, "data-to-code transition used stale bytes");
+			process.protect_memory(data, 16384, PROT_READ | PROT_WRITE);
+			const uint8_t changed = 44;
+			process.write_memory(data + 1, {&changed, 1});
+			process.protect_memory(data, 16384, PROT_READ | PROT_EXEC);
+			check(process.call(data, {}).value == 44, "code-to-data-to-code transition retained old translation");
+			const auto file = std::unique_ptr<FILE, decltype(&fclose)>(std::tmpfile(), fclose);
+			check(bool(file) && ftruncate(fileno(file.get()), 16384) == 0, "cannot create host-write alias fixture");
+			const auto rw = process.map_shared(fileno(file.get()), 16384, 0);
+			const auto rx = process.map_shared(fileno(file.get()), 16384, 0);
+			process.write_memory(rw, initial);
+			process.protect_memory(rx, 16384, PROT_READ | PROT_EXEC);
+			check(process.call(rx, {}).value == 43, "initial host-write alias result mismatch");
+			process.write_memory(rw + 1, {&changed, 1});
+			check(process.call(rx, {}).value == 44, "host write through non-executable shared alias retained old code");
+			std::cout << "PASS: host data writes, protection transitions, and shared aliases\n";
+			return 0;
+		}
 		if (mode == "shared-offset") {
 			const auto file = std::unique_ptr<FILE, decltype(&fclose)>(std::tmpfile(), fclose);
 			check(bool(file), "cannot create shared view fixture");
