@@ -79,3 +79,36 @@ window. Check fixed-size dialogs reject resizing without becoming stuck. Watch
 for stretched retained content, black uncovered Metal regions, stale final text,
 and unexpected geometry rollback. Confirm normal title-bar maximize behavior
 separately. These checks require a human with macOS input permission.
+
+## Verification on the merged base
+
+Implementation `21768e96` combines the resize branch with fex-portal `d7c8a73e`.
+The full two-job CTest run completed 1,739 entries in 866.40 seconds: 1,709 passed,
+7 skipped and 23 failed/not run. Seven failures cleared on targeted rechecks:
+one intermittent process-list enumeration check and six tests whose fixture
+executables are not included in the default build. The remaining 16 match the
+supplied baseline failures or the known long-build-path bitmap failure. Resize
+state/delivery, Cocoa policy/input/hidden-surface, native/FEX foreign GDI and the
+FEX process-runner contract passed. No tests were weakened.
+
+Chrome used fresh profiles, `about:blank`, FEX parallel execution, and three
+maximize/restore cycles per rendering route. Each route also received one
+81-step host-size sweep over two seconds; all 81 steps were consumed and 58 guest
+placements dispatched. A single control-file command schedules the sweep on
+normal Cocoa polls; control-file reads are limited to ten per second. This
+preserves the original nominal 25 ms geometry cadence without hot file polling.
+
+| Producer route | Final drag tail (one sweep) | Maximize median / maximum (3 samples) | Restore median / maximum (3 samples) |
+|---|---:|---:|---:|
+| GPU / DXMT | 344.756 ms | 349.177 / 1376.622 ms | 290.264 / 336.699 ms |
+| Software / foreign GDI | 148.482 ms | 668.688 / 1275.387 ms | 628.216 / 1212.221 ms |
+
+All twelve maximize/restore transitions had matching producer submissions; none
+were censored. Drag tails are consistent with the earlier resize improvement.
+These small, ordered, trace-enabled samples on a different base and a corrected
+probe are not a paired speedup measurement. Maximize remains variable; no
+maximize improvement is attributed to this resize change. The endpoints are
+producer-backed layer submissions, not screen scanout or complete page repaint.
+Real pointer dragging and visible intermediate Metal continuity remain untested.
+Raw traces, exact binary hashes, instrumentation diff, test logs and analysis
+are retained in `raven-wip/resize/round3/`.
