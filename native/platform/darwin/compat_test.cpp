@@ -101,9 +101,14 @@ static void guest_memory(const char *bootstrap)
 	raven::NativeProcess process(images, bootstrap, std::chrono::seconds(2));
 	raven::NativeEnvironment environment(process, image.loaded.base(), 1, 1);
 	raven::NativeMemory memory(process, environment);
-	check(!memory.query(image.loaded.base()), "an image unknown to the allocator was reported free");
+	// Address space the allocator has not registered is answered as held, never as free, so that a program's walk moves on.
+	const auto is_held = [&](uint64_t address) {
+		const auto info = memory.query(address);
+		return info && (*info)[32] == 0 && (*info)[33] == 0x20 && *reinterpret_cast<const uint64_t *>(info->data() + 24) >= 4096;
+	};
+	check(is_held(image.loaded.base()), "an image unknown to the allocator was reported free");
 	const auto [low, high] = process.stack_bounds();
-	check(memory.query(low).has_value() && high > low && !memory.query(low - 4096), "stack or guard-page query differs");
+	check(memory.query(low).has_value() && high > low && is_held(low - 4096), "stack or guard-page query differs");
 	const auto allocation = memory.allocate(0, 4096, 0x103000, 4);
 	check(!allocation.status && memory.query(allocation.address).has_value() && !memory.free(allocation.address, 0, 0x8000).status,
 		"supported MEM_TOP_DOWN allocation or release failed");

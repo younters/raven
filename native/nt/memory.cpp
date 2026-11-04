@@ -447,9 +447,19 @@ std::optional<std::array<uint8_t,48>> NativeMemory::query(uint64_t address) cons
 			return bytes;
 		}
 #ifdef __APPLE__
-		// The controller can own image or agent mappings that this allocator has not registered. They must never be reported free.
-		if (!process.memory_available(page, 4096))
-			return std::nullopt;
+		// The controller can own image or agent mappings that this allocator has not registered. They must never be reported free, but a
+		// query succeeds anywhere in the user range: programs walk the address space by each answer's size. Reserved says nothing can be
+		// read or allocated there, and the range ends where the address space is free again.
+		if (!process.memory_available(page, 4096)) {
+			uint64_t held=page+4096;
+			while (held<user_limit && held-page<(uint64_t(64)<<20) && !process.memory_available(held, 4096))
+				held+=4096;
+			std::array<uint8_t,48> bytes{};
+			put(bytes,0,page); put(bytes,8,page);
+			put(bytes,16,1,4); put(bytes,24,held-page);
+			put(bytes,32,0x2000,4); put(bytes,40,0x20000,4);
+			return bytes;
+		}
 #endif
 		uint64_t end=user_limit;
 		if (page<stack_low)
