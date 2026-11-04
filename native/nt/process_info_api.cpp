@@ -1160,6 +1160,9 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 					Snapshot::Thread thread{0, owner, 0};
 					std::memcpy(&thread.id, answer.path.data() + offset, 4);
 					std::memcpy(&thread.priority, answer.path.data() + offset + 4, 4);
+					// Another process's first thread goes by its process id, as CreateProcess reported it.
+					if (thread.id == 1 && owner != uint32_t(::getpid()))
+						thread.id = owner;
 					snapshot->threads.push_back(thread);
 				}
 			};

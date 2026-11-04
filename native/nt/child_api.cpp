@@ -434,7 +434,9 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 		call.store_pointer(call[9], process_handle.value);
 		call.store_pointer(call[9] + width, thread_handle.value);
 		call.store<uint32_t>(call[9] + 2 * width, uint32_t(child->pid));
-		call.store<uint32_t>(call[9] + 2 * width + 4, 1);
+		// A thread id means one thread on the whole machine, and a program can open it. The child's first thread is known here only by
+		// its process, whose id stands for it as it does for a window's thread; its own number 1 would name the caller's main thread.
+		call.store<uint32_t>(call[9] + 2 * width + 4, uint32_t(child->pid));
 		call.ret(1);
 	};
 	registry.add("CreateProcessW", 10, [create_process, &context](ApiCall &call) { create_process(call, context.process_token); });

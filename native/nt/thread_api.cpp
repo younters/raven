@@ -984,8 +984,8 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		}
 	});
 	registry.add("GetThreadId", 1, [&objects, thread_from](ApiCall &call) {
-		if (objects.object_as<ChildThreadObject>(call[0])) {
-			call.ret(1);
+		if (const auto child = objects.object_as<ChildThreadObject>(call[0])) {
+			call.ret(uint32_t(child->owner()->pid));
 			return;
 		}
 		const auto thread = thread_from(call[0]);
