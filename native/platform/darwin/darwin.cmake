@@ -1472,3 +1472,6 @@ endif()
 add_executable(darwin_unix_microbench EXCLUDE_FROM_ALL ${RAVEN_DARWIN_DIR}/tests/unix_microbench.cpp
     ${RAVEN_DARWIN_DIR}/dxmt/checked_memory.c)
 target_include_directories(darwin_unix_microbench PRIVATE ${RAVEN_DARWIN_DIR})
+
+add_executable(darwin_resize_state_test ${RAVEN_DARWIN_DIR}/resize_state_test.cpp)
+add_test(NAME native_darwin_resize_state COMMAND darwin_resize_state_test)

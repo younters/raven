@@ -969,13 +969,22 @@ void NativeWindows::receive(const DesktopEvent &event)
 	if (event.kind==DesktopEventKind::resize) {
 		// The host's configured size applies to resizable windows and to a requested maximization.
 		const auto *window=objects.window(event.window);
-		if (!window || window->parent || !(window->style & (0x40000U | 0x01000000U)) || event.x<=0 || event.y<=0) return;
+		if (!window || window->parent || event.x<=0 || event.y<=0) return;
+		if (!(window->style & (0x40000U | 0x01000000U))) {
+			if (presentation.resize_complete)
+				presentation.resize_complete(event.window,event.wparam,uint32_t(window->outer.right-window->outer.left),uint32_t(window->outer.bottom-window->outer.top));
+			return;
+		}
 		const DesktopRect outer{window->outer.left,window->outer.top,window->outer.left+event.x,window->outer.top+event.y};
-		if (outer.right-outer.left==window->outer.right-window->outer.left && outer.bottom-outer.top==window->outer.bottom-window->outer.top) return;
-		// The compositor already resized the host window, so it stays and receives the next frame at the new size.
-		keep_host_window=true;
-		try { place_window(event.window,outer,0,0x14); } catch (...) { keep_host_window=false; throw; }
-		keep_host_window=false;
+		if (outer.right-outer.left!=window->outer.right-window->outer.left || outer.bottom-outer.top!=window->outer.bottom-window->outer.top) {
+			const bool kept=keep_host_window;
+			keep_host_window=true;
+			try { place_window(event.window,outer,0,0x14); } catch (...) { keep_host_window=kept; throw; }
+			keep_host_window=kept;
+		}
+		window=objects.window(event.window);
+		if (window && presentation.resize_complete)
+			presentation.resize_complete(event.window,event.wparam,uint32_t(window->outer.right-window->outer.left),uint32_t(window->outer.bottom-window->outer.top));
 		return;
 	}
 	if (event.kind==DesktopEventKind::pointer_relative) {

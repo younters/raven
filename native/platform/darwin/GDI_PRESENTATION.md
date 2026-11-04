@@ -20,16 +20,16 @@ The cooperative guest is blocked during presentation and resumes only after the 
 only completed output surfaces. The pool excludes the current model-layer contents, pending CA submissions (an IOSurface use count
 released by transaction completion), and surfaces for which `IOSurfaceIsInUse` reports a reader. A full pool coalesces intermediate
 updates without a CPU copy. The desktop poll retries the latest source after pumping CA completions, including the final update when
-the program sends nothing further. A resized pool releases its references; CA retains old outputs for the existing 60 ms crossfade.
+the program sends nothing further. A resized pool releases its references; CA retains submitted outputs until their readers finish.
 
 `contentsRect` crops native title bars and borders without creating a cropped image. The existing `contentsScale` selection for aware
-and unaware programs, nearest magnification, bottom-left gravity, geometry and adaptive resize pacing remain in Cocoa. No texture
+and unaware programs, nearest magnification and geometry remain in Cocoa. Retained contents scale to the host bounds during resize. No texture
 upload occurs for partial GDI updates. Raven's presentation callback supplies no damage rectangle, so the GPU currently renders the
 whole frame. `RAVEN_COCOA_DUMP` reads the CPU-mapped source IOSurface through the existing pixel span.
 
 The desktop's existing pending-paint deadline remains 250 ms, or 2000 ms before initial presentation
-(`NativeWindows::present`). This is distinct from Cocoa's adaptive 10–100 ms wait for a resize response and delivery of the final
-size after 16 ms of stillness. Metal adds no debounce timer. Pool-pressure retries use the event pump and drain their temporary
+(`NativeWindows::present`). Cocoa now delivers coalesced geometry at each poll without waiting for a paint acknowledgement
+(see RESIZE.md). Metal adds no debounce timer. Pool-pressure retries use the event pump and drain their temporary
 Metal/CA objects in an autorelease pool. They depend on CA/WindowServer releasing an output: these timers do not establish a hard
 deadline for GPU execution or WindowServer completion.
 

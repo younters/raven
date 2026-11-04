@@ -83,5 +83,27 @@ int main()
 	check(access(ticket,F_OK)!=0);
 	ui.remove(200); ui.remove(201); ui.poll(std::chrono::milliseconds(0));
 	policy(NSApplicationActivationPolicyAccessory);
+	// Geometry changes are coalesced without waiting for a bitmap acknowledgement.
+	ui.frame(300,{},0x40000U);
+	ui.present(300,"Resize contract",100,80,pixels);
+	NSWindow *resizing=nil;
+	for (NSWindow *candidate in NSApp.windows)
+		if ([candidate.title isEqualToString:@"Resize contract"]) resizing=candidate;
+	check(resizing!=nil);
+	NSRect rect=resizing.frame; rect.size=NSMakeSize(240,180);
+	[resizing setFrame:rect display:NO];
+	rect.size=NSMakeSize(260,190); [resizing setFrame:rect display:NO];
+	auto events=ui.poll(std::chrono::milliseconds(0));
+	std::optional<raven::DesktopEvent> request;
+	for (const auto &event:events)
+		if (event.window==300 && event.kind==raven::DesktopEventKind::resize) {
+			check(!request); request=event;
+		}
+	check(request.has_value());
+	ui.present(300,"Resize contract",100,80,pixels);
+	check(NSEqualSizes(resizing.frame.size,rect.size)); // Stale paint cannot roll geometry back.
+	ui.resize_complete(300,request->wparam,100,80); // Guest veto restores accepted geometry.
+	check(resizing.frame.size.width==100 && resizing.frame.size.height==80);
+	ui.remove(300);
 	return 0;
 }
