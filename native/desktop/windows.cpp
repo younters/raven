@@ -408,6 +408,15 @@ bool NativeWindows::input_ready()
 	return queued_for(me) || invalid_owned(0);
 }
 
+void NativeWindows::complete_resize(const DesktopEvent &event)
+{
+	if (event.kind!=DesktopEventKind::resize || !event.wparam || !presentation.resize_complete) return;
+	const auto *window=objects.window(event.window);
+	presentation.resize_complete(event.window,event.wparam,
+		window ? uint32_t(window->outer.right-window->outer.left) : 0,
+		window ? uint32_t(window->outer.bottom-window->outer.top) : 0);
+}
+
 void NativeWindows::deliver_pending()
 {
 	while (!pending_events.empty()) {
@@ -417,8 +426,10 @@ void NativeWindows::deliver_pending()
 		// event no longer has a target, as one for a surface the host no longer shows. A menu popup is no guest window; the menu
 		// loop decides about its events.
 		const bool popup=event.window>=0x7b000000ULL && event.window<next_popup;
-		if (event.window && !popup && (!objects.window(event.window) || !objects.window(event.window)->visible))
+		if (event.window && !popup && (!objects.window(event.window) || !objects.window(event.window)->visible)) {
+			complete_resize(event);
 			continue;
+		}
 		receive(event);
 	}
 }
@@ -861,7 +872,7 @@ void NativeWindows::receive(const DesktopEvent &event)
 	// A key means one of the program's windows still has the keyboard, so a pending leave did not happen after all.
 	if (event.kind==DesktopEventKind::key) focus_leaving=false;
 	else if (event.kind!=DesktopEventKind::keyboard_focus) settle_focus_leave(false);
-	if (menu_event(event)) return;
+	if (menu_event(event)) { complete_resize(event); return; }
 	if (event.kind==DesktopEventKind::message) { post(event.window,event.message,event.wparam,event.lparam); return; }
 	if (event.kind==DesktopEventKind::keymap) { keyboard_map.load(event.keymap); key_translation.reset(); return; }
 	if (event.kind==DesktopEventKind::modifiers) {
@@ -969,22 +980,18 @@ void NativeWindows::receive(const DesktopEvent &event)
 	if (event.kind==DesktopEventKind::resize) {
 		// The host's configured size applies to resizable windows and to a requested maximization.
 		const auto *window=objects.window(event.window);
-		if (!window || window->parent || event.x<=0 || event.y<=0) return;
-		if (!(window->style & (0x40000U | 0x01000000U))) {
-			if (presentation.resize_complete)
-				presentation.resize_complete(event.window,event.wparam,uint32_t(window->outer.right-window->outer.left),uint32_t(window->outer.bottom-window->outer.top));
+		if (!window || window->parent || event.x<=0 || event.y<=0 || !(window->style & (0x40000U | 0x01000000U))) {
+			complete_resize(event);
 			return;
 		}
 		const DesktopRect outer{window->outer.left,window->outer.top,window->outer.left+event.x,window->outer.top+event.y};
 		if (outer.right-outer.left!=window->outer.right-window->outer.left || outer.bottom-outer.top!=window->outer.bottom-window->outer.top) {
 			const bool kept=keep_host_window;
 			keep_host_window=true;
-			try { place_window(event.window,outer,0,0x14); } catch (...) { keep_host_window=kept; throw; }
+			try { place_window(event.window,outer,0,0x14); } catch (...) { keep_host_window=kept; complete_resize(event); throw; }
 			keep_host_window=kept;
 		}
-		window=objects.window(event.window);
-		if (window && presentation.resize_complete)
-			presentation.resize_complete(event.window,event.wparam,uint32_t(window->outer.right-window->outer.left),uint32_t(window->outer.bottom-window->outer.top));
+		complete_resize(event);
 		return;
 	}
 	if (event.kind==DesktopEventKind::pointer_relative) {

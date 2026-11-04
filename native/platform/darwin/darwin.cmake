@@ -1475,3 +1475,8 @@ target_include_directories(darwin_unix_microbench PRIVATE ${RAVEN_DARWIN_DIR})
 
 add_executable(darwin_resize_state_test ${RAVEN_DARWIN_DIR}/resize_state_test.cpp)
 add_test(NAME native_darwin_resize_state COMMAND darwin_resize_state_test)
+
+add_executable(darwin_resize_delivery_test ${RAVEN_DARWIN_DIR}/resize_delivery_test.cpp)
+target_link_libraries(darwin_resize_delivery_test PRIVATE raven_cpu)
+add_dependencies(darwin_resize_delivery_test raven-bootstrap)
+add_test(NAME native_darwin_resize_delivery COMMAND darwin_resize_delivery_test $<TARGET_FILE:raven-bootstrap>)

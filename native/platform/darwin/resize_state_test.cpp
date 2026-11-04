@@ -22,4 +22,17 @@ int main() {
 	state.request(300,240); state.request(300,240);
 	auto fifth=state.take(); check(fifth && !state.take());
 	check(state.complete(fifth->generation)); // Also used for guest-adjusted/vetoed placement.
+	// Lost delivery expires without sleeping, including when no replacement is queued.
+	using State = raven::darwin::ResizeState;
+	const auto now = State::Clock::now();
+	state.request(400,300); auto lost=state.take(now);
+	check(!state.take(now+State::timeout-std::chrono::milliseconds(1)));
+	check(!state.take(now+State::timeout) && !state.active());
+	check(!state.complete(lost->generation));
+	state.request(500,400); lost=state.take(now);
+	state.request(600,500);
+	auto replacement=state.take(now+State::timeout);
+	check(replacement && replacement->width==600);
+	check(!state.complete(lost->generation) && state.active());
+	check(state.complete(replacement->generation));
 }

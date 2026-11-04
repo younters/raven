@@ -220,6 +220,7 @@ private:
 	// Host input collected while threads waited, delivered by the next input_ready.
 	std::deque<DesktopEvent> pending_events;
 	void deliver_pending();
+	void complete_resize(const DesktopEvent &event);
 	// PostQuitMessage codes by thread.
 	std::map<uint32_t,uint32_t> quits;
 	std::set<uint64_t> dirty_roots;

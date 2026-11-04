@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <chrono>
 #include <optional>
 
 namespace raven::darwin {
@@ -13,9 +14,15 @@ public:
 		if (active() && latest.width == width && latest.height == height) return;
 		latest = {latest.generation + 1, width, height};
 	}
-	std::optional<Request> take() {
+	using Clock = std::chrono::steady_clock;
+	static constexpr auto timeout = std::chrono::seconds(5);
+	std::optional<Request> take(Clock::time_point now = Clock::now()) {
+		// A lost delivery must not hold later geometry forever. Retire its generation;
+		// a late completion cannot acknowledge a newer request.
+		if (delivered != completed && now - sent >= timeout) completed = delivered;
 		if (delivered != completed || delivered == latest.generation) return std::nullopt;
 		delivered = latest.generation;
+		sent = now;
 		return latest;
 	}
 	bool complete(uint64_t generation) {
@@ -26,6 +33,7 @@ public:
 	bool active() const { return completed != latest.generation; }
 	Request requested() const { return latest; }
 private:
+	Clock::time_point sent{};
 	Request latest{};
 	uint64_t delivered = 0, completed = 0;
 };

@@ -359,7 +359,10 @@ void NativeWindows::register_api(ApiRegistry &registry)
 				for (const auto &event : presentation.poll(std::chrono::milliseconds(0))) pending_events.push_back(event);
 			for (auto remaining=pending_events.size();remaining;--remaining) {
 				const auto event=pending_events.front(); pending_events.pop_front();
-				if (event.window && (!objects.window(event.window) || !objects.window(event.window)->visible)) continue;
+				if (event.window && (!objects.window(event.window) || !objects.window(event.window)->visible)) {
+					complete_resize(event);
+					continue;
+				}
 				const auto thread=owner(event.window ? event.window : focus);
 				if (thread && thread!=me) pending_events.push_back(event);
 				else receive(event);

@@ -1292,10 +1292,13 @@ struct CocoaPresentation::State {
 			if (trace)
 				std::fprintf(stderr, "cocoa: t=%.3f present %llx %ux%u (asked %ux%u)\n", resize_trace_ms(), (unsigned long long)handle, width, height,
 					target->resize.requested().width, target->resize.requested().height);
+			const auto requested = target->resize.requested();
+			const bool stale = requested.generation && (width != requested.width || height != requested.height) &&
+				width == target->width && height == target->height;
 			target->width = width;
 			target->height = height;
 			// Host geometry remains authoritative until placement acknowledges it.
-			if (!target->resize.active())
+			if (!target->resize.active() && !stale)
 				set_size(*target, width, height);
 			show(*target, pixels, width, height, alpha_windows.contains(handle));
 			if (dump_directory && dumped < 400) {
@@ -1657,7 +1660,7 @@ DesktopPresentation CocoaPresentation::callbacks()
 {
 	DesktopPresentation result;
 	result.resize_complete = [this](uint64_t handle, uint64_t generation, uint32_t width, uint32_t height) {
-		if (auto *target = state->surface(handle); target && target->resize.complete(generation))
+		if (auto *target = state->surface(handle); target && target->resize.complete(generation) && width && height)
 			state->set_size(*target, width, height);
 	};
 	result.foreground = [this](uint64_t handle) { state->foreground_request(handle); };
