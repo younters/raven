@@ -810,6 +810,7 @@ static unsigned mb_lower(unsigned code) { return code >= 'A' && code <= 'Z' ? co
 static unsigned mb_upper(unsigned code) { return code >= 'a' && code <= 'z' ? code - 32 : code; }
 
 CRT size_t _mbclen(const unsigned char *at) { return mb_size(at); }
+CRT unsigned char *_mbsinc(const unsigned char *at) { return (unsigned char *)at + mb_size(at); }
 CRT int _ismbcspace(unsigned code) { return code < 0x100 && (code == ' ' || (code >= '\t' && code <= '\r')); }
 
 /* Whether `at` is a lead byte, judged by walking from the start, since a trail byte can look like one. */
@@ -1308,6 +1309,18 @@ CRT int _get_pgmptr(char **out)
 		GetModuleFileNameA(NULL, path, MAX_PATH);
 	*out = path;
 	return 0;
+}
+
+CRT wchar_t *_wsetlocale(int category, const wchar_t *name)
+{
+	static wchar_t result[128];
+	char narrow[128];
+	if (name && !WideCharToMultiByte(CP_ACP, 0, name, -1, narrow, sizeof narrow, NULL, NULL))
+		return NULL;
+	const char *chosen = setlocale(category, name ? narrow : NULL);
+	if (!chosen || !MultiByteToWideChar(CP_ACP, 0, chosen, -1, result, 128))
+		return NULL;
+	return result;
 }
 
 CRT int __uncaught_exception(void) { return 0; }
