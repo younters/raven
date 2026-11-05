@@ -19,6 +19,13 @@ namespace raven {
 
 std::optional<GpuMapping> map_gpu_memory(NativeProcess &process, void *host, size_t size)
 {
+#ifdef __APPLE__
+	// There is no file behind the driver's pages to find through /proc; the engine shows the guest the pages themselves when it can.
+	const uint64_t window = process.alias_host_memory(host, size);
+	if (!window)
+		return std::nullopt;
+	return GpuMapping{window, window};
+#endif
 	const uint64_t address = reinterpret_cast<uintptr_t>(host);
 	if (!size || size > UINT64_MAX - address)
 		return std::nullopt;

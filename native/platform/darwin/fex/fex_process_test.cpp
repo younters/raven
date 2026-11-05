@@ -219,6 +219,27 @@ int main(int argc, char **argv)
 			check(process.read_memory(view, 1)[0] == marker, "read-only file view lost its bytes when protected");
 			process.unmap_memory(view);
 			close(reader);
+			// A window on host memory shows the guest the same bytes in both directions, keeps the caller's offset, and leaves the host's
+			// pages alone when it goes.
+			{
+				const size_t bytes = 3 * 16384;
+				auto *pages = static_cast<uint8_t *>(mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0));
+				check(pages != MAP_FAILED, "cannot create host memory fixture");
+				for (const size_t offset : {size_t(0), size_t(256), size_t(4096), size_t(16384 + 64)}) {
+					auto *host = pages + offset;
+					const auto window = process.alias_host_memory(host, 8192);
+					check(window != 0, "host memory has no guest window");
+					host[0] = 0x31;
+					check(process.read_memory(window, 1)[0] == 0x31, "guest does not see host writes through its window");
+					const uint8_t value = 0x42;
+					process.write_memory(window + 8191, std::span(&value, 1));
+					check(host[8191] == value, "host does not see guest writes through its window");
+					process.unmap_memory(window);
+					check(host[8191] == value, "releasing the window changed the host's memory");
+					host[0] = 0;
+				}
+				munmap(pages, bytes);
+			}
 			std::cout << "PASS: shared Windows page offsets and teardown\n";
 			return 0;
 		}

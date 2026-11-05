@@ -1152,6 +1152,13 @@ uint64_t NativeProcess::map_shared(int descriptor, size_t size, uint64_t offset,
 	return map_descriptor(descriptor, size, offset);
 }
 
+uint64_t NativeProcess::alias_host_memory([[maybe_unused]] void *host, [[maybe_unused]] size_t size)
+{
+	// Only FEX runs the guest in this process; a separate guest process would need its own window on the pages.
+	FEX_RETURN(alias_host_memory, host, size);
+	return 0;
+}
+
 uint64_t NativeProcess::map_descriptor(int descriptor, size_t size, uint64_t offset)
 {
 	FEX_RETURN(map_descriptor, descriptor, size, offset);

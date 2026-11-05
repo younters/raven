@@ -41,6 +41,7 @@ public:
 	void unmap_memory(uint64_t address);
 	uint64_t map_shared(int descriptor, size_t size, uint64_t offset, uint64_t requested = 0);
 	uint64_t map_descriptor(int descriptor, size_t size, uint64_t offset);
+	uint64_t alias_host_memory(void *host, size_t size);
 	bool memory_available(uint64_t address, size_t size) const;
 	void discard_memory(uint64_t address, size_t size);
 	void map_image(LoadedImage &image);

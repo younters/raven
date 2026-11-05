@@ -123,6 +123,9 @@ public:
 #ifdef __APPLE__
 	// Wine's x64 unix-call ABI: an agent-owned Win64 entry and a table of SysV functions loaded in the x86 process.
 	uint64_t unix_call_gate() const;
+	// The guest's own window on memory of this host process, such as a mapped GPU buffer: both sides see the same bytes without copying.
+	// Returns 0 when the engine cannot do it, and the window is released with unmap_memory.
+	uint64_t alias_host_memory(void *host, size_t size);
 	uint64_t load_unix_library(const std::string &path, uint32_t function_count);
 	void drain_unix_events(const std::function<void(uint64_t)> &signal);
 	raven_control *darwin_control() const;

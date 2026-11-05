@@ -1659,6 +1659,36 @@ uint64_t FexProcess::map_shared(int descriptor, size_t size, uint64_t offset, ui
 	return address + delta;
 }
 uint64_t FexProcess::map_descriptor(int descriptor, size_t size, uint64_t offset) { return map_shared(descriptor, size, offset); }
+uint64_t FexProcess::alias_host_memory(void *host, size_t size)
+{
+	const auto start = reinterpret_cast<uintptr_t>(host) & ~uintptr_t(16383);
+	const size_t delta = reinterpret_cast<uintptr_t>(host) - start;
+	if (!size || size > SIZE_MAX - delta - 65536) return 0;
+	const auto address = map_memory(size + delta, PROT_READ | PROT_WRITE, 0);
+	const auto n = state->regions.at(address).size;
+	// Only the pages that hold the range: the source may end before the guest's larger allocation unit does.
+	const size_t pages = (size + delta + 16383) & ~size_t(16383);
+	mach_vm_address_t mapped = state->host(address, n);
+	const auto wanted = mapped;
+	vm_prot_t current = 0, maximum = 0;
+	const auto status = mach_vm_remap(mach_task_self(), &mapped, pages, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, mach_task_self(), start, false,
+		&current, &maximum, VM_INHERIT_NONE);
+	if (status != KERN_SUCCESS || mapped != wanted) {
+		unmap_memory(address);
+		return 0;
+	}
+	state->regions.at(address).shared = true;
+	uint64_t shared[8]{wanted, n};
+	raven_ec_call(mapped_image->export_address("RavenMarkSharedMemory"), shared, state->environment()->teb.data());
+	if (delta) {
+		try {
+			if (delta >= 4096) protect_memory(address, delta & ~size_t(4095), PROT_NONE);
+			state->shared_view_bases.emplace(address + delta, address);
+		}
+		catch (...) { unmap_memory(address); throw; }
+	}
+	return address + delta;
+}
 }
 
 namespace raven {
