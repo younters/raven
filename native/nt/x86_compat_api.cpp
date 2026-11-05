@@ -345,13 +345,6 @@ bool NativeX86Compat::dispatch(std::string_view name)
 	} else if (name == "RtlUnwind") {
 		process.api_arguments(4);
 		process.return_api(0);
-	} else if (name == "GetEnvironmentStrings") {
-		process.api_arguments(0);
-		// An empty block: two terminators. The environment is not exposed to 32-bit programs.
-		if (!environment_block) {
-			environment_block = heap_alloc(16, true);
-		}
-		process.return_api(environment_block);
 	} else if (name == "GetVersionExA") {
 		const auto args = process.api_arguments(1);
 		const auto size = read_word(process.read_memory(args[0], 4), 0);
@@ -367,6 +360,8 @@ bool NativeX86Compat::dispatch(std::string_view name)
 		write_word(info, 8, version.minor);
 		write_word(info, 12, version.build);
 		write_word(info, 16, 2);
+		if (size == 156)
+			info[154] = 1; // VER_NT_WORKSTATION, matching GetVersionExW and the shared ANSI handler.
 		if (version.service_pack) {
 			const std::string pack = "Service Pack " + std::to_string(version.service_pack);
 			std::copy(pack.begin(), pack.end(), info.begin() + 20);
