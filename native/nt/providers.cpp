@@ -1575,8 +1575,10 @@ static const std::vector<uint8_t> *block_prelude(std::string_view module, std::s
 		return &equal_rect_prelude();
 	if (module == "user32.dll" && (name == "MonitorFromPoint" || name == "MonitorFromRect" || name == "MonitorFromWindow"))
 		return &monitor_prelude();
+#ifndef __APPLE__
 	if (module == "user32.dll" && name == "GetWindowDpiAwarenessContext")
 		return &window_dpi_context_prelude();
+#endif
 	static constexpr std::array<BlockPrelude, 5> ticks{{{"kernel32.dll", "GetTickCount"}, {"kernel32.dll", "GetTickCount64"},
 		{"kernelbase.dll", "GetTickCount"}, {"kernelbase.dll", "GetTickCount64"}, {"winmm.dll", "timeGetTime"}}};
 	for (const auto &prelude : ticks)
