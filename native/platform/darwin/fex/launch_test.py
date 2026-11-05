@@ -2,6 +2,8 @@
 """Exercise routing before CLI dispatch without requiring provisioned modules."""
 from pathlib import Path
 import os
+import errno
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -10,7 +12,13 @@ with tempfile.TemporaryDirectory(prefix='raven-fex-launch-') as directory:
     root = Path(directory)
     raven = root / 'raven'
     # A hard link preserves a private executable-relative deployment directory.
-    os.link(sys.argv[1], raven)
+    try:
+        os.link(sys.argv[1], raven)
+    except OSError as error:
+        if error.errno != errno.EXDEV:
+            raise
+        # A copy keeps executable-relative companion discovery on another volume too.
+        shutil.copy2(sys.argv[1], raven)
     host = root / 'raven-fex-host'
     host.write_text('#!/bin/sh\n[ "$RAVEN_FEX_REEXEC" = 1 ] || exit 72\n[ "$2" = --execution=fex ] || exit 71\nexit 73\n')
     host.chmod(0o755)
