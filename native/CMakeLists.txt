@@ -3643,8 +3643,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     add_custom_target(accprop_fixture${width} ALL DEPENDS ${accprop_client} accprop_component)
                     add_test(NAME native_accprop_x${width} COMMAND raven --run-process --execution=native ${accprop_client})
                     set_tests_properties(native_accprop_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
-                    set(icu_client ${CMAKE_CURRENT_BINARY_DIR}/icu-client${width}.exe)
+                    # Keep clients away from the opposite-width ICU DLLs beside the runtime: application-local DLLs take precedence.
+                    set(icu_client ${CMAKE_CURRENT_BINARY_DIR}/icu-fixtures${width}/client.exe)
                     add_custom_command(OUTPUT ${icu_client}
+                        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/icu-fixtures${width}
                         COMMAND ${accprop_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${accprop_entry},--no-insert-timestamp
                             -o ${icu_client} ${LOADER_SOURCES}/icu_client.c -lkernel32
                         DEPENDS ${LOADER_SOURCES}/icu_client.c VERBATIM)
