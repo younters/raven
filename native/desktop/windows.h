@@ -11,6 +11,7 @@
 #include <poll.h>
 #include <array>
 #include <chrono>
+#include <cstring>
 #include <map>
 #include <set>
 #include "nt/api.h"
@@ -77,7 +78,8 @@ public:
 	// The window table the guest's window preludes read: a record of 256 bytes for each window, at its handle's low nine bits, and
 	// the offsets in a record. The runtime brings the records of the windows it touched up to date before the guest runs again; a
 	// window changed by a call stays touched until the outermost call in progress returns, as the call may change it after a callback.
-	static constexpr size_t window_records=512, window_record=256, window_extra_bytes=96;
+	// The last eight bytes of a record hold the client area's origin on the screen.
+	static constexpr size_t window_records=512, window_record=256, window_extra_bytes=88, window_origin=248;
 	// The focus window, published in the served block with the table: a flag, then the handle.
 	static constexpr size_t focus_published=0x710, focus_window=0x718;
 	void set_window_table(uint8_t *table);
@@ -103,6 +105,34 @@ public:
 	// as it logs it; the runtime carries the log out before it serves a call and does not publish logged handles again until then.
 	static constexpr size_t deferred_entries=255, icon_slots=1024;
 	void set_deferred_tables(uint8_t *log,uint8_t *icons);
+	// The regions RectInRegion and GetRgnBox read: 256 records of 256 bytes at the handle's low eight bits (handle, rectangle count,
+	// complexity, bounds, then up to 14 of the banded rectangles; a region with more carries a count above 14 and only its bounds).
+	static constexpr size_t region_records=256, region_record=256, region_rectangles=14;
+	void set_region_table(uint8_t *table);
+	// The threads whose queue the guest may answer for as empty: 64 slots of 16 bytes at the thread id's low six bits, each the thread
+	// id, the kinds of message its queue holds (QS_ flags) and the time stamp counter value until which GetInputState, GetQueueStatus and
+	// PeekMessage return 0 without a call when the queue holds none they ask for. A poll that
+	// found nothing at all sets it a moment ahead, no later than the next timer; any other call of the thread clears it, as it may post,
+	// send or draw, and so does a message queued for it. Input arriving clears every slot (see watch_input).
+	static constexpr size_t quiet_slots=64, quiet_slot=16;
+	void set_quiet_table(uint8_t *table) { quiet_table=table; publish_hooks(); }
+	// After the slots, in the same page: the hook chain in calling order, a count (above hook_entries when it does not fit) and then
+	// each hook's handle, kind and thread (0 for every thread), for CallNextHookEx to see in the guest that no hook follows.
+	static constexpr size_t hook_table_at=quiet_slots*quiet_slot, hook_entries=64, hook_entry=16;
+	void publish_hooks();
+	void mark_quiet(uint32_t thread);
+	void wake(uint32_t thread)
+	{
+		if (!quiet_table) return;
+		auto *slot=quiet_table+(thread%quiet_slots)*quiet_slot;
+		uint32_t occupant=0;
+		std::memcpy(&occupant,slot,4);
+		if (occupant==thread) __atomic_store_n(reinterpret_cast<uint64_t *>(slot+8),uint64_t(0),__ATOMIC_RELEASE);
+	}
+	void queue_changed(uint32_t thread,uint32_t kinds) { queues[thread].changed|=kinds; wake(thread); }
+	// A thread that clears the quiet table whenever the display has events the runtime has not read, until it closes.
+	void watch_input();
+	bool input_watched=false;
 	void take_deferred(const std::function<void(uint32_t,uint64_t)> &apply);
 	// In the served block: bit 0 when the flags are published, bit 1 while a message filter hook is installed; then the desktop window.
 	static constexpr size_t loop_flags=0x738, desktop_handle=0x740;
@@ -170,6 +200,10 @@ private:
 	struct ForeignTarget { std::shared_ptr<ForeignSurface> surface; uint64_t bitmap=0; };
 	std::map<uint64_t,ForeignTarget> foreign_targets;
 	uint64_t foreign_dc(uint64_t window);
+	// Tells the other processes of the prefix what they may ask of a window: styles, parent, visibility, class and title.
+	void publish_traits(uint64_t window);
+	// A top-level window of another process of the prefix with this class (any when empty) and, when asked, this title; 0 when none.
+	uint64_t foreign_top_level(const std::u16string &class_name, bool titled, const std::u16string &title) const;
 	std::map<uint64_t,uint32_t> foreign_frames;
 	// Windows that received a frame from another process with something other than black on it.
 	std::set<uint64_t> foreign_content;
@@ -177,6 +211,12 @@ private:
 	std::map<uint64_t,std::chrono::steady_clock::time_point> foreign_black;
 	std::chrono::steady_clock::time_point foreign_checked{};
 	uint64_t foreign_stamp=UINT64_MAX;
+	// The windows directory as it was when messages other processes posted were last taken in.
+	uint64_t posts_stamp=UINT64_MAX,sends_stamp=UINT64_MAX;
+	void import_foreign_posts();
+	void answer_foreign_sends();
+	// A message to a window of another process: the owner's answer, or nothing when it gave none in time.
+	std::optional<uint64_t> send_foreign(uint64_t window,uint32_t message,uint64_t wparam,uint64_t lparam,std::chrono::milliseconds timeout);
 	void import_foreign_frames();
 	uint8_t *screen_block=nullptr;
 	// A table entry handed out while calls were in progress, with the depth of the outermost of them: it is compared again before the
@@ -203,6 +243,10 @@ private:
 	std::vector<uint64_t> deferred_pending;
 	bool deferred(uint64_t handle) const { return std::find(deferred_pending.begin(),deferred_pending.end(),handle)!=deferred_pending.end(); }
 	void publish_icons();
+	uint8_t *region_table=nullptr;
+	uint8_t *quiet_table=nullptr;
+	void publish_region(uint64_t handle);
+	void publish_regions();
 	// The accelerator tables, the loop flags, the desktop and focus windows.
 	void publish_words();
 	uint64_t published_accelerators=UINT64_MAX;
@@ -258,6 +302,9 @@ private:
 	bool hosts_surface(uint64_t root) const;
 	std::optional<HostSurface> place_hosted(uint64_t window, bool paint = true);
 	void place_host_surface(uint64_t root);
+	// Child windows shown over the driver's surfaces of their root (see DesktopPresentation::overlay), with that root.
+	std::map<uint64_t,uint64_t> overlay_windows;
+	void place_overlays(uint64_t root,const DesktopBitmap &bitmap,std::span<const uint8_t> pixels);
 	// Whether nothing has been drawn into the window's client area yet: its surface still holds only zeros or what erasing it left,
 	// or there is none.
 	bool blank_client(uint64_t handle) const;
@@ -457,7 +504,6 @@ private:
 	void raw_mouse_input(int64_t dx,int64_t dy,uint32_t button_flags,int16_t wheel);
 	uint64_t current_cursor=desktop_stock_cursor;
 	void set_cursor(uint64_t handle);
-	void sync_cursor();
 #ifdef __APPLE__
 	int64_t dpi_context=-2;
 	bool dpi_declared=false;
@@ -522,6 +568,9 @@ private:
 	uint16_t atom(uint64_t name, uint64_t instance);
 	uint64_t fill_class_info(uint16_t id,bool extended,std::span<const uint64_t> args);
 	uint64_t send(uint64_t window, uint32_t message, uint64_t wparam, uint64_t lparam);
+	// Activation and focus belong to each thread: the windows of the thread that loses them hear of it when that thread next takes
+	// its messages, and the thread that takes them does not wait for the answer. A window of the calling thread gets the message at once.
+	void notify(uint64_t window, uint32_t message, uint64_t wparam, uint64_t lparam);
 	uint64_t create(std::span<const uint64_t> arguments);
 	uint64_t map_points(uint64_t from,uint64_t to,uint64_t points,uint32_t count);
 	bool destroy(uint64_t window);

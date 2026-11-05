@@ -1751,7 +1751,7 @@ DesktopPresentation CocoaPresentation::callbacks()
 		if (auto *target = state->surface(handle); target && !target->window.miniaturized)
 			[target->window miniaturize:nil];
 	};
-	result.cursor = [this](uint64_t handle, int count, const DesktopIcon *image) {
+	result.cursor_image = [this](uint64_t handle, int count, const DesktopIcon *image) {
 		if (state->trace) std::fprintf(stderr,"cocoa: cursor %llx count %d custom %d\n",(unsigned long long)handle,count,image!=nullptr);
 		state->cursor.set(handle, count, image, state->scale);
 		state->update_cursor();

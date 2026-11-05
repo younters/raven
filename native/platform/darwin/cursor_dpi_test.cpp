@@ -44,7 +44,7 @@ int main(int argc,char **argv)
 				if (title=="cursor DPI test") window=handle;
 			};
 			backend.remove=[](uint64_t) {};
-			backend.cursor=[&](uint64_t handle,int count,const raven::DesktopIcon *image) {
+			backend.cursor_image=[&](uint64_t handle,int count,const raven::DesktopIcon *image) {
 				if (image) {
 					const auto width=image->image.color.width,height=image->image.color.height;
 					check(image->cursor && image->hotspot_x==width/2 && image->hotspot_y==height/2 && image->image.and_mask[size_t(height/2)*width],"custom cursor data differs");

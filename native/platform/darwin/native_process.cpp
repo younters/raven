@@ -1293,6 +1293,14 @@ void NativeProcess::unmap_memory(uint64_t address)
 	state->allocations.erase(owned);
 }
 
+// Readers compare this to learn that no protection they saw has changed. This backend and FEX do not count their mapping changes,
+// so the answer differs every time: a reader looks again, which is always correct.
+uint64_t NativeProcess::mapping_changes() const
+{
+	static std::atomic<uint64_t> asked{0};
+	return asked.fetch_add(1, std::memory_order_relaxed);
+}
+
 bool NativeProcess::memory_available(uint64_t address, size_t size) const
 {
 	FEX_RETURN(memory_available, address, size);

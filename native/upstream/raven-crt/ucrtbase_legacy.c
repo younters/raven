@@ -789,7 +789,7 @@ CRT char *_strtime(char *to)
 {
 	SYSTEMTIME now;
 	GetLocalTime(&now);
-	sprintf(to, "%02u:%02u:%02u", now.wHour, now.wMinute, now.wSecond);
+	_snprintf(to, 9, "%02u:%02u:%02u", now.wHour, now.wMinute, now.wSecond);
 	return to;
 }
 
@@ -797,7 +797,7 @@ CRT char *_strdate(char *to)
 {
 	SYSTEMTIME now;
 	GetLocalTime(&now);
-	sprintf(to, "%02u/%02u/%02u", now.wMonth, now.wDay, now.wYear % 100);
+	_snprintf(to, 9, "%02u/%02u/%02u", now.wMonth, now.wDay, now.wYear % 100);
 	return to;
 }
 
@@ -816,10 +816,11 @@ CRT char *_tempnam(const char *folder, const char *prefix)
 	if (length && base[length - 1] != '\\' && base[length - 1] != '/')
 		base[length++] = '\\', base[length] = 0;
 	for (unsigned number = GetTickCount() & 0xffff, tries = 0; tries < 65536; ++number, ++tries) {
-		char *name = malloc(length + (prefix ? strlen(prefix) : 0) + 16);
+		const size_t size = length + (prefix ? strlen(prefix) : 0) + 16;
+		char *name = malloc(size);
 		if (!name)
 			return NULL;
-		sprintf(name, "%s%s%x", base, prefix ? prefix : "", number & 0xffff);
+		_snprintf(name, size, "%s%s%x", base, prefix ? prefix : "", number & 0xffff);
 		if (GetFileAttributesA(name) == INVALID_FILE_ATTRIBUTES)
 			return name;
 		free(name);
@@ -835,7 +836,7 @@ CRT char *_mktemp(char *name)
 		return NULL;
 	}
 	char *suffix = name + length - 6;
-	sprintf(suffix + 1, "%05lu", (unsigned long)(GetCurrentThreadId() % 100000));
+	_snprintf(suffix + 1, 6, "%05lu", (unsigned long)(GetCurrentThreadId() % 100000));
 	for (char letter = 'a'; letter <= 'z'; ++letter) {
 		suffix[0] = letter;
 		if (GetFileAttributesA(name) == INVALID_FILE_ATTRIBUTES)

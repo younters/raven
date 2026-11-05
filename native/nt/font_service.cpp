@@ -123,6 +123,13 @@ std::vector<uint8_t> scan_fonts()
 	const auto platform_roots = raven_darwin::font_roots();
 	roots.insert(roots.begin(), platform_roots.begin(), platform_roots.end());
 #else
+	// The fonts Raven bundles, such as the Raven Sans dialog faces, then the host's.
+	if (const auto bundled = std::filesystem::read_symlink("/proc/self/exe", error).parent_path() / "fonts"; std::filesystem::is_directory(bundled, error))
+		roots.push_back(bundled);
+#ifdef RAVEN_FONT_DIRECTORY
+	else if (std::filesystem::is_directory(RAVEN_FONT_DIRECTORY, error))
+		roots.emplace_back(RAVEN_FONT_DIRECTORY);
+#endif
 	roots.insert(roots.end(), {"/usr/share/fonts", "/usr/local/share/fonts"});
 #endif
 

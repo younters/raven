@@ -4,8 +4,10 @@
 
 #include <algorithm>
 #include <array>
+#include <iostream>
 #include <stdexcept>
 #include <sys/mman.h>
+#include <utility>
 
 namespace raven {
 
@@ -82,7 +84,7 @@ std::optional<Conversion> parse_conversion(std::u16string_view format, size_t &a
 
 uint64_t NativeWindows::desktop_window()
 {
-	if (desktop && objects.window(desktop))
+	if (desktop && std::as_const(objects).window(desktop))
 		return desktop;
 	// The class needs a non-zero procedure to register; the window itself carries none and is answered by the system.
 	DesktopClass definition{"#32769", 0, 1};
@@ -157,7 +159,7 @@ void NativeWindows::recalculate_client(uint64_t handle,int32_t previous_width,in
 	if (resized)
 		send(handle, 5, (window->style & 0x01000000U) ? 2 : (window->style & 0x20000000U) ? 1 : 0,
 			uint16_t(window->width) | (uint64_t(uint16_t(window->height)) << 16));
-	if (objects.window(handle) && objects.window_visible(handle)) {
+	if (std::as_const(objects).window(handle) && objects.window_visible(handle)) {
 		window = objects.window(handle);
 		objects.invalidate(handle, {0, 0, window->width, window->height}, true);
 		present(handle);
@@ -252,7 +254,7 @@ bool NativeWindows::system_dispatch(std::string_view name)
 		} else if (name == "TranslateAcceleratorW") {
 			const auto args = process.api_arguments(3);
 			const auto *table = objects.accelerators(args[1]);
-			if (!table || !objects.window(args[0]))
+			if (!table || !std::as_const(objects).window(args[0]))
 				throw uint32_t(1400);
 			const bool narrow = process.mode() == NativeMode::x86;
 			const auto bytes = process.read_memory(args[2], narrow ? 28 : 48);
@@ -285,7 +287,7 @@ bool NativeWindows::system_dispatch(std::string_view name)
 			result = 1;
 		} else if (name == "GetMenuItemRect") {
 			const auto args = process.api_arguments(4);
-			const auto *window = objects.window(args[0]);
+			const auto *window = std::as_const(objects).window(args[0]);
 			if (!window)
 				throw uint32_t(1400);
 			// Only the menu bar of its own window has a layout; popup menus are not laid out yet.
@@ -337,20 +339,20 @@ bool NativeWindows::system_dispatch(std::string_view name)
 			}
 		} else if (name == "SetCapture") {
 			const auto args = process.api_arguments(1);
-			if (!objects.window(args[0]))
+			if (!std::as_const(objects).window(args[0]))
 				throw uint32_t(1400);
 			result = capture;
 			capture = args[0];
-			if (result && result != args[0] && objects.window(result))
+			if (result && result != args[0] && std::as_const(objects).window(result))
 				send(result, 0x215, 0, args[0]);
-			else if (result && !objects.window(result))
+			else if (result && !std::as_const(objects).window(result))
 				result = 0;
 		} else if (name == "ReleaseCapture") {
 			process.api_arguments(0);
 			if (capture) {
 				const auto previous = capture;
 				capture = 0;
-				if (objects.window(previous))
+				if (std::as_const(objects).window(previous))
 					send(previous, 0x215, 0, 0);
 			}
 			result = 1;
@@ -358,7 +360,7 @@ bool NativeWindows::system_dispatch(std::string_view name)
 			// The coalescing tolerance is only a hint, so both entry points share one timer.
 			const auto args = process.api_arguments(name == "SetTimer" ? 4 : 5);
 			const auto interval = std::clamp<uint32_t>(uint32_t(args[2]), 10, 0x7fffffff);
-			if (args[0] && !objects.window(args[0]))
+			if (args[0] && !std::as_const(objects).window(args[0]))
 				throw uint32_t(1400);
 			uint64_t id = args[1];
 			if (!args[0]) {
@@ -371,11 +373,15 @@ bool NativeWindows::system_dispatch(std::string_view name)
 				throw uint32_t(8);
 			std::erase_if(timers, [&](const Timer &timer) { return timer.window == args[0] && timer.id == id; });
 			timers.push_back({args[0], id, args[3], interval, std::chrono::steady_clock::now() + std::chrono::milliseconds(interval), false, environment.thread_id()});
+			if (std::getenv("RAVEN_TRACE_TIMERS"))
+				std::cerr << "timer set " << std::hex << args[0] << ' ' << id << std::dec << " every " << interval << " ms on thread " << environment.thread_id() << '\n';
 			result = id;
 		} else if (name == "KillTimer") {
 			const auto args = process.api_arguments(2);
 			const auto before = timers.size();
 			std::erase_if(timers, [&](const Timer &timer) { return timer.window == args[0] && timer.id == args[1]; });
+			if (std::getenv("RAVEN_TRACE_TIMERS"))
+				std::cerr << "timer kill " << std::hex << args[0] << ' ' << args[1] << std::dec << '\n';
 			if (before == timers.size())
 				throw uint32_t(1814);
 			result = 1;

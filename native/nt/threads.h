@@ -36,6 +36,9 @@ struct GuestThread {
 	// Borrowed from the live waiting frame; readiness ends scheduler and desktop sleeps.
 	std::span<const pollfd> descriptors;
 	std::array<uint64_t, 6> debug_registers{};
+	// The API the thread waits in and since when, for the list RAVEN_DUMP_THREADS_ON asks for.
+	const char *waiting_in = nullptr;
+	std::chrono::steady_clock::time_point waiting_since;
 	uint32_t exit_code = 0x103;
 	int suspend_count = 0;
 	uint64_t start = 0, parameter = 0;
@@ -120,7 +123,7 @@ public:
 	void add_pump(std::function<void()> work) { pumps.push_back(std::move(work)); }
 	// Runs at every scheduling decision, also while threads run: requests from other processes are answered without waiting for idleness.
 	void add_service(std::function<void()> work) { services.push_back(std::move(work)); }
-	void serve() { if (tearing_down) return; for (const auto &service : services) service(); }
+	void serve();
 	// Ends the scheduler's idle wait early: called from a host thread that finished work a waiting guest thread looks for.
 	void nudge();
 	// For a wait outside the scheduler, such as a thread waiting for window messages while the others wait too: the latest time it may

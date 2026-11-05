@@ -13,6 +13,7 @@
 #ifdef __APPLE__
 #include "../platform/darwin/dxmt/identity.h"
 #endif
+#include <utility>
 
 namespace raven {
 
@@ -58,7 +59,7 @@ uint64_t NativeWindows::window_at(int32_t x, int32_t y)
 {
 	auto roots = top_level_windows();
 	for (auto root = roots.rbegin(); root != roots.rend(); ++root) {
-		const auto *record = objects.window(*root);
+		const auto *record = std::as_const(objects).window(*root);
 		if (record && record->visible && x >= record->outer.left && y >= record->outer.top && x < record->outer.right && y < record->outer.bottom)
 			return pointer_child(*root, x, y);
 	}
@@ -82,7 +83,7 @@ void NativeWindows::shift_window(uint64_t handle, int32_t dx, int32_t dy)
 
 void NativeWindows::invalidate_tree(uint64_t handle, bool erase)
 {
-	const auto *window = objects.window(handle);
+	const auto *window = std::as_const(objects).window(handle);
 	if (!window)
 		return;
 	objects.invalidate(handle, {0, 0, window->width, window->height}, erase);
@@ -108,7 +109,7 @@ bool NativeWindows::enable_window(uint64_t handle, bool enable)
 			send(handle, 0x215, 0, 0);
 		}
 	}
-	if (objects.window(handle))
+	if (std::as_const(objects).window(handle))
 		send(handle, 0x0a, enable, 0);
 	return was_disabled;
 }
@@ -174,6 +175,10 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 	window->visible = !hide;
 	window->style = (window->style & ~ws_visible) | (window->visible ? ws_visible : 0);
 	objects.update_window_dcs(window->parent ? window->parent : handle);
+	if (!window->parent) {
+		publish_traits(handle);
+		window = objects.window(handle);
+	}
 	if (show) {
 		// Showing a window paints its whole subtree, so the children's update regions are invalidated with it.
 		if (!objects.invalidate(handle, {0, 0, window->width, window->height}, true))
@@ -184,13 +189,13 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 	}
 	if (window->visible && !show)
 		objects.update_window_dcs(handle);
-	if (show && !window->parent && activate_it && objects.window(handle) && !(window->ex_style & 0x08000000U))
+	if (show && !window->parent && activate_it && std::as_const(objects).window(handle) && !(window->ex_style & 0x08000000U))
 		set_focus(handle);
 	window = objects.window(handle);
 	if (!window)
 		throw uint32_t(1400);
 	if (!window->visible && previous && window->parent) {
-		const auto *parent = objects.window(window->parent);
+		const auto *parent = std::as_const(objects).window(window->parent);
 		if (parent) objects.invalidate(window->parent, {window->outer.left - parent->x, window->outer.top - parent->y, window->outer.right - parent->x,
 			window->outer.bottom - parent->y}, true);
 	}
@@ -237,7 +242,7 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 			store(layout.flags, flags, 4);
 			process.write_memory(scratch, bytes);
 			send(handle, 0x46, 0, scratch);
-			if (!objects.window(handle)) {
+			if (!std::as_const(objects).window(handle)) {
 				process.unmap_memory(scratch);
 				return;
 			}
@@ -264,17 +269,17 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 		const bool top = after == 0 || after == UINT64_MAX || after == UINT64_MAX - 1 + 0;
 		if (after == 1)
 			objects.restack(handle, false);
-		else if (top || !objects.window(after))
+		else if (top || !std::as_const(objects).window(after))
 			objects.restack(handle, true);
 		else {
 			objects.restack(handle, true);
 			// Insert directly above the named sibling: every sibling above it climbs over this window.
-			const auto *sibling = objects.window(after);
+			const auto *sibling = std::as_const(objects).window(after);
 			auto *self = objects.window(handle);
 			if (sibling && self) {
 				self->order = sibling->order;
 				for (const auto other : objects.child_windows(window->parent))
-					if (other != handle && objects.window(other)->order >= sibling->order && other != after)
+					if (other != handle && std::as_const(objects).window(other)->order >= sibling->order && other != after)
 						++objects.window(other)->order;
 				++self->order;
 			}
@@ -306,7 +311,7 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 	} else if (shifted || resized) {
 		const auto old_client_x = window->x, old_client_y = window->y;
 		if (window->parent && was_visible) {
-			const auto *parent = objects.window(window->parent);
+			const auto *parent = std::as_const(objects).window(window->parent);
 			if (parent) objects.invalidate(window->parent, {old.left - parent->x, old.top - parent->y, old.right - parent->x, old.bottom - parent->y}, true);
 		}
 		if (window->parent || !resized) {
@@ -333,7 +338,7 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 		if (window->parent && client_moved && !resized) {
 			// Moving a child in its parent changes where its whole subtree draws.
 			objects.update_window_dcs(handle);
-			const auto *parent = objects.window(window->parent);
+			const auto *parent = std::as_const(objects).window(window->parent);
 			send(handle, 3, 0, uint16_t(window->x - (parent ? parent->x : 0)) | (uint64_t(uint16_t(window->y - (parent ? parent->y : 0))) << 16));
 		}
 		window = objects.window(handle);
@@ -356,7 +361,7 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 		show_window(handle, (effective & swp_noactivate) ? 8 : 5);
 	else if (effective & swp_hidewindow)
 		show_window(handle, 0);
-	if (!objects.window(handle))
+	if (!std::as_const(objects).window(handle))
 		return;
 	// WM_WINDOWPOSCHANGED tells the window what actually happened; the default procedure turns it into WM_MOVE and WM_SIZE.
 	const auto scratch = process.map_memory(4096, PROT_READ | PROT_WRITE);
@@ -381,6 +386,21 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 	process.unmap_memory(scratch);
 }
 
+uint64_t NativeWindows::foreign_top_level(const std::u16string &class_name, bool titled, const std::u16string &title) const
+{
+	for (const auto handle : foreign_windows()) {
+		const auto traits = foreign_window_traits(handle);
+		if (!traits || traits->parent)
+			continue;
+		if (!class_name.empty() && !equal_fold(from_utf8(traits->class_name), class_name))
+			continue;
+		if (titled && from_utf8(traits->title) != title)
+			continue;
+		return handle;
+	}
+	return 0;
+}
+
 void NativeWindows::register_manager_api(ApiRegistry &registry)
 {
 	registry.add("FindWindowW", 2, [this](ApiCall &call) {
@@ -388,7 +408,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		const auto title = call[1] ? call.wide(call[1], 4096) : std::u16string();
 		auto roots = top_level_windows();
 		for (auto root = roots.rbegin(); root != roots.rend(); ++root) {
-			const auto *window = objects.window(*root);
+			const auto *window = std::as_const(objects).window(*root);
 			const auto *definition = window ? objects.window_class(window->class_id) : nullptr;
 			if (!definition || window->destroying)
 				continue;
@@ -399,6 +419,10 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			call.ret(*root);
 			return;
 		}
+		if (const auto found = foreign_top_level(name, call[1] != 0, title)) {
+			call.ret(found);
+			return;
+		}
 		call.fail(1400);
 	});
 	registry.add("FindWindowA", 2, [this](ApiCall &call) {
@@ -407,7 +431,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		const std::u16string name(narrow_name.begin(), narrow_name.end()), title(narrow_title.begin(), narrow_title.end());
 		auto roots = top_level_windows();
 		for (auto root = roots.rbegin(); root != roots.rend(); ++root) {
-			const auto *window = objects.window(*root);
+			const auto *window = std::as_const(objects).window(*root);
 			const auto *definition = window ? objects.window_class(window->class_id) : nullptr;
 			if (!definition || window->destroying)
 				continue;
@@ -416,6 +440,10 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			if (call[1] && window->title != title)
 				continue;
 			call.ret(*root);
+			return;
+		}
+		if (const auto found = foreign_top_level(name, call[1] != 0, title)) {
+			call.ret(found);
 			return;
 		}
 		call.fail(1400);
@@ -430,7 +458,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 				started = *candidate == call[1];
 				continue;
 			}
-			const auto *window = objects.window(*candidate);
+			const auto *window = std::as_const(objects).window(*candidate);
 			const auto *definition = window ? objects.window_class(window->class_id) : nullptr;
 			if (!definition || (!name.empty() && !equal_fold(from_utf8(definition->name), name)))
 				continue;
@@ -442,7 +470,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		call.fail(1400);
 	});
 	registry.add("GetAncestor", 2, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		if (!window) {
 			call.fail(1400);
 			return;
@@ -452,7 +480,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		case 2: call.ret(objects.window_root(call[0])); break;
 		case 3: {
 			auto root = objects.window_root(call[0]);
-			while (objects.window(root) && objects.window(root)->owner && objects.window(objects.window(root)->owner))
+			while (objects.window(root) && std::as_const(objects).window(root)->owner && std::as_const(objects).window(objects.window(root)->owner))
 				root = objects.window_root(objects.window(root)->owner);
 			call.ret(root);
 			break;
@@ -495,13 +523,13 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		if (!window) {
 			const auto foreign=foreign_window_info(call[0]);
 			// The update a window's own process applies carries no message-only state.
-			if (!foreign || message_only || call[0]==target || (target&&!objects.window(target)&&!foreign_window_info(target))) { call.fail(1400);return; }
+			if (!foreign || message_only || call[0]==target || (target&&!std::as_const(objects).window(target)&&!foreign_window_info(target))) { call.fail(1400);return; }
 			if (window_under(call[0],target,local_parent)) { call.fail(87);return; }
 			ForeignWindowUpdate update{};update.mask=1;update.parent=target;
 			if (!request_window_update(call[0],update)) {call.fail(1400);return;}
 			call.ret(foreign->parent);return;
 		}
-		if (target && !objects.window(target) && !foreign_window_info(target)) {
+		if (target && !std::as_const(objects).window(target) && !foreign_window_info(target)) {
 			call.fail(1400);
 			return;
 		}
@@ -536,12 +564,12 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		call.ret(previous);
 	});
 	registry.add("BringWindowToTop", 1, [this](ApiCall &call) {
-		if (!objects.window(call[0])) {
+		if (!std::as_const(objects).window(call[0])) {
 			call.fail(1400);
 			return;
 		}
 		objects.restack(call[0], true);
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		if (window->parent && objects.window_visible(call[0]))
 			invalidate_tree(call[0], true);
 		call.ret(1);
@@ -560,7 +588,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		call.ret(1);
 	});
 	registry.add("GetWindowDisplayAffinity", 2, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		if (!window || !call[1]) {
 			call.fail(window ? 87 : 1400);
 			return;
@@ -571,15 +599,15 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	// Windows here are never snapped into an arrangement.
 	registry.add("IsWindowArranged", 1, [](ApiCall &call) { call.ret(0); });
 	registry.add("IsIconic", 1, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		call.ret(window && (window->style & ws_minimize));
 	});
 	registry.add("IsZoomed", 1, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		call.ret(window && (window->style & ws_maximize));
 	});
 	registry.add("IsWindowEnabled", 1, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		call.ret(window && !(window->style & ws_disabled));
 	});
 	registry.add("EnableWindow", 2, [this](ApiCall &call) {
@@ -599,7 +627,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		call.ret(1);
 	});
 	registry.add("SetForegroundWindow", 1, [this](ApiCall &call) {
-		if (!objects.window(call[0])) {
+		if (!std::as_const(objects).window(call[0])) {
 			call.fail(1400);
 			return;
 		}
@@ -608,7 +636,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	});
 	registry.add("GetLastActivePopup", 1, [](ApiCall &call) { call.ret(call[0]); });
 	registry.add("SetActiveWindow", 1, [this](ApiCall &call) {
-		if (!objects.window(call[0])) {
+		if (!std::as_const(objects).window(call[0])) {
 			call.fail(1400);
 			return;
 		}
@@ -618,7 +646,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	});
 	registry.add("AttachThreadInput", 3, [](ApiCall &call) { call.ret(1); });
 	registry.add("GetWindowThreadProcessId", 2, [this](ApiCall &call) {
-		if (!objects.window(call[0])) {
+		if (!std::as_const(objects).window(call[0])) {
 			// A window of another process: its creating thread stays with the owner, whose first thread stands for it.
 			if (const auto owner = foreign_window_owner(call[0])) {
 				if (call[1]) call.store<uint32_t>(call[1], *owner);
@@ -629,11 +657,11 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			return;
 		}
 		if (call[1]) call.store<uint32_t>(call[1], uint32_t(::getpid()));
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		call.ret(window->thread ? window->thread : environment.thread_id());
 	});
 	registry.add("ChildWindowFromPoint", 2, [this](ApiCall &call) {
-		const auto *parent = objects.window(call[0]);
+		const auto *parent = std::as_const(objects).window(call[0]);
 		if (!parent) {
 			call.fail(1400);
 			return;
@@ -642,7 +670,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		uint64_t found = call[0];
 		const auto children = objects.child_windows(call[0]);
 		for (auto child = children.rbegin(); child != children.rend(); ++child) {
-			const auto *record = objects.window(*child);
+			const auto *record = std::as_const(objects).window(*child);
 			if (record && x >= record->outer.left && y >= record->outer.top && x < record->outer.right && y < record->outer.bottom) {
 				found = *child;
 				break;
@@ -651,7 +679,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		call.ret(found);
 	});
 	registry.add("ChildWindowFromPointEx", 3, [this](ApiCall &call) {
-		const auto *parent = objects.window(call[0]);
+		const auto *parent = std::as_const(objects).window(call[0]);
 		if (!parent) {
 			call.fail(1400);
 			return;
@@ -661,7 +689,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		const uint32_t skip = call.u32(2);
 		const auto children = objects.child_windows(call[0]);
 		for (auto child = children.rbegin(); child != children.rend(); ++child) {
-			const auto *record = objects.window(*child);
+			const auto *record = std::as_const(objects).window(*child);
 			if (!record || x < record->outer.left || y < record->outer.top || x >= record->outer.right || y >= record->outer.bottom)
 				continue;
 			if (((skip & 1) && !record->visible) || ((skip & 2) && (record->style & ws_disabled)) || ((skip & 4) && (record->ex_style & 0x20)))
@@ -674,7 +702,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	// RealChildWindowFromPoint looks through what is transparent to the mouse, as a group box is: a child that answers WM_NCHITTEST with
 	// HTTRANSPARENT gives way to the one below it.
 	registry.add("RealChildWindowFromPoint", 2, [this](ApiCall &call) {
-		const auto *parent = objects.window(call[0]);
+		const auto *parent = std::as_const(objects).window(call[0]);
 		if (!parent) {
 			call.fail(1400);
 			return;
@@ -683,7 +711,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		uint64_t found = call[0];
 		const auto children = objects.child_windows(call[0]);
 		for (auto child = children.rbegin(); child != children.rend(); ++child) {
-			const auto *record = objects.window(*child);
+			const auto *record = std::as_const(objects).window(*child);
 			if (!record || !record->visible || x < record->outer.left || y < record->outer.top || x >= record->outer.right || y >= record->outer.bottom)
 				continue;
 			if (int32_t(send(*child, 0x84, 0, uint32_t(uint16_t(x)) | uint32_t(uint16_t(y)) << 16)) == -1)
@@ -696,7 +724,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	registry.add("WindowFromPoint", 1, [this](ApiCall &call) { call.ret(window_at(int32_t(call[0]), int32_t(call[0] >> 32))); });
 	const auto enumerate = [this](ApiCall &call, const std::vector<uint64_t> &handles, uint64_t procedure, uint64_t parameter) {
 		for (const auto handle : handles) {
-			if (!objects.window(handle))
+			if (!std::as_const(objects).window(handle) && !foreign_window_size(handle))
 				continue;
 			const uint64_t arguments[] = {handle, parameter};
 			const auto result = invoke(procedure, arguments);
@@ -710,6 +738,10 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	registry.add("EnumWindows", 2, [this, enumerate](ApiCall &call) {
 		auto roots = top_level_windows();
 		std::reverse(roots.begin(), roots.end());
+		// The top-level windows of the other processes of the prefix follow, as one desktop holds them all on Windows.
+		for (const auto handle : foreign_windows())
+			if (const auto traits = foreign_window_traits(handle); traits && !traits->parent)
+				roots.push_back(handle);
 		enumerate(call, roots, call[0], call[1]);
 	});
 	registry.add("EnumThreadWindows", 3, [this, enumerate](ApiCall &call) {
@@ -758,7 +790,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			call.ret(1);
 		});
 		registry.add("GetProp" + suffix, 2, [this, property_key, wide](ApiCall &call) {
-			const auto *window = objects.window(call[0]);
+			const auto *window = std::as_const(objects).window(call[0]);
 			if (!window) {
 				call.ret(0);
 				return;
@@ -784,7 +816,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	}
 
 	registry.add("SetWindowPos", 7, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		if (!window) {
 			ForeignWindowUpdate update{};update.mask=2;update.after=call[1];update.flags=call.u32(6);
 			update.x=call.i32(2);update.y=call.i32(3);update.width=std::max(call.i32(4),0);update.height=std::max(call.i32(5),0);
@@ -805,7 +837,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		}
 	});
 	registry.add("MoveWindow", 6, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		if (!window) {
 			call.fail(1400);
 			return;
@@ -835,7 +867,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	});
 	registry.add("DeferWindowPos", 8, [this, batches](ApiCall &call) {
 		const auto found = batches->find(call[0]);
-		const auto *window = objects.window(call[1]);
+		const auto *window = std::as_const(objects).window(call[1]);
 		if (found == batches->end() || !window) {
 			call.fail(window ? 6 : 1400, 0);
 			return;
@@ -855,7 +887,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		batches->erase(found);
 		try {
 			for (const auto &operation : operations)
-				if (objects.window(operation.window))
+				if (std::as_const(objects).window(operation.window))
 					place_window(operation.window, operation.outer, operation.insert_after, operation.flags);
 			call.ret(1);
 		} catch (const uint32_t &error) {
@@ -864,7 +896,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	});
 
 	registry.add("GetWindowPlacement", 2, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		if (!window) {
 			call.fail(1400);
 			return;
@@ -882,7 +914,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		call.ret(1);
 	});
 	registry.add("SetWindowPlacement", 2, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		if (!window) {
 			call.fail(1400);
 			return;
@@ -914,7 +946,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		}
 	});
 	registry.add("DrawMenuBar", 1, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		if (!window) {
 			call.fail(1400);
 			return;
@@ -924,7 +956,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		call.ret(1);
 	});
 	registry.add("GetUpdateRgn", 3, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		if (!window || !objects.region(call[1])) {
 			call.fail(window ? 6 : 1400);
 			return;
@@ -936,7 +968,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	// RedrawWindow (RDW_*): invalidate or validate the window, optionally its children, and optionally paint right away.
 	registry.add("RedrawWindow", 4, [this](ApiCall &call) {
 		const uint64_t handle = call[0] ? call[0] : desktop_window();
-		const auto *window = objects.window(handle);
+		const auto *window = std::as_const(objects).window(handle);
 		if (!window) {
 			call.fail(1400);
 			return;
@@ -950,7 +982,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		try {
 			const bool all = flags & 0x80;
 			const auto apply = [&](auto &&self, uint64_t target, DesktopRect area, bool whole) -> void {
-				const auto *record = objects.window(target);
+				const auto *record = std::as_const(objects).window(target);
 				if (!record)
 					return;
 				if (whole)
@@ -969,7 +1001,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 				for (const auto root : top_level_windows())
 					apply(apply, root, rect, true);
 			if (flags & 0x100) {
-				if (objects.window(handle) && !objects.window(handle)->update.empty())
+				if (std::as_const(objects).window(handle) && !std::as_const(objects).window(handle)->update.empty())
 					send(handle, 0x0f, 0, 0);
 			}
 			call.ret(1);
@@ -978,7 +1010,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		}
 	});
 	registry.add("ScrollWindow", 5, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		if (!window) {
 			call.fail(1400);
 			return;
@@ -990,14 +1022,14 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	// Layered window attributes are kept per window for GetLayeredWindowAttributes; the compositor draws windows opaque.
 	auto layered = std::make_shared<std::map<uint64_t, std::array<uint32_t, 3>>>();
 	registry.add("UpdateLayeredWindow", 9, [this](ApiCall &call) {
-		if (!objects.window(call[0])) {
+		if (!std::as_const(objects).window(call[0])) {
 			call.fail(1400);
 			return;
 		}
 		call.ret(1);
 	});
 	registry.add("SetLayeredWindowAttributes", 4, [this, layered](ApiCall &call) {
-		if (!objects.window(call[0])) {
+		if (!std::as_const(objects).window(call[0])) {
 			call.fail(1400);
 			return;
 		}
@@ -1006,7 +1038,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	});
 	registry.add("GetLayeredWindowAttributes", 4, [this, layered](ApiCall &call) {
 		const auto found = layered->find(call[0]);
-		if (!objects.window(call[0]) || found == layered->end()) {
+		if (!std::as_const(objects).window(call[0]) || found == layered->end()) {
 			call.fail(objects.window(call[0]) ? 87 : 1400);
 			return;
 		}
@@ -1019,7 +1051,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	// The attributes a program reads to place its own caption: the composition is on, nothing is cloaked, the frame is the window
 	// and the caption buttons sit in its top right corner, in window coordinates. Others are refused, as for an unknown attribute.
 	registry.add("DwmGetWindowAttribute", 4, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		if (!window) {
 			call.ret(0x80070006U);
 			return;
@@ -1082,7 +1114,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	});
 	// The compositor answers the hit test of the caption buttons it draws over an extended frame; every other message is the program's.
 	registry.add("DwmDefWindowProc", 5, [this](ApiCall &call) {
-		const auto *window = objects.window(call[0]);
+		const auto *window = std::as_const(objects).window(call[0]);
 		if (!window || !window->glass || call.u32(1) != 0x84 || !themed()) {
 			call.ret(0);
 			return;
@@ -1147,6 +1179,40 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	registry.add("MonitorFromPoint", 2, [](ApiCall &call) { call.ret(1); });
 	registry.add("MonitorFromRect", 2, [](ApiCall &call) { call.ret(1); });
 	registry.add("MonitorFromWindow", 2, [](ApiCall &call) { call.ret(1); });
+	// Where a popup of the given size goes next to an anchor point: the TPM_ alignment flags place it, the screen keeps it whole, and
+	// the rectangle to keep clear pushes it aside, to the right or left of it, or below or above it with TPM_VERTICAL.
+	registry.add("CalculatePopupWindowPosition", 5, [this](ApiCall &call) {
+		const auto &metrics = objects.nonclient_metrics();
+		const int32_t x = call.load<int32_t>(call[0]), y = call.load<int32_t>(call[0] + 4);
+		const int32_t width = call.load<int32_t>(call[1]), height = call.load<int32_t>(call[1] + 4);
+		const uint32_t flags = call.u32(2);
+		if (width < 0 || height < 0 || !call[4]) {
+			call.fail(87);
+			return;
+		}
+		int32_t left = (flags & 8) ? x - width : (flags & 4) ? x - width / 2 : x;
+		int32_t top = (flags & 0x20) ? y - height : (flags & 0x10) ? y - height / 2 : y;
+		const auto fit = [](int32_t start, int32_t length, int32_t limit) { return std::max(0, std::min(start, limit - length)); };
+		if (call[3]) {
+			const int32_t ex_left = call.load<int32_t>(call[3]), ex_top = call.load<int32_t>(call[3] + 4);
+			const int32_t ex_right = call.load<int32_t>(call[3] + 8), ex_bottom = call.load<int32_t>(call[3] + 12);
+			const bool overlaps = left < ex_right && left + width > ex_left && top < ex_bottom && top + height > ex_top;
+			if (overlaps && (flags & 0x40))
+				top = ex_bottom + height <= metrics.screen_y || ex_top - height < 0 ? ex_bottom : ex_top - height;
+			else if (overlaps)
+				left = ex_right + width <= metrics.screen_x || ex_left - width < 0 ? ex_right : ex_left - width;
+			if (flags & 0x40)
+				left = fit(left, width, metrics.screen_x);
+			else
+				top = fit(top, height, metrics.screen_y);
+		} else {
+			left = fit(left, width, metrics.screen_x);
+			top = fit(top, height, metrics.screen_y);
+		}
+		const int32_t rect[4] = {left, top, left + width, top + height};
+		call.write(call[4], std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(rect), sizeof(rect)));
+		call.ret(1);
+	});
 	// The one display has a single mode, which is the current one; mode numbers above 0 end the enumeration.
 	const auto display_mode = [this](ApiCall &call, size_t mode_index, size_t device_index, size_t output_index) {
 		const auto &metrics = objects.nonclient_metrics();

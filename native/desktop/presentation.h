@@ -87,21 +87,28 @@ struct DesktopPresentation {
 	std::function<std::optional<std::pair<int32_t,int32_t>>()> screen_size;
 	// Requests or leaves maximization while retaining the surface a graphics context renders into.
 	std::function<void(uint64_t,bool)> maximize;
+	// The pointer over the program's windows: a system cursor by its IDC_ identifier (32512 the arrow), or none for 0.
+	std::function<void(uint32_t shape)> cursor;
+	// Shows the pixels of a child window drawn by GDI over the surfaces drivers render to in the host window of its root (handle), at (x,
+	// y) of its frame: Windows composes child windows over a parent's swap chain, as the edit box of a pane drawn by Direct2D. No size
+	// removes the window's surface. Input keeps going to the host window.
+	std::function<void(uint64_t handle,uint64_t window,int32_t x,int32_t y,uint32_t width,uint32_t height,std::span<const uint8_t> pixels,
+		size_t stride)> overlay;
+	HostPlatform platform = default_host_platform;
+	// Minimizes a top-level window to the host's taskbar, keeping its surface; absent, a minimized window is removed from the screen.
+	std::function<void(uint64_t)> minimize;
 	// For a host that draws window titles itself: before each frame, where the program's caption and borders lie in it (left, top, right
 	// and bottom insets; the menu bar is not part of them) and the window's style. The host shows the rest and reports pointer positions
 	// on the whole frame as before.
 	std::function<void(uint64_t handle,std::array<int32_t,4> insets,uint32_t style)> frame;
 	// Whether the surface carries premultiplied pixel alpha, rather than GDI's unused high byte.
 	std::function<void(uint64_t handle,bool enabled)> alpha;
-	// Minimizes a window to the host's own place for it instead of removing it; the host reports the window's restoration as
-	// WM_SYSCOMMAND SC_RESTORE.
-	std::function<void(uint64_t handle)> minimize;
-	// The effective Windows cursor and visibility count; a custom image is borrowed for this call only. Null handle hides the pointer.
-	std::function<void(uint64_t handle,int show_count,const DesktopIcon *image)> cursor;
+	// For a host that shows any cursor: the effective Windows cursor and visibility count; a custom image is borrowed for this call only.
+	// Null handle hides the pointer.
+	std::function<void(uint64_t handle,int show_count,const DesktopIcon *image)> cursor_image;
 	// Device pixels per host point, and the scale selected by the runtime (one for DPI-unaware programs).
 	std::function<double()> backing_scale;
 	std::function<void(double)> render_scale;
-	HostPlatform platform = default_host_platform;
 	// Descriptors that must also end a descriptorless backend's blocking event poll. An empty span removes the watches.
 	std::function<void(std::span<const pollfd>)> wait_descriptors;
 	std::function<void(uint64_t,const DesktopObjects &)> window_state;

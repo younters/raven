@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cwctype>
+#include <utility>
 
 namespace raven {
 
@@ -305,7 +306,7 @@ void NativeWindows::register_api(ApiRegistry &registry)
 			const uint16_t page = call.load<uint16_t>(entry), usage = call.load<uint16_t>(entry + 2);
 			const uint32_t flags = call.load<uint32_t>(entry + 4);
 			const uint64_t target = call.load_pointer(entry + 8);
-			if (target && !objects.window(target)) {
+			if (target && !std::as_const(objects).window(target)) {
 				call.fail(1400);
 				return;
 			}
@@ -359,7 +360,7 @@ void NativeWindows::register_api(ApiRegistry &registry)
 				for (const auto &event : presentation.poll(std::chrono::milliseconds(0))) pending_events.push_back(event);
 			for (auto remaining=pending_events.size();remaining;--remaining) {
 				const auto event=pending_events.front(); pending_events.pop_front();
-				if (event.window && (!objects.window(event.window) || !objects.window(event.window)->visible)) {
+				if (event.window && (!std::as_const(objects).window(event.window) || !std::as_const(objects).window(event.window)->visible)) {
 					complete_resize(event);
 					continue;
 				}
@@ -405,7 +406,7 @@ void NativeWindows::register_api(ApiRegistry &registry)
 	registry.add("ShowCursor", 1, [this](ApiCall &call) {
 		cursor_count += call.u32(0) ? 1 : -1;
 		update_warp_lock(false);
-		sync_cursor();
+		show_cursor();
 		call.ret(uint32_t(cursor_count));
 	});
 	registry.add("GetCursor", 0, [this](ApiCall &call) { call.ret(current_cursor); });
@@ -432,7 +433,7 @@ void NativeWindows::register_api(ApiRegistry &registry)
 	};
 	registry.add("MessageBoxW", 4, [message_box](ApiCall &call) { message_box(call, true); });
 	registry.add("MessageBoxA", 4, [message_box](ApiCall &call) { message_box(call, false); });
-	registry.add("GetCapture", 0, [this](ApiCall &call) { call.ret(capture && objects.window(capture) ? capture : 0); });
+	registry.add("GetCapture", 0, [this](ApiCall &call) { call.ret(capture && std::as_const(objects).window(capture) ? capture : 0); });
 }
 
 void NativeWindows::register_message_api(ApiRegistry &registry)

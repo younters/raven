@@ -429,7 +429,9 @@ int NativeChild::wait(const std::function<bool()> *served)
 	}
 	// Guest code usually reaches its next trap within microseconds, so it is polled first; a guest that runs longer is waited for
 	// asleep, which leaves the processor to it. Waiting asleep at once costs a wake-up on every stop, which a program that stops thousands
-	// of times a second, as a game's graphics threads do, pays in frames. A served call made meanwhile ends in a trap, which wakes the wait.
+	// of times a second, as a game's graphics threads do, pays in frames. On a loaded machine a sleeping tracer is also woken late, so a
+	// window that handles one input in a few hundred stops took seconds with a short poll; two thousand tries keep it within its frame.
+	// A served call made meanwhile ends in a trap, which wakes the wait.
 	unsigned polls = 0;
 	for (;;) {
 		// A guest that is being served keeps running, so it is as busy as one that just started; it never stops for its calls, so its
@@ -442,12 +444,14 @@ int NativeChild::wait(const std::function<bool()> *served)
 		}
 		int status = 0;
 		pid_t result = waitpid(pid, &status, WNOHANG);
-		if (result == 0 && ++polls >= 200) {
+		if (result == 0) {
 			const auto now = std::chrono::steady_clock::now();
 			if (slice_end && now >= *slice_end)
 				return -2;
 			if (now >= deadline)
 				return -1;
+			if (++polls < 2000)
+				continue;
 			const auto until = slice_end ? std::min(*slice_end, deadline) : deadline;
 			const auto left = std::chrono::duration_cast<std::chrono::nanoseconds>(until - now).count();
 			itimerspec alarm{};
@@ -521,6 +525,8 @@ struct NativeProcess::State {
 	// The guest's own mappings by start address; they never overlap. A program such as a browser makes thousands of them, and every
 	// read, write and protection change looks one up.
 	std::map<uint64_t, ImageMapping> mappings;
+	// Counts every change to the mappings, so that a reader can tell whether a protection it saw may have changed since.
+	uint64_t mapping_changes = 0;
 	std::vector<std::pair<uint64_t, uint64_t>> allocations;
 	std::vector<std::pair<uint64_t, uint64_t>> image_allocations;
 	std::map<uint64_t, uint32_t> api_traps;
@@ -677,6 +683,7 @@ NativeProcess::NativeProcess(std::span<LoadedImage *const> images, const std::st
 		for (const auto &mapping : mapped_image->mappings()) {
 			child.syscall(SYS_mprotect, mapping.address, mapping.size, static_cast<uint64_t>(mapping.protection));
 			state->mappings.insert_or_assign(mapping.address, mapping);
+			++state->mapping_changes;
 		}
 	}
 	// The first thread's stack is as large as the program's headers reserve, as Windows makes it, from 1 MiB to 64 MiB.
@@ -689,6 +696,7 @@ NativeProcess::NativeProcess(std::span<LoadedImage *const> images, const std::st
 		throw std::runtime_error("host placed the native stack outside the guest address space");
 	child.syscall(SYS_mprotect, stack + 4096, stack_size, PROT_READ | PROT_WRITE);
 	state->mappings.insert_or_assign(stack + 4096, ImageMapping{stack + 4096, stack_size, 0, PROT_READ | PROT_WRITE});
+	++state->mapping_changes;
 	state->stack_top = stack + 4096 + stack_size;
 	state->initial_stack_top = state->stack_top;
 	if (mode == NativeMode::x86) {
@@ -698,6 +706,7 @@ NativeProcess::NativeProcess(std::span<LoadedImage *const> images, const std::st
 		if (page + 4096 > state->limit())
 			throw std::runtime_error("host placed the native return gate outside the guest address space");
 		state->mappings.insert_or_assign(page, ImageMapping{page, 4096, 0, PROT_READ | PROT_WRITE});
+		++state->mapping_changes;
 		write_memory(page, std::vector<uint8_t>{0xcc});
 		child.syscall(SYS_mprotect, page, 4096, PROT_READ | PROT_EXEC);
 		state->mappings.at(page).protection = PROT_READ | PROT_EXEC;
@@ -1002,6 +1011,7 @@ uint64_t NativeProcess::map_memory(size_t size, int protection, uint64_t address
 		throw std::runtime_error("host returned an invalid native allocation address");
 	}
 	state->mappings.insert_or_assign(mapped, ImageMapping{mapped, size, 0, protection});
+	++state->mapping_changes;
 	state->allocations.emplace_back(mapped, size);
 	return mapped;
 }
@@ -1110,6 +1120,7 @@ uint64_t NativeProcess::map_file(int descriptor, size_t size, uint64_t offset, b
 		guest_descriptor = uint64_t(-1);
 		unmap_memory(scratch);
 		state->mappings.insert_or_assign(mapped, ImageMapping{mapped, size, 0, PROT_READ | PROT_WRITE});
+		++state->mapping_changes;
 		state->allocations.emplace_back(mapped, size);
 		return mapped;
 	} catch (...) {
@@ -1122,6 +1133,11 @@ uint64_t NativeProcess::map_file(int descriptor, size_t size, uint64_t offset, b
 		}
 		throw;
 	}
+}
+
+uint64_t NativeProcess::mapping_changes() const
+{
+	return state->mapping_changes;
 }
 
 bool NativeProcess::has_protection(uint64_t address, size_t size, int protection) const
@@ -1191,6 +1207,7 @@ void NativeProcess::protect_range(uint64_t address, size_t size, int protection,
 	}
 	memory_syscall(SYS_mprotect, address, size, static_cast<uint64_t>(protection));
 	state->mappings.erase(first_touched, past_touched);
+	++state->mapping_changes;
 	for (const auto &piece : pieces)
 		state->mappings.insert_or_assign(piece.address, piece);
 }
@@ -1211,6 +1228,7 @@ void NativeProcess::unmap_memory(uint64_t address)
 		state->served_owners.erase(static_cast<uint64_t *>(view->second->host));
 	state->shared_views.erase(address);
 	state->mappings.erase(state->mappings.lower_bound(address), state->mappings.lower_bound(end));
+	++state->mapping_changes;
 	state->api_traps.erase(state->api_traps.lower_bound(address), state->api_traps.lower_bound(end));
 	state->returning_traps.erase(state->returning_traps.lower_bound(address), state->returning_traps.lower_bound(end));
 	state->allocations.erase(owned);
@@ -1288,6 +1306,7 @@ void NativeProcess::map_image(LoadedImage &image)
 		scratch = 0;
 		for (const auto &mapping : mappings)
 			state->mappings.insert_or_assign(mapping.address, mapping);
+			++state->mapping_changes;
 		state->image_allocations.emplace_back(base, size);
 	} catch (...) {
 		try {
@@ -1315,6 +1334,7 @@ void NativeProcess::unmap_image(uint64_t address)
 	const uint64_t end = address + owned->second;
 	memory_syscall(SYS_munmap, address, owned->second);
 	state->mappings.erase(state->mappings.lower_bound(address), state->mappings.lower_bound(end));
+	++state->mapping_changes;
 	state->api_traps.erase(state->api_traps.lower_bound(address), state->api_traps.lower_bound(end));
 	state->returning_traps.erase(state->returning_traps.lower_bound(address), state->returning_traps.lower_bound(end));
 	state->image_allocations.erase(owned);
@@ -1708,7 +1728,7 @@ NativeResult NativeProcess::callback(uint64_t address, std::span<const uint64_t>
 		throw std::runtime_error(std::string("native callback requires a pending API call (last API ") + api_in_progress + ")");
 	}
 	if (state->callbacks.size() >= 64)
-		throw std::runtime_error("native callback exceeds initial nesting limit");
+		throw std::runtime_error(std::string("native callback exceeds initial nesting limit (last API ") + api_in_progress + ")");
 	// The procedure called keeps the nonvolatile vector and control registers, as the calling convention requires, and the volatile
 	// ones are the API call's to change: the general registers are all that has to come back.
 	NativeContext saved{};
