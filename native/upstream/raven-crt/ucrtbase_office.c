@@ -1754,5 +1754,30 @@ __asm__(".section .drectve\n\t.ascii \""
 	SAME(iswprint) SAME(iswspace) SAME(iswxdigit) SAME(localeconv) SAME(malloc) SAME(qsort) SAME(realloc) SAME(setlocale) SAME(strcat_s)
 	SAME(strcpy_s) SAME(strncat_s) SAME(strncpy_s) SAME(terminate) SAME(tolower) SAME(towlower) SAME(wcscat_s) SAME(wcscpy_s)
 	SAME(wcsncat_s) SAME(wcsncpy_s) SAME(wcstoul) SAME(wmemcpy_s)
+	SAME(__std_type_info_destroy_list) SAME(__stdio_common_vsprintf) SAME(__stdio_common_vswprintf) SAME(_atoi64) SAME(_chsize_s) SAME(_fpclass)
+	SAME(_get_osfhandle) SAME(_mbstrlen) SAME(_strdup) SAME(_strtoui64) SAME(_write) SAME(_wsopen_s)
+	SAME(acos) SAME(asin) SAME(atan) SAME(atan2) SAME(atof) SAME(ceil)
+	SAME(cos) SAME(cosh) SAME(exp) SAME(floor) SAME(fmod) SAME(getenv)
+	SAME(isalnum) SAME(isalpha) SAME(isdigit) SAME(isxdigit) SAME(log) SAME(modf)
+	SAME(pow) SAME(sin) SAME(sinh) SAME(sqrt) " -export:_o_strtod=raven_strtod" SAME(strtoul)
+	SAME(tan) SAME(tanh) SAME(toupper)
 	"\"\n\t.text");
 #undef SAME
+
+/* The list of decorated type names a module's type_info objects keep: nothing here allocates one. */
+CRT void __std_type_info_destroy_list(void *head) { (void)head; }
+CRT int __isascii(int character) { return (unsigned)character < 0x80; }
+
+/* The fixed English form of a broken-down time, "Wed Jan 02 02:03:55 1980\n", in one buffer for each call to overwrite. */
+CRT char *asctime(const void *when)
+{
+	static char text[32];
+	static const char days[] = "SunMonTueWedThuFriSat", months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
+	const int *time = when;
+	if (!time || time[6] < 0 || time[6] > 6 || time[4] < 0 || time[4] > 11) {
+		set_errno(22);
+		return NULL;
+	}
+	sprintf(text, "%.3s %.3s %02d %02d:%02d:%02d %d\n", days + time[6] * 3, months + time[4] * 3, time[3], time[2], time[1], time[0], time[5] + 1900);
+	return text;
+}
