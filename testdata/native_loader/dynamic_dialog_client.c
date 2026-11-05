@@ -70,7 +70,7 @@ UINT raven_entry(void)
 	IMalloc_Release(allocator);
 	shell = LoadLibraryA("shell32.dll");
 	get_store = (void *)GetProcAddress(shell, "SHGetPropertyStoreFromParsingName");
-	check(get_store && get_store(L"C:\\unsupported.lnk", NULL, GPS_READWRITE, &property_store, &store) == E_NOTIMPL && !store, 5);
+	check(get_store && get_store(L"C:\\unsupported.lnk", NULL, GPS_READWRITE, &property_store, &store) == STG_E_ACCESSDENIED && !store, 5);
 
 	modal = TRUE;
 	check(API(DialogBoxParamW)(instance, MAKEINTRESOURCEW(1), NULL, dialog_proc, -123) == -234, 20);
