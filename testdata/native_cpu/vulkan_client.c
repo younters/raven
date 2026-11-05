@@ -77,6 +77,24 @@ unsigned int raven_entry(void)
 	count = 16;
 	if (vkEnumeratePhysicalDevices(instance, &count, repeated) != VK_SUCCESS || repeated[0] != devices[0])
 		return 10;
+	{
+		/* A device group names the same handles the plain enumeration gave out. */
+		const PFN_vkEnumeratePhysicalDeviceGroups groups =
+			(PFN_vkEnumeratePhysicalDeviceGroups)vkGetInstanceProcAddr(instance, "vkEnumeratePhysicalDeviceGroups");
+		VkPhysicalDeviceGroupProperties group;
+		uint32_t group_count = 1;
+		if (!groups)
+			return 80;
+		group.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GROUP_PROPERTIES;
+		group.pNext = 0;
+		group.physicalDeviceCount = 0;
+		{
+			const VkResult status = groups(instance, &group_count, &group);
+			if ((status != VK_SUCCESS && status != VK_INCOMPLETE) || group_count != 1 || group.physicalDeviceCount != 1 ||
+				group.physicalDevices[0] != devices[0])
+				return 81;
+		}
+	}
 	vkGetPhysicalDeviceMemoryProperties(devices[0], &memory_properties);
 	vkGetPhysicalDeviceFeatures(devices[0], &features);
 	if (!memory_properties.memoryTypeCount || !memory_properties.memoryHeapCount)
