@@ -207,6 +207,19 @@ ProgramIdentity *program_identity(bool with_icon)
 }
 }
 
+static NSString *program_bundle_identifier()
+{
+	const char *path = std::getenv("RAVEN_PROGRAM_IMAGE");
+	if (!path) return @"org.raven.runtime";
+	NSString *stem = [NSString stringWithUTF8String:path].lastPathComponent.stringByDeletingPathExtension.lowercaseString;
+	NSMutableString *name = [NSMutableString string];
+	for (NSUInteger at = 0; at < stem.length; ++at) {
+		const unichar c = [stem characterAtIndex:at];
+		[name appendFormat:@"%C", (unichar)((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' ? c : '-')];
+	}
+	return [NSString stringWithFormat:@"org.raven.program.%@.%d", name.length ? name : @"unnamed", getpid()];
+}
+
 // A program that shows a window: its name, and its icon in the Dock and the application switcher.
 void raven_macos_program_identity()
 {
@@ -319,7 +332,9 @@ void raven_macos_prepare_foreground()
 		using Register = int32_t (*)(CFDictionaryRef,void *);
 		auto register_app = reinterpret_cast<Register>(dlsym(RTLD_DEFAULT,"_RegisterApplication"));
 		if (register_app) {
-			NSDictionary *info = @{@"CFBundleIdentifier":@"org.raven.runtime", @"CFBundleName":@"Raven", @"LSUIElement":@YES,
+			// Each process has an identifier of its own, as the helpers of one program all share the runtime's executable: what looks
+			// up an application by identifier finds the process that owns its windows, not whichever helper registered first.
+			NSDictionary *info = @{@"CFBundleIdentifier":program_bundle_identifier(), @"CFBundleName":@"Raven", @"LSUIElement":@YES,
 				@"LSDisplayName":@"Raven", @"CFBundleVersion":@"1", @"LSBundlePath":NSBundle.mainBundle.bundlePath,
 				@"LSExecutablePath":NSBundle.mainBundle.executablePath};
 			int32_t result = register_app((__bridge CFDictionaryRef)info,nullptr);
