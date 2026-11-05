@@ -468,7 +468,7 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 			const Bytes data{image->data().data(), image->data().size()};
 			const auto pe = data.get<uint32_t>(0x3c);
 			const auto flags = data.get<uint16_t>(pe + 22);
-			if (!(flags & 0x2000)) { state->user_limit = wow64_user_limit(flags); break; }
+			if (!(flags & 0x2000)) { state->user_limit = wow64_program_limit(flags); break; }
 		}
 		state->window = std::make_unique<FexGuestWindow>();
 		wow64_guest_base = state->window->base();

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "cpu/native_cpu.h"
+#include <cstdlib>
 
 struct raven_control;
 
@@ -10,6 +11,13 @@ namespace raven {
 constexpr uint64_t wow64_user_limit(uint16_t characteristics)
 {
 	return characteristics & 0x20 ? 0xffff0000ULL : 0x7fff0000ULL;
+}
+
+// A program's limit, which RAVEN_LARGE_ADDRESS_AWARE raises as if its image asked for it: the Direct3D 9 backend keeps its textures in the
+// program's address space, where a Windows driver would not, so a program that fits in 2 GiB on Windows may not here.
+inline uint64_t wow64_program_limit(uint16_t characteristics)
+{
+	return wow64_user_limit(std::getenv("RAVEN_LARGE_ADDRESS_AWARE") ? uint16_t(characteristics | 0x20) : characteristics);
 }
 
 // Opt-in in-process x64/WoW64 engine behind the Darwin NativeProcess seam.

@@ -45,7 +45,7 @@ uint64_t NativeEnvironment::x86_user_limit() const
 	if (fex_execution_selected()) {
 		const auto image = value(process, process_block + 8);
 		const auto pe = value(process, image + 0x3c);
-		return wow64_user_limit(uint16_t(value(process, image + pe + 20) >> 16));
+		return wow64_program_limit(uint16_t(value(process, image + pe + 20) >> 16));
 	}
 #endif
 	return 0x7fff0000ULL;
