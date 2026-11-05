@@ -273,6 +273,28 @@ static int runtime_helpers(void)
 	return 0;
 }
 
+/* A command's output read through a pipe, its exit code from the close, and rotations whose count wraps at the width. */
+static int command_pipes(void)
+{
+	HMODULE crt = GetModuleHandleA("ucrtbase.dll");
+	void *(__cdecl *wide_open)(const wchar_t *, const wchar_t *) = (void *)GetProcAddress(crt, "_wpopen");
+	void *(__cdecl *narrow_open)(const char *, const char *) = (void *)GetProcAddress(crt, "_popen");
+	int (__cdecl *close_pipe)(void *) = (void *)GetProcAddress(crt, "_pclose");
+	unsigned (__cdecl *rotate)(unsigned, int) = (void *)GetProcAddress(crt, "_rotl");
+	unsigned (__cdecl *rotate_right)(unsigned, int) = (void *)GetProcAddress(crt, "_rotr");
+	unsigned long long (__cdecl *rotate64)(unsigned long long, int) = (void *)GetProcAddress(crt, "_rotl64");
+	char *(__cdecl *read_line)(char *, int, void *) = (void *)GetProcAddress(crt, "fgets");
+	if (!wide_open || !narrow_open || !close_pipe || !rotate || !rotate_right || !rotate64 || !read_line) return 1;
+	if (rotate(0x80000001u, 1) != 3 || rotate(5, 32) != 5 || rotate_right(3, 1) != 0x80000001u || rotate64(1ULL << 63, 1) != 1) return 2;
+	if (wide_open(L"echo", L"x") || wide_open(NULL, L"r") || close_pipe(NULL) != -1 || close_pipe(&crt) != -1) return 3;
+	void *pipe = narrow_open("echo raven", "r");
+	if (!pipe) return GetFileAttributesA("C:\\Windows\\System32\\cmd.exe") == INVALID_FILE_ATTRIBUTES ? 0 : 4;
+	char line[32];
+	if (!read_line(line, sizeof line, pipe) || line[0] != 'r' || line[4] != 'n') return 5;
+	if (close_pipe(pipe) != 0) return 6;
+	return 0;
+}
+
 int raven_entry(void)
 {
 	char line[64], big[64];
@@ -332,5 +354,7 @@ int raven_entry(void)
 		return 300 + (int)count;
 	if ((count = runtime_helpers()))
 		return 400 + (int)count;
+	if ((count = command_pipes()))
+		return 500 + (int)count;
 	return temp_names();
 }

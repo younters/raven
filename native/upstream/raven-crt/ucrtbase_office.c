@@ -465,6 +465,140 @@ CRT intptr_t _wspawnvpe(int mode, const wchar_t *program, const wchar_t *const *
 	return spawn_wide(mode, program, arguments, environment, 1);
 }
 
+/* _wpopen and its forms: a command run by the command interpreter with one end of a pipe as its standard input or output. */
+#define POPEN_LIMIT 32
+static struct { void *stream; HANDLE process; } popen_streams[POPEN_LIMIT];
+static SRWLOCK popen_lock = SRWLOCK_INIT;
+
+CRT void *_wpopen(const wchar_t *command, const wchar_t *mode)
+{
+	const int reading = mode && mode[0] == L'r', writing = mode && mode[0] == L'w';
+	if (!command || (!reading && !writing)) {
+		set_errno(22);
+		return NULL;
+	}
+	wchar_t shell[MAX_PATH];
+	if (!GetEnvironmentVariableW(L"COMSPEC", shell, MAX_PATH))
+		lstrcpyW(shell, L"cmd.exe");
+	const size_t size = lstrlenW(shell) + lstrlenW(command) + 8;
+	wchar_t *line = HeapAlloc(GetProcessHeap(), 0, size * sizeof(wchar_t));
+	if (!line) {
+		set_errno(12);
+		return NULL;
+	}
+	lstrcpyW(line, shell);
+	lstrcatW(line, L" /c ");
+	lstrcatW(line, command);
+	SECURITY_ATTRIBUTES inherit = {sizeof inherit, NULL, TRUE};
+	HANDLE ends[2];
+	if (!CreatePipe(&ends[0], &ends[1], &inherit, 0)) {
+		HeapFree(GetProcessHeap(), 0, line);
+		set_errno(24);
+		return NULL;
+	}
+	HANDLE ours = ends[reading ? 0 : 1], theirs = ends[reading ? 1 : 0];
+	SetHandleInformation(ours, HANDLE_FLAG_INHERIT, 0);
+	STARTUPINFOW startup = {sizeof startup};
+	startup.dwFlags = STARTF_USESTDHANDLES;
+	startup.hStdInput = reading ? GetStdHandle(STD_INPUT_HANDLE) : theirs;
+	startup.hStdOutput = reading ? theirs : GetStdHandle(STD_OUTPUT_HANDLE);
+	startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+	PROCESS_INFORMATION process = {0};
+	const BOOL started = CreateProcessW(NULL, line, NULL, NULL, TRUE, 0, NULL, NULL, &startup, &process);
+	const DWORD failure = GetLastError();
+	HeapFree(GetProcessHeap(), 0, line);
+	CloseHandle(theirs);
+	if (!started) {
+		CloseHandle(ours);
+		set_errno(failure == ERROR_FILE_NOT_FOUND || failure == ERROR_PATH_NOT_FOUND ? 2 : 22);
+		return NULL;
+	}
+	CloseHandle(process.hThread);
+	const int fd = _open_osfhandle((intptr_t)ours, reading ? 0 : 1);
+	void *stream = fd < 0 ? NULL : _fdopen(fd, reading ? "r" : "w");
+	if (stream) {
+		AcquireSRWLockExclusive(&popen_lock);
+		int slot = 0;
+		while (slot < POPEN_LIMIT && popen_streams[slot].stream)
+			++slot;
+		if (slot < POPEN_LIMIT) {
+			popen_streams[slot].stream = stream;
+			popen_streams[slot].process = process.hProcess;
+		}
+		ReleaseSRWLockExclusive(&popen_lock);
+		if (slot < POPEN_LIMIT)
+			return stream;
+		fclose(stream);
+		set_errno(24);
+	} else if (fd < 0) {
+		CloseHandle(ours);
+	} else {
+		_close(fd);
+	}
+	CloseHandle(process.hProcess);
+	return NULL;
+}
+
+CRT void *_popen(const char *command, const char *mode)
+{
+	if (!command || !mode) {
+		set_errno(22);
+		return NULL;
+	}
+	wchar_t wide_mode[8];
+	const int length = MultiByteToWideChar(CP_ACP, 0, command, -1, NULL, 0);
+	if (!length || !MultiByteToWideChar(CP_ACP, 0, mode, -1, wide_mode, 8)) {
+		set_errno(22);
+		return NULL;
+	}
+	wchar_t *wide = HeapAlloc(GetProcessHeap(), 0, length * sizeof(wchar_t));
+	if (!wide) {
+		set_errno(12);
+		return NULL;
+	}
+	MultiByteToWideChar(CP_ACP, 0, command, -1, wide, length);
+	void *stream = _wpopen(wide, wide_mode);
+	HeapFree(GetProcessHeap(), 0, wide);
+	return stream;
+}
+
+CRT int _pclose(void *stream)
+{
+	HANDLE process = NULL;
+	AcquireSRWLockExclusive(&popen_lock);
+	for (int slot = 0; stream && slot < POPEN_LIMIT; ++slot)
+		if (popen_streams[slot].stream == stream) {
+			process = popen_streams[slot].process;
+			popen_streams[slot].stream = NULL;
+			break;
+		}
+	ReleaseSRWLockExclusive(&popen_lock);
+	if (!process) {
+		set_errno(9);
+		return -1;
+	}
+	fclose(stream);
+	WaitForSingleObject(process, INFINITE);
+	DWORD code = (DWORD)-1;
+	GetExitCodeProcess(process, &code);
+	CloseHandle(process);
+	return (int)code;
+}
+
+/* Bit rotations, whose count is taken modulo the width. */
+#undef _rotl
+#undef _rotr
+#undef _lrotl
+#undef _lrotr
+#undef _rotl64
+#undef _rotr64
+CRT unsigned _rotl(unsigned value, int shift) { shift &= 31; return shift ? value << shift | value >> (32 - shift) : value; }
+CRT unsigned _rotr(unsigned value, int shift) { shift &= 31; return shift ? value >> shift | value << (32 - shift) : value; }
+CRT unsigned long _lrotl(unsigned long value, int shift) { return _rotl(value, shift); }
+CRT unsigned long _lrotr(unsigned long value, int shift) { return _rotr(value, shift); }
+CRT unsigned long long _rotl64(unsigned long long value, int shift) { shift &= 63; return shift ? value << shift | value >> (64 - shift) : value; }
+CRT unsigned long long _rotr64(unsigned long long value, int shift) { shift &= 63; return shift ? value >> shift | value << (64 - shift) : value; }
+
 /* The daylight saving bias in seconds, as the Universal CRT publishes it beside the time zone: its address, read after _tzset. */
 static long daylight_bias = -3600;
 CRT long *__dstbias(void)
