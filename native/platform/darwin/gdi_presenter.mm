@@ -126,7 +126,7 @@ struct GDIPresenter::State {
 		Frame *available = nullptr;
 		for (auto &frame : frames) {
 			// Never overwrite the model layer's current frame, even before CA has committed it.
-			// IsInUse also protects frames retained by WindowServer and the resize crossfade.
+			// IsInUse also protects frames retained by WindowServer.
 			if (!frame.surface || (frame.surface != current && !IOSurfaceIsInUse(frame.surface))) {
 				available = &frame;
 				break;

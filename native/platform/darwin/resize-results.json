@@ -1,0 +1,276 @@
+{
+  "date": "2026-11-02",
+  "timezone": "America/Denver",
+  "baseline": "27cfa1ea910349ce8ca228f8e22b37a023daed79",
+  "implementation": "b6cff8c8d8cf6ecab2257a2e5a9cf979143d5d93",
+  "endpoint": "first matching DXMT layer submission after native frame change; not screen scanout",
+  "samples": {
+    "after-chrome-repeat": [
+      {
+        "action": "restore",
+        "host_to_frame_ms": null,
+        "request_to_frame_ms": null,
+        "dispatch_delay_ms": 7.62,
+        "no_frame_observed_for_ms": null,
+        "expected_client": null
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": 703.487,
+        "request_to_frame_ms": 775.363,
+        "dispatch_delay_ms": 33.716,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1878x1050"
+      },
+      {
+        "action": "restore",
+        "host_to_frame_ms": 465.076,
+        "request_to_frame_ms": 491.522,
+        "dispatch_delay_ms": 10.884,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "916x1026"
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": 601.236,
+        "request_to_frame_ms": 680.314,
+        "dispatch_delay_ms": 7.626,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1878x1050"
+      },
+      {
+        "action": "restore",
+        "host_to_frame_ms": 493.218,
+        "request_to_frame_ms": 580.22,
+        "dispatch_delay_ms": 10.829,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "916x1026"
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": 601.912,
+        "request_to_frame_ms": 712.747,
+        "dispatch_delay_ms": 9.208,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1878x1050"
+      }
+    ],
+    "after-chrome": [
+      {
+        "action": "restore",
+        "host_to_frame_ms": null,
+        "request_to_frame_ms": null,
+        "dispatch_delay_ms": 4.108,
+        "no_frame_observed_for_ms": null,
+        "expected_client": null
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": 478.92,
+        "request_to_frame_ms": 606.525,
+        "dispatch_delay_ms": 7.778,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1878x1050"
+      },
+      {
+        "action": "restore",
+        "host_to_frame_ms": 639.659,
+        "request_to_frame_ms": 679.602,
+        "dispatch_delay_ms": 21.448,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "916x1026"
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": 597.802,
+        "request_to_frame_ms": 795.207,
+        "dispatch_delay_ms": 45.931,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1878x1050"
+      },
+      {
+        "action": "restore",
+        "host_to_frame_ms": 553.263,
+        "request_to_frame_ms": 606.75,
+        "dispatch_delay_ms": 11.177,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "916x1026"
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": 612.503,
+        "request_to_frame_ms": 749.433,
+        "dispatch_delay_ms": 17.798,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1878x1050"
+      }
+    ],
+    "after-steam": [
+      {
+        "action": "restore",
+        "host_to_frame_ms": 497.105,
+        "request_to_frame_ms": 561.098,
+        "dispatch_delay_ms": 20.341,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1367x800"
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": 593.154,
+        "request_to_frame_ms": 641.821,
+        "dispatch_delay_ms": 2.65,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1878x1050"
+      },
+      {
+        "action": "restore",
+        "host_to_frame_ms": 283.408,
+        "request_to_frame_ms": 321.211,
+        "dispatch_delay_ms": 2.675,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1367x800"
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": 1563.006,
+        "request_to_frame_ms": 1671.61,
+        "dispatch_delay_ms": 69.716,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1878x1050"
+      },
+      {
+        "action": "restore",
+        "host_to_frame_ms": null,
+        "request_to_frame_ms": null,
+        "dispatch_delay_ms": 6.277,
+        "no_frame_observed_for_ms": 9899.253,
+        "expected_client": "1367x800"
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": 3237.205,
+        "request_to_frame_ms": 3347.365,
+        "dispatch_delay_ms": 9.943,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1878x1050"
+      }
+    ],
+    "before-chrome-repeat": [],
+    "before-chrome": [
+      {
+        "action": "restore",
+        "host_to_frame_ms": null,
+        "request_to_frame_ms": null,
+        "dispatch_delay_ms": 269.359,
+        "no_frame_observed_for_ms": null,
+        "expected_client": null
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": 1372.77,
+        "request_to_frame_ms": 1596.645,
+        "dispatch_delay_ms": 3.72,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1878x1050"
+      },
+      {
+        "action": "restore",
+        "host_to_frame_ms": 360.643,
+        "request_to_frame_ms": 425.089,
+        "dispatch_delay_ms": 3.493,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "916x1026"
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": null,
+        "request_to_frame_ms": null,
+        "dispatch_delay_ms": 5138.513,
+        "no_frame_observed_for_ms": 4797.215,
+        "expected_client": "1878x1050"
+      },
+      {
+        "action": "restore",
+        "host_to_frame_ms": 634.759,
+        "request_to_frame_ms": 694.022,
+        "dispatch_delay_ms": 7.82,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "916x1026"
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": 555.556,
+        "request_to_frame_ms": 635.238,
+        "dispatch_delay_ms": 8.445,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1878x1050"
+      }
+    ],
+    "before-steam": [
+      {
+        "action": "restore",
+        "host_to_frame_ms": 760.238,
+        "request_to_frame_ms": 808.618,
+        "dispatch_delay_ms": 9.461,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1367x800"
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": 1202.564,
+        "request_to_frame_ms": 1259.059,
+        "dispatch_delay_ms": 2.877,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1878x1050"
+      },
+      {
+        "action": "restore",
+        "host_to_frame_ms": 772.334,
+        "request_to_frame_ms": 821.631,
+        "dispatch_delay_ms": 2.709,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1367x800"
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": null,
+        "request_to_frame_ms": null,
+        "dispatch_delay_ms": 18.225,
+        "no_frame_observed_for_ms": 9918.81,
+        "expected_client": "1878x1050"
+      },
+      {
+        "action": "restore",
+        "host_to_frame_ms": 2604.46,
+        "request_to_frame_ms": 2691.239,
+        "dispatch_delay_ms": 8.778,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1367x800"
+      },
+      {
+        "action": "max",
+        "host_to_frame_ms": 601.382,
+        "request_to_frame_ms": 690.615,
+        "dispatch_delay_ms": 6.041,
+        "no_frame_observed_for_ms": null,
+        "expected_client": "1878x1050"
+      }
+    ]
+  },
+  "limitations": [
+    "Steam Store content black/loading; shell only",
+    "Chrome reverse-order baseline startup failed twice",
+    "Censored samples are not completed latencies",
+    "Multi-second producer stalls and hosted Metal visual continuity remain unresolved"
+  ],
+  "qualification": "diagnostic only; control-file polling materially perturbed the CEF main thread",
+  "probe_profile": {
+    "main_thread_samples": 700,
+    "control_poll_samples": 130,
+    "fopen_samples": 81,
+    "fscanf_samples": 41
+  },
+  "measurement_window_finished": "2026-11-02 approximately 23:37 MST",
+  "all_owned_processes_stopped": true,
+  "second_window_required": true
+}

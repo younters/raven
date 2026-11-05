@@ -83,5 +83,43 @@ int main()
 	check(access(ticket,F_OK)!=0);
 	ui.remove(200); ui.remove(201); ui.poll(std::chrono::milliseconds(0));
 	policy(NSApplicationActivationPolicyAccessory);
+	// Geometry changes are coalesced without waiting for a bitmap acknowledgement.
+	ui.frame(300,{},0x40000U);
+	ui.present(300,"Resize contract",100,80,pixels);
+	NSWindow *resizing=nil;
+	for (NSWindow *candidate in NSApp.windows)
+		if ([candidate.title isEqualToString:@"Resize contract"]) resizing=candidate;
+	check(resizing!=nil);
+	NSRect rect=resizing.frame; rect.size=NSMakeSize(240,180);
+	[resizing setFrame:rect display:NO];
+	rect.size=NSMakeSize(260,190); [resizing setFrame:rect display:NO];
+	auto events=ui.poll(std::chrono::milliseconds(0));
+	std::optional<raven::DesktopEvent> request;
+	for (const auto &event:events)
+		if (event.window==300 && event.kind==raven::DesktopEventKind::resize) {
+			check(!request); request=event;
+		}
+	check(request.has_value());
+	ui.present(300,"Resize contract",100,80,pixels);
+	check(NSEqualSizes(resizing.frame.size,rect.size)); // Stale paint cannot roll geometry back.
+	ui.resize_complete(300,request->wparam,100,80); // Guest veto restores accepted geometry.
+	check(resizing.frame.size.width==100 && resizing.frame.size.height==80);
+	// Completion precedes producer repaint: the old bitmap must still not roll back.
+	rect.size=NSMakeSize(260,190); [resizing setFrame:rect display:NO];
+	for (const auto &event:ui.poll(std::chrono::milliseconds(0)))
+		if (event.window==300 && event.kind==raven::DesktopEventKind::resize) request=event;
+	ui.resize_complete(300,request->wparam,260,190);
+	ui.present(300,"Resize contract",100,80,pixels);
+	check(NSEqualSizes(resizing.frame.size,rect.size));
+	std::vector<uint8_t> resized_pixels(260*190*4,255);
+	ui.present(300,"Resize contract",260,190,resized_pixels);
+	check(NSEqualSizes(resizing.frame.size,rect.size));
+	// A destroyed guest target acknowledges with zero extent, never a zero-sized host frame.
+	rect.size=NSMakeSize(280,200); [resizing setFrame:rect display:NO];
+	for (const auto &event:ui.poll(std::chrono::milliseconds(0)))
+		if (event.window==300 && event.kind==raven::DesktopEventKind::resize) request=event;
+	ui.resize_complete(300,request->wparam,0,0);
+	check(NSEqualSizes(resizing.frame.size,rect.size));
+	ui.remove(300);
 	return 0;
 }
