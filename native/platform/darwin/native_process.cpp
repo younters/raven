@@ -1305,8 +1305,24 @@ bool NativeProcess::memory_available(uint64_t address, size_t size) const
 	for (const auto &[start, mapping] : state->mappings)
 		if (address < mapping.address + mapping.size && mapping.address < end)
 			return false;
-	// The agent, Rosetta and the libraries they load live in the guest's address space too; only the agent knows where.
-	return state->service(RAVEN_SERVICE_AVAILABLE, {address, size}, "availability") != 0;
+	// Low memory is a permanent reservation whose free pages only the agent tracks.
+	if (address < RAVEN_LOW_END && !state->service(RAVEN_SERVICE_AVAILABLE,
+		{address, std::min(end, uint64_t(RAVEN_LOW_END)) - address}, "availability"))
+		return false;
+	if (end <= RAVEN_LOW_END)
+		return true;
+	// Query the high address space from the host. Running an availability service in
+	// Rosetta can itself allocate translation storage in the gap we are inspecting.
+	mach_vm_address_t base = std::max(address, uint64_t(RAVEN_LOW_END));
+	mach_vm_size_t length = 0;
+	vm_region_basic_info_data_64_t info{};
+	mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+	mach_port_t object = MACH_PORT_NULL;
+	const auto status = mach_vm_region(state->child->task, &base, &length, VM_REGION_BASIC_INFO_64,
+		reinterpret_cast<vm_region_info_t>(&info), &count, &object);
+	if (object != MACH_PORT_NULL)
+		mach_port_deallocate(mach_task_self(), object);
+	return status == KERN_INVALID_ADDRESS || (status == KERN_SUCCESS && base >= end);
 }
 
 void NativeProcess::discard_memory(uint64_t address, size_t size)
