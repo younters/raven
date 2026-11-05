@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "fex_process.h"
+#include <fcntl.h>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -201,6 +202,23 @@ int main(int argc, char **argv)
 				process.unmap_memory(address);
 				check(!process.has_protection(address, 4096, PROT_READ | PROT_WRITE), "shared view survived teardown");
 			}
+			// A file opened only for reading still maps, at any Windows page offset: this is how a read-only view avoids a copy.
+			char path[] = "/tmp/raven-shared-view-XXXXXX";
+			const int writer = mkstemp(path);
+			check(writer >= 0, "cannot create read-only view fixture");
+			check(ftruncate(writer, 65536) == 0, "cannot size read-only view fixture");
+			const uint8_t marker = 0x5a;
+			check(pwrite(writer, &marker, 1, 4096) == 1, "cannot seed read-only view fixture");
+			const int reader = open(path, O_RDONLY);
+			unlink(path);
+			close(writer);
+			check(reader >= 0, "cannot reopen read-only view fixture");
+			const auto view = process.map_shared(reader, 20480, 4096);
+			check(process.read_memory(view, 1)[0] == marker, "read-only file view has the wrong bytes");
+			process.protect_memory(view, 20480, PROT_READ);
+			check(process.read_memory(view, 1)[0] == marker, "read-only file view lost its bytes when protected");
+			process.unmap_memory(view);
+			close(reader);
 			std::cout << "PASS: shared Windows page offsets and teardown\n";
 			return 0;
 		}

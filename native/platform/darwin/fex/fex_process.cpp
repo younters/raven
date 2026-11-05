@@ -17,6 +17,7 @@ static bool raven_unix_fault_pc(uintptr_t pc);
 #include <libproc.h>
 #include <set>
 #include <map>
+#include <fcntl.h>
 #include <sys/mman.h>
 #include <atomic>
 #include <condition_variable>
@@ -1635,7 +1636,12 @@ uint64_t FexProcess::map_shared(int descriptor, size_t size, uint64_t offset, ui
 	// preceding file header. Keep the reservation base for exact teardown.
 	const auto address = map_memory(size + delta, PROT_READ | PROT_WRITE, requested ? requested - delta : 0);
 	const auto n = state->regions.at(address).size;
-	void *mapped = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, descriptor, off_t(offset - delta));
+	// A file opened only for reading cannot back a writable shared mapping, and refusing it has the caller copy the whole file into
+	// an allocation instead. Nothing writes through such a view, whose logical protection the caller lowers next, so the file's pages
+	// serve it as they are.
+	const int open_flags = fcntl(descriptor, F_GETFL);
+	const int sharing = open_flags != -1 && (open_flags & O_ACCMODE) == O_RDONLY ? MAP_PRIVATE : MAP_SHARED;
+	void *mapped = mmap(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE, MAP_FIXED | sharing, descriptor, off_t(offset - delta));
 	if (mapped == MAP_FAILED) { unmap_memory(address); throw std::runtime_error("FEX shared descriptor mapping failed"); }
 	state->regions.at(address).shared = true;
 	// Logical permissions remain unchanged. FEX must validate executable bytes
