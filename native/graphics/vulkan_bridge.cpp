@@ -634,6 +634,12 @@ bool VulkanBridge::dispatch(std::string_view name)
 		VkPhysicalDeviceProperties properties;
 		std::memset(&properties, 0, sizeof(properties));
 		vkGetPhysicalDeviceProperties(found->second.handle, &properties);
+#ifdef __APPLE__
+		// MoltenVK reports 2^30. Programs written against Windows drivers multiply this by a work group size in 32 bits, and the zero that
+		// gives makes them split their work into empty dispatches forever. 65535 is what Direct3D fixes and what Vulkan guarantees.
+		for (auto &count : properties.limits.maxComputeWorkGroupCount)
+			count = std::min(count, 65535U);
+#endif
 		write(arguments[1], properties);
 	}
 	process.return_api(result);
