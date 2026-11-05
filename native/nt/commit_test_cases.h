@@ -4,6 +4,14 @@
 
 static void commit_test_cases(raven::NativeProcess &process, raven::NativeEnvironment &environment, raven::NativeMemory &memory)
 {
+	// A guest thread stopped inside its section must not stop the host for good, and the word is free again afterwards.
+	{
+		uint64_t block[raven::commit_guest_lock/8+1]{};
+		block[raven::commit_guest_lock/8]=1;
+		const auto start=std::chrono::steady_clock::now();
+		{ raven::CommitBlockLock lock(block); }
+		check(std::chrono::steady_clock::now()-start<std::chrono::seconds(5) && !block[raven::commit_guest_lock/8],"stopped guest section held the host");
+	}
 	// Exhaustion must leave a cold reservation inaccessible, with no charge change.
 	const auto cold=memory.allocate(0,32768,0x2000,4);
 	check(!cold.status && memory.allocate(cold.address,20480,0x1000,4).status==0xc000012dU &&
