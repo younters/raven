@@ -1,0 +1,26 @@
+diff --git a/FEXCore/Source/Interface/Core/Addressing.cpp b/FEXCore/Source/Interface/Core/Addressing.cpp
+index 86d4760..bccbcb1 100644
+--- a/FEXCore/Source/Interface/Core/Addressing.cpp
++++ b/FEXCore/Source/Interface/Core/Addressing.cpp
+@@ -62,10 +62,18 @@ AddressMode SelectAddressMode(IREmitter* IREmit, const AddressMode& A, IR::OpSiz
+   }
+   if (Is32Bit && A.AddrSize == OpSize::i64Bit) {
+     // Synthetic structure offsets must never pass through another 32-bit wrap.
++    // No base at all, not an invalid node: LoadEffectiveAddress would add a node that holds no value to the rest of the address.
+     auto Offset = A;
+-    Offset.Base = IREmit->Invalid();
+-    return {.Base = A.Base, .Index = LoadEffectiveAddress(IREmit, Offset, OpSize::i64Bit, true),
+-            .IndexType = MemOffsetType::SXTX, .IndexScale = 1};
++    Offset.Base = nullptr;
++    auto Index = LoadEffectiveAddress(IREmit, Offset, OpSize::i64Bit, true);
++    if (!Index) {
++      return {.Base = A.Base, .Index = IREmit->Invalid()};
++    }
++    // An ordered integer access only has the [Xn] form, and the backend would drop a register index.
++    if (AtomicTSO && !Vector) {
++      return {.Base = IREmit->Add(OpSize::i64Bit, A.Base, Index), .Index = IREmit->Invalid()};
++    }
++    return {.Base = A.Base, .Index = Index, .IndexType = MemOffsetType::SXTX, .IndexScale = 1};
+   }
+   const auto GPRSizeMatchesAddrSize = A.AddrSize == GPRSize;
+   const auto OffsetIndexToLargeFor32Bit = Is32Bit && (A.Offset <= -16384 || A.Offset >= 16384);

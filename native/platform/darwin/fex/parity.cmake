@@ -238,6 +238,22 @@ if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
     endforeach()
 endif()
 
+if(RAVEN_FEX_MODHOST AND RAVEN_MINGW32)
+    set(bit_memory_fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-bit-memory32.exe)
+    add_fex_parity_fixture(${bit_memory_fixture} "${RAVEN_MINGW32}" _raven_entry
+        ${RAVEN_DARWIN_DIR}/fex/bit_memory_client.c)
+    add_custom_target(fex_bit_memory_fixture DEPENDS ${bit_memory_fixture})
+    add_dependencies(raven fex_bit_memory_fixture)
+    foreach(engine native fex)
+        add_test(NAME native_bit_memory_x32_${engine} COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py --require-modules --backend ${engine}
+            --raven $<TARGET_FILE:raven> --fixture ${bit_memory_fixture}
+            --modules "${RAVEN_FEX_MODULE_ROOT}")
+        set_tests_properties(native_bit_memory_x32_${engine} PROPERTIES TIMEOUT 30
+            LABELS "engine-parity;cpu")
+    endforeach()
+endif()
+
 if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
     set(loop_fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-loop-context.exe)
     add_fex_parity_fixture(${loop_fixture} "${RAVEN_MINGW64}" raven_entry
