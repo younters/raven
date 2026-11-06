@@ -13,11 +13,16 @@ constexpr uint64_t wow64_user_limit(uint16_t characteristics)
 	return characteristics & 0x20 ? 0xffff0000ULL : 0x7fff0000ULL;
 }
 
-// A program's limit, which RAVEN_LARGE_ADDRESS_AWARE raises as if its image asked for it: the Direct3D 9 backend keeps its textures in the
-// program's address space, where a Windows driver would not, so a program that fits in 2 GiB on Windows may not here.
+// Set for a program that carries the mtld3d Direct3D 9 backend: it keeps its textures in the program's address space, where a Windows driver
+// would not, so a program that fits in 2 GiB on Windows may not here.
+inline bool wow64_backend_needs_address_space = false;
+
+// A program's limit: as its image asks, raised for the backend above. RAVEN_LARGE_ADDRESS_AWARE=1 raises it for any program and =0 for none.
 inline uint64_t wow64_program_limit(uint16_t characteristics)
 {
-	return wow64_user_limit(std::getenv("RAVEN_LARGE_ADDRESS_AWARE") ? uint16_t(characteristics | 0x20) : characteristics);
+	const char *choice = std::getenv("RAVEN_LARGE_ADDRESS_AWARE");
+	const bool raise = choice ? *choice != '0' : wow64_backend_needs_address_space;
+	return wow64_user_limit(raise ? uint16_t(characteristics | 0x20) : characteristics);
 }
 
 // Opt-in in-process x64/WoW64 engine behind the Darwin NativeProcess seam.

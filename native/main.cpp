@@ -334,6 +334,11 @@ int main(int argc, char **argv)
 				auto &module = modules.add(std::filesystem::path(argv[i]).filename().string(), std::move(bytes));
 				if (!entry) {
 					entry = &module;
+#ifdef RAVEN_FEX_PROCESS
+					// mtld3d is opted into by placing it beside the program.
+					std::error_code no_backend;
+					raven::wow64_backend_needs_address_space = std::filesystem::exists(std::filesystem::path(argv[i]).parent_path() / "mtld3d.dll", no_backend);
+#endif
 					// A program runs elevated when its manifest asks for it or when the process that started it is elevated.
 					raven::set_process_elevated(elevated || raven::manifest_requests_elevation(module.image, std::filesystem::path(argv[i]).filename().string()));
 					// The Windows Installer server, which msiexec runs as with -Embedding, works in the services' session, and so do the
