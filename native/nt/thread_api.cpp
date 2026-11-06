@@ -1481,6 +1481,34 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		semaphore->state = static_cast<SemaphoreState *>(semaphore->shared->data);
 		call.ret(objects.add_object(semaphore).value);
 	});
+	// SEMAPHORE_BASIC_INFORMATION is the only class Windows has: the current and the maximum count.
+	registry.add("NtQuerySemaphore", 5, [&objects](ApiCall &call) {
+		const auto semaphore = objects.object_as<SemaphoreObject>(call[0]);
+		if (!semaphore) {
+			call.ret(0xc0000008U);
+			return;
+		}
+		if (call.u32(1)) {
+			call.ret(0xc0000003U);
+			return;
+		}
+		if (call.u32(3) != 2 * sizeof(int32_t)) {
+			call.ret(0xc0000004U);
+			return;
+		}
+		const int32_t info[]{semaphore->state->count.load(), semaphore->state->maximum};
+		try {
+			call.write(call[2], std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(info), sizeof(info)));
+			if (call[4]) {
+				const uint32_t written = sizeof(info);
+				call.write(call[4], std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&written), sizeof(written)));
+			}
+		} catch (const std::runtime_error &) {
+			call.ret(0xc0000005U);
+			return;
+		}
+		call.ret(0);
+	});
 	registry.add("ReleaseSemaphore", 3, [&objects](ApiCall &call) {
 		const auto semaphore = objects.object_as<SemaphoreObject>(call[0]);
 		const int32_t amount = call.i32(1);

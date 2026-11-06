@@ -88,6 +88,15 @@ UINT raven_entry(void)
 	if (local_zone != TIME_ZONE_ID_UNKNOWN && (!zone.StandardDate.wMonth || !zone.DaylightDate.wMonth ||
 		zone.StandardDate.wYear || zone.DaylightDate.wYear || !zone.StandardDate.wDay || zone.StandardDate.wDay > 5 ||
 		!zone.DaylightDate.wDay || zone.DaylightDate.wDay > 5)) return 23;
+	/* The count and the limit of a semaphore, and what is refused. */
+	LONG (WINAPI *query_semaphore)(HANDLE, int, void *, ULONG, ULONG *) = (void *)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQuerySemaphore");
+	if (!query_semaphore) return 24;
+	HANDLE semaphore = CreateSemaphoreW(NULL, 2, 5, NULL);
+	LONG counts[2] = {0, 0};
+	ULONG written = 0;
+	if (query_semaphore(semaphore, 0, counts, sizeof(counts), &written) || counts[0] != 2 || counts[1] != 5 || written != sizeof(counts)) return 25;
+	if (query_semaphore(semaphore, 0, counts, sizeof(LONG), NULL) != (LONG)0xc0000004 || query_semaphore(mapping, 0, counts, sizeof(counts), NULL) != (LONG)0xc0000008) return 26;
+	CloseHandle(semaphore);
 	CloseHandle(readable);
 	CloseHandle(mapping);
 	return 0;

@@ -2162,6 +2162,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"NtImpersonateAnonymousToken", "NtOpenSection"})
 		nt_names.push_back(name);
 	nt_names.push_back("strncpy"); // winemetal.dll can be loaded after ntdll's export table was built.
+	nt_names.push_back("NtQuerySemaphore"); // So can Mullion's, which reads a semaphore's count.
 #endif
 	nt_names.insert(nt_names.end(),NativeEnvironment::nt_exports().begin(),NativeEnvironment::nt_exports().end());
 	nt_names.insert(nt_names.end(),NativeObjectAPI::nt_exports().begin(),NativeObjectAPI::nt_exports().end());
