@@ -323,6 +323,7 @@ void NativeWindows::present(uint64_t handle, bool force)
 		presentation.frame(handle,{window->x-window->outer.left,window->y-window->outer.top-menu,window->outer.right-window->x-window->width,
 			window->outer.bottom-window->y-window->height},window->style);
 	}
+	if (presentation.transient_for) presentation.transient_for(handle,owning ? owner : 0);
 	presentation.present(handle,encode_utf8(window->title,true),bitmap->width,bitmap->height,pixels);
 	place_host_surface(handle);
 	place_overlays(handle,*bitmap,pixels);
@@ -714,12 +715,14 @@ void NativeWindows::release_surface(uint64_t handle)
 	if (!window->parent && dirty_roots.contains(handle) && presentation.present && window->bitmap) {
 		try { present(handle, true); } catch (...) {}
 	}
+	objects.abandon_paint(handle);
 	objects.detach_window_dcs(handle);
 	if (!window->parent) {
 		// Children draw on the root's bitmap through their own surface contexts; those follow it out.
 		const auto drop=[&](auto &&self,uint64_t node) -> void {
 			for (const auto child:objects.child_windows(node)) {
 				self(self,child);
+				objects.abandon_paint(child);
 				objects.detach_window_dcs(child);
 				if (auto *record=objects.window(child)) {
 					if (record->dc) objects.erase(record->dc);
@@ -3054,8 +3057,10 @@ bool NativeWindows::dispatch(std::string_view name)
 			auto *window=objects.window(args[0]); if (!window) throw uint32_t(1400);
 			const bool narrow=process.mode()==NativeMode::x86;
 			const auto paint=process.read_memory(args[1],narrow ? 64 : 72);
-			if (!window->painting || read(paint,0,narrow ? 4 : 8)!=window->dc) throw uint32_t(87);
-			finish_paint(args[0]);
+			// A paint the window's surface ended early, when the window changed size inside it, has nothing left to finish; EndPaint
+			// still succeeds, as it always does on Windows.
+			if (window->painting && read(paint,0,narrow ? 4 : 8)!=window->dc) throw uint32_t(87);
+			if (window->painting) finish_paint(args[0]);
 			result=1;
 		}
 		else if (name=="ReleaseDC") {

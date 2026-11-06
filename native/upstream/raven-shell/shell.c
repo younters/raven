@@ -572,6 +572,7 @@ static HRESULT make_dialog(BOOL save, REFIID iid, void **out)
 
 HRESULT raven_make_shell_link(REFIID iid, void **out);
 HRESULT raven_make_known_folder_manager(REFIID iid, void **out);
+HRESULT raven_make_global_interface_table(REFIID iid, void **out);
 HRESULT raven_create_registered(REFCLSID clsid, LPUNKNOWN outer, DWORD context, REFIID iid, void **out);
 HRESULT raven_registered_class_object(REFCLSID clsid, DWORD context, REFIID iid, void **out);
 
@@ -635,27 +636,39 @@ static HRESULT make_taskbar_list(REFIID iid, void **out)
 	return result;
 }
 
-/* COM options belong to the process, so separate GlobalOptions objects see the same values. Raven's in-process calls propagate
- * exceptions directly; COMGLB_EXCEPTION_DONOT_HANDLE is the policy programs use to keep their crash handlers in charge. */
-typedef struct { IGlobalOptions face; LONG refs; } GlobalOptions;
+/* Global options ---------------------------------------------------------------------------------------------- */
+
+static const CLSID global_options_class = {0x0000034b, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+static const CLSID global_interface_table_class = {0x00000323, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+static const IID global_options_iid = {0x0000015b, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+
+/* The process-wide COM settings a program sets once while it starts, such as whether calls into its objects swallow exceptions. Every
+ * object shares one table, as each one stands for the same process; nothing here acts on the values, which are only kept and read back. */
 static ULONG_PTR global_options[COMGLB_UNMARSHALING_POLICY + 1];
-static SRWLOCK global_options_lock = SRWLOCK_INIT;
-static const CLSID global_options_class = {0x0000034b, 0, 0, {0xc0, 0, 0, 0, 0, 0, 0, 0x46}};
+
+typedef struct {
+	IGlobalOptions face;
+	LONG refs;
+} OptionsObject;
 
 static HRESULT STDMETHODCALLTYPE go_query(IGlobalOptions *self, REFIID iid, void **out)
 {
-	if (!out) return E_POINTER;
+	if (!out)
+		return E_POINTER;
+	if (same_iid(iid, &IID_IUnknown) || same_iid(iid, &global_options_iid)) {
+		*out = self;
+		InterlockedIncrement(&((OptionsObject *)self)->refs);
+		return S_OK;
+	}
 	*out = NULL;
-	if (!same_iid(iid, &IID_IUnknown) && !same_iid(iid, &IID_IGlobalOptions)) return E_NOINTERFACE;
-	*out = self;
-	InterlockedIncrement(&((GlobalOptions *)self)->refs);
-	return S_OK;
+	return E_NOINTERFACE;
 }
-static ULONG STDMETHODCALLTYPE go_add_ref(IGlobalOptions *self) { return InterlockedIncrement(&((GlobalOptions *)self)->refs); }
+static ULONG STDMETHODCALLTYPE go_add_ref(IGlobalOptions *self) { return InterlockedIncrement(&((OptionsObject *)self)->refs); }
 static ULONG STDMETHODCALLTYPE go_release(IGlobalOptions *self)
 {
-	const LONG refs = InterlockedDecrement(&((GlobalOptions *)self)->refs);
-	if (!refs) HeapFree(GetProcessHeap(), 0, self);
+	const LONG refs = InterlockedDecrement(&((OptionsObject *)self)->refs);
+	if (!refs)
+		HeapFree(GetProcessHeap(), 0, self);
 	return refs;
 }
 static HRESULT STDMETHODCALLTYPE go_set(IGlobalOptions *self, GLOBALOPT_PROPERTIES property, ULONG_PTR value)
@@ -663,27 +676,29 @@ static HRESULT STDMETHODCALLTYPE go_set(IGlobalOptions *self, GLOBALOPT_PROPERTI
 	if (property < COMGLB_EXCEPTION_HANDLING || property > COMGLB_UNMARSHALING_POLICY ||
 		(property == COMGLB_EXCEPTION_HANDLING && value > COMGLB_EXCEPTION_DONOT_HANDLE_ANY) ||
 		(property == COMGLB_RPC_THREADPOOL_SETTING && value != COMGLB_RPC_THREADPOOL_SETTING_PRIVATE_POOL) ||
-		(property == COMGLB_UNMARSHALING_POLICY && value > COMGLB_UNMARSHALING_POLICY_HYBRID)) return E_INVALIDARG;
-	AcquireSRWLockExclusive(&global_options_lock);
+		(property == COMGLB_UNMARSHALING_POLICY && value > COMGLB_UNMARSHALING_POLICY_HYBRID))
+		return E_INVALIDARG;
 	global_options[property] = value;
-	ReleaseSRWLockExclusive(&global_options_lock);
 	return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE go_get(IGlobalOptions *self, GLOBALOPT_PROPERTIES property, ULONG_PTR *value)
 {
-	if (!value) return E_POINTER;
-	if (property < COMGLB_EXCEPTION_HANDLING || property > COMGLB_UNMARSHALING_POLICY) return E_INVALIDARG;
-	AcquireSRWLockShared(&global_options_lock);
+	if (!value)
+		return E_POINTER;
+	if (property < COMGLB_EXCEPTION_HANDLING || property > COMGLB_UNMARSHALING_POLICY)
+		return E_INVALIDARG;
 	*value = global_options[property];
-	ReleaseSRWLockShared(&global_options_lock);
 	return S_OK;
 }
-static IGlobalOptionsVtbl global_options_vtbl = {go_query, go_add_ref, go_release, go_set, go_get};
+
+static IGlobalOptionsVtbl options_vtbl = {go_query, go_add_ref, go_release, go_set, go_get};
+
 static HRESULT make_global_options(REFIID iid, void **out)
 {
-	GlobalOptions *options = HeapAlloc(GetProcessHeap(), 0, sizeof *options);
-	if (!options) return E_OUTOFMEMORY;
-	options->face.lpVtbl = &global_options_vtbl;
+	OptionsObject *options = HeapAlloc(GetProcessHeap(), 0, sizeof *options);
+	if (!options)
+		return E_OUTOFMEMORY;
+	options->face.lpVtbl = &options_vtbl;
 	options->refs = 1;
 	const HRESULT result = go_query(&options->face, iid, out);
 	go_release(&options->face);
@@ -706,6 +721,8 @@ static HRESULT make_builtin(REFCLSID clsid, REFIID iid, void **out, BOOL *served
 		return make_taskbar_list(iid, out);
 	if (same_iid(clsid, &CLSID_KnownFolderManager))
 		return raven_make_known_folder_manager(iid, out);
+	if (same_iid(clsid, &global_interface_table_class))
+		return raven_make_global_interface_table(iid, out);
 	*served = FALSE;
 	return REGDB_E_CLASSNOTREG;
 }
@@ -749,8 +766,9 @@ static IClassFactoryVtbl builtin_factory_vtbl = {bf_query, bf_add_ref, bf_releas
 
 static BOOL builtin_class(REFCLSID clsid)
 {
-	return same_iid(clsid, &global_options_class) || same_iid(clsid, &CLSID_FileOpenDialog) || same_iid(clsid, &CLSID_FileSaveDialog) || same_iid(clsid, &CLSID_ShellLink) ||
-		same_iid(clsid, &CLSID_TaskbarList) || same_iid(clsid, &CLSID_KnownFolderManager);
+	return same_iid(clsid, &CLSID_FileOpenDialog) || same_iid(clsid, &CLSID_FileSaveDialog) || same_iid(clsid, &CLSID_ShellLink) ||
+		same_iid(clsid, &CLSID_TaskbarList) || same_iid(clsid, &CLSID_KnownFolderManager) || same_iid(clsid, &global_options_class) ||
+		same_iid(clsid, &global_interface_table_class);
 }
 
 

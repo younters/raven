@@ -2,17 +2,274 @@
  * Copyright (c) 2026 Mirko Brombin
  * See LICENSES/MIT.txt.
  */
-/* Raven shell component: the OLE clipboard over the Win32 one.
- *
- * OleSetClipboard renders every format the data object offers in a global block onto the Win32 clipboard at once, as
- * OleFlushClipboard would; the object stays the current clipboard object until another replaces it. OleGetClipboard hands out
- * a data object that reads the Win32 clipboard when asked, so what other programs (and the host) put there is what it offers. */
 #define CINTERFACE
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <objbase.h>
+#include <objidl.h>
 #include <ole2.h>
+
+/* The data object OleGetClipboard hands out: a view of the clipboard as it is when the object is asked, so every call opens the
+ * clipboard, takes what it holds in the format asked for and closes it again. Data is given as global memory the caller owns. */
+
+static BOOL same_iid(REFIID left, REFIID right)
+{
+	return !memcmp(left, right, sizeof(IID));
+}
+
+/* --- The formats on the clipboard, listed when the enumerator is made. --- */
+
+typedef struct
+{
+	IEnumFORMATETC iface;
+	LONG refs;
+	ULONG count, next;
+	FORMATETC formats[];
+} format_list;
+
+static const IEnumFORMATETCVtbl format_vtbl;
+
+static format_list *new_format_list(const FORMATETC *formats, ULONG count, ULONG next)
+{
+	format_list *self = HeapAlloc(GetProcessHeap(), 0, sizeof(*self) + count * sizeof(FORMATETC));
+	if (!self)
+		return NULL;
+	self->iface.lpVtbl = &format_vtbl;
+	self->refs = 1;
+	self->count = count;
+	self->next = next;
+	if (count)
+		memcpy(self->formats, formats, count * sizeof(FORMATETC));
+	return self;
+}
+
+static HRESULT WINAPI formats_QueryInterface(IEnumFORMATETC *iface, REFIID iid, void **out)
+{
+	if (!out)
+		return E_POINTER;
+	if (same_iid(iid, &IID_IUnknown) || same_iid(iid, &IID_IEnumFORMATETC))
+	{
+		*out = iface;
+		IEnumFORMATETC_AddRef(iface);
+		return S_OK;
+	}
+	*out = NULL;
+	return E_NOINTERFACE;
+}
+
+static ULONG WINAPI formats_AddRef(IEnumFORMATETC *iface)
+{
+	return InterlockedIncrement(&((format_list *)iface)->refs);
+}
+
+static ULONG WINAPI formats_Release(IEnumFORMATETC *iface)
+{
+	const LONG refs = InterlockedDecrement(&((format_list *)iface)->refs);
+	if (!refs)
+		HeapFree(GetProcessHeap(), 0, iface);
+	return refs;
+}
+
+static HRESULT WINAPI formats_Next(IEnumFORMATETC *iface, ULONG wanted, FORMATETC *out, ULONG *fetched)
+{
+	format_list *self = (format_list *)iface;
+	ULONG given = 0;
+	if (!out || (wanted > 1 && !fetched))
+		return E_INVALIDARG;
+	while (given < wanted && self->next < self->count)
+		out[given++] = self->formats[self->next++];
+	if (fetched)
+		*fetched = given;
+	return given == wanted ? S_OK : S_FALSE;
+}
+
+static HRESULT WINAPI formats_Skip(IEnumFORMATETC *iface, ULONG count)
+{
+	format_list *self = (format_list *)iface;
+	const ULONG left = self->count - self->next;
+	self->next += count < left ? count : left;
+	return count <= left ? S_OK : S_FALSE;
+}
+
+static HRESULT WINAPI formats_Reset(IEnumFORMATETC *iface)
+{
+	((format_list *)iface)->next = 0;
+	return S_OK;
+}
+
+static HRESULT WINAPI formats_Clone(IEnumFORMATETC *iface, IEnumFORMATETC **out)
+{
+	format_list *self = (format_list *)iface, *copy;
+	if (!out)
+		return E_POINTER;
+	copy = new_format_list(self->formats, self->count, self->next);
+	*out = copy ? &copy->iface : NULL;
+	return copy ? S_OK : E_OUTOFMEMORY;
+}
+
+static const IEnumFORMATETCVtbl format_vtbl = {formats_QueryInterface, formats_AddRef, formats_Release, formats_Next, formats_Skip,
+	formats_Reset, formats_Clone};
+
+/* --- The data object. --- */
+
+#define CLIPBOARD_CANT_OPEN ((HRESULT)0x800401d0)
+
+static HRESULT WINAPI data_QueryInterface(IDataObject *iface, REFIID iid, void **out)
+{
+	if (!out)
+		return E_POINTER;
+	if (same_iid(iid, &IID_IUnknown) || same_iid(iid, &IID_IDataObject))
+	{
+		*out = iface;
+		return S_OK;
+	}
+	*out = NULL;
+	return E_NOINTERFACE;
+}
+
+/* One object serves every caller, as the clipboard is one. */
+static ULONG WINAPI data_AddRef(IDataObject *iface)
+{
+	return 2;
+}
+
+static ULONG WINAPI data_Release(IDataObject *iface)
+{
+	return 1;
+}
+
+static HRESULT check_format(const FORMATETC *format)
+{
+	if (!format)
+		return E_INVALIDARG;
+	if (format->lindex != -1)
+		return DV_E_LINDEX;
+	if (!(format->tymed & TYMED_HGLOBAL))
+		return DV_E_TYMED;
+	if (format->dwAspect != DVASPECT_CONTENT)
+		return DV_E_DVASPECT;
+	return IsClipboardFormatAvailable(format->cfFormat) ? S_OK : DV_E_FORMATETC;
+}
+
+static HRESULT WINAPI data_GetData(IDataObject *iface, FORMATETC *format, STGMEDIUM *medium)
+{
+	HRESULT result;
+	HANDLE source;
+	HGLOBAL copy = NULL;
+	if (!medium)
+		return E_INVALIDARG;
+	memset(medium, 0, sizeof(*medium));
+	result = check_format(format);
+	if (FAILED(result))
+		return result;
+	if (!OpenClipboard(NULL))
+		return CLIPBOARD_CANT_OPEN;
+	source = GetClipboardData(format->cfFormat);
+	if (source)
+	{
+		const SIZE_T size = GlobalSize(source);
+		const void *bytes = GlobalLock(source);
+		copy = bytes ? GlobalAlloc(GMEM_MOVEABLE, size) : NULL;
+		if (copy)
+		{
+			memcpy(GlobalLock(copy), bytes, size);
+			GlobalUnlock(copy);
+		}
+		if (bytes)
+			GlobalUnlock(source);
+	}
+	CloseClipboard();
+	if (!copy)
+		return source ? E_OUTOFMEMORY : DV_E_FORMATETC;
+	medium->tymed = TYMED_HGLOBAL;
+	medium->hGlobal = copy;
+	return S_OK;
+}
+
+static HRESULT WINAPI data_GetDataHere(IDataObject *iface, FORMATETC *format, STGMEDIUM *medium)
+{
+	return E_NOTIMPL;
+}
+
+static HRESULT WINAPI data_QueryGetData(IDataObject *iface, FORMATETC *format)
+{
+	return check_format(format);
+}
+
+static HRESULT WINAPI data_GetCanonicalFormatEtc(IDataObject *iface, FORMATETC *format, FORMATETC *out)
+{
+	if (!format || !out)
+		return E_INVALIDARG;
+	*out = *format;
+	out->ptd = NULL;
+	return DATA_S_SAMEFORMATETC;
+}
+
+static HRESULT WINAPI data_SetData(IDataObject *iface, FORMATETC *format, STGMEDIUM *medium, BOOL release)
+{
+	return E_NOTIMPL;
+}
+
+static HRESULT WINAPI data_EnumFormatEtc(IDataObject *iface, DWORD direction, IEnumFORMATETC **out)
+{
+	FORMATETC formats[64];
+	ULONG count = 0;
+	UINT format = 0;
+	format_list *list;
+	if (!out)
+		return E_INVALIDARG;
+	*out = NULL;
+	if (direction != DATADIR_GET)
+		return E_NOTIMPL;
+	if (!OpenClipboard(NULL))
+		return CLIPBOARD_CANT_OPEN;
+	while (count < ARRAYSIZE(formats) && (format = EnumClipboardFormats(format)))
+	{
+		FORMATETC *entry = &formats[count++];
+		entry->cfFormat = (CLIPFORMAT)format;
+		entry->ptd = NULL;
+		entry->dwAspect = DVASPECT_CONTENT;
+		entry->lindex = -1;
+		entry->tymed = TYMED_HGLOBAL;
+	}
+	CloseClipboard();
+	list = new_format_list(formats, count, 0);
+	if (!list)
+		return E_OUTOFMEMORY;
+	*out = &list->iface;
+	return S_OK;
+}
+
+static HRESULT WINAPI data_DAdvise(IDataObject *iface, FORMATETC *format, DWORD flags, IAdviseSink *sink, DWORD *connection)
+{
+	return OLE_E_ADVISENOTSUPPORTED;
+}
+
+static HRESULT WINAPI data_DUnadvise(IDataObject *iface, DWORD connection)
+{
+	return OLE_E_ADVISENOTSUPPORTED;
+}
+
+static HRESULT WINAPI data_EnumDAdvise(IDataObject *iface, IEnumSTATDATA **out)
+{
+	return OLE_E_ADVISENOTSUPPORTED;
+}
+
+static const IDataObjectVtbl data_vtbl = {data_QueryInterface, data_AddRef, data_Release, data_GetData, data_GetDataHere,
+	data_QueryGetData, data_GetCanonicalFormatEtc, data_SetData, data_EnumFormatEtc, data_DAdvise, data_DUnadvise, data_EnumDAdvise};
+static IDataObject clipboard_object = {(IDataObjectVtbl *)&data_vtbl};
+
+HRESULT WINAPI OleGetClipboard(IDataObject **out)
+{
+	if (!out)
+		return E_INVALIDARG;
+	*out = &clipboard_object;
+	return S_OK;
+}
+
+/* --- Setting the clipboard: OleSetClipboard renders every format the data object offers in a global block onto the Win32 clipboard at once,
+ * as OleFlushClipboard would; the object stays the current clipboard object until another replaces it. --- */
 
 static IDataObject *current;
 /* The clipboard's sequence number once the object was rendered: once it moves on, someone else owns the clipboard. */
@@ -159,205 +416,4 @@ void WINAPI ReleaseStgMedium(STGMEDIUM *medium)
 		IUnknown_Release(medium->pUnkForRelease);
 	medium->tymed = TYMED_NULL;
 	medium->pUnkForRelease = NULL;
-}
-
-/* The formats on the clipboard when the enumerator was made, one at a time. */
-typedef struct {
-	IEnumFORMATETC iface;
-	LONG references;
-	UINT *formats;
-	ULONG count, position;
-} Formats;
-
-static HRESULT WINAPI formats_query(IEnumFORMATETC *self, REFIID iid, void **out)
-{
-	if (!out)
-		return E_POINTER;
-	if (InlineIsEqualGUID(iid, &IID_IUnknown) || InlineIsEqualGUID(iid, &IID_IEnumFORMATETC)) {
-		*out = self;
-		IEnumFORMATETC_AddRef(self);
-		return S_OK;
-	}
-	*out = NULL;
-	return E_NOINTERFACE;
-}
-static ULONG WINAPI formats_add_ref(IEnumFORMATETC *self) { return InterlockedIncrement(&((Formats *)self)->references); }
-static ULONG WINAPI formats_release(IEnumFORMATETC *self)
-{
-	Formats *formats = (Formats *)self;
-	const LONG left = InterlockedDecrement(&formats->references);
-	if (!left) {
-		HeapFree(GetProcessHeap(), 0, formats->formats);
-		HeapFree(GetProcessHeap(), 0, formats);
-	}
-	return left;
-}
-static HRESULT WINAPI formats_next(IEnumFORMATETC *self, ULONG wanted, FORMATETC *out, ULONG *fetched)
-{
-	Formats *formats = (Formats *)self;
-	ULONG given = 0;
-	if (!out || (wanted > 1 && !fetched))
-		return E_INVALIDARG;
-	for (; given < wanted && formats->position < formats->count; ++given, ++formats->position) {
-		const FORMATETC format = {(CLIPFORMAT)formats->formats[formats->position], NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-		out[given] = format;
-	}
-	if (fetched)
-		*fetched = given;
-	return given == wanted ? S_OK : S_FALSE;
-}
-static HRESULT WINAPI formats_skip(IEnumFORMATETC *self, ULONG count)
-{
-	Formats *formats = (Formats *)self;
-	const ULONG left = formats->count - formats->position;
-	formats->position += count < left ? count : left;
-	return count <= left ? S_OK : S_FALSE;
-}
-static HRESULT WINAPI formats_reset(IEnumFORMATETC *self)
-{
-	((Formats *)self)->position = 0;
-	return S_OK;
-}
-static HRESULT make_formats(const UINT *list, ULONG count, ULONG position, IEnumFORMATETC **out);
-static HRESULT WINAPI formats_clone(IEnumFORMATETC *self, IEnumFORMATETC **out)
-{
-	Formats *formats = (Formats *)self;
-	return out ? make_formats(formats->formats, formats->count, formats->position, out) : E_POINTER;
-}
-static IEnumFORMATETCVtbl formats_vtbl = {formats_query, formats_add_ref, formats_release, formats_next, formats_skip, formats_reset,
-	formats_clone};
-
-static HRESULT make_formats(const UINT *list, ULONG count, ULONG position, IEnumFORMATETC **out)
-{
-	Formats *formats = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof *formats);
-	if (formats)
-		formats->formats = HeapAlloc(GetProcessHeap(), 0, (count ? count : 1) * sizeof *list);
-	if (!formats || !formats->formats) {
-		if (formats)
-			HeapFree(GetProcessHeap(), 0, formats);
-		*out = NULL;
-		return E_OUTOFMEMORY;
-	}
-	formats->iface.lpVtbl = &formats_vtbl;
-	formats->references = 1;
-	memcpy(formats->formats, list, count * sizeof *list);
-	formats->count = count;
-	formats->position = position;
-	*out = &formats->iface;
-	return S_OK;
-}
-
-/* The clipboard as a data object: each request reads what the clipboard holds then. */
-typedef struct {
-	IDataObject iface;
-	LONG references;
-} Clipboard;
-
-static HRESULT WINAPI clipboard_query(IDataObject *self, REFIID iid, void **out)
-{
-	if (!out)
-		return E_POINTER;
-	if (InlineIsEqualGUID(iid, &IID_IUnknown) || InlineIsEqualGUID(iid, &IID_IDataObject)) {
-		*out = self;
-		IDataObject_AddRef(self);
-		return S_OK;
-	}
-	*out = NULL;
-	return E_NOINTERFACE;
-}
-static ULONG WINAPI clipboard_add_ref(IDataObject *self) { return InterlockedIncrement(&((Clipboard *)self)->references); }
-static ULONG WINAPI clipboard_release(IDataObject *self)
-{
-	const LONG left = InterlockedDecrement(&((Clipboard *)self)->references);
-	if (!left)
-		HeapFree(GetProcessHeap(), 0, self);
-	return left;
-}
-static HRESULT WINAPI clipboard_get_data(IDataObject *self, FORMATETC *format, STGMEDIUM *medium)
-{
-	HGLOBAL copy = NULL;
-	if (!format || !medium)
-		return E_INVALIDARG;
-	if (!(format->tymed & TYMED_HGLOBAL))
-		return DV_E_TYMED;
-	if (!IsClipboardFormatAvailable(format->cfFormat))
-		return DV_E_FORMATETC;
-	if (!OpenClipboard(NULL))
-		return CLIPBRD_E_CANT_OPEN;
-	{
-		HANDLE held = GetClipboardData(format->cfFormat);
-		if (held)
-			copy = copy_global(held);
-	}
-	CloseClipboard();
-	if (!copy)
-		return DV_E_FORMATETC;
-	medium->tymed = TYMED_HGLOBAL;
-	medium->hGlobal = copy;
-	medium->pUnkForRelease = NULL;
-	return S_OK;
-}
-static HRESULT WINAPI clipboard_get_data_here(IDataObject *self, FORMATETC *format, STGMEDIUM *medium) { return E_NOTIMPL; }
-static HRESULT WINAPI clipboard_query_get_data(IDataObject *self, FORMATETC *format)
-{
-	if (!format)
-		return E_INVALIDARG;
-	if (!(format->tymed & TYMED_HGLOBAL))
-		return DV_E_TYMED;
-	return IsClipboardFormatAvailable(format->cfFormat) ? S_OK : DV_E_FORMATETC;
-}
-static HRESULT WINAPI clipboard_canonical(IDataObject *self, FORMATETC *in, FORMATETC *out)
-{
-	if (out)
-		out->ptd = NULL;
-	return DATA_S_SAMEFORMATETC;
-}
-static HRESULT WINAPI clipboard_set_data(IDataObject *self, FORMATETC *format, STGMEDIUM *medium, BOOL release) { return E_NOTIMPL; }
-static HRESULT WINAPI clipboard_enum(IDataObject *self, DWORD direction, IEnumFORMATETC **out)
-{
-	UINT list[256];
-	ULONG count = 0;
-	if (!out)
-		return E_POINTER;
-	if (direction != DATADIR_GET) {
-		*out = NULL;
-		return E_NOTIMPL;
-	}
-	if (OpenClipboard(NULL)) {
-		for (UINT format = EnumClipboardFormats(0); format && count < ARRAYSIZE(list); format = EnumClipboardFormats(format))
-			list[count++] = format;
-		CloseClipboard();
-	}
-	return make_formats(list, count, 0, out);
-}
-static HRESULT WINAPI clipboard_advise(IDataObject *self, FORMATETC *format, DWORD flags, IAdviseSink *sink, DWORD *connection)
-{
-	return OLE_E_ADVISENOTSUPPORTED;
-}
-static HRESULT WINAPI clipboard_unadvise(IDataObject *self, DWORD connection) { return OLE_E_ADVISENOTSUPPORTED; }
-static HRESULT WINAPI clipboard_enum_advise(IDataObject *self, IEnumSTATDATA **out) { return OLE_E_ADVISENOTSUPPORTED; }
-static IDataObjectVtbl clipboard_vtbl = {clipboard_query, clipboard_add_ref, clipboard_release, clipboard_get_data,
-	clipboard_get_data_here, clipboard_query_get_data, clipboard_canonical, clipboard_set_data, clipboard_enum, clipboard_advise,
-	clipboard_unadvise, clipboard_enum_advise};
-
-HRESULT WINAPI OleGetClipboard(IDataObject **out)
-{
-	Clipboard *clipboard;
-	if (!out)
-		return E_INVALIDARG;
-	/* The program's own object, while it is still the clipboard's, answers with everything it can render. */
-	if (still_current()) {
-		*out = current;
-		IDataObject_AddRef(current);
-		return S_OK;
-	}
-	clipboard = HeapAlloc(GetProcessHeap(), 0, sizeof *clipboard);
-	if (!clipboard) {
-		*out = NULL;
-		return E_OUTOFMEMORY;
-	}
-	clipboard->iface.lpVtbl = &clipboard_vtbl;
-	clipboard->references = 1;
-	*out = &clipboard->iface;
-	return S_OK;
 }

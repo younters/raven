@@ -2177,7 +2177,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			nt_names.push_back(name);
 	}
 	// Natives that the shared API registry implements.
-	for (const auto name : {"NtSetInformationThread", "NtOpenThreadToken", "NtOpenThreadTokenEx", "NtOpenThread", "NtOpenProcess", "NtOpenProcessToken", "NtOpenProcessTokenEx", "NtQueryInformationProcess", "NtReadVirtualMemory", "NtWriteVirtualMemory", "NtQuerySection", "NtFlushInstructionCache", "RtlAddGrowableFunctionTable", "RtlGrowFunctionTable", "RtlDeleteGrowableFunctionTable",
+	for (const auto name : {"NtSetInformationThread", "NtOpenThreadToken", "NtOpenThreadTokenEx", "NtOpenThread", "NtOpenProcess", "NtOpenProcessToken", "NtOpenProcessTokenEx", "NtCompareTokens", "NtQueryInformationProcess", "NtReadVirtualMemory", "NtWriteVirtualMemory", "NtQuerySection", "NtFlushInstructionCache", "RtlAddGrowableFunctionTable", "RtlGrowFunctionTable", "RtlDeleteGrowableFunctionTable",
 		"NtWriteFile", "NtQueryDirectoryFile", "ZwQueryDirectoryFile", "RtlNtStatusToDosError", "NtQueryObject", "NtMapViewOfSection", "NtUnmapViewOfSection",
 		"RtlAcquireSRWLockExclusive", "RtlAcquireSRWLockShared", "RtlWakeConditionVariable", "RtlWakeAllConditionVariable", "RtlWaitOnAddress",
 		"RtlWakeAddressSingle", "RtlWakeAddressAll",
@@ -2199,6 +2199,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"RtlDosPathNameToNtPathName_U_WithStatus", "NtCancelIoFile", "NtCreateSection", "NtFsControlFile", "NtReadFile", "RtlCreateUnicodeStringFromAsciiz", "RtlFreeHeap",
 		"RtlFreeUnicodeString", "RtlDllShutdownInProgress", "RtlGetVersion", "RtlGetNtVersionNumbers", "RtlIpv6AddressToStringExW", "RtlIpv6StringToAddressW", "RtlLengthSid", "RtlUnicodeToMultiByteN",
 		"RtlUnicodeToMultiByteSize", "RtlIsTextUnicode", "RtlImageNtHeader", "NtDeleteKey",
+		// What the Chromium Embedded Framework imports from ntdll, which the WebBrowser control loads when it first shows a page.
+		"RtlFormatCurrentUserKeyPath", "RtlGetLastNtStatus",
 		// What a browser installer looks up about the machine it runs on.
 		"RtlGetDeviceFamilyInfoEnum", "RtlConvertDeviceFamilyInfoToString",
 		// The unwinding of 64-bit frames, which libraries built with their own exception handling import.
@@ -2209,7 +2211,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"DbgPrintEx", "DbgPrompt", "RtlVerifyVersionInfo", "RtlInitializeBitMap", "RtlSetBits", "RtlClearBits", "RtlSetAllBits",
 		"RtlClearAllBits", "RtlAreBitsClear", "RtlAreBitsSet", "RtlFindClearBits", "RtlFindClearBitsAndSet", "RtlNumberOfSetBits",
 		"RtlInitializeSListHead", "RtlInterlockedPushEntrySList", "RtlInterlockedPopEntrySList", "RtlInterlockedFlushSList",
-		"RtlQueryDepthSList",
+		"RtlQueryDepthSList", "RtlFirstEntrySList",
 		// What Wine's builds of the Direct3D 10.1 and Direct2D libraries import from ntdll.
 		"_vsnprintf",
 		// The registry natives, which libraries loaded after start (the Click-to-Run integration of Office among them) import by name.
@@ -2830,8 +2832,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				if (name_first && failure_arguments.size() > name_index && failure_arguments[name_index] > 0xffff) {
 					std::string text;
 					try {
-						const auto raw = process.read_memory(failure_arguments[name_index], 240);
-						for (size_t i = 0; i < 120 && (raw[i * 2] | raw[i * 2 + 1]); ++i)
+						const auto raw = process.read_memory(failure_arguments[name_index], 520);
+						for (size_t i = 0; i < 260 && (raw[i * 2] | raw[i * 2 + 1]); ++i)
 							text.push_back(raw[i * 2 + 1] ? '?' : char(raw[i * 2]));
 					} catch (...) {}
 					std::cerr << " name=" << text;
@@ -2927,6 +2929,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		kernel.process_token = std::make_shared<AccessToken>(launch->process_token_fd);
 	threads.set_watched([reactor = kernel.reactor](std::vector<pollfd> &descriptors) { reactor->watch(descriptors); });
 	windows.set_global_allocator([&allocator](uint64_t size) { return allocator.allocate(size,true); });
+	windows.set_global_data([&allocator](uint64_t handle) { return allocator.data(handle); });
 	kernel.queue_status=[&windows](uint32_t thread,uint32_t mask,bool clear) { return windows.queue_status(thread,mask,clear); };
 	kernel.queue_quiet=[&windows](uint32_t thread) { windows.mark_quiet(thread); };
 	windows.set_block([&threads](std::function<bool()> ready) {

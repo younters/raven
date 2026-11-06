@@ -132,7 +132,8 @@ def main():
     # The shell component is Raven code on the public headers: the file dialogs and the class registries of COM and the Windows Runtime.
     shell_support = repo / "native/upstream/raven-shell"
     shell_objects = [objects / "shell.o", objects / "shell_link.o", objects / "shell_com.o", objects / "shell_crt.o", objects / "shell_stream.o", objects / "shell_dialog.o",
-                     objects / "shell_netaddress.o", objects / "shell_winrt.o", objects / "shell_knownfolder.o", objects / "shell_clipboard.o", objects / "shell_rot.o", objects / "shell_folder.o", objects / "shell_errorinfo.o"]
+                     objects / "shell_netaddress.o", objects / "shell_winrt.o", objects / "shell_knownfolder.o", objects / "shell_rot.o", objects / "shell_folder.o", objects / "shell_errorinfo.o",
+                     objects / "shell_clipboard.o"]
     shell_flags = ["-O2", "-w", "-ffreestanding", f"-ffile-prefix-map={repo}=raven"]
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "shell.c", "-o", shell_objects[0]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "link.c", "-o", shell_objects[1]])
@@ -143,10 +144,10 @@ def main():
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "netaddress.c", "-o", shell_objects[6]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "winrt.c", "-o", shell_objects[7]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "knownfolder.c", "-o", shell_objects[8]])
-    run([triple + "-gcc", "-c", *shell_flags, shell_support / "clipboard.c", "-o", shell_objects[9]])
-    run([triple + "-gcc", "-c", *shell_flags, shell_support / "rot.c", "-o", shell_objects[10]])
-    run([triple + "-gcc", "-c", *shell_flags, shell_support / "folder.c", "-o", shell_objects[11]])
-    run([triple + "-gcc", "-c", *shell_flags, shell_support / "errorinfo.c", "-o", shell_objects[12]])
+    run([triple + "-gcc", "-c", *shell_flags, shell_support / "rot.c", "-o", shell_objects[9]])
+    run([triple + "-gcc", "-c", *shell_flags, shell_support / "folder.c", "-o", shell_objects[10]])
+    run([triple + "-gcc", "-c", *shell_flags, shell_support / "errorinfo.c", "-o", shell_objects[11]])
+    run([triple + "-gcc", "-c", *shell_flags, shell_support / "clipboard.c", "-o", shell_objects[12]])
     shell_defined = decorated(shell_objects)
     shell_names = ("GetRunningObjectTable", "CreateItemMoniker", "CoCreateInstance", "CoCreateInstanceEx", "CoGetClassObject", "CoGetTreatAsClass", "CoGetMalloc", "SHCreateItemFromParsingName", "SHGetPropertyStoreForWindow", "PropVariantClear", "SHAppBarMessage", "GetOpenFileNameW", "GetSaveFileNameW", "CommDlgExtendedError", "GetFileTitleW", "IUnknown_QueryService", "QISearch", "CLSIDFromProgID",
                    "SHCreateStreamOnFileA", "SHCreateStreamOnFileW", "SHCreateStreamOnFileEx", "SHCreateMemStream", "PropVariantCopy", "CoGetContextToken", "CoGetObjectContext", "ExtractIconExW", "ExtractIconW", "UiaGetReservedNotSupportedValue", "UiaGetReservedMixedAttributeValue", "SHGetMalloc",
@@ -154,7 +155,7 @@ def main():
                    "RoGetActivationFactory", "RoActivateInstance", "CoCreateFreeThreadedMarshaler",
                    "SHBrowseForFolderW", "SHBrowseForFolderA", "OleSetClipboard", "OleGetClipboard", "OleFlushClipboard", "OleIsCurrentClipboard", "ReleaseStgMedium",
                    "SHGetDesktopFolder", "SHCreateItemFromIDList", "CreateFileMoniker", "SHLoadIndirectString", "SHGetPropertyStoreFromParsingName", "ILGetSize", "ILGetNext", "ILFindLastID", "ILClone", "ILCloneFirst", "ILCombine", "ILFree", "ILCreateFromPathW", "ILIsEqual",
-                   "CreateErrorInfo", "SetErrorInfo", "GetErrorInfo")
+                   "CreateErrorInfo", "SetErrorInfo", "GetErrorInfo", "CoWaitForMultipleHandles", "OleGetClipboard")
     (output / "raven-shell.def").write_text("NAME raven-shell.dll\nEXPORTS\n" + "".join(definition_line(name, shell_defined.get(name)) for name in shell_names))
     run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['shell']:#x},--no-insert-timestamp", *link_extra,
          "-o", output / "raven-shell.dll", *shell_objects, output / "raven-shell.def", "-luser32", "-lgdi32", "-ladvapi32", "-lkernel32", "-lole32", "-loleaut32", "-luuid", "-lruntimeobject", "-lshell32", "-lgcc"])

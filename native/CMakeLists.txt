@@ -145,9 +145,22 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
             COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/l_intl.nls ${CMAKE_CURRENT_BINARY_DIR}/x86/l_intl.nls
             DEPENDS ${PROJECT_SOURCE_DIR}/scripts/generate-intl-nls.py VERBATIM)
         add_custom_target(intl_nls ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/l_intl.nls ${CMAKE_CURRENT_BINARY_DIR}/x86/l_intl.nls)
+        # The runtime's Windows Runtime metadata, which prefixes keep in System32\WinMetadata for .NET programs that call the Windows Runtime.
+        add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/WinMetadata/Windows.winmd
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/WinMetadata
+            COMMAND ${Python3_EXECUTABLE} -I ${PROJECT_SOURCE_DIR}/scripts/generate-winmd.py ${PROJECT_SOURCE_DIR}/native/upstream/raven-winmd/windows.types
+                ${CMAKE_CURRENT_BINARY_DIR}/WinMetadata/Windows.winmd
+            DEPENDS ${PROJECT_SOURCE_DIR}/scripts/generate-winmd.py ${PROJECT_SOURCE_DIR}/native/upstream/raven-winmd/windows.types VERBATIM)
+        add_custom_target(windows_winmd ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/WinMetadata/Windows.winmd)
     endif()
     target_sources(raven_cpu PRIVATE nt/nls.cpp nt/multibyte.cpp nt/startup.cpp nt/launch.cpp nt/file.cpp nt/prefix.cpp nt/registry.cpp nt/advapi_api.cpp nt/msvcrt_api.cpp nt/profile_api.cpp nt/x86_process.cpp nt/x86_thread_api.cpp nt/x86_compat_api.cpp nt/x86_loader.cpp nt/x86_system_api.cpp nt/registry_words.cpp nt/x86_tls.cpp nt/x86_com.cpp nt/x86_dsound.cpp nt/x86_d3d9.cpp ${CMAKE_CURRENT_BINARY_DIR}/nls-generated/nls-cp1252.h
         ${CMAKE_CURRENT_BINARY_DIR}/nls-generated/nls-sbcs.h ${CMAKE_CURRENT_BINARY_DIR}/nls-generated/nls-dbcs.h)
+    # The browser version of the runtime's WebView2 runtime, which the registry names and the runtime's folder carries: the Chromium
+    # version of the page engine it draws with.
+    file(READ ${PROJECT_SOURCE_DIR}/native/upstream/raven-webengine/cef.json cef_manifest)
+    string(JSON cef_release GET ${cef_manifest} version)
+    string(REGEX REPLACE ".*chromium-" "" RAVEN_WEBVIEW_VERSION ${cef_release})
+    target_compile_definitions(raven_cpu PRIVATE RAVEN_WEBVIEW_VERSION=u"${RAVEN_WEBVIEW_VERSION}")
     file(SHA256 ${CMAKE_CURRENT_SOURCE_DIR}/upstream/unicode/cp1252-decomposition.inc DECOMPOSITION_HASH)
     if(NOT DECOMPOSITION_HASH STREQUAL "dc36d1023c7fcd96043122aae2854b6f67febb7debfe4be8780aadbb5a9ba30b")
         message(FATAL_ERROR "Pinned CP1252 decompositions differ")
@@ -170,7 +183,11 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
         target_link_libraries(raven_cpu PUBLIC OpenSSL::Crypto)
         target_compile_definitions(raven_cpu PRIVATE RAVEN_OPENSSL=1)
         # The Schannel package of SSPI is a TLS client over the same library.
-        target_sources(raven_cpu PRIVATE nt/schannel_api.cpp)
+        target_sources(raven_cpu PRIVATE nt/schannel_api.cpp nt/ntlm.cpp)
+        add_executable(ntlm_test nt/ntlm_test.cpp)
+        target_link_libraries(ntlm_test PRIVATE raven_cpu)
+        add_test(NAME native_ntlm_contract COMMAND ntlm_test)
+        set_tests_properties(native_ntlm_contract PROPERTIES TIMEOUT 15)
         # WinINet's HTTP client uses it for HTTPS.
         target_sources(raven_cpu PRIVATE nt/wininet_api.cpp)
         target_link_libraries(raven_cpu PUBLIC OpenSSL::SSL)
@@ -644,7 +661,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                 -Wl,--entry,raven_entry,--image-base,0x1d0000000,--no-insert-timestamp
                 -o ${CLIP_CLIENT} ${PROJECT_SOURCE_DIR}/testdata/native_loader/clip_client.c -luser32 -lgdi32 -lkernel32
             DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/clip_client.c VERBATIM)
-        add_custom_target(clip_pe_fixtures ALL DEPENDS ${CLIP_CLIENT} ${CLIP_PAINT_CLIENT})
+        # A window that resizes itself while it paints ends that paint and paints again.
+        set(PAINT_RESIZE_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/paint-resize-client.exe)
+        add_custom_command(OUTPUT ${PAINT_RESIZE_CLIENT}
+            COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector -fno-builtin
+                -Wl,--entry,raven_entry,--image-base,0x1d0000000,--no-insert-timestamp
+                -o ${PAINT_RESIZE_CLIENT} ${PROJECT_SOURCE_DIR}/testdata/native_loader/paint_resize_client.c -luser32 -lgdi32 -lkernel32
+            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/paint_resize_client.c VERBATIM)
+        add_custom_target(clip_pe_fixtures ALL DEPENDS ${CLIP_CLIENT} ${CLIP_PAINT_CLIENT} ${PAINT_RESIZE_CLIENT})
+        add_test(NAME native_paint_resize COMMAND raven --run-process --execution=native --timeout-ms=30000 ${PAINT_RESIZE_CLIENT})
+        set_tests_properties(native_paint_resize PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
         add_executable(clip_test desktop/clip_test.cpp)
         target_link_libraries(clip_test PRIVATE raven_cpu)
         add_dependencies(clip_test clip_pe_fixtures raven-bootstrap)
@@ -1128,6 +1154,14 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
         add_custom_target(dc_attribute_pe_fixture ALL DEPENDS ${DC_ATTRIBUTE_FIXTURE})
         add_test(NAME native_dc_attribute_cli COMMAND raven --run-process --execution=native ${DC_ATTRIBUTE_FIXTURE})
         set_tests_properties(native_dc_attribute_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        set(TRANSPARENT_CHILD_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/transparent-child-fixture.exe)
+        add_custom_command(OUTPUT ${TRANSPARENT_CHILD_FIXTURE}
+            COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector -Wl,--entry,raven_entry,--no-insert-timestamp
+                -o ${TRANSPARENT_CHILD_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/native_loader/transparent_child_client.c -lgdi32 -luser32 -lkernel32
+            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/transparent_child_client.c VERBATIM)
+        add_custom_target(transparent_child_pe_fixture ALL DEPENDS ${TRANSPARENT_CHILD_FIXTURE})
+        add_test(NAME native_transparent_child_cli COMMAND raven --run-process --execution=native ${TRANSPARENT_CHILD_FIXTURE})
+        set_tests_properties(native_transparent_child_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
         set(RELEASE_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/release-fixture.exe)
         add_custom_command(OUTPUT ${RELEASE_FIXTURE}
             COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
@@ -1523,7 +1557,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
             set(installer_copies)
             foreach(component msi.dll cabinet.dll sxs.dll rpcrt4.dll raven-storage.dll msiexec.exe msxml3.dll atl100.dll oleaut32.dll
                 libpng.dll libjpeg.dll libtiff.dll propsys.dll mlang.dll windowscodecs.dll gdiplus.dll urlmon.dll riched20.dll msftedit.dll msvfw32.dll advpack.dll raven-setupapi.dll xmllite.dll
-                raven-appx.dll)
+                raven-appx.dll mspatcha.dll vbscript.dll scrrun.dll wshom.ocx jscript.dll)
                 if(NOT EXISTS "${installer_dir}/${component}")
                     message(FATAL_ERROR "Configured installer component does not exist: ${installer_dir}/${component}")
                 endif()
@@ -1555,6 +1589,61 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                 add_custom_target(appx_fixture_${installer_arch} ALL DEPENDS ${appx_fixture}/appx-client.exe ${appx_fixture}/appx-good.msix)
                 add_test(NAME native_appx_packaging_${installer_arch} COMMAND raven --run-process --execution=native ${appx_fixture}/appx-client.exe)
                 set_tests_properties(native_appx_packaging_${installer_arch} PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                # Delta patches mspatcha_fixtures.py writes, applied through the mspatcha exports by name, handle and buffer.
+                set(mspatcha_fixture ${CMAKE_CURRENT_BINARY_DIR}/mspatcha-fixtures/${installer_arch})
+                add_custom_command(OUTPUT ${mspatcha_fixture}/mspatcha-client.exe ${mspatcha_fixture}/delta.pa19
+                    COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/testdata/native_loader/mspatcha_fixtures.py ${mspatcha_fixture}
+                    COMMAND ${installer_compiler} -O2 -nostdlib -fno-stack-protector -fno-builtin
+                        -Wl,--entry,${installer_entry},--no-insert-timestamp -o ${mspatcha_fixture}/mspatcha-client.exe
+                        ${PROJECT_SOURCE_DIR}/testdata/native_loader/mspatcha_client.c -lkernel32
+                    DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/mspatcha_fixtures.py ${PROJECT_SOURCE_DIR}/testdata/native_loader/mspatcha_client.c
+                    VERBATIM)
+                add_custom_target(mspatcha_fixture_${installer_arch} ALL DEPENDS ${mspatcha_fixture}/mspatcha-client.exe ${mspatcha_fixture}/delta.pa19)
+                add_test(NAME native_mspatcha_${installer_arch} COMMAND raven --run-process --execution=native ${mspatcha_fixture}/mspatcha-client.exe)
+                set_tests_properties(native_mspatcha_${installer_arch} PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                # The VBScript engine as a script host drives it: vbscript_tests.vbs through a site with a named item, then an expression, the
+                # script's globals through IDispatch and the errors the site is told of.
+                set(vbscript_fixture ${CMAKE_CURRENT_BINARY_DIR}/vbscript-fixtures/${installer_arch})
+                add_custom_command(OUTPUT ${vbscript_fixture}/vbscript-client.exe ${vbscript_fixture}/vbscript_tests.vbs
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${vbscript_fixture}
+                    COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/testdata/native_loader/vbscript_tests.vbs ${vbscript_fixture}/vbscript_tests.vbs
+                    COMMAND ${installer_compiler} -O2 -nostdlib -fno-stack-protector -fno-builtin
+                        -Wl,--entry,${installer_entry},--no-insert-timestamp -o ${vbscript_fixture}/vbscript-client.exe
+                        ${PROJECT_SOURCE_DIR}/testdata/native_loader/vbscript_client.c -lole32 -loleaut32 -luuid -luser32 -lmsvcrt -lkernel32
+                    DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/vbscript_client.c ${PROJECT_SOURCE_DIR}/testdata/native_loader/vbscript_tests.vbs
+                    VERBATIM)
+                add_custom_target(vbscript_fixture_${installer_arch} ALL DEPENDS ${vbscript_fixture}/vbscript-client.exe ${vbscript_fixture}/vbscript_tests.vbs)
+                add_test(NAME native_vbscript_${installer_arch} COMMAND raven --run-process --execution=native ${vbscript_fixture}/vbscript-client.exe)
+                set_tests_properties(native_vbscript_${installer_arch} PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                # The script host runs scrrun_tests.vbs: the WScript object, the Dictionary and the file system through the scripting runtime;
+                # then wshom_tests.vbs: the shell and network objects. Each prints how many checks passed, or which failed.
+                if(installer_arch STREQUAL "x86")
+                    set(script_host ${CMAKE_CURRENT_BINARY_DIR}/x86/cscript.exe)
+                else()
+                    set(script_host ${CMAKE_CURRENT_BINARY_DIR}/cscript.exe)
+                endif()
+                add_custom_command(OUTPUT ${vbscript_fixture}/scrrun_tests.vbs
+                    COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/testdata/native_loader/scrrun_tests.vbs ${vbscript_fixture}/scrrun_tests.vbs
+                    DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/scrrun_tests.vbs VERBATIM)
+                add_custom_target(scrrun_fixture_${installer_arch} ALL DEPENDS ${vbscript_fixture}/scrrun_tests.vbs)
+                add_test(NAME native_cscript_${installer_arch} COMMAND raven --run-process --execution=native --stdio=inherit ${script_host} --
+                    //nologo Z:${vbscript_fixture}/scrrun_tests.vbs first /named:value "two words")
+                set_tests_properties(native_cscript_${installer_arch} PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "out line\r?\necho 1 True\r?\n[0-9]+ checks passed" FAIL_REGULAR_EXPRESSION "FAIL|failed")
+                add_custom_command(OUTPUT ${vbscript_fixture}/wshom_tests.vbs
+                    COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/testdata/native_loader/wshom_tests.vbs ${vbscript_fixture}/wshom_tests.vbs
+                    DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/wshom_tests.vbs VERBATIM)
+                add_custom_target(wshom_fixture_${installer_arch} ALL DEPENDS ${vbscript_fixture}/wshom_tests.vbs)
+                add_test(NAME native_wshom_${installer_arch} COMMAND raven --run-process --execution=native --stdio=inherit ${script_host} --
+                    //nologo Z:${vbscript_fixture}/wshom_tests.vbs)
+                set_tests_properties(native_wshom_${installer_arch} PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "[0-9]+ checks passed" FAIL_REGULAR_EXPRESSION "FAIL|failed")
+                # The JScript engine under the same host: the language, its built-in objects and the host's objects.
+                add_custom_command(OUTPUT ${vbscript_fixture}/jscript_tests.js
+                    COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/testdata/native_loader/jscript_tests.js ${vbscript_fixture}/jscript_tests.js
+                    DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/jscript_tests.js VERBATIM)
+                add_custom_target(jscript_fixture_${installer_arch} ALL DEPENDS ${vbscript_fixture}/jscript_tests.js)
+                add_test(NAME native_jscript_${installer_arch} COMMAND raven --run-process --execution=native --stdio=inherit ${script_host} --
+                    //nologo Z:${vbscript_fixture}/jscript_tests.js)
+                set_tests_properties(native_jscript_${installer_arch} PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "[0-9]+ checks passed" FAIL_REGULAR_EXPRESSION "FAIL|failed")
             endif()
             # A package made by wixl, read back as a database: tables, SQL views and the summary information stream; then installed.
             if(RAVEN_WIXL AND installer_compiler)
@@ -1649,23 +1738,28 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     set_tests_properties(native_msi_wow64_custom_actions PROPERTIES TIMEOUT 300 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
                         ENVIRONMENT RAVEN_PREFIX=${fixture}/wow64-prefix)
                 endif()
-                # VBScript custom actions. wixl writes no script actions, so msibuild turns its library actions into ones that run a function
-                # of the script in the Binary table (6, deferred without impersonation 3078) and into one whose target holds the script itself (38).
+                # VBScript and JScript custom actions. wixl writes no script actions, so msibuild turns its library actions into ones that run a
+                # function of the script in the Binary table (6, deferred without impersonation 3078; 5 for JScript) and into ones whose target
+                # holds the script itself (38, and 37 for JScript).
                 if(RAVEN_MSIBUILD)
                     file(MAKE_DIRECTORY ${fixture}/script)
                     add_custom_command(OUTPUT ${fixture}/script/script.msi ${fixture}/script/msi-script.exe
                         COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/testdata/native_loader/msi_payload.txt ${fixture}/script/msi_payload.txt
                         COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/testdata/native_loader/msi_script.vbs ${fixture}/script/msi_script.vbs
+                        COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/testdata/native_loader/msi_script.js ${fixture}/script/msi_script.js
                         COMMAND ${RAVEN_WIXL} -a ${installer_arch} -o ${fixture}/script/script.msi ${PROJECT_SOURCE_DIR}/testdata/native_loader/msi_script.wxs
                         COMMAND ${RAVEN_MSIBUILD} ${fixture}/script/script.msi -q [=[UPDATE `CustomAction` SET `Type` = 6 WHERE `Type` = 1]=]
                         COMMAND ${RAVEN_MSIBUILD} ${fixture}/script/script.msi -q [=[UPDATE `CustomAction` SET `Type` = 3078 WHERE `Type` = 3073]=]
                         COMMAND ${RAVEN_MSIBUILD} ${fixture}/script/script.msi -q
                             [=[UPDATE `CustomAction` SET `Type` = 38, `Source` = '', `Target` = 'Session.Property("INLINE_RESULT") = "inline " & (6 * 7)' WHERE `Action` = 'Inline']=]
+                        COMMAND ${RAVEN_MSIBUILD} ${fixture}/script/script.msi -q [=[UPDATE `CustomAction` SET `Type` = 5 WHERE `Action` = 'JMain']=]
+                        COMMAND ${RAVEN_MSIBUILD} ${fixture}/script/script.msi -q
+                            [=[UPDATE `CustomAction` SET `Type` = 37, `Source` = '', `Target` = 'Session.Property("JINLINE_RESULT") = "inline " + (6 * 7)' WHERE `Action` = 'JInline']=]
                         COMMAND ${installer_compiler} -O2 -nostdlib -fno-stack-protector -fno-builtin -Wl,--entry,${installer_entry},--no-insert-timestamp
                             -o ${fixture}/script/msi-script.exe ${PROJECT_SOURCE_DIR}/testdata/native_loader/msi_script_client.c -lmsi -ladvapi32 -lkernel32
                         WORKING_DIRECTORY ${fixture}/script
                         DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/msi_script.wxs ${PROJECT_SOURCE_DIR}/testdata/native_loader/msi_script.vbs
-                            ${PROJECT_SOURCE_DIR}/testdata/native_loader/msi_script_client.c ${PROJECT_SOURCE_DIR}/testdata/native_loader/msi_payload.txt VERBATIM)
+                            ${PROJECT_SOURCE_DIR}/testdata/native_loader/msi_script.js ${PROJECT_SOURCE_DIR}/testdata/native_loader/msi_script_client.c ${PROJECT_SOURCE_DIR}/testdata/native_loader/msi_payload.txt VERBATIM)
                     add_custom_target(msi_script_fixture_${installer_arch} ALL DEPENDS ${fixture}/script/script.msi ${fixture}/script/msi-script.exe)
                     add_test(NAME native_msi_script_actions_${installer_arch} COMMAND raven --run-process --execution=native --timeout-ms=120000
                         ${fixture}/script/msi-script.exe)
@@ -1741,12 +1835,15 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                 file(MAKE_DIRECTORY ${fixture}/actctx)
                 add_custom_command(OUTPUT ${fixture}/actctx/actctx.exe ${fixture}/actctx/actctx.manifest
                     COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/testdata/native_loader/actctx.manifest ${fixture}/actctx/actctx.manifest
+                    COMMAND ${CMAKE_COMMAND} -E copy ${PROJECT_SOURCE_DIR}/testdata/native_loader/actctx_classes.manifest
+                        ${PROJECT_SOURCE_DIR}/testdata/native_loader/Raven.Test.Managed.manifest ${fixture}/actctx
                     COMMAND ${resource_compiler} -O coff -i ${PROJECT_SOURCE_DIR}/testdata/native_loader/actctx.rc -o ${fixture}/actctx/actctx_res.o
                     COMMAND ${installer_compiler} -O2 -nostdlib -fno-stack-protector -fno-builtin -Wl,--entry,${installer_entry},--no-insert-timestamp
                         -o ${fixture}/actctx/actctx.exe ${PROJECT_SOURCE_DIR}/testdata/native_loader/actctx_client.c ${fixture}/actctx/actctx_res.o
-                        -lcomctl32 -luxtheme -lgdi32 -luser32 -lkernel32
+                        -lcomctl32 -luxtheme -lole32 -luuid -lgdi32 -luser32 -lkernel32
                     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/testdata/native_loader
                     DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/actctx_client.c ${PROJECT_SOURCE_DIR}/testdata/native_loader/actctx.manifest
+                        ${PROJECT_SOURCE_DIR}/testdata/native_loader/actctx_classes.manifest ${PROJECT_SOURCE_DIR}/testdata/native_loader/Raven.Test.Managed.manifest
                         ${PROJECT_SOURCE_DIR}/testdata/native_loader/actctx.rc VERBATIM)
                 add_custom_target(actctx_fixture_${installer_arch} ALL DEPENDS ${fixture}/actctx/actctx.exe)
                 add_test(NAME native_activation_contexts_${installer_arch} COMMAND raven --run-process --execution=native --timeout-ms=60000
@@ -2008,6 +2105,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
             set(ETW_CLIENTS)
             set(PROCESS_ENUM_CLIENTS)
             set(WORKSTATION_CLIENTS)
+            set(INITIALIZE_SPY_CLIENTS)
             foreach(width 64 32)
                 if(width EQUAL 64)
                     set(etw_compiler ${RAVEN_MINGW64})
@@ -2047,6 +2145,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     list(APPEND WORKSTATION_CLIENTS ${workstation_client})
                     add_test(NAME native_workstation_info_x${width} COMMAND raven --run-process --execution=native ${workstation_client})
                     set_tests_properties(native_workstation_info_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    # The spies programs register to hear of each COM initialization on their threads.
+                    set(initialize_spy_client ${CMAKE_CURRENT_BINARY_DIR}/initialize-spy${width}.exe)
+                    add_custom_command(OUTPUT ${initialize_spy_client}
+                        COMMAND ${etw_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -mno-stack-arg-probe
+                            -Wl,--entry,${etw_entry},--image-base,0x1e700000,--no-insert-timestamp
+                            -o ${initialize_spy_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/initialize_spy_client.c -lole32 -luuid -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/initialize_spy_client.c VERBATIM)
+                    list(APPEND INITIALIZE_SPY_CLIENTS ${initialize_spy_client})
+                    add_test(NAME native_initialize_spy_x${width} COMMAND raven --run-process --execution=native ${initialize_spy_client})
+                    set_tests_properties(native_initialize_spy_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                 endif()
             endforeach()
             add_custom_target(etw_controller_fixtures ALL DEPENDS ${ETW_CLIENTS})
@@ -2242,6 +2350,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                 endif()
             endforeach()
             add_custom_target(dynamic_dialog_fixtures ALL DEPENDS ${DYNAMIC_DIALOG_CLIENTS})
+            add_custom_target(initialize_spy_fixtures ALL DEPENDS ${INITIALIZE_SPY_CLIENTS})
             set(SOCKET_MESSAGE_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/socket-message-client.exe)
             add_custom_command(OUTPUT ${SOCKET_MESSAGE_CLIENT}
                 COMMAND ${RAVEN_MINGW64} -nostdlib -O1 -fno-builtin -fno-stack-protector
@@ -2277,6 +2386,28 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                 set_tests_properties(native_schannel_x64 PROPERTIES TIMEOUT 60)
             endif()
             find_program(RAVEN_MINGW32 i686-w64-mingw32-gcc)
+            # Windows authentication between two programs of the machine, through the Negotiate package, at both widths.
+            if(OPENSSL_FOUND)
+                foreach(width 64 32)
+                    set(ntlm_client ${CMAKE_CURRENT_BINARY_DIR}/ntlm-client${width}.exe)
+                    if(width EQUAL 64)
+                        set(ntlm_compiler ${RAVEN_MINGW64})
+                        set(ntlm_entry raven_entry)
+                    else()
+                        set(ntlm_compiler ${RAVEN_MINGW32})
+                        set(ntlm_entry _raven_entry)
+                    endif()
+                    if(ntlm_compiler)
+                        add_custom_command(OUTPUT ${ntlm_client}
+                            COMMAND ${ntlm_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${ntlm_entry},--no-insert-timestamp
+                                -o ${ntlm_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/ntlm_client.c -lsecur32 -ladvapi32 -lkernel32
+                            DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/ntlm_client.c VERBATIM)
+                        add_custom_target(ntlm_fixture${width} ALL DEPENDS ${ntlm_client})
+                        add_test(NAME native_ntlm_x${width} COMMAND raven --run-process --execution=native ${ntlm_client})
+                        set_tests_properties(native_ntlm_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    endif()
+                endforeach()
+            endif()
             set(REMOTE_PROCESS_CLIENTS)
             set(SHARED_WAIT_CLIENTS)
             set(PREFIX_SETUP_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/prefix-setup-client.exe)
@@ -2983,7 +3114,9 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                 add_dependencies(foreign_present_test vulkan_foreign64_fixture raven-bootstrap)
                 add_test(NAME native_vulkan_foreign_present_x64 COMMAND foreign_present_test
                     $<TARGET_FILE:raven-bootstrap> ${VULKAN_FIXTURES}/foreign-present64.exe)
-                set_tests_properties(native_vulkan_foreign_present_x64 PROPERTIES TIMEOUT 20 FAIL_REGULAR_EXPRESSION "Validation Error:|VUID-")
+                # A prefix of its own keeps its window records apart from the other tests that publish windows.
+                set_tests_properties(native_vulkan_foreign_present_x64 PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error:|VUID-"
+                    ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/foreign-present-x64-prefix)
                 add_custom_command(OUTPUT ${VULKAN_FIXTURES}/descriptor-buffer64.exe
                     COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector -mno-stack-arg-probe
                         -idirafter ${Vulkan_INCLUDE_DIRS} -I${PROJECT_SOURCE_DIR}/testdata/native_cpu
@@ -3016,7 +3149,9 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                         add_dependencies(foreign_present_test vulkan_foreign32_fixture)
                         add_test(NAME native_vulkan_foreign_present_x32 COMMAND foreign_present_test
                             $<TARGET_FILE:raven-bootstrap> ${VULKAN_FIXTURES}/foreign-present32.exe)
-                        set_tests_properties(native_vulkan_foreign_present_x32 PROPERTIES TIMEOUT 20 FAIL_REGULAR_EXPRESSION "Validation Error:|VUID-")
+                        # A prefix of its own keeps its window records apart from the other tests that publish windows.
+                        set_tests_properties(native_vulkan_foreign_present_x32 PROPERTIES TIMEOUT 60 FAIL_REGULAR_EXPRESSION "Validation Error:|VUID-"
+                            ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/foreign-present-x32-prefix)
                         add_custom_command(OUTPUT ${VULKAN_FIXTURES}/descriptor-buffer32.exe
                             COMMAND ${RAVEN_MINGW32_VULKAN} -minline-all-stringops -O2 -nostdlib -fno-stack-protector -mno-stack-arg-probe
                                 -I${VULKAN_GENERATED_DIR}/mingw-include -I${PROJECT_SOURCE_DIR}/testdata/native_cpu
@@ -3332,6 +3467,27 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                 list(APPEND RAVEN_CMD_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/x86/${tool_file})
             endif()
         endforeach()
+        # The script host, for the console and with windows, from one source; it hosts the script engines through COM.
+        set(RAVEN_WSH_LIBRARIES -lole32 -loleaut32 -luuid -luser32 -ladvapi32 -lkernel32 -lgcc)
+        foreach(host cscript wscript)
+            set(host_flags)
+            if(host STREQUAL "wscript")
+                set(host_flags -DWSH_WINDOWED -mwindows)
+            endif()
+            add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${host}.exe
+                COMMAND ${RAVEN_MINGW64} ${RAVEN_CMD_FLAGS} ${host_flags} -Wl,--entry,raven_tool_entry,--no-insert-timestamp
+                    -o ${CMAKE_CURRENT_BINARY_DIR}/${host}.exe ${RAVEN_TOOLS_DIRECTORY}/wsh.c ${RAVEN_WSH_LIBRARIES}
+                DEPENDS ${RAVEN_TOOLS_DIRECTORY}/wsh.c ${RAVEN_TOOL_HEADERS} VERBATIM)
+            list(APPEND RAVEN_CMD_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/${host}.exe)
+            if(RAVEN_MINGW32)
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/x86/${host}.exe
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/x86
+                    COMMAND ${RAVEN_MINGW32} ${RAVEN_CMD_FLAGS} ${host_flags} -Wl,--entry,_raven_tool_entry,--no-insert-timestamp
+                        -o ${CMAKE_CURRENT_BINARY_DIR}/x86/${host}.exe ${RAVEN_TOOLS_DIRECTORY}/wsh.c ${RAVEN_WSH_LIBRARIES}
+                    DEPENDS ${RAVEN_TOOLS_DIRECTORY}/wsh.c ${RAVEN_TOOL_HEADERS} VERBATIM)
+                list(APPEND RAVEN_CMD_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/x86/${host}.exe)
+            endif()
+        endforeach()
         add_custom_target(raven_cmd ALL DEPENDS ${RAVEN_CMD_OUTPUTS})
         add_dependencies(raven raven_cmd)
         # rundll32 reaches a library's entry by name, its wide form first, with the rest of the command line.
@@ -3541,7 +3697,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                         ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase.c -o ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.o
                     COMMAND ${RAVEN_MINGW32} -shared -nostdlib -Wl,--entry,_DllMain@12,--image-base,0x1fc00000,--no-insert-timestamp
                         -o ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.dll ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.o ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase32.def -lmingwex -lkernel32 -lgcc
-                    DEPENDS ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase32.def ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_io.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_legacy.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_msvcrt.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_cpp.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_cxx.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_more.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_fiber.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_office.c VERBATIM)
+                    DEPENDS ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase32.def ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_float.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_io.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_legacy.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_msvcrt.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_cpp.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_cxx.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_more.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_fiber.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-crt/ucrtbase_office.c VERBATIM)
                 add_custom_target(x86_ucrt_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/ucrtbase32.dll)
                 # mscoree.dll, the system's entry to the .NET Framework, for each width: it hands every call to the shim implementation the
                 # installed Framework brings.
@@ -3659,6 +3815,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     add_custom_target(toolbar_customize_fixture${width} ALL DEPENDS ${toolbar_customize_client})
                     add_test(NAME native_toolbar_customize_x${width} COMMAND raven --run-process --execution=native --timeout-ms=20000 ${toolbar_customize_client})
                     set_tests_properties(native_toolbar_customize_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    if(width EQUAL 64)
+                        set(chained_unwind_client ${CMAKE_CURRENT_BINARY_DIR}/chained-unwind64.exe)
+                        add_custom_command(OUTPUT ${chained_unwind_client}
+                            COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${webservices_entry},--no-insert-timestamp
+                                -o ${chained_unwind_client} ${LOADER_SOURCES}/chained_unwind_client.c -lkernel32 -lntdll
+                            DEPENDS ${LOADER_SOURCES}/chained_unwind_client.c VERBATIM)
+                        add_custom_target(chained_unwind_fixture ALL DEPENDS ${chained_unwind_client})
+                        add_test(NAME native_chained_unwind_x64 COMMAND raven --run-process --execution=native ${chained_unwind_client})
+                        set_tests_properties(native_chained_unwind_x64 PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    endif()
                     # mlang comes with the installer components, whose import library the client links against.
                     if(width EQUAL 64)
                         set(mlang_dir ${RAVEN_INSTALLER_COMPONENT_DIR})
@@ -4078,6 +4244,132 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     add_test(NAME native_bits_x${width} COMMAND raven --run-process --execution=native ${bits_client})
                     set_tests_properties(native_bits_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                 endforeach()
+                # raven-wmi.dll, the object path parser of wmiutils and the locator of wbemprox with the classes of root\cimv2, for each
+                # width: Raven code on the public headers.
+                set(wmi_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-wmi)
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/raven-wmi.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-wmi.dll
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/x86
+                    COMMAND ${RAVEN_DLLTOOL} -d ${taskschd_source}/ravenhost64.def -l ${CMAKE_CURRENT_BINARY_DIR}/libravenhost-wmi64.a
+                    COMMAND ${RAVEN_DLLTOOL32} -k -d ${taskschd_source}/ravenhost32.def -l ${CMAKE_CURRENT_BINARY_DIR}/libravenhost-wmi32.a
+                    COMMAND ${RAVEN_MINGW64} ${accprop_flags} -Wl,--entry,DllMain,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/raven-wmi.dll
+                        ${wmi_source}/wmi.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c ${CMAKE_CURRENT_BINARY_DIR}/libravenhost-wmi64.a
+                        -loleaut32 -lole32 -ladvapi32 -luser32 -lkernel32 -lgcc
+                    COMMAND ${RAVEN_MINGW32} ${accprop_flags} -Wl,--entry,_DllMain@12,--kill-at,--no-insert-timestamp -o ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-wmi.dll
+                        ${wmi_source}/wmi.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c ${CMAKE_CURRENT_BINARY_DIR}/libravenhost-wmi32.a
+                        -loleaut32 -lole32 -ladvapi32 -luser32 -lkernel32 -lgcc
+                    DEPENDS ${wmi_source}/wmi.c ${taskschd_source}/ravenhost64.def ${taskschd_source}/ravenhost32.def VERBATIM)
+                add_custom_target(wmi_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/raven-wmi.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-wmi.dll)
+                foreach(width 64 32)
+                    set(wmi_client ${CMAKE_CURRENT_BINARY_DIR}/wmi-client${width}.exe)
+                    if(width EQUAL 64)
+                        set(wmi_compiler ${RAVEN_MINGW64})
+                        set(wmi_entry raven_entry)
+                    else()
+                        set(wmi_compiler ${RAVEN_MINGW32})
+                        set(wmi_entry _raven_entry)
+                    endif()
+                    add_custom_command(OUTPUT ${wmi_client}
+                        COMMAND ${wmi_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${wmi_entry},--no-insert-timestamp
+                            -o ${wmi_client} ${LOADER_SOURCES}/wmi_client.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c
+                            -loleaut32 -lole32 -luser32 -lkernel32 -lgcc
+                        DEPENDS ${LOADER_SOURCES}/wmi_client.c VERBATIM)
+                    add_custom_target(wmi_fixture${width} ALL DEPENDS ${wmi_client} wmi_component)
+                    add_test(NAME native_wmi_x${width} COMMAND raven --run-process --execution=native ${wmi_client})
+                    set_tests_properties(native_wmi_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                endforeach()
+                # raven-webengine.dll, the page engine of the runtime's web controls, and raven-cefhost.exe, its subprocess, built when
+                # RAVEN_CEF_DIRECTORY names the output of scripts/provision-cef.py: the Chromium Embedded Framework's runtime stands
+                # beside them in the runtime's cef folder.
+                set(webengine_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-webengine)
+                set(RAVEN_CEF_DIRECTORY "" CACHE PATH "Directory holding the CEF build provisioned by scripts/provision-cef.py")
+                if(RAVEN_CEF_DIRECTORY)
+                    if(NOT EXISTS "${RAVEN_CEF_DIRECTORY}/runtime/libcef.dll")
+                        message(FATAL_ERROR "RAVEN_CEF_DIRECTORY must be the output of scripts/provision-cef.py")
+                    endif()
+                    set(cef_flags -DCEF_API_VERSION=15600 -I${RAVEN_CEF_DIRECTORY})
+                    set(cef_folder ${CMAKE_CURRENT_BINARY_DIR}/cef)
+                    file(GLOB cef_runtime RELATIVE ${RAVEN_CEF_DIRECTORY}/runtime ${RAVEN_CEF_DIRECTORY}/runtime/*)
+                    set(cef_links "")
+                    foreach(entry ${cef_runtime})
+                        list(APPEND cef_links COMMAND ${CMAKE_COMMAND} -E create_symlink ${RAVEN_CEF_DIRECTORY}/runtime/${entry} ${cef_folder}/${entry})
+                    endforeach()
+                    add_custom_command(OUTPUT ${cef_folder}/raven-cefhost.exe
+                        COMMAND ${CMAKE_COMMAND} -E make_directory ${cef_folder}
+                        ${cef_links}
+                        COMMAND ${RAVEN_MINGW64} -O1 -municode -mwindows ${cef_flags} -Wl,--no-insert-timestamp
+                            -o ${cef_folder}/raven-cefhost.exe ${webengine_source}/cefhost.c ${RAVEN_CEF_DIRECTORY}/runtime/libcef.dll
+                        DEPENDS ${webengine_source}/cefhost.c ${RAVEN_CEF_DIRECTORY}/runtime/libcef.dll VERBATIM)
+                    add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/raven-webengine.dll
+                        COMMAND ${RAVEN_DLLTOOL} -d ${taskschd_source}/ravenhost64.def -l ${CMAKE_CURRENT_BINARY_DIR}/libravenhost-webengine64.a
+                        COMMAND ${RAVEN_MINGW64} ${accprop_flags} ${cef_flags} -Wl,--entry,DllMain,--no-insert-timestamp
+                            -o ${CMAKE_CURRENT_BINARY_DIR}/raven-webengine.dll ${webengine_source}/engine.c ${webengine_source}/external.c
+                            ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c ${CMAKE_CURRENT_BINARY_DIR}/libravenhost-webengine64.a
+                            -loleaut32 -lole32 -lurlmon -luser32 -lgdi32 -lkernel32 -lgcc
+                        DEPENDS ${webengine_source}/engine.c ${webengine_source}/external.c ${webengine_source}/engine_cef.h
+                            ${webengine_source}/webengine.h ${taskschd_source}/ravenhost64.def VERBATIM)
+                    add_custom_target(webengine_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/raven-webengine.dll ${cef_folder}/raven-cefhost.exe)
+                endif()
+                # EmbeddedBrowserWebView.dll, Raven's WebView2 runtime over the page engine, built when RAVEN_WEBVIEW2_SDK_DIRECTORY names the
+                # output of scripts/provision-webview2-sdk.py. It stands where a program's WebView2Loader.dll looks for it, in a folder named
+                # after its browser version.
+                set(RAVEN_WEBVIEW2_SDK_DIRECTORY "" CACHE PATH "Directory holding the WebView2 SDK headers provisioned by scripts/provision-webview2-sdk.py")
+                if(RAVEN_WEBVIEW2_SDK_DIRECTORY)
+                    if(NOT EXISTS "${RAVEN_WEBVIEW2_SDK_DIRECTORY}/webview2/include/WebView2.h")
+                        message(FATAL_ERROR "RAVEN_WEBVIEW2_SDK_DIRECTORY must be the output of scripts/provision-webview2-sdk.py")
+                    endif()
+                    set(webview_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-webview)
+                    set(webview_folder ${CMAKE_CURRENT_BINARY_DIR}/webview/${RAVEN_WEBVIEW_VERSION}/EBWebView/x64)
+                    string(REPLACE "." "," webview_numbers ${RAVEN_WEBVIEW_VERSION})
+                    add_custom_command(OUTPUT ${webview_folder}/EmbeddedBrowserWebView.dll
+                        COMMAND ${CMAKE_COMMAND} -E make_directory ${webview_folder}
+                        COMMAND ${RAVEN_WINDRES} -DRAVEN_WEBVIEW_VERSION_TEXT=${RAVEN_WEBVIEW_VERSION} -DRAVEN_WEBVIEW_VERSION_NUMBERS=${webview_numbers}
+                            ${webview_source}/webview.rc ${CMAKE_CURRENT_BINARY_DIR}/webview-version.o
+                        COMMAND ${RAVEN_DLLTOOL} -d ${taskschd_source}/ravenhost64.def -l ${CMAKE_CURRENT_BINARY_DIR}/libravenhost-webview64.a
+                        COMMAND ${RAVEN_MINGW64} ${accprop_flags} -Wno-unknown-pragmas -DRAVEN_WEBVIEW_VERSION=L"${RAVEN_WEBVIEW_VERSION}"
+                            -I${webview_source}/include -I${RAVEN_WEBVIEW2_SDK_DIRECTORY}/webview2/include -I${webengine_source}
+                            -Wl,--entry,DllMain,--no-insert-timestamp -o ${webview_folder}/EmbeddedBrowserWebView.dll ${webview_source}/webview.c
+                            ${CMAKE_CURRENT_BINARY_DIR}/webview-version.o ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c
+                            ${CMAKE_CURRENT_BINARY_DIR}/libravenhost-webview64.a -lole32 -luser32 -lkernel32 -lgcc
+                        DEPENDS ${webview_source}/webview.c ${webview_source}/webview.rc ${webengine_source}/webengine.h ${taskschd_source}/ravenhost64.def
+                        VERBATIM)
+                    add_custom_target(webview_component ALL DEPENDS ${webview_folder}/EmbeddedBrowserWebView.dll)
+                endif()
+                # raven-ieframe.dll, the WebBrowser control of ieframe that hosts embed, for each width: Raven code on the public headers.
+                # The control draws pages with raven-webengine.dll when the runtime has it.
+                set(ieframe_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-ieframe)
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/raven-ieframe.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-ieframe.dll
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/x86
+                    COMMAND ${RAVEN_DLLTOOL} -d ${taskschd_source}/ravenhost64.def -l ${CMAKE_CURRENT_BINARY_DIR}/libravenhost-ieframe64.a
+                    COMMAND ${RAVEN_DLLTOOL32} -k -d ${taskschd_source}/ravenhost32.def -l ${CMAKE_CURRENT_BINARY_DIR}/libravenhost-ieframe32.a
+                    COMMAND ${RAVEN_MINGW64} ${accprop_flags} -I${webengine_source} -Wl,--entry,DllMain,--no-insert-timestamp
+                        -o ${CMAKE_CURRENT_BINARY_DIR}/raven-ieframe.dll ${ieframe_source}/ieframe.c ${ieframe_source}/engine.c
+                        ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c
+                        ${CMAKE_CURRENT_BINARY_DIR}/libravenhost-ieframe64.a -loleaut32 -lole32 -lurlmon -luser32 -lgdi32 -lkernel32 -lgcc
+                    COMMAND ${RAVEN_MINGW32} ${accprop_flags} -I${webengine_source} -Wl,--entry,_DllMain@12,--kill-at,--no-insert-timestamp
+                        -o ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-ieframe.dll ${ieframe_source}/ieframe.c ${ieframe_source}/engine.c
+                        ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c
+                        ${CMAKE_CURRENT_BINARY_DIR}/libravenhost-ieframe32.a -loleaut32 -lole32 -lurlmon -luser32 -lgdi32 -lkernel32 -lgcc
+                    DEPENDS ${ieframe_source}/ieframe.c ${ieframe_source}/engine.c ${webengine_source}/webengine.h ${taskschd_source}/ravenhost64.def
+                        ${taskschd_source}/ravenhost32.def VERBATIM)
+                add_custom_target(ieframe_component ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/raven-ieframe.dll ${CMAKE_CURRENT_BINARY_DIR}/x86/raven-ieframe.dll)
+                foreach(width 64 32)
+                    set(ieframe_client ${CMAKE_CURRENT_BINARY_DIR}/ieframe-client${width}.exe)
+                    if(width EQUAL 64)
+                        set(ieframe_compiler ${RAVEN_MINGW64})
+                        set(ieframe_entry raven_entry)
+                    else()
+                        set(ieframe_compiler ${RAVEN_MINGW32})
+                        set(ieframe_entry _raven_entry)
+                    endif()
+                    add_custom_command(OUTPUT ${ieframe_client}
+                        COMMAND ${ieframe_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${ieframe_entry},--no-insert-timestamp
+                            -o ${ieframe_client} ${LOADER_SOURCES}/ieframe_client.c ${PROJECT_SOURCE_DIR}/native/upstream/raven-dwrite/crt.c
+                            -loleaut32 -lole32 -luser32 -lkernel32 -lgcc
+                        DEPENDS ${LOADER_SOURCES}/ieframe_client.c VERBATIM)
+                    add_custom_target(ieframe_fixture${width} ALL DEPENDS ${ieframe_client} ieframe_component)
+                    add_test(NAME native_ieframe_x${width} COMMAND raven --run-process --execution=native ${ieframe_client})
+                    set_tests_properties(native_ieframe_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                endforeach()
                 # avrt.dll and mfplat.dll: the multimedia scheduler a media library registers its threads with, and the Media Foundation
                 # factories it makes its samples, types and buffers with, for each width.
                 set(media_source ${PROJECT_SOURCE_DIR}/native/upstream/raven-media)
@@ -4382,6 +4674,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                     add_test(NAME native_dotnet_framework48 COMMAND ${RAVEN_PIL_PYTHON} ${PROJECT_SOURCE_DIR}/scripts/native-dotnet.py
                         $<TARGET_FILE:raven> ${RAVEN_NETFX_INSTALLER} ${dotnet_fixtures} ${CMAKE_CURRENT_BINARY_DIR}/dotnet-evidence "${RAVEN_XNA_INSTALLER}" "${RAVEN_NETFX35_PACKAGE}")
                     set_tests_properties(native_dotnet_framework48 PROPERTIES TIMEOUT 7200 RESOURCE_LOCK raven_compositor PASS_REGULAR_EXPRESSION "PASS: ")
+                    # The same installer run as bootstrappers run it, through its own Setup.exe, then a console program on what it installed.
+                    add_test(NAME native_dotnet_setup48 COMMAND ${RAVEN_PIL_PYTHON} ${PROJECT_SOURCE_DIR}/scripts/native-dotnet-setup.py
+                        $<TARGET_FILE:raven> ${RAVEN_NETFX_INSTALLER} ${dotnet_fixtures} ${CMAKE_CURRENT_BINARY_DIR}/dotnet-setup-evidence)
+                    set_tests_properties(native_dotnet_setup48 PROPERTIES TIMEOUT 3000 PASS_REGULAR_EXPRESSION "PASS: ")
                 endif()
                 # A self-contained .NET 8 program, published with the .NET SDK given: the runtime loads its libraries of managed code alone,
                 # built for any CPU, and a managed exception and a runtime one are thrown and caught.
@@ -4447,7 +4743,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
             add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/clipboard.exe
                 COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
                     -Wl,--entry,raven_entry,--no-insert-timestamp
-                    -o ${CMAKE_CURRENT_BINARY_DIR}/clipboard.exe ${LOADER_SOURCES}/clipboard_client.c -luser32 -lkernel32
+                    -o ${CMAKE_CURRENT_BINARY_DIR}/clipboard.exe ${LOADER_SOURCES}/clipboard_client.c -lole32 -luser32 -lkernel32
                 DEPENDS ${LOADER_SOURCES}/clipboard_client.c VERBATIM)
             add_custom_target(clipboard_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/clipboard.exe)
             add_test(NAME native_clipboard_formats COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/clipboard.exe)
@@ -4627,6 +4923,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                         $<TARGET_FILE:raven> ${RAVEN_TESTDATA_DIR}/d3d12/device.exe ${RAVEN_VKD3D_PE64_DIR} ${RAVEN_DXVK_PE64_DIR}
                         ${CMAKE_CURRENT_BINARY_DIR}/d3d12-device)
                     set_tests_properties(native_d3d12_device PROPERTIES TIMEOUT 300 ENVIRONMENT "${RAVEN_VULKAN_ICD};${RAVEN_LSAN}")
+                    add_test(NAME native_d3d12_fences COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/native-d3d12-fences.py
+                        $<TARGET_FILE:raven> ${RAVEN_TESTDATA_DIR}/d3d12/fences.exe ${RAVEN_VKD3D_PE64_DIR} ${RAVEN_DXVK_PE64_DIR}
+                        ${CMAKE_CURRENT_BINARY_DIR}/d3d12-fences)
+                    set_tests_properties(native_d3d12_fences PROPERTIES TIMEOUT 300 ENVIRONMENT "${RAVEN_VULKAN_ICD};${RAVEN_LSAN}")
                     add_test(NAME native_d3d12_clear COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/scripts/native-d3d12-clear.py
                         $<TARGET_FILE:raven> ${RAVEN_TESTDATA_DIR}/d3d12/clear.exe ${RAVEN_VKD3D_PE64_DIR} ${RAVEN_DXVK_PE64_DIR}
                         ${CMAKE_CURRENT_BINARY_DIR}/d3d12-clear)
@@ -4986,6 +5286,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
             add_custom_target(delay_setupapi_fixture ALL DEPENDS ${DELAY_FIXTURES}/cabinet-client.exe)
             add_test(NAME native_delay_setupapi COMMAND raven --run-process --execution=native ${DELAY_FIXTURES}/cabinet-client.exe)
             set_tests_properties(native_delay_setupapi PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+            # A queued copy that fails: skipped by default, fatal when its style forbids skipping.
+            set(SETUPAPI_QUEUE_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/setupapi-queue.exe)
+            add_custom_command(OUTPUT ${SETUPAPI_QUEUE_CLIENT}
+                COMMAND ${RAVEN_MINGW64} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                    -Wl,--entry,raven_entry,--image-base,0x193000000,--no-insert-timestamp
+                    -o ${SETUPAPI_QUEUE_CLIENT} ${PROJECT_SOURCE_DIR}/testdata/native_loader/setupapi_queue_client.c -lsetupapi -lkernel32
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/setupapi_queue_client.c VERBATIM)
+            add_custom_target(setupapi_queue_fixture ALL DEPENDS ${SETUPAPI_QUEUE_CLIENT})
+            add_test(NAME native_setupapi_copy_errors COMMAND raven --run-process --execution=native ${SETUPAPI_QUEUE_CLIENT})
+            set_tests_properties(native_setupapi_copy_errors PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
             add_executable(delay_loader_test nt/delay_loader_test.cpp)
             target_link_libraries(delay_loader_test PRIVATE raven_cpu)
             add_dependencies(delay_loader_test delay_pe_fixtures raven-bootstrap)

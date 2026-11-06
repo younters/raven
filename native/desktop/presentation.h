@@ -117,6 +117,9 @@ struct DesktopPresentation {
 	// Acknowledges a host resize after guest placement, including adjusted/vetoed sizes.
 	// Resize events carry their optional generation in wparam.
 	std::function<void(uint64_t,uint64_t,uint32_t,uint32_t)> resize_complete;
+	// Keeps a top-level window above the top-level window that owns it, as Windows keeps an owned dialog; 0 for no owner. Given before the
+	// window's first frame.
+	std::function<void(uint64_t handle,uint64_t owner)> transient_for;
 };
 
 }

@@ -136,8 +136,9 @@ NativeRegistry::NativeRegistry(std::filesystem::path file) : file(std::move(file
 // Scheduler, which installers use to start a program once they finish, the accessibility annotation services of oleacc, which
 // programs create for their windows' controls, the MSXML 6.0 classes, which the XML component serves beside its own, the network list,
 // which programs ask whether they are online, the package manager of the Windows Runtime, the factories of the packaging API, which
-// package managers read .appx and .msix packages with, and the background transfer manager of each BITS version, which bootstrappers
-// download through. A hive that lacks them, a new one or one made before they were registered, gets them.
+// package managers read .appx and .msix packages with, the background transfer manager of each BITS version, which bootstrappers
+// download through, and the locator and object path parser of management instrumentation, which System.Management asks what the
+// machine is made of through, and the WebBrowser control, which Windows Forms and WPF programs embed. A hive that lacks them, a new one or one made before they were registered, gets them.
 void NativeRegistry::register_runtime_classes()
 {
 	static constexpr std::pair<const char16_t *, const char16_t *> classes[] = {{u"{E5CB7A31-7512-11D2-89CE-0080C792E5D8}", u"mscoree.dll"},
@@ -153,7 +154,13 @@ void NativeRegistry::register_runtime_classes()
 		{u"{5842A140-FF9F-4166-8F5C-62F5B7B0C781}", u"raven-appx.dll"}, {u"{378E0446-5384-43B7-8877-E7DBDD883446}", u"raven-appx.dll"},
 		{u"{4991D34B-80A1-4291-83B6-3328366B9097}", u"raven-bits.dll"}, {u"{F087771F-D74F-4C1A-BB8A-E16ACA9124EA}", u"raven-bits.dll"},
 		{u"{6D18AD12-BDE3-4393-B311-099C346E6DF9}", u"raven-bits.dll"}, {u"{03CA98D6-FF5D-49B8-ABC6-03DD84127020}", u"raven-bits.dll"},
-		{u"{659CDEA7-489E-11D9-A9CD-000D56965251}", u"raven-bits.dll"}};
+		{u"{659CDEA7-489E-11D9-A9CD-000D56965251}", u"raven-bits.dll"}, {u"{4590F811-1D3A-11D0-891F-00AA004B2E24}", u"raven-wmi.dll"},
+		{u"{CF4CC405-E2C5-4DDD-B3CE-5E7582D8C9FA}", u"raven-wmi.dll"}, {u"{8856F961-340A-11D0-A96B-00C04FD705A2}", u"raven-ieframe.dll"},
+		{u"{B54F3741-5B07-11CF-A4B0-00AA004A55E8}", u"vbscript.dll"}, {u"{3F4DACA4-160D-11D2-A8E9-00104B365C9F}", u"vbscript.dll"},
+		{u"{EE09B103-97E0-11CF-978F-00A02463E06F}", u"scrrun.dll"}, {u"{0D43FE01-F093-11CF-8940-00A0C9054228}", u"scrrun.dll"},
+		{u"{72C24DD5-D70A-438B-8A42-98424B88AFB8}", u"wshom.ocx"}, {u"{093FF999-1EA0-4079-9525-9614C3504B74}", u"wshom.ocx"},
+		{u"{F935DC22-1CF0-11D0-ADB9-00C04FD58A0B}", u"wshom.ocx"}, {u"{F935DC26-1CF0-11D0-ADB9-00C04FD58A0B}", u"wshom.ocx"},
+		{u"{F414C260-6AC0-11CF-B6D1-00AA00BBBB58}", u"jscript.dll"}};
 	register_animation_classes();
 	const auto store = [&](uint64_t key, const char16_t *name, std::u16string_view value) {
 		std::vector<uint8_t> data;
@@ -199,8 +206,14 @@ void NativeRegistry::register_runtime_classes()
 			close(key);
 		}
 	}
-	// Scripts create the scheduler, and programs the MSXML 6.0 classes, by name.
+	// Scripts create the scheduler, programs the MSXML 6.0 classes and script hosts the VBScript and JScript engines, by name.
 	static constexpr std::pair<const char16_t *, const char16_t *> names[] = {{u"Schedule.Service", u"{0F87369F-A4E5-4CFC-BD3E-73E6154572DD}"},
+		{u"VBScript", u"{B54F3741-5B07-11CF-A4B0-00AA004A55E8}"}, {u"VBScript.RegExp", u"{3F4DACA4-160D-11D2-A8E9-00104B365C9F}"},
+		{u"JScript", u"{F414C260-6AC0-11CF-B6D1-00AA00BBBB58}"}, {u"JavaScript", u"{F414C260-6AC0-11CF-B6D1-00AA00BBBB58}"},
+		{u"ECMAScript", u"{F414C260-6AC0-11CF-B6D1-00AA00BBBB58}"},
+		{u"Scripting.Dictionary", u"{EE09B103-97E0-11CF-978F-00A02463E06F}"}, {u"Scripting.FileSystemObject", u"{0D43FE01-F093-11CF-8940-00A0C9054228}"},
+		{u"WScript.Shell", u"{72C24DD5-D70A-438B-8A42-98424B88AFB8}"}, {u"WScript.Shell.1", u"{72C24DD5-D70A-438B-8A42-98424B88AFB8}"},
+		{u"WScript.Network", u"{093FF999-1EA0-4079-9525-9614C3504B74}"}, {u"WScript.Network.1", u"{093FF999-1EA0-4079-9525-9614C3504B74}"},
 		{u"Msxml2.DOMDocument.6.0", u"{88D96A05-F192-11D4-A65F-0040963251E5}"}, {u"Msxml2.FreeThreadedDOMDocument.6.0", u"{88D96A06-F192-11D4-A65F-0040963251E5}"},
 		{u"Msxml2.XMLSchemaCache.6.0", u"{88D96A07-F192-11D4-A65F-0040963251E5}"}, {u"Msxml2.XSLTemplate.6.0", u"{88D96A08-F192-11D4-A65F-0040963251E5}"},
 		{u"Msxml2.XMLHTTP.6.0", u"{88D96A0A-F192-11D4-A65F-0040963251E5}"}, {u"Msxml2.ServerXMLHTTP.6.0", u"{88D96A0B-F192-11D4-A65F-0040963251E5}"},
@@ -232,6 +245,7 @@ void NativeRegistry::register_runtime_classes()
 		{u"Windows.Security.Authentication.OnlineId.OnlineIdServiceTicketRequest", u"raven-twinapi.dll"},
 		{u"Windows.Security.Authentication.Web.Core.WebAuthenticationCoreManager", u"raven-twinapi.dll"},
 		{u"Windows.ApplicationModel.Core.CoreApplication", u"raven-twinapi.dll"},
+		{u"Windows.Foundation.Metadata.ApiInformation", u"raven-twinapi.dll"},
 		{u"Windows.Foundation.Uri", u"raven-web.dll"}, {u"Windows.Web.Http.HttpClient", u"raven-web.dll"},
 		{u"Windows.Web.Http.HttpMethod", u"raven-web.dll"}, {u"Windows.Web.Http.HttpRequestMessage", u"raven-web.dll"},
 		{u"Windows.Web.Http.HttpResponseMessage", u"raven-web.dll"}, {u"Windows.Web.Http.Filters.HttpBaseProtocolFilter", u"raven-web.dll"},
@@ -388,6 +402,9 @@ void NativeRegistry::seed()
 		text(files.c_str(), u"CommonW6432Dir", u"C:\\Program Files\\Common Files");
 		text(files.c_str(), u"ProgramFilesPath", u"%ProgramFiles%");
 		text(files.c_str(), u"DevicePath", u"%SystemRoot%\\inf");
+		// Where a program's WebView2 loader finds the runtime's WebView2 runtime: the folder named after its version.
+		text((root + u"\\Microsoft\\EdgeUpdate\\ClientState\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}").c_str(), u"EBWebView",
+			u"C:\\Windows\\System32\\raven-webview\\" RAVEN_WEBVIEW_VERSION);
 		text(system.c_str(), u"ProductName", u"Windows 10 Pro");
 		text(system.c_str(), u"EditionID", u"Professional");
 		text(system.c_str(), u"InstallationType", u"Client");

@@ -492,6 +492,8 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		if (result.status) call.fail(8); else call.ret(result.address);
 	});
 	registry.add("VirtualAllocEx", 5, [memory_operation](ApiCall &call) { memory_operation(call, "process:allocate"); });
+	// One NUMA node holds all memory, so the preferred node changes nothing.
+	registry.add("VirtualAllocExNuma", 6, [memory_operation](ApiCall &call) { memory_operation(call, "process:allocate"); });
 	registry.add("VirtualFreeEx", 4, [memory_operation](ApiCall &call) { memory_operation(call, "process:free"); });
 	registry.add("VirtualProtectEx", 5, [memory_operation](ApiCall &call) { memory_operation(call, "process:protect"); });
 	registry.add("VirtualQueryEx", 4, [&objects, is_self, request_process](ApiCall &call) {

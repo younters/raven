@@ -146,7 +146,7 @@ constexpr std::string_view shared_allowed[] = {
 	"QueryFullProcessImageNameW", "QueryFullProcessImageNameA",
 	"NtQueryInformationProcess", "NtReadVirtualMemory", "NtWriteVirtualMemory", "ReadProcessMemory", "WriteProcessMemory", "OpenProcess",
 	"NtSetInformationThread", "NtOpenThreadToken", "NtOpenThreadTokenEx", "NtOpenThread", "NtOpenProcess", "NtOpenProcessToken", "NtOpenProcessTokenEx", "NtQueryInformationThread", "OpenThread", "GetThreadId",
-	"VirtualAlloc2FromApp", "VirtualAllocEx", "VirtualFreeEx", "VirtualProtectEx", "VirtualQueryEx",
+	"VirtualAlloc2FromApp", "VirtualAllocEx", "VirtualAllocExNuma", "VirtualFreeEx", "VirtualProtectEx", "VirtualQueryEx",
 	"SetDllDirectoryW", "SetDllDirectoryA", "SetConsoleTitleW", "SetConsoleTitleA", "OpenSCManagerW", "OpenSCManagerA", "OpenServiceW", "OpenServiceA", "CreateServiceW", "CreateServiceA",
 	"CloseServiceHandle", "DeleteService", "ChangeServiceConfigW", "ChangeServiceConfig2W", "ChangeServiceConfig2A", "QueryServiceConfigW", "QueryServiceConfigA", "GetServiceDisplayNameW", "GetServiceDisplayNameA",
 	"QueryServiceObjectSecurity", "SetServiceObjectSecurity", "RegQueryInfoKeyA", "RegQueryInfoKeyW", "LookupPrivilegeValueA", "QueryServiceStatus", "QueryServiceStatusEx", "StartServiceW", "ControlService",

@@ -4,8 +4,9 @@
  */
 /* Raven shell component: classes registered in the registry, as COM finds them on Windows.
  *
- * A class is looked up under HKEY_CLASSES_ROOT\CLSID\{class}\InprocServer32, whose default value names the library that serves it;
- * the library is loaded and its DllGetClassObject asked for the class factory. A class a Windows service serves as a local server is
+ * A class the activation context in effect declares is served by the library its manifest names. Otherwise a class is looked up
+ * under HKEY_CLASSES_ROOT\CLSID\{class}\InprocServer32, whose default value names the library that serves it; the library is loaded
+ * and its DllGetClassObject asked for the class factory. A class a Windows service serves as a local server is
  * served the same way. Program identifiers lead to their class through HKEY_CLASSES_ROOT\<identifier>\CLSID, following CurVer when
  * the identifier is version independent. */
 #define CINTERFACE
@@ -65,15 +66,49 @@ static BOOL service_class(REFCLSID clsid)
 	return named_value(key, L"LocalService", service, MAX_PATH);
 }
 
+/* A class nobody registered is named in Raven's trace, so the classes a program misses can be found. */
+static HRESULT unregistered(REFCLSID clsid)
+{
+	static void (WINAPI *raven_trace)(const char *);
+	static BOOL looked;
+	char line[64];
+	if (!looked) {
+		raven_trace = (void (WINAPI *)(const char *))GetProcAddress(LoadLibraryW(L"ravenhost.dll"), "RavenTrace");
+		looked = TRUE;
+	}
+	if (raven_trace) {
+		wsprintfA(line, "com: no class {%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}", clsid->Data1, clsid->Data2, clsid->Data3,
+			clsid->Data4[0], clsid->Data4[1], clsid->Data4[2], clsid->Data4[3], clsid->Data4[4], clsid->Data4[5], clsid->Data4[6], clsid->Data4[7]);
+		raven_trace(line);
+	}
+	return REGDB_E_CLASSNOTREG;
+}
+
+/* The library that serves a class the activation context in effect declares, as a manifest's comClass or clrClass names it: the file
+ * of its assembly, or mscoree.dll for managed code, which finds the class in the context again. The entry is the runtime's: its size,
+ * its kind, then the offset and length of each of its strings, the library first. */
+static BOOL context_library(REFCLSID clsid, WCHAR *library, DWORD capacity)
+{
+	ACTCTX_SECTION_KEYED_DATA data = {sizeof data};
+	if (!FindActCtxSectionGuid(0, NULL, ACTIVATION_CONTEXT_SECTION_COM_SERVER_REDIRECTION, clsid, &data) || data.ulLength < 16)
+		return FALSE;
+	const ULONG *entry = data.lpData;
+	if (entry[2] + entry[3] > data.ulLength || entry[3] / sizeof(WCHAR) >= capacity)
+		return FALSE;
+	lstrcpynW(library, (const WCHAR *)((const BYTE *)data.lpData + entry[2]), (int)capacity);
+	return TRUE;
+}
+
 HRESULT raven_registered_class_object(REFCLSID clsid, DWORD context, REFIID iid, void **out)
 {
 	WCHAR key[MAX_PATH], library[MAX_PATH];
 	*out = NULL;
 	if (!(context & (CLSCTX_INPROC_SERVER | CLSCTX_INPROC_HANDLER)) && !((context & CLSCTX_LOCAL_SERVER) && service_class(clsid)))
-		return REGDB_E_CLASSNOTREG;
+		return unregistered(clsid);
 	class_key(clsid, L"\\InprocServer32", key);
-	if (!class_value(key, library, MAX_PATH))
-		return REGDB_E_CLASSNOTREG;
+	/* The context in effect comes before the registry, as Windows looks there first. */
+	if (!((context & (CLSCTX_INPROC_SERVER | CLSCTX_INPROC_HANDLER)) && context_library(clsid, library, MAX_PATH)) && !class_value(key, library, MAX_PATH))
+		return unregistered(clsid);
 	/* The library stays loaded for the objects it makes, as COM keeps it until CoFreeUnusedLibraries. */
 	HMODULE module = LoadLibraryExW(library, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
 	if (!module)
@@ -218,4 +253,63 @@ HRESULT WINAPI CoGetObjectContext(REFIID iid, void **out)
 	*out = NULL;
 	const HRESULT result = current_context(&context);
 	return FAILED(result) ? result : context_query(&context->callback, iid, out);
+}
+
+/* A wait of COM: in a single-threaded apartment the thread keeps dispatching the messages that reach it while it waits, as the modal
+ * loop of COM does, so a window of the apartment, or a completion posted to it, is served while the thread waits on a task. A quit
+ * message seen meanwhile is posted again for the thread's own loop. In the multithreaded apartment it is a plain wait. The result is the
+ * index of the handle that ended the wait (or WAIT_IO_COMPLETION after the thread ran its APCs), RPC_S_CALLPENDING when the time runs
+ * out. */
+HRESULT WINAPI CoWaitForMultipleHandles(DWORD flags, DWORD timeout, ULONG count, LPHANDLE handles, LPDWORD index)
+{
+	enum { wait_all = 1, alertable = 2, input_available = 4, known_flags = 0x1f };
+	APTTYPE type;
+	APTTYPEQUALIFIER qualifier;
+	if (!index)
+		return E_INVALIDARG;
+	*index = 0;
+	if (!handles || !count || (flags & ~known_flags))
+		return E_INVALIDARG;
+	const BOOL single = SUCCEEDED(CoGetApartmentType(&type, &qualifier)) && (type == APTTYPE_STA || type == APTTYPE_MAINSTA);
+	DWORD result;
+	if (!single)
+		result = WaitForMultipleObjectsEx(count, handles, (flags & wait_all) != 0, timeout, (flags & alertable) != 0);
+	else {
+		const DWORD wait_flags = ((flags & wait_all) ? MWMO_WAITALL : 0) | ((flags & alertable) ? MWMO_ALERTABLE : 0) |
+			((flags & input_available) ? MWMO_INPUTAVAILABLE : 0);
+		const DWORD start = GetTickCount();
+		BOOL quit = FALSE;
+		WPARAM quit_code = 0;
+		for (;;) {
+			DWORD remaining = timeout;
+			if (timeout != INFINITE) {
+				const DWORD spent = GetTickCount() - start;
+				remaining = spent >= timeout ? 0 : timeout - spent;
+			}
+			result = MsgWaitForMultipleObjectsEx(count, handles, remaining, QS_ALLINPUT, wait_flags);
+			if (result != WAIT_OBJECT_0 + count)
+				break;
+			MSG message;
+			while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE)) {
+				if (message.message == WM_QUIT) {
+					quit = TRUE;
+					quit_code = message.wParam;
+				} else
+					DispatchMessageW(&message);
+			}
+			if (quit || (timeout != INFINITE && GetTickCount() - start >= timeout)) {
+				result = WaitForMultipleObjectsEx(count, handles, (flags & wait_all) != 0, 0, FALSE);
+				if (quit || result != WAIT_TIMEOUT)
+					break;
+			}
+		}
+		if (quit)
+			PostQuitMessage((int)quit_code);
+	}
+	if (result == WAIT_TIMEOUT)
+		return RPC_S_CALLPENDING;
+	if (result == WAIT_FAILED)
+		return HRESULT_FROM_WIN32(GetLastError());
+	*index = result;
+	return S_OK;
 }

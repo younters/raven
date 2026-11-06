@@ -102,6 +102,30 @@ void NativePrefix::place_runtime_components(const std::filesystem::path &runtime
 			std::filesystem::copy_file(from, destination, std::filesystem::copy_options::update_existing, error);
 #endif
 		}
+	// The Windows Runtime metadata stands in each system directory's WinMetadata folder, where the type resolution of the Windows Runtime
+	// looks for it.
+	for (const auto folder : {"system32", "syswow64"}) {
+		std::error_code error;
+		const auto source = runtime / "WinMetadata", target = windows / folder / "WinMetadata";
+		if (!std::filesystem::is_directory(source, error))
+			break;
+		std::filesystem::create_directories(target, error);
+		for (const auto &entry : std::filesystem::directory_iterator(source, error))
+			if (entry.path().extension() == ".winmd")
+				std::filesystem::copy_file(entry.path(), target / entry.path().filename(), std::filesystem::copy_options::update_existing, error);
+	}
+	// The page engine of the web controls and the WebView2 runtime over it are too large to copy into every prefix, so the system
+	// directory links to the runtime's.
+	for (const auto &[folder, name] : {std::pair{"cef", "raven-cef"}, std::pair{"webview", "raven-webview"}}) {
+		std::error_code error;
+		const auto target = runtime / folder, link = windows / "system32" / name;
+		if (!std::filesystem::is_directory(target, error))
+			continue;
+		if (std::filesystem::is_symlink(link, error) && std::filesystem::read_symlink(link, error) != target)
+			std::filesystem::remove(link, error);
+		if (!std::filesystem::exists(std::filesystem::symlink_status(link, error)))
+			std::filesystem::create_directory_symlink(target, link, error);
+	}
 }
 
 NativePrefix NativePrefix::from_environment()

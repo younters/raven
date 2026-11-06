@@ -609,53 +609,16 @@ CRT long *__dstbias(void)
 	return &daylight_bias;
 }
 
-/* The significant decimal digits of a positive finite value, rounded at `count`, and the power of ten of the first. The value is
-   scaled into [1, 10) in extended precision, which keeps the digits a double holds. */
+/* The significant decimal digits of a positive finite value, rounded to nearest at `count` and padded with zeros, and the power of ten of
+   the first. */
 static int decimal_digits(double value, int count, char *digits)
 {
-	long double scaled = value;
-	int exponent = 0;
-	if (value == 0) {
-		for (int at = 0; at < count; ++at)
-			digits[at] = '0';
-		digits[count] = 0;
-		return 0;
-	}
-	while (scaled >= 1e32L) {
-		scaled /= 1e32L;
-		exponent += 32;
-	}
-	while (scaled < 1e-32L) {
-		scaled *= 1e32L;
-		exponent -= 32;
-	}
-	while (scaled >= 10) {
-		scaled /= 10;
-		++exponent;
-	}
-	while (scaled < 1) {
-		scaled *= 10;
-		--exponent;
-	}
-	for (int at = 0; at < count; ++at) {
-		const int digit = (int)scaled;
-		digits[at] = (char)('0' + digit);
-		scaled = (scaled - digit) * 10;
-	}
+	int point;
+	int used = float_digits(value, count, digits, &point);
+	while (used < count)
+		digits[used++] = '0';
 	digits[count] = 0;
-	if (scaled >= 5) {
-		int at = count - 1;
-		while (at >= 0 && digits[at] == '9')
-			digits[at--] = '0';
-		if (at >= 0)
-			++digits[at];
-		else {
-			if (count)
-				digits[0] = '1';
-			++exponent;
-		}
-	}
-	return exponent;
+	return value == 0 ? 0 : point - 1;
 }
 
 /* `count` significant digits with no point; where the point goes and the sign come back apart. */
@@ -1621,6 +1584,8 @@ CRT int _isctype(int c, int mask) { return _isctype_l(c, mask, NULL); }
 CRT int _iswprint_l(wint_t c, _locale_t locale) { return iswprint(c); }
 CRT int _wcsicmp_l(const wchar_t *a, const wchar_t *b, _locale_t locale) { return _wcsicmp(a, b); }
 CRT int _wcsnicmp_l(const wchar_t *a, const wchar_t *b, size_t count, _locale_t locale) { return _wcsnicmp(a, b, count); }
+CRT int _stricmp_l(const char *a, const char *b, _locale_t locale) { return _stricmp(a, b); }
+CRT int _strnicmp_l(const char *a, const char *b, size_t count, _locale_t locale) { return _strnicmp(a, b, count); }
 
 CRT wchar_t *_itow(int value, wchar_t *to, int radix)
 {

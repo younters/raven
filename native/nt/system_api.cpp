@@ -6,6 +6,7 @@
 #include "kernel_context.h"
 #include "actctx.h"
 #include "text.h"
+#include "x86_compat_api.h"
 
 #include <algorithm>
 #include <array>
@@ -1622,6 +1623,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(head);
 	});
 	registry.add("QueryDepthSList", 1, [count](ApiCall &call) { call.ret(count(call) & 0xffff); });
+	// The entry at the head, left on the list.
+	registry.add("RtlFirstEntrySList", 1, [](ApiCall &call) { call.ret(call.load_pointer(call[0])); });
 	// ntdll's names for the same lists.
 	for (const auto &[native, win32] : {std::pair{"RtlInitializeSListHead", "InitializeSListHead"},
 			{"RtlInterlockedPushEntrySList", "InterlockedPushEntrySList"}, {"RtlInterlockedPopEntrySList", "InterlockedPopEntrySList"},
@@ -1852,8 +1855,11 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			character = upper_case(character);
 		const auto folder = context.launch.image_path.substr(0, slash + 1);
 		const auto resolved = paths.resolve(folder + u"netfx_Patch_x64.msp");
-		if (name.starts_with(u"NDP48") || (name == u"SETUP.EXE" && resolved && resolved->exists))
+		if (name.starts_with(u"NDP48") || (name == u"SETUP.EXE" && resolved && resolved->exists)) {
 			activation_contexts().set_compatibility_layer(u"WIN7SP1");
+			// The setup is a 32-bit program that reads its package catalog with about a million heap calls.
+			want_guest_heap();
+		}
 	}
 	paths.set_search_path([variables] {
 		const auto found = variables->values.find(u"PATH");

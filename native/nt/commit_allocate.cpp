@@ -34,10 +34,14 @@ NativeMemoryRange NativeMemory::commit_allocate(uint64_t address, uint64_t size,
 	refresh_commit_sample();
 	if (!range(address,size,user_limit))
 		return {0,0,invalid};
-	// MEM_RESET preserves commitment and protection; eagerly discarding is optional on Windows.
-	if (type == 0x80000) {
+	// MEM_RESET and MEM_RESET_UNDO preserve commitment and protection; eagerly discarding is optional on Windows.
+	if (type == 0x80000 || type == 0x1000000) {
 		const auto base=address & ~uint64_t(4095), length=(size+address-base+4095)&~uint64_t(4095);
-		return region(base,length)==regions.end() ? NativeMemoryRange{0,0,conflict} : NativeMemoryRange{base,length};
+		const auto found=region(base,length);
+		if (found==regions.end()) return {0,0,conflict};
+		const auto first=(base-found->first)/4096;
+		if (found->second.pages.nonzero(first,length/4096)!=length/4096) return {0,0,conflict};
+		return {base,length};
 	}
 	// MEM_TOP_DOWN only asks for the highest free address; any free address serves the program as well.
 	type&=~0x100000U;
