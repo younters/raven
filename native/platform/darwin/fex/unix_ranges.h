@@ -27,6 +27,14 @@ public:
         ranges.erase(ranges.lower_bound(address), ranges.lower_bound(address + size));
         ranges.emplace(address, Range{address + size, protection});
     }
+    // The guest gave these addresses up. The host may map something else there, such as a Metal buffer, so nothing is known about them any
+    // more and the real mapping decides.
+    void forget(uint64_t address, uint64_t size) {
+        if (!size || size > UINT64_MAX - address) return;
+        std::lock_guard lock(mutex);
+        split(address); split(address + size);
+        ranges.erase(ranges.lower_bound(address), ranges.lower_bound(address + size));
+    }
     int check(uint64_t address, uint64_t size, uint32_t write) {
         if (!size) return 1;
         if (!address || size > UINT64_MAX - address) return 0;

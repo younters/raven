@@ -1105,7 +1105,7 @@ void FexProcess::unmap_memory(uint64_t address)
 	auto found = state->regions.find(address);
 	if (found == state->regions.end()) throw std::runtime_error("FEX allocation not found");
 	const auto n = found->second.size;
-	unix_ranges.set(state->host(address, n), n, PROT_NONE);
+	unix_ranges.forget(state->host(address, n), n);
 	uint64_t args[8]{state->host(address, n), n, 0x8000};
 	notify_memory("NotifyMemoryFree", args, 3, [&] {
 		if (state->window) {
