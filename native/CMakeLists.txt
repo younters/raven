@@ -1430,6 +1430,9 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
         add_executable(raw_buffer_test desktop/raw_buffer_test.cpp)
         target_link_libraries(raw_buffer_test PRIVATE raven_cpu)
         add_dependencies(raw_buffer_test raven-bootstrap)
+        add_executable(warp_cursor_test desktop/warp_cursor_test.cpp)
+        target_link_libraries(warp_cursor_test PRIVATE raven_cpu)
+        add_dependencies(warp_cursor_test raven-bootstrap)
         foreach(QUEUE_ARCH IN ITEMS 64 32)
             set(QUEUE_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/queue-${QUEUE_ARCH}.exe)
             if(QUEUE_ARCH EQUAL 64)
@@ -1460,6 +1463,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR APPLE)
                 add_dependencies(raw_buffer_test raw_buffer_${QUEUE_ARCH}_fixture)
                 add_test(NAME native_raw_buffer_x${QUEUE_ARCH} COMMAND raw_buffer_test $<TARGET_FILE:raven-bootstrap> ${RAW_BUFFER_FIXTURE})
                 set_tests_properties(native_raw_buffer_x${QUEUE_ARCH} PROPERTIES TIMEOUT 15)
+                set(WARP_CURSOR_FIXTURE ${CMAKE_CURRENT_BINARY_DIR}/warp-cursor-${QUEUE_ARCH}.exe)
+                add_custom_command(OUTPUT ${WARP_CURSOR_FIXTURE}
+                    COMMAND ${QUEUE_COMPILER} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                        -Wl,--entry,${QUEUE_ENTRY},--no-insert-timestamp
+                        -o ${WARP_CURSOR_FIXTURE} ${PROJECT_SOURCE_DIR}/testdata/native_loader/warp_cursor_client.c -lkernel32 -luser32 -lgcc
+                    DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/warp_cursor_client.c VERBATIM)
+                add_custom_target(warp_cursor_${QUEUE_ARCH}_fixture ALL DEPENDS ${WARP_CURSOR_FIXTURE})
+                add_dependencies(warp_cursor_test warp_cursor_${QUEUE_ARCH}_fixture)
+                add_test(NAME native_warp_cursor_x${QUEUE_ARCH} COMMAND warp_cursor_test $<TARGET_FILE:raven-bootstrap> ${WARP_CURSOR_FIXTURE})
+                set_tests_properties(native_warp_cursor_x${QUEUE_ARCH} PROPERTIES TIMEOUT 15)
             endif()
         endforeach()
         # SPI_GETHIGHCONTRAST answers both pointer widths without writing past the structure.
