@@ -1674,13 +1674,20 @@ void NativeWindows::activate(uint64_t handle,bool notify_host)
 			activating=true;
 			try {
 				const auto previous=active;
+				// The program as a whole gains or loses the foreground only when no window of it was or will be active. Games keep their
+				// mouse and their frame rate by this message.
 				if (previous && std::as_const(objects).window(previous)) {
+					if (!handle) notify(previous,0x1c,0,0);
 					notify(previous,0x86,0,handle);
 					notify(previous,6,0,handle);
 				}
 				if (handle && !std::as_const(objects).window(handle)) handle=0;
 				active=handle;
-				if (handle) { notify(handle,0x86,1,previous); notify(handle,6,1,previous); }
+				if (handle) {
+					if (!previous) notify(handle,0x1c,1,0);
+					notify(handle,0x86,1,previous);
+					notify(handle,6,1,previous);
+				}
 				activating=false;
 			} catch (...) { activating=false; has_queued_activation=false; throw; }
 		}
