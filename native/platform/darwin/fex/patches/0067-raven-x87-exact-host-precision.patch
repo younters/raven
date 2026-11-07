@@ -1,0 +1,173 @@
+diff --git a/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/F80Fallbacks.h b/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/F80Fallbacks.h
+index 5c0e656..bcc487f 100644
+--- a/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/F80Fallbacks.h
++++ b/FEXCore/Source/Interface/Core/Interpreter/Fallbacks/F80Fallbacks.h
+@@ -43,6 +43,88 @@ FEXCORE_PRESERVE_ALL_ATTR static void HandleX87Exception(const softfloat_state&
+   }
+ }
+ 
++// Raven: an exact host path for the precisions programs set. With the precision control at 24 or 53 bits and rounding to nearest,
++// operands that hold no more bits than that precision give the same result from the host's double operation, rounded to the precision,
++// as from the x87: one rounding for 53 bits; for 24 bits a second rounding that cannot change the result, as 53 >= 2 * 24 + 2 for
++// addition, subtraction, multiplication, division and square root. Anything the double range cannot hold as a normal number, and any
++// zero that is not exact (a flushed tiny result), takes the software path.
++namespace RavenX87Fast {
++FEXCORE_PRESERVE_ALL_ATTR static inline bool Ready(uint16_t FCW, unsigned& Precision) {
++  const auto PC = (FCW >> 8) & 3;
++  const auto RC = (FCW >> 10) & 3;
++  if (RC != 0 || (PC != 0 && PC != 2)) {
++    return false;
++  }
++#ifdef ARCHITECTURE_arm64
++  uint64_t Control;
++  __asm__ volatile("mrs %0, fpcr" : "=r"(Control));
++  if (Control & (3ULL << 22)) {
++    return false;
++  }
++#else
++  return false;
++#endif
++  Precision = PC == 0 ? 24 : 53;
++  return true;
++}
++
++FEXCORE_PRESERVE_ALL_ATTR static inline bool ToDouble(const X80SoftFloat& Value, unsigned Precision, double& Out) {
++  uint64_t Bits;
++  if (Value.Top.Exponent == 0 && Value.Significand == 0) {
++    Bits = uint64_t(Value.Top.Sign) << 63;
++  } else {
++    const int Exponent = int(Value.Top.Exponent) - 16383;
++    if (!(Value.Significand >> 63) || Exponent < -1022 || Exponent > 1023 || (Value.Significand & ((uint64_t(1) << (64 - Precision)) - 1))) {
++      return false;
++    }
++    Bits = uint64_t(Value.Top.Sign) << 63 | uint64_t(Exponent + 1023) << 52 | ((Value.Significand << 1) >> 12);
++  }
++  memcpy(&Out, &Bits, sizeof(Out));
++  return true;
++}
++
++FEXCORE_PRESERVE_ALL_ATTR static inline double SquareRoot(double Value) {
++  double Result = Value;
++#ifdef ARCHITECTURE_arm64
++  // The instruction itself: the library function would be an import the module host does not provide.
++  __asm__("fsqrt %d0, %d1" : "=w"(Result) : "w"(Value));
++#endif
++  return Result;
++}
++
++FEXCORE_PRESERVE_ALL_ATTR static inline bool FromDouble(double Result, unsigned Precision, bool ExactZero, X80SoftFloat& Out) {
++  uint64_t Bits;
++  memcpy(&Bits, &Result, sizeof(Bits));
++  const uint16_t Sign = Bits >> 63;
++  int Field = int((Bits >> 52) & 0x7ff);
++  uint64_t Mantissa = Bits & ((uint64_t(1) << 52) - 1);
++  if (Field == 0) {
++    if (Mantissa || !ExactZero) {
++      return false;
++    }
++    Out = X80SoftFloat(Sign, 0, 0);
++    return true;
++  }
++  if (Field == 0x7ff) {
++    return false;
++  }
++  if (Precision == 24) {
++    const uint64_t Rest = Mantissa & ((uint64_t(1) << 29) - 1);
++    const uint64_t Half = uint64_t(1) << 28;
++    Mantissa >>= 29;
++    if ((Rest > Half || (Rest == Half && (Mantissa & 1))) && ++Mantissa == (uint64_t(1) << 23)) {
++      Mantissa = 0;
++      if (++Field == 0x7ff) {
++        return false;
++      }
++    }
++    Mantissa <<= 29;
++  }
++  Out = X80SoftFloat(Sign, uint16_t(Field - 1023 + 16383), (uint64_t(1) << 63) | (Mantissa << 11));
++  return true;
++}
++} // namespace RavenX87Fast
++
+ // Wrapper for SoftFloat state to handle X87 exceptions
+ class ScopedSoftFloatState {
+ public:
+@@ -209,6 +291,15 @@ template<>
+ struct OpHandlers<IR::OP_F80SQRT> {
+   FEXCORE_PRESERVE_ALL_ATTR static VectorRegType handle(uint16_t FCW, VectorRegType Src1, FEXCore::Core::CpuStateFrame* Frame) {
+     FEXCORE_PROFILE_INSTANT_INCREMENT(Frame->Thread, AccumulatedFloatFallbackCount, 1);
++    {
++      unsigned Precision;
++      double A;
++      X80SoftFloat Result;
++      if (RavenX87Fast::Ready(FCW, Precision) && RavenX87Fast::ToDouble(Src1, Precision, A) && A >= 0 &&
++          RavenX87Fast::FromDouble(RavenX87Fast::SquareRoot(A), Precision, A == 0, Result)) {
++        return Result;
++      }
++    }
+     ScopedSoftFloatState State {FCW, Frame};
+     return X80SoftFloat::FSQRT(&State.State, Src1);
+   }
+@@ -261,6 +352,15 @@ template<>
+ struct OpHandlers<IR::OP_F80ADD> {
+   FEXCORE_PRESERVE_ALL_ATTR static VectorRegType handle(uint16_t FCW, VectorRegType Src1, VectorRegType Src2, FEXCore::Core::CpuStateFrame* Frame) {
+     FEXCORE_PROFILE_INSTANT_INCREMENT(Frame->Thread, AccumulatedFloatFallbackCount, 1);
++    {
++      unsigned Precision;
++      double A, B;
++      X80SoftFloat Result;
++      if (RavenX87Fast::Ready(FCW, Precision) && RavenX87Fast::ToDouble(Src1, Precision, A) && RavenX87Fast::ToDouble(Src2, Precision, B) &&
++          RavenX87Fast::FromDouble(A + B, Precision, A == -B || A == 0 || B == 0, Result)) {
++        return Result;
++      }
++    }
+     ScopedSoftFloatState State {FCW, Frame};
+     return X80SoftFloat::FADD(&State.State, Src1, Src2);
+   }
+@@ -270,6 +370,15 @@ template<>
+ struct OpHandlers<IR::OP_F80SUB> {
+   FEXCORE_PRESERVE_ALL_ATTR static VectorRegType handle(uint16_t FCW, VectorRegType Src1, VectorRegType Src2, FEXCore::Core::CpuStateFrame* Frame) {
+     FEXCORE_PROFILE_INSTANT_INCREMENT(Frame->Thread, AccumulatedFloatFallbackCount, 1);
++    {
++      unsigned Precision;
++      double A, B;
++      X80SoftFloat Result;
++      if (RavenX87Fast::Ready(FCW, Precision) && RavenX87Fast::ToDouble(Src1, Precision, A) && RavenX87Fast::ToDouble(Src2, Precision, B) &&
++          RavenX87Fast::FromDouble(A - B, Precision, A == B || A == 0 || B == 0, Result)) {
++        return Result;
++      }
++    }
+     ScopedSoftFloatState State {FCW, Frame};
+     return X80SoftFloat::FSUB(&State.State, Src1, Src2);
+   }
+@@ -279,6 +388,15 @@ template<>
+ struct OpHandlers<IR::OP_F80MUL> {
+   FEXCORE_PRESERVE_ALL_ATTR static VectorRegType handle(uint16_t FCW, VectorRegType Src1, VectorRegType Src2, FEXCore::Core::CpuStateFrame* Frame) {
+     FEXCORE_PROFILE_INSTANT_INCREMENT(Frame->Thread, AccumulatedFloatFallbackCount, 1);
++    {
++      unsigned Precision;
++      double A, B;
++      X80SoftFloat Result;
++      if (RavenX87Fast::Ready(FCW, Precision) && RavenX87Fast::ToDouble(Src1, Precision, A) && RavenX87Fast::ToDouble(Src2, Precision, B) &&
++          RavenX87Fast::FromDouble(A * B, Precision, A == 0 || B == 0, Result)) {
++        return Result;
++      }
++    }
+     ScopedSoftFloatState State {FCW, Frame};
+     return X80SoftFloat::FMUL(&State.State, Src1, Src2);
+   }
+@@ -288,6 +406,15 @@ template<>
+ struct OpHandlers<IR::OP_F80DIV> {
+   FEXCORE_PRESERVE_ALL_ATTR static VectorRegType handle(uint16_t FCW, VectorRegType Src1, VectorRegType Src2, FEXCore::Core::CpuStateFrame* Frame) {
+     FEXCORE_PROFILE_INSTANT_INCREMENT(Frame->Thread, AccumulatedFloatFallbackCount, 1);
++    {
++      unsigned Precision;
++      double A, B;
++      X80SoftFloat Result;
++      if (RavenX87Fast::Ready(FCW, Precision) && RavenX87Fast::ToDouble(Src1, Precision, A) && RavenX87Fast::ToDouble(Src2, Precision, B) &&
++          RavenX87Fast::FromDouble(A / B, Precision, A == 0 && B != 0, Result)) {
++        return Result;
++      }
++    }
+     ScopedSoftFloatState State {FCW, Frame};
+     return X80SoftFloat::FDIV(&State.State, Src1, Src2);
+   }

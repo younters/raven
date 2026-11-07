@@ -238,6 +238,24 @@ if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
     endforeach()
 endif()
 
+if(RAVEN_FEX_MODHOST AND RAVEN_MINGW32)
+    # x87 arithmetic in every precision, bit for bit, under both engines: the host path for 24 and 53 bits must give the x87's results.
+    set(x87_precision_fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-x87-precision32.exe)
+    add_custom_command(OUTPUT ${x87_precision_fixture}
+        COMMAND ${RAVEN_MINGW32} -O1 -march=i686 -mno-sse -nostdlib -fno-stack-protector -fno-builtin -mno-stack-arg-probe
+            -Wl,--entry,_raven_entry,--no-insert-timestamp -o ${x87_precision_fixture} ${RAVEN_DARWIN_DIR}/fex/x87_precision_client.c -lkernel32
+        DEPENDS ${RAVEN_DARWIN_DIR}/fex/x87_precision_client.c VERBATIM)
+    add_custom_target(fex_x87_precision_fixture DEPENDS ${x87_precision_fixture})
+    add_dependencies(raven fex_x87_precision_fixture)
+    foreach(engine native fex)
+        add_test(NAME native_x87_precision_x32_${engine} COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py --require-modules --backend ${engine}
+            --raven $<TARGET_FILE:raven> --fixture ${x87_precision_fixture}
+            --modules "${RAVEN_FEX_MODULE_ROOT}")
+        set_tests_properties(native_x87_precision_x32_${engine} PROPERTIES TIMEOUT 60 LABELS "engine-parity;cpu")
+    endforeach()
+endif()
+
 if(RAVEN_FEX_MODHOST AND RAVEN_MINGW32 AND RAVEN_MINGW64)
     # The calls answered in the guest behave as on Windows and stay there.
     foreach(width 32 64)
