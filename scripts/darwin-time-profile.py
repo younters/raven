@@ -22,7 +22,7 @@ import tempfile
 import time
 from pathlib import Path
 
-IDLE = ("__psynch_cvwait", "__workq_kernreturn", "semaphore_wait_trap", "semaphore_timedwait_trap", "mach_msg2_trap",
+IDLE = ("__psynch_cvwait", "semaphore_wait_signal_trap", "__workq_kernreturn", "semaphore_wait_trap", "semaphore_timedwait_trap", "mach_msg2_trap",
         "__semwait_signal", "kevent", "poll", "__select", "__ulock_wait", "os_sync_wait_on_address", "__sigsuspend")
 
 # Short names of system calls, which must match whole: "read" is also part of "pthread".
@@ -116,6 +116,9 @@ def parse(path, translator):
             rows.append((len(match.group(1)), int(match.group(2)), match.group(3).strip()))
     totals = collections.Counter()
     threads = collections.Counter()
+    # Each thread's busy samples by category, and all its samples: a thread near 100% busy is what limits a program that waits on it.
+    per_thread = collections.defaultdict(collections.Counter)
+    thread_samples = collections.Counter()
     leaves = collections.Counter()
     # A frame's own samples are its count less those of its children, so a frame with children can still hold time.
     open_frames = []
@@ -131,6 +134,7 @@ def parse(path, translator):
         category, named = classify(frame["stack"], translator)
         totals[category] += own
         threads[frame["thread"]] += own
+        per_thread[frame["thread"]][category] += own
         leaves[f"{category}: {(named if symbol == '???' else symbol)[:80]}"] += own
 
     for depth, count, text in rows:
@@ -138,6 +142,7 @@ def parse(path, translator):
             close(open_frames.pop())
         if text.startswith("Thread_"):
             thread = text.split()[0]
+            thread_samples[thread] += count
             open_frames.append({"depth": depth, "count": count, "children": 0, "stack": [], "thread": thread})
             continue
         name = re.sub(r"\s+\(in .*", "", text)
@@ -151,7 +156,7 @@ def parse(path, translator):
         open_frames.append({"depth": depth, "count": count, "children": 0, "stack": [frame] + (parent["stack"] if parent else []), "thread": thread})
     while open_frames:
         close(open_frames.pop())
-    return totals, threads, leaves
+    return totals, threads, leaves, per_thread, thread_samples
 
 
 def main():
@@ -163,6 +168,7 @@ def main():
     parser.add_argument("--output", type=Path, help="write one CSV row per window and category")
     parser.add_argument("--map", help="the folder given to the program as RAVEN_PROFILE_MAP")
     parser.add_argument("--nm", default="llvm-nm", help="llvm-nm, to read the translator's function names")
+    parser.add_argument("--threads", type=int, default=4, help="busiest threads to list per window, with how busy each was")
     parser.add_argument("--top", type=int, default=6, help="busiest symbols to list per window")
     args = parser.parse_args()
 
@@ -187,7 +193,7 @@ def main():
             parsed = parse(report, translator)
         if not parsed:
             break
-        totals, threads, leaves = parsed
+        totals, threads, leaves, per_thread, thread_samples = parsed
         at = int(started - began)
         busy = sum(totals.values()) or 1
         print(f"--- t={at}s busy samples {busy} on {len(threads)} threads")
@@ -197,6 +203,10 @@ def main():
                 writer.writerow([at, category, count, f"{count / busy:.4f}"])
         for name, count in leaves.most_common(args.top):
             print(f"       {100 * count / busy:5.1f}%  {name}")
+        for thread, count in threads.most_common(args.threads):
+            share = 100 * count / max(thread_samples[thread], 1)
+            parts = ", ".join(f"{category} {100 * part / count:.0f}%" for category, part in per_thread[thread].most_common(3))
+            print(f"    thread {thread[7:]:>10} busy {share:5.1f}%: {parts}")
         sys.stdout.flush()
         if output:
             output.flush()

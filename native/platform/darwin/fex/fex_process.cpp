@@ -305,6 +305,8 @@ struct FexWorker {
 	// A stop no resume has taken yet, and whether the controller is watching this worker instead of sleeping on the stop descriptor.
 	std::atomic<bool> unread{false};
 	std::atomic<bool> controller_watching{false};
+	// How many looks in a row ran out, on each side, and a count that lets a side that gave up look again now and then.
+	unsigned worker_misses = 0, worker_skips = 0, controller_misses = 0, controller_skips = 0;
 	uint64_t teb = 0;
 	uint32_t *interrupt = nullptr;
 	int descriptor;
@@ -331,11 +333,14 @@ struct FexWorker {
 				ready = true;
 				wake.notify_all();
 				for (;;) {
-					if (!requested.load(std::memory_order_acquire) && !quit) {
+					// A worker whose recent looks all ran out is waiting on something slow, such as a wait on an event: it sleeps at once and
+					// looks again only now and then, so it does not burn a processor on a fanless machine for nothing.
+					if (!requested.load(std::memory_order_acquire) && !quit && (worker_misses < 4 || !(++worker_skips & 15))) {
 						lock.unlock();
 						for (const auto limit = handoff_ticks() + ticks_of(handoff_patience);
 							!requested.load(std::memory_order_acquire) && handoff_ticks() < limit;)
 							asm volatile("yield");
+						worker_misses = requested.load(std::memory_order_acquire) ? 0 : std::min(worker_misses + 1, 64u);
 						lock.lock();
 					}
 					wake.wait(lock, [this] { return requested.load(std::memory_order_relaxed) || quit; });
@@ -421,6 +426,8 @@ struct FexProcess::State {
 		const auto started = handoff_ticks();
 		if (started - last_scheduled > ticks_of(std::chrono::microseconds(200)))
 			return false;
+		if (worker.controller_misses >= 4 && (++worker.controller_skips & 15))
+			return false;
 		const auto limit = started + ticks_of(handoff_patience);
 		worker.controller_watching.store(true, std::memory_order_seq_cst);
 		for (unsigned round = 0;; ++round) {
@@ -435,7 +442,9 @@ struct FexProcess::State {
 			asm volatile("yield");
 		}
 		worker.controller_watching.store(false, std::memory_order_seq_cst);
-		return worker.stopped.load(std::memory_order_seq_cst);
+		const bool arrived = worker.stopped.load(std::memory_order_seq_cst);
+		worker.controller_misses = arrived ? 0 : std::min(worker.controller_misses + 1, 64u);
+		return arrived;
 	}
 	std::unique_ptr<FexGuestWindow> window;
 	uint64_t host(uint64_t address, size_t size = 1) const { return window ? uintptr_t(window->host(address, size)) : address; }
