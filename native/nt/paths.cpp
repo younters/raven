@@ -9,7 +9,9 @@
 #include <mutex>
 #include <sys/stat.h>
 #include <time.h>
+#include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace raven {
@@ -36,12 +38,10 @@ std::u16string strip_namespace(std::u16string_view path)
 // Looks for an entry that differs from name only by case, so Windows spellings find Linux files. The entries of a folder are kept by
 // their upper-case spelling while the folder stays as it was: programs ask for files that are not there by the hundred, Office for a
 // library at each click, and each miss read the whole folder. A folder changed in the last two seconds is read again each time, as its
-// time stamp may not have moved for a change made within the same tick.
-std::optional<std::string> case_match(const std::filesystem::path &directory, const std::string &name)
+// time stamp may not have moved for a change made within the same tick. A current listing answers without asking the disk. `known` is the
+// folder's status when the caller already has it.
+std::optional<std::string> case_match(const std::filesystem::path &directory, const std::string &name, const struct stat *known = nullptr)
 {
-	std::error_code ignored;
-	if (std::filesystem::exists(directory / name, ignored))
-		return name;
 	const auto key = [](std::u16string text) {
 		for (auto &character : text)
 			character = upper_case(character);
@@ -50,34 +50,70 @@ std::optional<std::string> case_match(const std::filesystem::path &directory, co
 	struct Listing {
 		timespec changed{};
 		std::unordered_map<std::u16string, std::string> names;
+		std::unordered_set<std::string> exact;
 	};
 	static std::mutex lock;
 	static std::unordered_map<std::string, Listing> listings;
 	struct stat status{};
-	if (::stat(directory.c_str(), &status) != 0)
+	if (known)
+		status = *known;
+	else if (::stat(directory.c_str(), &status) != 0)
 		return std::nullopt;
 	timespec now{};
 	::clock_gettime(CLOCK_REALTIME, &now);
 	const bool settled = now.tv_sec - status.st_mtim.tv_sec > 2;
-	std::lock_guard guard(lock);
-	auto cached = listings.find(directory.native());
-	if (!settled || cached == listings.end() || cached->second.changed.tv_sec != status.st_mtim.tv_sec ||
-		cached->second.changed.tv_nsec != status.st_mtim.tv_nsec) {
-		DIR *handle = ::opendir(directory.c_str());
-		if (!handle)
+	const auto current = [&](const Listing &listing) {
+		return settled && listing.changed.tv_sec == status.st_mtim.tv_sec && listing.changed.tv_nsec == status.st_mtim.tv_nsec;
+	};
+	const auto look = [&](const Listing &listing) -> std::optional<std::string> {
+		if (listing.exact.contains(name))
+			return name;
+		const auto found = listing.names.find(key(from_utf8(name)));
+		if (found == listing.names.end())
 			return std::nullopt;
-		Listing listing{status.st_mtim, {}};
-		while (const auto *entry = ::readdir(handle))
-			listing.names.emplace(key(from_utf8(entry->d_name)), entry->d_name);
-		::closedir(handle);
-		if (listings.size() > 4096)
-			listings.clear();
-		cached = listings.insert_or_assign(directory.native(), std::move(listing)).first;
+		return found->second;
+	};
+	{
+		std::lock_guard guard(lock);
+		if (const auto cached = listings.find(directory.native()); cached != listings.end() && current(cached->second))
+			return look(cached->second);
 	}
-	const auto found = cached->second.names.find(key(from_utf8(name)));
-	if (found == cached->second.names.end())
+	// A folder still changing is not worth listing: the name as given is tried first. A settled one is listed, so that what comes back is the
+	// name as stored, the spelling the volume finds fastest: on a case-insensitive ZFS volume another spelling costs ten times as much.
+	std::error_code ignored;
+	if (!settled && std::filesystem::exists(directory / name, ignored))
+		return name;
+	DIR *handle = ::opendir(directory.c_str());
+	if (!handle)
 		return std::nullopt;
-	return found->second;
+	Listing listing{status.st_mtim, {}, {}};
+	while (const auto *entry = ::readdir(handle)) {
+		listing.names.emplace(key(from_utf8(entry->d_name)), entry->d_name);
+		listing.exact.insert(entry->d_name);
+	}
+	::closedir(handle);
+	std::lock_guard guard(lock);
+	if (listings.size() > 4096)
+		listings.clear();
+	const auto stored = listings.insert_or_assign(directory.native(), std::move(listing)).first;
+	return look(stored->second);
+}
+
+// Windows folders and the host folders they resolved to, by upper-case Windows path. A lookup starts at the folder above its last
+// component when that is known, which one stat of its host path confirms, and with it every folder above: before, each component of each
+// path was looked up again, a dozen system calls for a file deep in a game's folders.
+std::mutex folder_lock;
+std::unordered_map<std::u16string, std::string> folders;
+
+std::u16string folder_key(char16_t drive, std::span<const std::u16string_view> parts)
+{
+	std::u16string key{upper_case(drive), u':'};
+	for (const auto part : parts) {
+		key += u'\\';
+		for (const auto character : part)
+			key += upper_case(character);
+	}
+	return key;
 }
 }
 
@@ -310,28 +346,56 @@ std::optional<NativePaths::Resolved> NativePaths::resolve_direct(const std::u16s
 	if (!host)
 		return std::nullopt;
 	Resolved result{*host, true, true};
-	std::u16string_view rest = std::u16string_view(path).substr(3);
-	while (!rest.empty()) {
+	std::vector<std::u16string_view> parts;
+	for (std::u16string_view rest = std::u16string_view(path).substr(3); !rest.empty();) {
 		const auto end = rest.find(u'\\');
-		const auto part = rest.substr(0, end);
-		if (!part.empty()) {
-			const auto name = to_utf8(part);
-			const bool last = end == rest.npos || end + 1 == rest.size();
-			if (const auto match = result.exists ? case_match(result.host, name) : std::nullopt)
-				result.host /= *match;
-			else {
-				result.host /= name;
-				if (result.exists)
-					result.exists = false;
-				else
-					result.parent_exists = false;
-				if (!last)
-					result.parent_exists = false;
-			}
-		}
+		if (const auto part = rest.substr(0, end); !part.empty())
+			parts.push_back(part);
 		if (end == rest.npos)
 			break;
 		rest = rest.substr(end + 1);
+	}
+	size_t first = 0;
+	struct stat parent{};
+	bool parent_known = false;
+	if (parts.size() > 1) {
+		const auto key = folder_key(path[0], std::span(parts).first(parts.size() - 1));
+		std::string cached;
+		{
+			std::lock_guard guard(folder_lock);
+			if (const auto found = folders.find(key); found != folders.end())
+				cached = found->second;
+		}
+		if (!cached.empty() && ::stat(cached.c_str(), &parent) == 0 && S_ISDIR(parent.st_mode)) {
+			result.host = cached;
+			first = parts.size() - 1;
+			parent_known = true;
+		} else if (!cached.empty()) {
+			std::lock_guard guard(folder_lock);
+			folders.erase(key);
+		}
+	}
+	for (size_t index = first; index < parts.size(); ++index) {
+		const auto name = to_utf8(parts[index]);
+		const bool last = index + 1 == parts.size();
+		if (const auto match = result.exists ? case_match(result.host, name, parent_known ? &parent : nullptr) : std::nullopt) {
+			result.host /= *match;
+			if (!last) {
+				std::lock_guard guard(folder_lock);
+				if (folders.size() > 8192)
+					folders.clear();
+				folders.insert_or_assign(folder_key(path[0], std::span(parts).first(index + 1)), result.host.native());
+			}
+		} else {
+			result.host /= name;
+			if (result.exists)
+				result.exists = false;
+			else
+				result.parent_exists = false;
+			if (!last)
+				result.parent_exists = false;
+		}
+		parent_known = false;
 	}
 	return result;
 }
