@@ -797,6 +797,13 @@ NativeResult FexProcess::resume()
 		result.exception_information.assign(record.information, record.information + record.count);
 		if (record.count > 1) result.fault_address = record.information[1];
 	}
+	// A 32-bit provider's trap entered through int 0x2e, with its own address in EAX: the call stop a breakpoint there would have made, and
+	// the instruction already past it.
+	if (wow64_module && result.stop == NativeStop::syscall && result.instruction == result.value + 1 && state->traps.contains(result.value)) {
+		state->thread.awaiting_syscall = false;
+		state->thread.awaiting_api = true;
+		result.stop = NativeStop::api;
+	}
 	if (result.stop == NativeStop::exception && result.value == 0x80000003 && state->traps.contains(result.instruction)) {
 		auto saved = context();
 		saved.registers.rip += 1;

@@ -153,6 +153,23 @@ const std::vector<FastStub> &fast_stubs_x86()
 		// Waiters of an address look again on their own, so a wake has nothing to do. ret 4
 		{"WakeByAddressSingle", {0xc2, 0x04, 0}},
 		{"WakeByAddressAll", {0xc2, 0x04, 0}},
+		// Critical sections in their own fields, with the lock word Windows XP used: LockCount is -1 while free and counts the owner's
+		// entries and the waiters after that, OwningThread (0xc) and RecursionCount (8) belong to the owner. A thread that finds the section
+		// held by another jumps to the trap at 0x30, served as RavenCriticalSectionWait, which hands it the section; a release that finds
+		// waiters jumps there as RavenCriticalSectionWake.
+		// mov ecx,[esp+4]; mov edx,fs:[0x24]; lock inc dword [ecx+4]; jnz busy; mov [ecx+0xc],edx; mov dword [ecx+8],1; ret 4
+		// busy: cmp [ecx+0xc],edx; jne wait; inc dword [ecx+8]; ret 4; wait: jmp trap
+		{"EnterCriticalSection", {0x8b, 0x4c, 0x24, 0x04, 0x64, 0x8b, 0x15, 0x24, 0, 0, 0, 0xf0, 0xff, 0x41, 0x04, 0x75, 0x0d,
+			0x89, 0x51, 0x0c, 0xc7, 0x41, 0x08, 1, 0, 0, 0, 0xc2, 0x04, 0, 0x39, 0x51, 0x0c, 0x75, 0x06, 0xff, 0x41, 0x08, 0xc2, 0x04, 0,
+			0xeb, 0x05}},
+		// A free section is taken here; any other state is served. mov ecx,[esp+4]; mov eax,-1; xor edx,edx; lock cmpxchg [ecx+4],edx;
+		// jne trap; mov edx,fs:[0x24]; mov [ecx+0xc],edx; mov dword [ecx+8],1; xor eax,eax; inc eax; ret 4
+		{"TryEnterCriticalSection", {0x8b, 0x4c, 0x24, 0x04, 0xb8, 0xff, 0xff, 0xff, 0xff, 0x31, 0xd2, 0xf0, 0x0f, 0xb1, 0x51, 0x04, 0x75, 0x1e,
+			0x64, 0x8b, 0x15, 0x24, 0, 0, 0, 0x89, 0x51, 0x0c, 0xc7, 0x41, 0x08, 1, 0, 0, 0, 0x31, 0xc0, 0x40, 0xc2, 0x04, 0}},
+		// mov ecx,[esp+4]; dec dword [ecx+8]; jnz still; mov dword [ecx+0xc],0; lock dec dword [ecx+4]; jge trap; jmp done;
+		// still: lock dec dword [ecx+4]; done: ret 4
+		{"LeaveCriticalSection", {0x8b, 0x4c, 0x24, 0x04, 0xff, 0x49, 0x08, 0x75, 0x0f, 0xc7, 0x41, 0x0c, 0, 0, 0, 0, 0xf0, 0xff, 0x49, 0x04,
+			0x7d, 0x1a, 0xeb, 0x04, 0xf0, 0xff, 0x49, 0x04, 0xc2, 0x04, 0}},
 		// In the guest these are atomic against other threads that run at the same time, which a served call cannot be.
 		// mov ecx,[esp+4]; mov eax,1; lock xadd [ecx],eax; inc eax; ret 4
 		{"InterlockedIncrement", {0x8b, 0x4c, 0x24, 0x04, 0xb8, 1, 0, 0, 0, 0xf0, 0x0f, 0xc1, 0x01, 0x40, 0xc2, 0x04, 0}},
@@ -1827,11 +1844,34 @@ uint64_t api_trap_address(const PEModule &provider, std::string_view module, std
 	return provider.loaded.base() + stub + fast_stub_trap_offset(module, name);
 }
 
+std::string_view x86_fast_stub_slow_name(std::string_view name)
+{
+	if (name == "EnterCriticalSection")
+		return "RavenCriticalSectionWait";
+	if (name == "LeaveCriticalSection")
+		return "RavenCriticalSectionWake";
+	return name;
+}
+
 uint64_t x86_api_trap_address(const PEModule &provider, uint32_t address)
 {
-	// Any export that does not start with its breakpoint is a fast stub, whose slow path sits at the fixed offset.
+	// A trap is a breakpoint, or mov eax,trap; int 0x2e for FEX, where the trap is the int's last byte. An export that starts with neither is a
+	// fast stub, whose slow path sits at the fixed offset.
 	const auto image = provider.loaded.data();
-	return provider.loaded.base() + address + (address < image.size() && image[address] != 0xcc ? 0x30 : 0);
+	const auto base = provider.loaded.base();
+	const auto trap_at = [&](uint64_t at) -> uint64_t {
+		if (at < image.size() && image[at] == 0xcc)
+			return base + at;
+		if (at + 7 <= image.size() && image[at] == 0xb8 && image[at + 5] == 0xcd && image[at + 6] == 0x2e &&
+			(uint32_t(image[at + 1]) | uint32_t(image[at + 2]) << 8 | uint32_t(image[at + 3]) << 16 | uint32_t(image[at + 4]) << 24) == base + at + 6)
+			return base + at + 6;
+		return 0;
+	};
+	if (const auto trap = trap_at(address))
+		return trap;
+	if (const auto trap = trap_at(address + 0x30))
+		return trap;
+	return base + address;
 }
 
 // Offset of the slow-path breakpoint inside a fast or served stub.
@@ -2003,11 +2043,25 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 	size_t cursor = module_name + name.size() + 1;
 	size_t fast_next = 0, served_next = 0, clock_next = 0, commit_next = 0, strings_next = strings_start, blocks_next = blocks_start;
 	size_t queued_next = queued_start;
+	// A 32-bit program run by FEX enters the runtime through int 0x2e, which FEX hands to the host as a call: a breakpoint costs a signal,
+	// several microseconds on every call. EAX carries the trap's address, the last byte of the int, so that a stop there reads as one at an
+	// int3 placed on it: mov eax,trap; int 0x2e; ret.
+	const auto x86_trap = [&](size_t at) {
+#ifdef RAVEN_FEX_PROCESS
+		if (x86 && fex_execution_selected()) {
+			const uint32_t trap = uint32_t(base + rva(at) + 6);
+			const uint8_t entry[8] = {0xb8, uint8_t(trap), uint8_t(trap >> 8), uint8_t(trap >> 16), uint8_t(trap >> 24), 0xcd, 0x2e, 0xc3};
+			std::copy(std::begin(entry), std::end(entry), bytes.begin() + ptrdiff_t(at));
+			return;
+		}
+#endif
+		bytes[at] = 0xcc;
+		bytes[at + 1] = 0xc3;
+	};
 	for (size_t index = 0; index < exports.size(); ++index) {
 		size_t code = 0x200 + index * 16;
 		const uint32_t service = x86 ? 0 : nt_service_number(name, exports[index]);
-		bytes[code] = 0xcc;
-		bytes[code + 1] = 0xc3;
+		x86_trap(code);
 		// Hooking libraries copy an x64 entry preamble into a trampoline; keep the breakpoint beyond their 14-byte jump space.
 		if (!x86 && (fast_paths || name == "user32.dll")) {
 			std::fill_n(bytes.begin() + ptrdiff_t(code), 14, 0x90);
@@ -2063,8 +2117,12 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 				if (stub.name == exports[index]) {
 					code = fast_start + fast_next++ * 64;
 					std::copy(stub.code.begin(), stub.code.end(), bytes.begin() + ptrdiff_t(code));
-					bytes[code + 0x30] = 0xcc;
-					bytes[code + 0x31] = 0xc3;
+					if (x86) {
+						x86_trap(code + 0x30);
+					} else {
+						bytes[code + 0x30] = 0xcc;
+						bytes[code + 0x31] = 0xc3;
+					}
 				}
 		if (queued && queued_arguments(name, exports[index])) {
 			const size_t served = code;

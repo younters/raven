@@ -8,6 +8,9 @@
 #endif
 
 static DWORD shared_slot, freed_slot, fiber_slot;
+static CRITICAL_SECTION section;
+static volatile LONG counter_value;
+static volatile LONG try_result = -1;
 static HANDLE go, done;
 
 static void WINAPI fiber_callback(void *value)
@@ -43,6 +46,29 @@ static DWORD WINAPI worker(void *argument)
 	return 0;
 }
 
+/* Four threads add to a plain counter under one section: any lost update shows a section that let two in. */
+static DWORD WINAPI adder(void *argument)
+{
+	(void)argument;
+	for (int i = 0; i < 20000; ++i) {
+		EnterCriticalSection(&section);
+		LONG value = counter_value;
+		for (volatile int spin = 0; spin < 3; ++spin) {}
+		counter_value = value + 1;
+		LeaveCriticalSection(&section);
+	}
+	return 0;
+}
+
+static DWORD WINAPI try_other(void *argument)
+{
+	(void)argument;
+	try_result = TryEnterCriticalSection(&section);
+	if (try_result)
+		LeaveCriticalSection(&section);
+	return 0;
+}
+
 typedef LONG(WINAPI *one_word)(volatile LONG *);
 typedef LONG(WINAPI *two_words)(volatile LONG *, LONG);
 typedef LONG(WINAPI *three_words)(volatile LONG *, LONG, LONG);
@@ -52,7 +78,8 @@ int raven_entry(void)
 	HMODULE kernel = GetModuleHandleA("kernel32.dll");
 	/* Answered in the guest: an entry that begins with the breakpoint would go to the runtime. */
 	static const char *const fast[] = {"GetLastError", "SetLastError", "GetCurrentThreadId", "GetCurrentProcessId", "GetCurrentProcess",
-		"GetCurrentThread", "TlsGetValue", "TlsSetValue", "FlsGetValue"};
+		"GetCurrentThread", "TlsGetValue", "TlsSetValue", "FlsGetValue", "EnterCriticalSection", "LeaveCriticalSection",
+		"TryEnterCriticalSection"};
 	for (unsigned i = 0; i < sizeof fast / sizeof *fast; ++i) {
 		const unsigned char *code = (const unsigned char *)GetProcAddress(kernel, fast[i]);
 		if (!code)
@@ -120,6 +147,33 @@ int raven_entry(void)
 		ExitProcess(16);
 	if (status)
 		ExitProcess(status);
+
+	/* A critical section: its owner and depth where Windows keeps them, recursion, a try from another thread, and exclusion. */
+	InitializeCriticalSection(&section);
+	EnterCriticalSection(&section);
+	EnterCriticalSection(&section);
+	if (!TryEnterCriticalSection(&section))
+		ExitProcess(40);
+	if ((DWORD)(ULONG_PTR)section.OwningThread != GetCurrentThreadId() || section.RecursionCount != 3)
+		ExitProcess(41);
+	HANDLE other = CreateThread(NULL, 0, try_other, NULL, 0, NULL);
+	if (!other || WaitForSingleObject(other, 10000) != WAIT_OBJECT_0 || try_result != 0)
+		ExitProcess(42);
+	CloseHandle(other);
+	LeaveCriticalSection(&section);
+	LeaveCriticalSection(&section);
+	LeaveCriticalSection(&section);
+	if (section.OwningThread || section.RecursionCount)
+		ExitProcess(43);
+	HANDLE adders[4];
+	for (int i = 0; i < 4; ++i)
+		if (!(adders[i] = CreateThread(NULL, 0, adder, NULL, 0, NULL)))
+			ExitProcess(44);
+	if (WaitForMultipleObjects(4, adders, TRUE, 60000) != WAIT_OBJECT_0)
+		ExitProcess(45);
+	if (counter_value != 80000)
+		ExitProcess(46);
+	DeleteCriticalSection(&section);
 
 #ifndef _WIN64
 	/* 32-bit kernel32 exports the interlocked calls, whose results programs rely on. */

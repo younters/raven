@@ -22,6 +22,8 @@ size_t fast_stub_trap_offset(std::string_view module, std::string_view name);
 bool guest_paths();
 // Where the breakpoint of a 32-bit provider export sits: past the guest-side path of a fast stub, at its start otherwise.
 uint64_t x86_api_trap_address(const PEModule &provider, uint32_t address);
+// The name the runtime serves a 32-bit fast stub's own trap under, where the stub calls it for a slow path rather than handing over the call.
+std::string_view x86_fast_stub_slow_name(std::string_view name);
 // The breakpoint a 64-bit provider export ends in when the runtime serves it: behind a guest-side prelude when the export has one.
 uint64_t api_trap_address(const PEModule &provider, std::string_view module, std::string_view name, uint32_t address);
 // Device information sets belong to the runtime; the installer component handles INF files and queues.

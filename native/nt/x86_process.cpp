@@ -592,7 +592,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			const auto found = std::find_if(kernel32_table().begin(), kernel32_table().end(), [&](const auto &item) { return item.name == exported; });
 			const auto view = std::find(names.begin(), names.end(), exported);
 			const uint32_t fixed = found != kernel32_table().end() ? found->words : registry_words(exported) != UINT32_MAX ? registry_words(exported) : 0;
-			traps.emplace(x86_api_trap_address(provider, symbol.address), std::pair{*view, words_of("kernel32.dll", exported, fixed) * 4});
+			const auto trap = x86_api_trap_address(provider, symbol.address);
+			traps.emplace(trap, std::pair{trap - provider.loaded.base() - symbol.address >= 0x30 ? x86_fast_stub_slow_name(*view) : *view,
+				words_of("kernel32.dll", exported, fixed) * 4});
 		}
 	}
 	const auto add_desktop = [&](const char *dll, std::span<const std::string_view> implemented, std::span<const std::string_view> pending) {
@@ -613,7 +615,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			const auto view = std::find(exports.begin(), exports.end(), exported);
 			const auto found = desktop_arguments().find(exported);
 			const uint32_t fixed = found != desktop_arguments().end() ? found->second : registry_words(exported) != UINT32_MAX ? registry_words(exported) : 0;
-			traps.emplace(provider.loaded.base() + symbol.address, std::pair{*view, words_of(dll, exported, fixed) * 4});
+			traps.emplace(x86_api_trap_address(provider, symbol.address), std::pair{*view, words_of(dll, exported, fixed) * 4});
 		}
 	};
 	std::vector<std::string_view> user_pending{"CheckMenuItem", "DialogBoxParamW", "EndDialog", "GetDesktopWindow",
@@ -696,7 +698,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			const auto stable = std::find(merged.begin(), merged.end(), exported);
 			if (stable == merged.end())
 				throw std::runtime_error("native x86 provider export is not in its list: " + std::string(dll) + "!" + exported);
-			traps.emplace(x86_api_trap_address(provider, symbol.address), std::pair{*stable, words_of(dll, exported, count(exported)) * 4});
+			const auto trap = x86_api_trap_address(provider, symbol.address);
+			traps.emplace(trap, std::pair{trap - provider.loaded.base() - symbol.address >= 0x30 ? x86_fast_stub_slow_name(*stable) : *stable,
+				words_of(dll, exported, count(exported)) * 4});
 		}
 	};
 	// KernelBase serves the same kernel entry points, including the PathCch functions missing from the public import-library lists.

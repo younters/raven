@@ -279,6 +279,13 @@ if(RAVEN_FEX_MODHOST AND RAVEN_MINGW32 AND RAVEN_MINGW64)
             set_tests_properties(native_fast_calls_x${width}_${engine} PROPERTIES TIMEOUT 30
                 LABELS "engine-parity;cpu")
         endforeach()
+        # Guest threads that run side by side contend for one critical section for real.
+        add_test(NAME native_fast_calls_x${width}_fex_parallel COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py --require-modules --backend fex
+            --raven $<TARGET_FILE:raven> --fixture ${fast_calls_fixture}
+            --modules "${RAVEN_FEX_MODULE_ROOT}")
+        set_tests_properties(native_fast_calls_x${width}_fex_parallel PROPERTIES TIMEOUT 60 ENVIRONMENT RAVEN_PARALLEL=1
+            LABELS "engine-parity;cpu")
     endforeach()
 endif()
 
