@@ -1,0 +1,16 @@
+diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+--- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+@@ -1026,8 +1026,10 @@
+     ldr(TMP1, &l_ExitLink);
+     blr(TMP1);
+ 
+-    // This is a ExitFunctionLinkData struct
+-    BindOrRestart(&l_ExitLink);
++    // This is a ExitFunctionLinkData struct, which the linker finds through the return address of the blr above.
++    // Raven: l_ExitLink is bound once, after the loop, at the linker's address that every thunk loads. Binding it here as well
++    // patched every earlier thunk's load again at each thunk, quadratic in a block's exits, only for the final bind to set them all
++    // the same: a block with a thousand exits took a second to compile.
+     dc64(0); // HostCode
+     if (PendingJumpThunk.PatchSiteAddress) {
+       // GuestRIP with an extra step
