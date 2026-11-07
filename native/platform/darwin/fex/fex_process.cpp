@@ -1033,8 +1033,11 @@ bool fex_reserve_image_address(uint64_t address, uint64_t size)
 }
 bool FexProcess::memory_available(uint64_t address, size_t size) const { if (state->window) {
 		if (!size || address < 65536 || address >= state->user_limit || size > state->user_limit - address) return false;
-		for (auto [base, region] : state->regions) if (address < base + region.size && base < address + size) return false;
-		return true;
+		// Regions do not overlap: only the last one that starts before the end can reach into the range.
+		auto after = state->regions.lower_bound(address + size);
+		if (after == state->regions.begin()) return true;
+		const auto &[base, region] = *std::prev(after);
+		return base + region.size <= address;
 	} return fex_address_available(address, size); }
 std::vector<uint8_t> FexProcess::read_memory(uint64_t address, size_t size) const
 {
@@ -1099,7 +1102,17 @@ uint64_t FexProcess::map_memory(size_t size, int protection, uint64_t address)
 	}
 	const auto n = (size + 16383) & ~size_t(16383);
 	if (state->window) {
-		if (!address) for (address = 0x10000; address < state->user_limit && !memory_available(address, n); address += 65536) {}
+		// The lowest free 64 KiB-aligned place, as Windows allocates bottom up: the gaps between regions in order, where a scan of every
+		// 64 KiB step that asked about every region made loading a game that maps thousands of blocks spend its time here.
+		if (!address) {
+			address = 0x10000;
+			for (auto it = state->regions.begin(); it != state->regions.end() && address < state->user_limit; ++it) {
+				const auto &[base, region] = *it;
+				if (base + region.size <= address) continue;
+				if (base >= address + n) break;
+				address = (base + region.size + 65535) & ~uint64_t(65535);
+			}
+		}
 		if (!memory_available(address, n) || address % 16384) throw std::runtime_error("WoW64 guest allocation unavailable");
 		if (mprotect(reinterpret_cast<void *>(state->host(address, n)), n, PROT_READ | PROT_WRITE)) throw std::runtime_error("WoW64 guest commit failed");
 	} else if (address) {
