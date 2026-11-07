@@ -1784,6 +1784,14 @@ static std::vector<uint8_t> commit_prelude(int32_t to_pointer, int32_t to_trap)
 
 // Where the served stub behind an export sits: the export itself, or the stub a clock prelude falls back to; for a commit prelude, the
 // breakpoint it falls back to.
+// A plain x64 slot with the breakpoint past the hook space: NOPs before it, or under FEX mov rax,trap; int 0x2e.
+static bool plain_hookable_slot(std::span<const uint8_t> image, size_t rva)
+{
+	if (rva + 15 >= image.size() || image[rva + 14] != 0xcc)
+		return false;
+	return image[rva] == 0x90 || (image[rva] == 0x48 && image[rva + 1] == 0xb8 && image[rva + 10] == 0xcd && image[rva + 11] == 0x2e);
+}
+
 static uint32_t served_stub_rva(std::span<const uint8_t> image, std::string_view module, std::string_view name, uint32_t rva)
 {
 	if (queued_arguments(module, name) && rva <= image.size() && image.size() - rva >= queued_prelude_size &&
@@ -1796,7 +1804,7 @@ static uint32_t served_stub_rva(std::span<const uint8_t> image, std::string_view
 		image[rva] == 0x4c && image[rva + 1] == 0x8b && image[rva + 2] == 0xd1 && image[rva + 3] == 0xb8)
 		return rva;
 	// A plain provider has no guest-side prelude in front of its trap.
-	if (rva < image.size() && (image[rva] == 0xcc || (image[rva] == 0x90 && size_t(rva) + 15 < image.size() && image[rva + 14] == 0xcc)))
+	if (rva < image.size() && (image[rva] == 0xcc || plain_hookable_slot(image, rva)))
 		return rva;
 	if (const auto *prelude = block_prelude(module, name)) {
 		int32_t relative = 0;
@@ -1839,7 +1847,7 @@ uint64_t api_trap_address(const PEModule &provider, std::string_view module, std
 		return provider.loaded.base() + address;
 	const uint32_t stub = served_stub_rva(image, module, name, address);
 	// A plain x64 slot keeps its breakpoint past the space hooking libraries overwrite.
-	if (!served_api(module, name) && size_t(stub) + 15 < image.size() && image[stub] == 0x90 && image[stub + 14] == 0xcc)
+	if (!served_api(module, name) && plain_hookable_slot(image, stub))
 		return provider.loaded.base() + stub + 14;
 	return provider.loaded.base() + stub + fast_stub_trap_offset(module, name);
 }
@@ -2116,6 +2124,19 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 			std::fill_n(bytes.begin() + ptrdiff_t(code), 14, 0x90);
 			bytes[code + 14] = 0xcc;
 			bytes[code + 15] = 0xc3;
+#ifdef RAVEN_FEX_PROCESS
+			// Under FEX the entry is mov rax,trap; int 0x2e, which FEX hands to the host as a call, where the breakpoint raised a signal: the
+			// trap's own address in RAX makes the stop read as one at the breakpoint. Not syscall, which overwrites RCX, the first argument.
+			// Whole instructions within the 14 bytes, so a hook that copies them still works.
+			if (fex_execution_selected()) {
+				const uint64_t trap = base + rva(code) + 14;
+				bytes[code] = 0x48;
+				bytes[code + 1] = 0xb8;
+				std::memcpy(bytes.data() + code + 2, &trap, 8);
+				bytes[code + 10] = 0xcd;
+				bytes[code + 11] = 0x2e;
+			}
+#endif
 		}
 		if (service) {
 			const std::array<uint8_t, 11> entry{0x4c, 0x8b, 0xd1, 0xb8, 0, 0, 0, 0, 0x0f, 0x05, 0xc3};
