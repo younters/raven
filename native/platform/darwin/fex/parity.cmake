@@ -239,6 +239,21 @@ if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
 endif()
 
 if(RAVEN_FEX_MODHOST AND RAVEN_MINGW32)
+    # rep movsb and rep stosb in every alignment, length and direction, bit for bit with the registers they leave, under both engines.
+    set(string_ops_fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-string-ops32.exe)
+    add_fex_parity_fixture(${string_ops_fixture} "${RAVEN_MINGW32}" _raven_entry ${RAVEN_DARWIN_DIR}/fex/string_ops_client.c)
+    add_custom_target(fex_string_ops_fixture DEPENDS ${string_ops_fixture})
+    add_dependencies(raven fex_string_ops_fixture)
+    foreach(engine native fex)
+        add_test(NAME native_string_ops_x32_${engine} COMMAND ${Python3_EXECUTABLE}
+            ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py --require-modules --backend ${engine}
+            --raven $<TARGET_FILE:raven> --fixture ${string_ops_fixture}
+            --modules "${RAVEN_FEX_MODULE_ROOT}")
+        set_tests_properties(native_string_ops_x32_${engine} PROPERTIES TIMEOUT 60 LABELS "engine-parity;cpu")
+    endforeach()
+endif()
+
+if(RAVEN_FEX_MODHOST AND RAVEN_MINGW32)
     # x87 arithmetic in every precision, bit for bit, under both engines: the host path for 24 and 53 bits must give the x87's results.
     set(x87_precision_fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-x87-precision32.exe)
     add_custom_command(OUTPUT ${x87_precision_fixture}

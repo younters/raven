@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "xtajit64_sha256": "086ec1c986d103fdd26060184a6f22fdfe0ba06cd489c7b67f181c8bf39e37ee",
+  "xtajit64_sha256": "f107b4e1b58f79a1b9d1afb32a0c02c334143e91c12284118aa292cb31461820",
   "raven_process_init_rva": 28764,
   "patches": {
     "0001-deterministic-pe-timestamps.patch": "bd6e3165a3d1fbcb45155bee49a5b0242f38fdc6d11c1bed51ef7883ca657e46",
@@ -35,9 +35,10 @@
     "0063-raven-shared-code-validation.patch": "9bc81740c9cca1b6f16d970d297bdef645499e4202581f5635bbf14b2ffefcf8",
     "0064-raven-code-cache.patch": "02785e1b4efaebdf84c18774850d6f496e78df6c9efd043e3320aa01eb13ad2a",
     "0066-raven-wow64-wide-address.patch": "0ec09311e51c408b793759478386aee3cd8f6bef509e7992ffffa23f6c5a7ac2",
-    "0067-raven-x87-exact-host-precision.patch": "acc38b22e16fddb51c34aadcebe066df0591461eb587ac9349529d6731e5ce59"
+    "0067-raven-x87-exact-host-precision.patch": "acc38b22e16fddb51c34aadcebe066df0591461eb587ac9349529d6731e5ce59",
+    "0068-raven-wow64-string-chunks.patch": "a93bdb129be47546741ed8d4f54e9ae0b7b2d75410d35a97a1270f50040536c2"
   },
-  "xtajit_sha256": "32dbe86af0e88f0d42f265c6c69a40dd9319b2089866c909313f5caa7459fb2a",
+  "xtajit_sha256": "b176309f67940e0c49ef1695f8d07d76855dfde3cc5251d985596eef072ce979",
   "raven_wow64_process_init_rva": 31180,
   "raven_wow64_process_init_instruction": 4162785278,
   "shared_patch12_xtajit_sha256": "5c785d47c43d8f2d0a444e82114ca731499b8a9e2ac408679b212db46c76bd6b",

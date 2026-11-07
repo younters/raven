@@ -1,0 +1,38 @@
+diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+--- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
++++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
+@@ -3211,7 +3211,10 @@
+     return;
+   }
+ 
+-  const bool ChunkBytes = Is64BitMode && AddrSize == OpSize::i64Bit && Size == OpSize::i8Bit &&
++  // Raven: 32-bit programs copy through the same chunks, with 32-bit offsets and arithmetic. Their C runtimes move every block of 128
++  // bytes or more with rep movsb, which a byte at a time ran at 400 MB/s.
++  const bool Flat32 = !Is64BitMode && AddrSize == OpSize::i32Bit;
++  const bool ChunkBytes = ((Is64BitMode && AddrSize == OpSize::i64Bit) || Flat32) && Size == OpSize::i8Bit &&
+     !(Op->Flags & X86Tables::DecodeFlags::FLAG_SEGMENTS) && !CTX->IsMemcpyAtomicTSOEnabled();
+   CalculateDeferredFlags();
+   ForeachDirection([&](int32_t PtrDir) {
+@@ -3231,14 +3234,17 @@
+       _GuestOpcode(Op->PC - Entry);
+       Ref Src = Copy ? LoadGPRRegister(X86State::REG_RSI, AddrSize) : Invalid();
+       Ref Dest = LoadGPRRegister(X86State::REG_RDI, AddrSize);
+-      Ref Value = Copy ? _LoadMem(RegClass::GPR, OpSize::i64Bit, Src, Invalid(), OpSize::i64Bit, MemOffsetType::SXTX, 1)
++      // A 32-bit offset becomes an address through its segment, as each element's does.
++      Ref SrcAddress = Copy && Flat32 ? AppendSegmentOffset(Src, Op->Flags, X86Tables::DecodeFlags::FLAG_DS_PREFIX) : Src;
++      Ref DestAddress = Flat32 ? AppendSegmentOffset(Dest, 0, X86Tables::DecodeFlags::FLAG_ES_PREFIX, true) : Dest;
++      Ref Value = Copy ? _LoadMem(RegClass::GPR, OpSize::i64Bit, SrcAddress, Invalid(), OpSize::i64Bit, MemOffsetType::SXTX, 1)
+         : _Mul(OpSize::i64Bit, _Bfe(OpSize::i64Bit, 8, 0, LoadGPRRegister(X86State::REG_RAX)), Constant(0x0101010101010101ULL));
+       // Aligned 8-byte accesses cannot straddle a protection page or overlap within a chunk.
+       // Load each chunk after the preceding store, retaining scalar propagation at distance 8.
+-      _StoreMem(RegClass::GPR, OpSize::i64Bit, Value, Dest, Invalid(), OpSize::i64Bit, MemOffsetType::SXTX, 1);
+-      StoreOffset(X86State::REG_RDI, Add(OpSize::i64Bit, Dest, 8));
+-      if (Copy) StoreOffset(X86State::REG_RSI, Add(OpSize::i64Bit, Src, 8));
+-      StoreOffset(X86State::REG_RCX, Sub(OpSize::i64Bit, LoadGPRRegister(X86State::REG_RCX, AddrSize), 8));
++      _StoreMem(RegClass::GPR, OpSize::i64Bit, Value, DestAddress, Invalid(), OpSize::i64Bit, MemOffsetType::SXTX, 1);
++      StoreOffset(X86State::REG_RDI, Add(ArithmeticSize, Dest, 8));
++      if (Copy) StoreOffset(X86State::REG_RSI, Add(ArithmeticSize, Src, 8));
++      StoreOffset(X86State::REG_RCX, Sub(ArithmeticSize, LoadGPRRegister(X86State::REG_RCX, AddrSize), 8));
+       Jump(Header);
+       auto Scalar = CreateNewCodeBlockAfter(Body);
+       SetTrueJumpTarget(Unaligned, Scalar);
