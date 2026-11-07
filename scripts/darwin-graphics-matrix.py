@@ -9,8 +9,8 @@ D3D11 window with a copy from the GPU, which measures that copy as much as the A
 the executable, and D3D12 needs the environment of a D3D12 backend, passed with --env. A row records what happened
 even if nothing ran, because a refusal or a crash is the result this table exists to show.
 
-Frame rates alone have lied here, a black scene scored well, so the last frame of each run is saved beside its row
-for a person to look at.
+Frame rates alone have lied here, a black scene scored well, so given --windows-tool a late frame of each run is saved
+beside its row for a person to look at.
 """
 import argparse
 import csv
@@ -30,35 +30,33 @@ EXECUTABLES = {"64": "AIO-Graphics-Test-64bit.exe", "32": "AIO-Graphics-Test-32b
 
 
 def read_bench(results):
-    """The figures of the run from AIO's CSV, whose third line holds them."""
+    """The figures of the run from the comment lines at the top of AIO's CSV, as name,value pairs."""
     path = results / "AIO-Graphics-Test_bench.csv"
     if not path.exists():
         return None
-    lines = path.read_text(errors="replace").splitlines()
-    for index, line in enumerate(lines):
-        if "avg_fps" in line and index + 1 < len(lines):
-            names = [name.strip() for name in line.split(",")]
-            values = [value.strip() for value in lines[index + 1].split(",")]
-            return dict(zip(names, values))
+    for line in path.read_text(errors="replace").splitlines()[:6]:
+        if line.startswith("# avg_fps"):
+            fields = line[2:].split(",")
+            return dict(zip(fields[::2], fields[1::2]))
     return None
 
 
-def capture(pid, target):
-    """Saves the window of the process as an image. Fails quietly: the row matters more than the picture."""
-    owner = (
-        'import Quartz,sys;'
-        'w=Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionAll,0);'
-        f'print(next((x["kCGWindowNumber"] for x in w if x.get("kCGWindowOwnerPID")=={pid} and x.get("kCGWindowBounds",{{}}).get("Width",0)>100),""))'
-    )
-    found = subprocess.run(["python3", "-c", owner], capture_output=True, text=True)
-    window = found.stdout.strip()
-    if window:
-        subprocess.run(["screencapture", "-x", "-o", f"-l{window}", str(target)], capture_output=True)
+def capture(windows_tool, target):
+    """Saves AIO's window as an image, using a tool that lists windows as id=<number> with their titles. Fails quietly: the row matters more."""
+    if not windows_tool:
+        return
+    listing = subprocess.run([str(windows_tool)], capture_output=True, text=True).stdout
+    for line in listing.splitlines():
+        found = re.search(r"id=(\d+)", line)
+        if found and re.search(r"cube|aio|direct3d|vulkan|opengl|directdraw", line, re.I):
+            subprocess.run(["screencapture", "-x", "-o", f"-l{found.group(1)}", str(target)], capture_output=True)
+            return
 
 
 def run_one(args, bits, api, folder):
     executable = args.aio / EXECUTABLES[bits]
-    results = args.aio / "AIO Results" / "Benchmark"
+    # AIO writes under the directory it starts in, here the top of the prefix's C: drive.
+    results = args.prefix / "drive_c" / "AIO Results" / "Benchmark"
     if results.exists():
         for old in results.iterdir():
             if old.is_file():
@@ -67,26 +65,32 @@ def run_one(args, bits, api, folder):
     environment = dict(os.environ, RAVEN_PARALLEL="1", RAVEN_PREFIX=str(args.prefix), RAVEN_CONTINUE_UNIMPLEMENTED="1")
     for item in args.env:
         name, _, value = item.partition("=")
-        environment[name] = value
+        # dx12:NAME=VALUE applies to that API alone: a backend's settings must not change what another API's row measures.
+        wanted, separator, bare = name.rpartition(":")
+        if not separator or wanted == api:
+            environment[bare] = value
     command = [str(args.raven), "--run-process", "--execution=" + args.execution, f"--timeout-ms={args.limit * 1000}", "--desktop=macos", str(executable),
                "--", "--cube", api, "--bench", str(args.seconds), "--autoclose", "5"]
     started = time.time()
     with log.open("w") as output:
         process = subprocess.Popen(command, cwd=args.aio, env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
-        pictured = False
         outcome = None
+        pictured = 0.0
         while True:
             code = process.poll()
             if code is not None:
                 outcome = code
                 break
             elapsed = time.time() - started
-            if not pictured and read_bench(results) is None and elapsed > args.limit * 0.75:
-                capture(process.pid, folder / f"{bits}-{api}-late.png")
-                pictured = True
+            # The last picture before the end shows what the figures were measuring.
+            if elapsed - pictured > 4:
+                capture(args.windows_tool, folder / f"{bits}-{api}.png")
+                pictured = elapsed
             if elapsed > args.limit:
-                capture(process.pid, folder / f"{bits}-{api}-stuck.png")
-                os.killpg(process.pid, signal.SIGKILL)
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except (PermissionError, ProcessLookupError):
+                    process.kill()
                 process.wait()
                 outcome = "timeout"
                 break
@@ -98,9 +102,6 @@ def run_one(args, bits, api, folder):
         row["outcome"] = "ran" if outcome == 0 else f"ran, then ended with {outcome}"
         for name in ("avg_fps", "min_fps", "max_fps", "low1pct_fps"):
             row[name] = figures.get(name, "")
-        if results.exists():
-            for image in results.glob("*.png"):
-                shutil.copy(image, folder / f"{bits}-{api}.png")
     else:
         row["outcome"] = "timed out" if outcome == "timeout" else f"no result, ended with {outcome}"
         text = log.read_text(errors="replace")
@@ -139,9 +140,10 @@ def main():
     parser.add_argument("--seconds", type=int, default=15)
     parser.add_argument("--limit", type=int, default=240, help="seconds before a run counts as stuck")
     parser.add_argument("--execution", default="fex")
-    parser.add_argument("--env", action="append", default=[], metavar="NAME=VALUE")
+    parser.add_argument("--env", action="append", default=[], metavar="[API:]NAME=VALUE")
     parser.add_argument("--build", default="")
     parser.add_argument("--compare", type=Path)
+    parser.add_argument("--windows-tool", type=Path, help="lists windows as id=<number> and title, to picture each run")
     args = parser.parse_args()
     args.raven = args.raven.resolve()
     args.aio = args.aio.resolve()

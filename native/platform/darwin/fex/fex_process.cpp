@@ -1372,7 +1372,8 @@ void FexProcess::set_resume_hook(std::function<void()> hook) { state->resume_hoo
 std::vector<uint64_t> FexProcess::api_arguments(size_t count) const
 {
 	FexCallTimer timing{2};
-	if (state->thread.translated_words) return *state->thread.translated_words;
+	// The words belong to the call that took them: one made from a callback under it passes its own, as in the Rosetta engine.
+	if (state->thread.translated_words && callback_depth() == state->thread.translated_depth) return *state->thread.translated_words;
 	if (wow64_module) {
 		std::vector<uint64_t> words;
 		auto bytes = read_memory(context(false).registers.rsp + 4, count * 4);
@@ -1393,7 +1394,7 @@ void FexProcess::set_api_argument(size_t index, uint32_t value)
 {
 	if (!wow64_module || !state->thread.awaiting_api || index > 127)
 		throw std::runtime_error("FEX argument rewrite requires a pending x86 API call");
-	if (auto &words = state->thread.translated_words; words && index < words->size())
+	if (auto &words = state->thread.translated_words; words && callback_depth() == state->thread.translated_depth && index < words->size())
 		(*words)[index] = value;
 	const uint8_t bytes[4] = {uint8_t(value), uint8_t(value >> 8), uint8_t(value >> 16), uint8_t(value >> 24)};
 	write_memory(context(false).registers.rsp + 4 + index * 4, bytes);
