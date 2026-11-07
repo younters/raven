@@ -270,6 +270,26 @@ struct FexCallTimer {
 }
 
 namespace raven {
+namespace {
+// A guest usually calls again within microseconds of being answered, and on macOS putting a thread to sleep and waking it costs more than that:
+// the two sides look at each other's state for this long first. Past it they sleep as before, so a thread that really waits costs nothing.
+constexpr std::chrono::microseconds handoff_patience{30};
+uint64_t handoff_ticks()
+{
+	uint64_t ticks;
+	asm volatile("mrs %0, cntvct_el0" : "=r"(ticks));
+	return ticks;
+}
+uint64_t ticks_of(std::chrono::microseconds time)
+{
+	static const uint64_t frequency = [] {
+		uint64_t value;
+		asm volatile("mrs %0, cntfrq_el0" : "=r"(value));
+		return value;
+	}();
+	return uint64_t(time.count()) * frequency / 1000000;
+}
+}
 // Workers execute only translated code. The existing NT scheduler retains all API
 // handlers on its controller/coroutine stacks, just as with the Rosetta agent.
 struct FexWorker {
@@ -279,8 +299,12 @@ struct FexWorker {
 	std::unique_ptr<RavenNT::ThreadEnvironment> environment;
 	std::exception_ptr failure;
 	StopPacket result{};
-	bool ready = false, requested = false, quit = false;
+	bool ready = false, quit = false;
+	std::atomic<bool> requested{false};
 	std::atomic<bool> stopped{true};
+	// A stop no resume has taken yet, and whether the controller is watching this worker instead of sleeping on the stop descriptor.
+	std::atomic<bool> unread{false};
+	std::atomic<bool> controller_watching{false};
 	uint64_t teb = 0;
 	uint32_t *interrupt = nullptr;
 	int descriptor;
@@ -302,13 +326,21 @@ struct FexWorker {
 					if (!interrupt) throw std::runtime_error("FEX WoW64 needs a suspend doorbell; rebuild the module");
 					wow64_unix_doorbell = interrupt;
 				}
+				auto *const run = mapped_image->export_address(wow64_module ? "RavenWow64Run" : "BeginSimulation");
 				std::unique_lock lock(mutex);
 				ready = true;
 				wake.notify_all();
 				for (;;) {
-					wake.wait(lock, [this] { return requested || quit; });
+					if (!requested.load(std::memory_order_acquire) && !quit) {
+						lock.unlock();
+						for (const auto limit = handoff_ticks() + ticks_of(handoff_patience);
+							!requested.load(std::memory_order_acquire) && handoff_ticks() < limit;)
+							asm volatile("yield");
+						lock.lock();
+					}
+					wake.wait(lock, [this] { return requested.load(std::memory_order_relaxed) || quit; });
 					if (quit) break;
-					requested = false;
+					requested.store(false, std::memory_order_relaxed);
 					wow64_teb = teb;
 					guest_teb = !wow64_module && teb ? reinterpret_cast<void *>(teb) : environment->teb.data();
 					RavenFault::execution_teb = guest_teb;
@@ -316,7 +348,7 @@ struct FexWorker {
 					FaultDispatchState dispatch_state;
 					auto previous = NativeJit::protect(1);
 					if (!sigsetjmp(stop_frame, 1)) {
-						raven_ec_call(mapped_image->export_address(wow64_module ? "RavenWow64Run" : "BeginSimulation"), args, guest_teb);
+						raven_ec_call(run, args, guest_teb);
 						std::abort();
 					}
 					asm volatile("mov x18,xzr");
@@ -324,10 +356,14 @@ struct FexWorker {
 					NativeJit::protect(previous);
 					lock.lock();
 					result = last_stop;
-					stopped.store(true, std::memory_order_release);
+					unread.store(true, std::memory_order_relaxed);
+					stopped.store(true, std::memory_order_seq_cst);
 					wake.notify_all();
-					uint64_t one = 1;
-					(void)::write(descriptor, &one, sizeof(one));
+					// Order against the controller giving up its watch: one side always sees the other.
+					if (!controller_watching.load(std::memory_order_seq_cst)) {
+						uint64_t one = 1;
+						(void)::write(descriptor, &one, sizeof(one));
+					}
 				}
 				lock.unlock();
 				// The public module frontend tears down the current FEX state without
@@ -376,6 +412,31 @@ struct FexWorker {
 };
 struct FexProcess::State {
 	NativeMode mode = NativeMode::x64;
+	// When the scheduler last looked at the other threads, which a run of quickly answered calls leaves waiting.
+	uint64_t last_scheduled = 0;
+	// Watches a resumed worker for a stop without entering the scheduler. Gives up at once if another worker has a stop to answer, and now and
+	// then regardless: timeouts, window events and threads this one woke only move in the scheduler.
+	bool stop_arrived_soon(FexWorker &worker)
+	{
+		const auto started = handoff_ticks();
+		if (started - last_scheduled > ticks_of(std::chrono::microseconds(200)))
+			return false;
+		const auto limit = started + ticks_of(handoff_patience);
+		worker.controller_watching.store(true, std::memory_order_seq_cst);
+		for (unsigned round = 0;; ++round) {
+			if (worker.stopped.load(std::memory_order_seq_cst))
+				break;
+			if (handoff_ticks() >= limit)
+				break;
+			if (!(round & 15) && std::any_of(workers.begin(), workers.end(), [&](const auto &item) {
+				return item.second.get() != &worker && item.second->unread.load(std::memory_order_relaxed);
+			}))
+				break;
+			asm volatile("yield");
+		}
+		worker.controller_watching.store(false, std::memory_order_seq_cst);
+		return worker.stopped.load(std::memory_order_seq_cst);
+	}
 	std::unique_ptr<FexGuestWindow> window;
 	uint64_t host(uint64_t address, size_t size = 1) const { return window ? uintptr_t(window->host(address, size)) : address; }
 	uint64_t guest(const void *address) const { return uintptr_t(address) - (window ? window->base() : 0); }
@@ -640,8 +701,9 @@ NativeResult FexProcess::resume()
 			worker->teb = state->teb;
 			if (wow64_module) __atomic_store_n(worker->interrupt, 0u, __ATOMIC_RELEASE);
 			else __atomic_store_n(worker->environment->cpu.doorbell, 0u, __ATOMIC_RELEASE);
+			worker->unread.store(false, std::memory_order_relaxed);
 			worker->stopped.store(false, std::memory_order_release);
-			worker->requested = true;
+			worker->requested.store(true, std::memory_order_release);
 		}
 		worker->wake.notify_all();
 		auto ready = [worker] { return worker->stopped.load(std::memory_order_acquire); };
@@ -649,7 +711,9 @@ NativeResult FexProcess::resume()
 			FexWorker *worker;
 			~PauseOnExit() { worker->pause(); }
 		} pause_on_exit{worker};
-		if (state->execution_wait) {
+		if (state->execution_wait && state->stop_arrived_soon(*worker)) {
+		} else if (state->execution_wait) {
+			state->last_scheduled = handoff_ticks();
 			state->execution_wait(ready, deadline);
 		} else {
 			std::unique_lock lock(worker->mutex);
@@ -657,6 +721,7 @@ NativeResult FexProcess::resume()
 		}
 		worker->pause();
 		last_stop = worker->result;
+		worker->unread.store(false, std::memory_order_relaxed);
 	} else {
 		std::mutex timer_mutex;
 		std::condition_variable_any timer_wake;
