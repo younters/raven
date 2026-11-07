@@ -262,10 +262,8 @@ CRT double _strtod_l(const char *text, char **end, _locale_t locale) { return ra
 
 /* The other locale forms of the number parsers and the character-width query, which libc++ builds (Strata Source's libcpp.dll) import.
    The runtime has one locale, so each answers as its plain form does. */
-CRT float _strtof_l(const char *text, char **end, _locale_t locale) { (void)locale; return raven_strtof(text, end); }
 CRT long long _strtoi64_l(const char *text, char **end, int base, _locale_t locale) { (void)locale; return strtoll(text, end, base); }
 CRT unsigned long long _strtoui64_l(const char *text, char **end, int base, _locale_t locale) { (void)locale; return strtoull(text, end, base); }
-CRT int ___mb_cur_max_l_func(_locale_t locale) { (void)locale; return ___mb_cur_max_func(); }
 /* A long double is a double in the Windows ABI, as for strtold above. */
 __asm__(".section .drectve\n\t.ascii \" -export:_strtold_l=raven_strtold_l\"\n\t.text");
 double raven_strtold_l(const char *text, char **end, _locale_t locale) { (void)locale; return raven_strtod(text, end); }
@@ -289,27 +287,9 @@ CRT int wctob(wint_t character)
 /* ---- what GLib's Windows port imports (Strata Source's Panorama text renderer links it) ---- */
 
 /* A handler for invalid parameters on this thread alone, which _invalid_parameter_noinfo prefers to the process's. */
-static DWORD parameter_slot(void)
-{
-	if (thread_parameter_slot == TLS_OUT_OF_INDEXES) {
-		const DWORD slot = TlsAlloc();
-		if (InterlockedCompareExchange((LONG *)&thread_parameter_slot, (LONG)slot, (LONG)TLS_OUT_OF_INDEXES) != (LONG)TLS_OUT_OF_INDEXES)
-			TlsFree(slot);
-	}
-	return thread_parameter_slot;
-}
-CRT RavenInvalidParameterHandler _set_thread_local_invalid_parameter_handler(RavenInvalidParameterHandler handler)
-{
-	const DWORD slot = parameter_slot();
-	if (slot == TLS_OUT_OF_INDEXES)
-		return NULL;
-	RavenInvalidParameterHandler previous = (RavenInvalidParameterHandler)TlsGetValue(slot);
-	TlsSetValue(slot, (void *)handler);
-	return previous;
-}
 CRT RavenInvalidParameterHandler _get_thread_local_invalid_parameter_handler(void)
 {
-	return thread_parameter_slot == TLS_OUT_OF_INDEXES ? NULL : (RavenInvalidParameterHandler)TlsGetValue(thread_parameter_slot);
+	return invalid_parameter_slot == TLS_OUT_OF_INDEXES ? NULL : (RavenInvalidParameterHandler)TlsGetValue(invalid_parameter_slot);
 }
 
 /* _wcreat: a file created, or emptied, and opened for reading and writing, as _creat is. */
@@ -1401,7 +1381,7 @@ CRT void _wassert(const wchar_t *expression, const wchar_t *file, unsigned line)
 	ExitProcess(3);
 }
 
-CRT RavenInvalidParameterHandler _get_invalid_parameter_handler(void) { return invalid_parameter_handler; }
+CRT RavenInvalidParameterHandler _get_invalid_parameter_handler(void) { return process_parameter_handler; }
 
 CRT int _get_pgmptr(char **out)
 {
@@ -1719,30 +1699,16 @@ __asm__(".section .drectve\n\t.ascii \""
 	SAME(iswprint) SAME(iswspace) SAME(iswxdigit) SAME(localeconv) SAME(malloc) SAME(qsort) SAME(realloc) SAME(setlocale) SAME(strcat_s)
 	SAME(strcpy_s) SAME(strncat_s) SAME(strncpy_s) SAME(terminate) SAME(tolower) SAME(towlower) SAME(wcscat_s) SAME(wcscpy_s)
 	SAME(wcsncat_s) SAME(wcsncpy_s) SAME(wcstoul) SAME(wmemcpy_s)
-	SAME(__std_type_info_destroy_list) SAME(__stdio_common_vsprintf) SAME(__stdio_common_vswprintf) SAME(_atoi64) SAME(_chsize_s) SAME(_fpclass)
+	SAME(__stdio_common_vsprintf) SAME(__stdio_common_vswprintf) SAME(_atoi64) SAME(_chsize_s) SAME(_fpclass)
 	SAME(_get_osfhandle) SAME(_mbstrlen) SAME(_strdup) SAME(_strtoui64) SAME(_write) SAME(_wsopen_s)
 	SAME(acos) SAME(asin) SAME(atan) SAME(atan2) SAME(atof) SAME(ceil)
 	SAME(cos) SAME(cosh) SAME(exp) SAME(floor) SAME(fmod) SAME(getenv)
 	SAME(isalnum) SAME(isalpha) SAME(isdigit) SAME(isxdigit) SAME(log) SAME(modf)
-	SAME(pow) SAME(sin) SAME(sinh) SAME(sqrt) " -export:_o_strtod=raven_strtod" SAME(strtoul)
-	SAME(tan) SAME(tanh) SAME(toupper)
+	SAME(pow) SAME(sin) SAME(sinh) SAME(sqrt) " -export:_o_strtod=raven_strtod -export:_o___std_type_info_destroy_list=raven_std_type_info_destroy_list" SAME(strtoul)
+	SAME(tan) SAME(tanh) SAME(toupper) SAME(isprint)
 	"\"\n\t.text");
 #undef SAME
 
-/* The list of decorated type names a module's type_info objects keep: nothing here allocates one. */
-CRT void __std_type_info_destroy_list(void *head) { (void)head; }
 CRT int __isascii(int character) { return (unsigned)character < 0x80; }
 
 /* The fixed English form of a broken-down time, "Wed Jan 02 02:03:55 1980\n", in one buffer for each call to overwrite. */
-CRT char *asctime(const void *when)
-{
-	static char text[32];
-	static const char days[] = "SunMonTueWedThuFriSat", months[] = "JanFebMarAprMayJunJulAugSepOctNovDec";
-	const int *time = when;
-	if (!time || time[6] < 0 || time[6] > 6 || time[4] < 0 || time[4] > 11) {
-		set_errno(22);
-		return NULL;
-	}
-	sprintf(text, "%.3s %.3s %02d %02d:%02d:%02d %d\n", days + time[6] * 3, months + time[4] * 3, time[3], time[2], time[1], time[0], time[5] + 1900);
-	return text;
-}

@@ -12,42 +12,116 @@ import sys
 import tarfile
 import urllib.request
 
-from component_licenses import mark_patched_sources, preserve_notices
+from component_licenses import mark_patched_sources
 
 
-# The ReactOS revision the common controls component is built from: one archive serves both.
-REVISION = "dacf2a6c47fa562799f9c8a41ab6d5c558556558"
-ARCHIVE_SHA256 = "5373bbbb60541cb2a49e0acb53360e1218d4f5d56c31f9187b341b9fc16daa69"
-PREFIXES = ("sdk/include/", "sdk/lib/pseh/", "sdk/tools/hpp/", "sdk/tools/spec2def/", "sdk/lib/3rdparty/zlib/", "sdk/lib/3rdparty/libwine/",
-            "sdk/lib/3rdparty/libxml2/", "sdk/lib/3rdparty/libwin-iconv/", "dll/3rdparty/libxslt/",
-            "dll/win32/stdole2.tlb/",
-            "dll/3rdparty/libpng/", "dll/3rdparty/libjpeg/", "dll/3rdparty/libtiff/",
-            "sdk/lib/getopt/", "dll/win32/setupapi/", "dll/win32/kernel32/wine/lzexpand.c")
-# Interface headers the installer sources include, generated from the public IDL files with what they import.
-IDLS = ("objidlbase", "commoncontrols", "fusion", "msxml2", "oaidl", "ocidl", "objidl", "unknwn", "wtypes", "propidl", "urlmon", "shobjidl", "servprov", "docobj", "oleidl",
-        "exdisp", "activscp", "shldisp", "mshtml", "xmldom", "imnact", "msctf", "shtypes", "oleacc", "comcat", "mscoree", "wincodec", "dispex",
-        "atliface", "winsxs", "msxml6", "msxml", "xmldso", "objsafe", "mshtmhst", "mshtmdid", "httprequest", "xmlparser", "asptlb", "perhist", "hlink", "mimeinfo", "mlang", "wincodec", "wincodecsdk", "propsys", "structuredquery", "dxgiformat", "dxgicommon", "dxgitype", "xmllite")
+# Libraries taken from their own releases: zlib, which cabinet.dll, msxml3.dll, the image libraries and raven-appx.dll compress and
+# inflate with, and the Independent JPEG Group's library the codecs read and write JPEG through. Each is kept beside the components
+# as NAME-VERSION-source.tar.gz with the notices listed here, and unpacked to NAME-source.
+UPSTREAM = {
+    "zlib": dict(version="1.3.1", sha256="9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+                 url="https://github.com/madler/zlib/releases/download/v{version}/zlib-{version}.tar.gz", notices=("LICENSE", "README")),
+    "libjpeg": dict(version="10", sha256="8b9eaa13242690ebd03e1728ab1edf97a81a78ed6e83624d493655f31ac95ab5",
+                    url="https://www.ijg.org/files/jpegsrc.v{version}.tar.gz", notices=("README",)),
+    "libtiff": dict(version="4.7.1", sha256="f698d94f3103da8ca7438d84e0344e453fe0ba3b7486e04c5bf7a9a3fabe9b69",
+                    url="https://download.osgeo.org/libtiff/tiff-{version}.tar.gz", notices=("LICENSE.md", "README.md")),
+    "libxml2": dict(version="2.12.8", sha256="43ad877b018bc63deb2468d71f95219c2fac196876ef36d1bee51d226173ec93",
+                    url="https://download.gnome.org/sources/libxml2/2.12/libxml2-{version}.tar.xz", notices=("Copyright", "README.md")),
+    "libxslt": dict(version="1.1.42", sha256="85ca62cac0d41fc77d3f6033da9df6fd73d20ea2fc18b0a3609ffb4110e1baeb",
+                    url="https://download.gnome.org/sources/libxslt/1.1/libxslt-{version}.tar.xz", notices=("Copyright", "README.md")),
+}
+# The parts of libxml2 msxml3.dll is built with, and the features its configuration turns on for them.
+XML_SOURCES = ("buf.c", "catalog.c", "chvalid.c", "debugXML.c", "dict.c", "encoding.c", "entities.c", "error.c", "globals.c", "hash.c",
+               "HTMLparser.c", "HTMLtree.c", "list.c", "parser.c", "parserInternals.c", "pattern.c", "relaxng.c", "SAX.c", "SAX2.c", "threads.c",
+               "tree.c", "uri.c", "valid.c", "xinclude.c", "xmlIO.c", "xmlmemory.c", "xmlreader.c", "xmlregexp.c", "xmlsave.c", "xmlschemas.c",
+               "xmlschemastypes.c", "xmlstring.c", "xmlunicode.c", "xpath.c", "xpointer.c")
+XML_FEATURES = dict(WITH_TRIO=0, WITH_THREADS=1, WITH_THREAD_ALLOC=0, WITH_TREE=1, WITH_OUTPUT=1, WITH_PUSH=1, WITH_READER=1, WITH_PATTERN=1,
+                    WITH_WRITER=1, WITH_SAX1=1, WITH_FTP=0, WITH_HTTP=0, WITH_VALID=1, WITH_HTML=1, WITH_LEGACY=0, WITH_C14N=1, WITH_CATALOG=1,
+                    WITH_XPATH=1, WITH_XPTR=1, WITH_XPTR_LOCS=0, WITH_XINCLUDE=1, WITH_ICONV=0, WITH_ICU=0, WITH_ISO8859X=1, WITH_DEBUG=1,
+                    WITH_MEM_DEBUG=0, WITH_REGEXPS=1, WITH_SCHEMAS=1, WITH_SCHEMATRON=1, WITH_MODULES=0, MODULE_EXTENSION=".dll", WITH_ZLIB=0,
+                    WITH_LZMA=0)
+# libtiff's sources; the codecs whose support is not configured below compile to nothing.
+TIFF_SOURCES = ("tif_aux.c", "tif_close.c", "tif_codec.c", "tif_color.c", "tif_compress.c", "tif_dir.c", "tif_dirinfo.c", "tif_dirread.c",
+                "tif_dirwrite.c", "tif_dumpmode.c", "tif_error.c", "tif_extension.c", "tif_fax3.c", "tif_fax3sm.c", "tif_flush.c", "tif_getimage.c",
+                "tif_hash_set.c", "tif_jbig.c", "tif_jpeg.c", "tif_jpeg_12.c", "tif_lerc.c", "tif_luv.c", "tif_lzma.c", "tif_lzw.c", "tif_next.c",
+                "tif_ojpeg.c", "tif_open.c", "tif_packbits.c", "tif_pixarlog.c", "tif_predict.c", "tif_print.c", "tif_read.c", "tif_strip.c",
+                "tif_swab.c", "tif_thunder.c", "tif_tile.c", "tif_version.c", "tif_warning.c", "tif_webp.c", "tif_write.c", "tif_zip.c", "tif_zstd.c",
+                "tif_win32.c")
 ZLIB = ("adler32.c", "crc32.c", "deflate.c", "inflate.c", "inffast.c", "inftrees.c", "trees.c", "zutil.c")
-COMPONENTS = ("cabinet.dll", "sxs.dll", "rpcrt4.dll", "msi.dll", "raven-storage.dll", "msiexec.exe", "msxml3.dll", "atl100.dll", "oleaut32.dll", "libpng.dll", "libjpeg.dll",
+COMPONENTS = ("cabinet.dll", "sxs.dll", "rpcrt4.dll", "msi.dll", "raven-storage.dll", "msiexec.exe", "msxml3.dll", "atl100.dll", "oleaut32.dll", "libjpeg.dll",
               "libtiff.dll", "propsys.dll", "mlang.dll", "windowscodecs.dll", "gdiplus.dll", "urlmon.dll", "riched20.dll", "msftedit.dll", "msvfw32.dll", "advpack.dll", "raven-setupapi.dll", "xmllite.dll",
               "raven-appx.dll", "mspatcha.dll", "vbscript.dll", "scrrun.dll", "wshom.ocx", "jscript.dll")
 
 
 def widl_target(triple):
-    # Width alone retains the host ISA on arm64. RPC stubs need the guest ABI.
-    return ["widl", "-b", triple]
+    # Width alone retains the host ISA on arm64. RPC stubs need the guest ABI. A widl built on its own has no interface definitions
+    # installed with it, so it reads those of the Wine tree it came from.
+    command = ["widl", "-b", triple]
+    found = shutil.which("widl")
+    include = Path(found).resolve().parent.parent / "wine-src/include" if found else None
+    return command + ["-I", str(include)] if include and (include / "oaidl.idl").is_file() else command
+
+
+# The export list of a library from its specification file: the subset of the format the specifications here use, one export per line,
+# an ordinal or "@" for the next one, stdcall or cdecl, -private, and a stdcall name decorated with its argument bytes on x86.
+def spec_exports(spec, name, x86):
+    lines = ["; File generated automatically, do not edit!", "", f"NAME {name}", "", "EXPORTS"]
+    ordinal = 0
+    for raw in spec.read_text().splitlines():
+        text = raw.split("#", 1)[0].strip()
+        if not text:
+            continue
+        match = re.fullmatch(r"(@|\d+)\s+(stdcall|cdecl)((?:\s+-\w+)*)\s+([A-Za-z_]\w*)\(([^)]*)\)", text)
+        if not match:
+            raise RuntimeError(f"{spec}: unsupported specification line: {raw}")
+        number, convention, options, symbol, arguments = match.groups()
+        ordinal = int(number) if number != "@" else ordinal + 1
+        entry = symbol
+        if x86 and convention == "stdcall":
+            size = sum({"int64": 8, "double": 8, "int128": 16}.get(argument, 4) for argument in arguments.split())
+            entry = f"{symbol}={symbol}@{size}"
+        lines.append(f" {entry} @{ordinal}" + (" PRIVATE" if "-private" in options.split() else ""))
+    return "\n".join(lines) + "\n"
+
+
+# CMake's configure_file for the templates of a library: #cmakedefine lines become definitions for the names set, and @NAME@ the values,
+# empty for a name not set as CMake leaves it.
+def configure_file(template, target, values):
+    def line(text):
+        match = re.match(r"#(\s*)cmakedefine (\w+)(.*)", text)
+        if match:
+            indent, name, rest = match.groups()
+            return f"#{indent}define {name}{rest}" if values.get(name) else f"/* #{indent}undef {name} */"
+        return text
+    text = "\n".join(line(text) for text in template.read_text().splitlines()) + "\n"
+    text = re.sub(r"@(\w+)@", lambda match: str(values.get(match.group(1), "")), text)
+    target.write_text(text)
+
+
+# Downloads an archive beside where it belongs and moves it into place once its checksum matches, so an interrupted download is not kept;
+# one already there is checked the same way.
+def fetch(url, archive, sha256, what):
+    if not archive.exists():
+        temporary = archive.with_suffix(archive.suffix + ".part")
+        try:
+            urllib.request.urlretrieve(url, temporary)
+            if hashlib.sha256(temporary.read_bytes()).hexdigest() != sha256:
+                raise RuntimeError(f"downloaded {what} checksum differs")
+            temporary.replace(archive)
+        finally:
+            temporary.unlink(missing_ok=True)
+    if hashlib.sha256(archive.read_bytes()).hexdigest() != sha256:
+        raise RuntimeError(f"{what} checksum differs: {archive} is incomplete or another version; delete it to download it again")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Build the pinned ReactOS Windows Installer components: msi, cabinet, sxs and structured storage")
+    parser = argparse.ArgumentParser(description="Build the Windows Installer components and the libraries they install with")
     parser.add_argument("--rpc-abi-probe", action="store_true", help="generate a minimal RPC client using the installer WIDL command, then exit")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--archive", type=Path)
     parser.add_argument("--arch", choices=("x64", "x86"), default="x64", help="build the 64-bit components, or the 32-bit ones for PE32 programs")
     args = parser.parse_args()
     x86 = args.arch == "x86"
     triple = "i686-w64-mingw32" if x86 else "x86_64-w64-mingw32"
-    spec_arch = "-a=i386" if x86 else "-a=x86_64"
     entry_point = "_DllMain@12" if x86 else "DllMain"
     link_extra = ["-Wl,--kill-at"] if x86 else []
     bases = dict(cabinet=0x1e000000, sxs=0x1e200000, rpcrt4=0x1d800000, msi=0x1e400000, storage=0x1ec00000, xslt=0x1d400000, msxml=0x1d000000, atl=0x1cc00000, oleaut=0x1c800000) if x86 else dict(
@@ -66,33 +140,28 @@ interface probe {
         subprocess.run(widl + ["-Oif", "-c", "-o", str(output / "probe.c"), str(probe)], check=True)
         return
     repo = Path(__file__).resolve().parents[1]
-    archive = args.archive.resolve() if args.archive else output / "reactos-source.tar.gz"
-    if not archive.exists():
-        # Downloaded beside the archive and moved into place once it checks out, so an interrupted download is not kept.
-        temporary = archive.with_suffix(archive.suffix + ".part")
-        try:
-            urllib.request.urlretrieve(f"https://codeload.github.com/reactos/reactos/tar.gz/{REVISION}", temporary)
-            if hashlib.sha256(temporary.read_bytes()).hexdigest() != ARCHIVE_SHA256:
-                raise RuntimeError("downloaded ReactOS source archive checksum differs")
-            temporary.replace(archive)
-        finally:
-            temporary.unlink(missing_ok=True)
-    if hashlib.sha256(archive.read_bytes()).hexdigest() != ARCHIVE_SHA256:
-        raise RuntimeError(f"ReactOS source archive checksum differs: {archive} is incomplete or not revision {REVISION}; delete it to download it again")
-    source = output / "source"
-    shutil.rmtree(source, ignore_errors=True)
-    with tarfile.open(archive) as upstream:
-        for member in upstream:
-            parts = Path(member.name).parts[1:]
-            name = "/".join(parts)
-            if not member.isfile() or not (name.startswith(PREFIXES) or ("/" not in name and name.startswith("COPYING"))):
-                continue
-            if not parts or ".." in parts or Path(name).is_absolute():
-                raise RuntimeError("invalid upstream archive path")
-            target = source / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(upstream.extractfile(member).read())
-    for tool in ("clang", triple + "-gcc", triple + "-dlltool", "widl", "bison"):
+    upstream_sources = {}
+    for name, release in UPSTREAM.items():
+        version = release["version"]
+        packed = output / f"{name}-{version}-source.tar.{release['url'].rsplit('.', 1)[1]}"
+        fetch(release["url"].format(version=version), packed, release["sha256"], f"{name} {version} source archive")
+        unpacked = upstream_sources[name] = output / f"{name}-source"
+        shutil.rmtree(unpacked, ignore_errors=True)
+        with tarfile.open(packed) as upstream:
+            for member in upstream:
+                parts = Path(member.name).parts[1:]
+                if not member.isfile() or not parts:
+                    continue
+                if ".." in parts or Path(member.name).is_absolute():
+                    raise RuntimeError(f"invalid {name} archive path")
+                target = unpacked.joinpath(*parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(upstream.extractfile(member).read())
+    zlib_source, jpeg_source, tiff_source = upstream_sources["zlib"], upstream_sources["libjpeg"], upstream_sources["libtiff"] / "libtiff"
+    xml_root, xslt_root = upstream_sources["libxml2"], upstream_sources["libxslt"]
+    # The library's own configuration for Windows compilers, which keeps boolean an unsigned char as the platform headers have it.
+    shutil.copyfile(jpeg_source / "jconfig.vc", jpeg_source / "jconfig.h")
+    for tool in (triple + "-gcc", triple + "-dlltool", "widl", "bison"):
         if not shutil.which(tool):
             raise RuntimeError(f"required installer build tool is missing: {tool}")
     # The headers of MinGW-w64 12 lack declarations the components use, such as MIDL_STUB_MESSAGE.CorrDespIncrement.
@@ -142,80 +211,36 @@ interface probe {
                 names[symbol] = None
         return names
 
-    # Raven's corrections to upstream behavior are kept as reviewable patches and recorded in the provenance.
+    # Raven's corrections to a library taken from its own release are kept as reviewable patches in a folder named after it, and recorded
+    # in the provenance.
     support = repo / "native/upstream/reactos-installer"
-    patches = sorted((support / "patches").glob("*.patch"))
-    for patch in patches:
-        run(["patch", "-p1", "--forward", "--silent", "-i", patch], source)
-    mark_patched_sources(source, patches)
+    patches = []
+    for name, unpacked in upstream_sources.items():
+        own = sorted((support / "patches" / name).glob("*.patch"))
+        for patch in own:
+            run(["patch", "-p1", "--forward", "--silent", "-i", patch], unpacked)
+        mark_patched_sources(unpacked, own)
+        patches += own
     generated = output / "generated"
     shutil.rmtree(generated, ignore_errors=True)
-    (generated / "psdk").mkdir(parents=True)
-    (generated / "reactos").mkdir()
-    run(["clang", "-O2", "-w", source / "sdk/tools/hpp/hpp.c", "-o", output / "hpp"])
-    run(["clang", "-O1", "-w", source / "sdk/tools/spec2def/spec2def.c", "-o", output / "spec2def"])
-    for name in ("winnt", "ntdef", "devioctl"):
-        run([output / "hpp", name + ".template.h", generated / "psdk" / (name + ".h")], source / "sdk/include/xdk")
-
-    widl += ["-D__REACTOS__", "-I", source / "sdk/include/psdk", "-I", source / "sdk/include", "-I", generated / "psdk"]
-    idls = set()
-
-    def idl(name):
-        path = source / "sdk/include/psdk" / (name + ".idl")
-        if name in idls or not path.exists():
-            return
-        idls.add(name)
-        for dependency in re.findall(r'import\s+"([^"]+)\.idl"', path.read_text(errors="replace")):
-            idl(dependency)
-        run([*widl, "-h", "-H", generated / "psdk" / (name + ".h"), path])
-
-    for name in IDLS:
-        idl(name)
-    # Every other public interface header too, as the components include many of them; one widl cannot read is left out.
-    for path in sorted((source / "sdk/include/psdk").glob("*.idl")):
-        try:
-            idl(path.stem)
-        except RuntimeError:
-            pass
-    # The version headers are configure-time templates upstream; the component pins their values.
-    version = (source / "sdk/include/reactos/version.h.cmake").read_text()
-    for key, value in (("KERNEL_VERSION_MAJOR", "0"), ("KERNEL_VERSION_MINOR", "4"), ("KERNEL_VERSION_PATCH_LEVEL", "17"), ("COPYRIGHT_YEAR", "2026")):
-        version = version.replace("@" + key + "@", value)
-    (generated / "version.h").write_text(version)
-    (generated / "reactos/version.h").write_text(version)
-    buildno = (source / "sdk/include/reactos/buildno.h.cmake").read_text()
-    for key, value in (("KERNEL_VERSION_BUILD", "custom"), ("REVISION", REVISION[:7]), ("KERNEL_VERSION", "0.4.17-dev"), ("COMMIT_HASH", REVISION),
-                       ("REACTOS_DLL_VERSION_MAJOR", "42"), ("DLL_VERSION_STR", "42.4.17-dev"), ("CMAKE_C_COMPILER_ID", "GNU"), ("CMAKE_C_COMPILER_VERSION", "13")):
-        buildno = buildno.replace("@" + key + "@", value)
-    (generated / "reactos/buildno.h").write_text(buildno)
-    # The Wine-compat header overlay sits one directory below its psdk siblings upstream; Wine modules see it first.
-    overlay = source / "sdk/include/reactos/wine"
-    shutil.copytree(source / "sdk/include/wine", overlay, dirs_exist_ok=True)
-    gcc_include = run([triple + "-gcc", "-print-file-name=include"]).stdout.strip()
+    generated.mkdir(parents=True)
+    # Type libraries are compiled against the interface definitions installed with the IDL compiler.
+    widl = widl_target(triple)
     # A toolchain whose default C runtime is the UCRT gives that library the name msvcrt and keeps the one of msvcrt.dll as msvcrt-os.
     msvcrt = "-lmsvcrt-os" if Path(run([triple + "-gcc", "-print-file-name=libmsvcrt-os.a"]).stdout.strip()).is_absolute() else "-lmsvcrt"
-    includes = [generated, generated / "psdk", source / "sdk/lib/pseh/include", source / "sdk/include/vcruntime", overlay, source / "sdk/include/psdk",
-                source / "sdk/include/crt", source / "sdk/include/ndk", source / "sdk/include", source / "sdk/include/reactos", source / "sdk/include/ddk"]
-    # A function the headers do not declare would return a truncated int: none is allowed. The sources use the old CRT names, which the
-    # oldnames library supplies upstream.
-    # GCC 14 and later reject the pointer mismatches the upstream sources still carry, such as an extended version structure passed as its
-    # base; they stay warnings, as with the compilers the sources are built with upstream.
-    flags = ["-O2", "-nostdinc", "-isystem", gcc_include, "-fgnu89-inline", "-Werror=implicit-function-declaration", "-Werror=int-conversion",
-             "-Wno-error=incompatible-pointer-types",
-             "-Dwcsdup=_wcsdup", "-Dwcsicmp=_wcsicmp", "-Dwcsnicmp=_wcsnicmp", "-Dwcsupr=_wcsupr", "-Dwcslwr=_wcslwr", "-Dstrdup=_strdup", "-Dstricmp=_stricmp", "-Dstrnicmp=_strnicmp",
-             "-D_WIN32_WINNT=0x600", "-DWINVER=0x600", "-D_WIN32_IE=0x0A00", "-D__REACTOS__", "-DUNICODE", "-D_UNICODE",
-             "-D_M_IX86" if x86 else "-D_M_AMD64", "-D__WINESRC__", "-D_WINE", *([] if x86 else ["-D__ROS_LONG64__"]),
-             # 32-bit handlers read the exception through the frame based PSEH of ReactOS, as the guarded blocks themselves do.
-             *(["-D_exception_code()=_SEH2_GetExceptionCode()", "-D_exception_info()=_SEH2_GetExceptionInformation()"] if x86 else []),
-             f"-ffile-prefix-map={source}=reactos", f"-ffile-prefix-map={repo}=raven", f"-ffile-prefix-map={output}=component"]
+    # Raven code and the upstream libraries on the MinGW-w64 headers. A function the headers do not declare would return a truncated int: none
+    # is allowed. GCC 14 and later reject the pointer mismatches the upstream libraries still carry; they stay warnings, as with the compilers
+    # those libraries are built with upstream. The formatting functions are the C runtime's own, as the components link no other.
+    flags = ["-O2", "-Werror=implicit-function-declaration", "-Werror=int-conversion", "-Wno-error=incompatible-pointer-types",
+             "-D__USE_MINGW_ANSI_STDIO=0", "-D_WIN32_WINNT=0x600", "-DWINVER=0x600", "-D_WIN32_IE=0x0A00", "-DUNICODE", "-D_UNICODE",
+             f"-ffile-prefix-map={repo}=raven", f"-ffile-prefix-map={output}=component"]
     objects = output / "objects"
     shutil.rmtree(objects, ignore_errors=True)
     objects.mkdir()
 
-    def compile(path, name, extra=(), wine_module=True):
+    def compile(path, name, extra=()):
         target = objects / (name + ".o")
-        paths = includes if wine_module else [path for path in includes if path != overlay]
-        run([triple + "-gcc", "-c", *flags, *extra, *["-I" + str(path) for path in paths], path, "-o", target])
+        run([triple + "-gcc", "-c", *flags, *extra, "-I" + str(generated), path, "-o", target])
         return target
 
     def runtime(libraries):
@@ -240,30 +265,16 @@ interface probe {
     expansion.write_text("LIBRARY kernel32.dll\nEXPORTS\n" + "".join(" " + name + ("@" + size if x86 else "") + "\n" for name, size in
                          (("LZOpenFileW", "12"), ("LZRead", "12"), ("LZSeek", "12"), ("LZClose", "4"))))
     run([triple + "-dlltool", "-d", expansion, "-l", output / "liblzimports.a", *(["-k"] if x86 else [])])
-    debug = compile(repo / "native/upstream/reactos-installer/debug.c", "debug")
-    # 32-bit code registers its exception frames on the thread's chain: the frame based PSEH support of ReactOS is built into each component.
-    pseh = []
-    if x86:
-        pseh_root = source / "sdk/lib/pseh"
-        for name in ("framebased-gcchack.c", "framebased-gcchack-asm.S", "framebased.S", "../framebased.c"):
-            target = objects / ("pseh_" + Path(name).name.replace(".", "_") + ".o")
-            language = ["-x", "assembler-with-cpp"] if name.endswith(".S") else [*flags, *["-I" + str(path) for path in includes]]
-            run([triple + "-gcc", "-c", *language, "-I" + str(pseh_root / "include"), "-I" + str(pseh_root / "include/pseh"), pseh_root / "i386" / name,
-                 "-o", target])
-            pseh.append(target)
-        debug = [debug, *pseh]
-    else:
-        debug = [debug]
     # cabinet.dll: cabinet files, their compression and extraction, on zlib.
-    zlib_include = source / "sdk/include/reactos/libs/zlib"
-    zlib = [compile(source / "sdk/lib/3rdparty/zlib" / name, "zlib_" + Path(name).stem, ["-I" + str(zlib_include)]) for name in ZLIB]
+    zlib_include = zlib_source
+    zlib = [compile(zlib_source / name, "zlib_" + Path(name).stem, ["-I" + str(zlib_include)]) for name in ZLIB]
     cabinet_root = repo / "native/upstream/raven-cabinet"
     with ThreadPoolExecutor(max_workers=2) as pool:
         cabinet = list(pool.map(lambda name: compile(cabinet_root / name, "cabinet_" + Path(name).stem,
-                                                     ["-I" + str(cabinet_root), "-I" + str(zlib_include)], wine_module=False),
+                                                     ["-I" + str(cabinet_root), "-I" + str(zlib_include)]),
                                 ("compose.c", "extract.c", "lzx.c", "quantum.c", "session.c")))
-    run([output / "spec2def", spec_arch, "-n=cabinet.dll", "-d=" + str(output / "cabinet.def"), cabinet_root / "cabinet.spec"])
-    link("cabinet.dll", bases["cabinet"], [*zlib, *cabinet, *debug], output / "cabinet.def", ["-lmsvcrt", "-lkernel32", "-lntdll", "-lgcc"],
+    (output / "cabinet.def").write_text(spec_exports(cabinet_root / "cabinet.spec", "cabinet.dll", x86))
+    link("cabinet.dll", bases["cabinet"], [*zlib, *cabinet], output / "cabinet.def", ["-lmsvcrt", "-lkernel32", "-lntdll", "-lgcc"],
          output / "libcabinet.a")
     # sxs.dll: the side-by-side assembly cache.
     own_sxs = repo / "native/upstream/raven-sxs"
@@ -308,7 +319,7 @@ interface probe {
     link("msi.dll", bases["msi"], msi_objects, output / "msi.def",
          # The toolchain's oleaut32 import library by its file name: beside the output, -loleaut32 would find the runtime's own oleaut32.dll.
          ["-L" + str(output), "-lcabinet", "-lrpcrt4", "-l:liboleaut32.a",
-          *[f"-l{library}" for library in ("advapi32", "ole32", "shell32", "user32", "version", "kernel32", "uuid", "gcc")]], implib=output / "libmsi.a")
+          *[f"-l{library}" for library in ("advapi32", "ole32", "shell32", "user32", "gdi32", "version", "kernel32", "uuid", "gcc")]], implib=output / "libmsi.a")
     # raven-storage.dll: Raven's own structured storage, which the runtime's ole32 hands those exports to.
     own_storage = repo / "native/upstream/raven-storage"
     own_objects = []
@@ -328,23 +339,32 @@ interface probe {
          f"-Wl,--entry,{'_raven_msiexec@0' if x86 else 'raven_msiexec'},--no-insert-timestamp", "-I" + str(own_msi),
          own_msi / "msiexec.c", repo / "native/upstream/raven-comctl32/crt.c", "-o", output / "msiexec.exe", "-L" + str(output), "-lmsi", "-luser32", "-lkernel32", "-lgcc"])
     # msxml3.dll: the XML document object model installers and their bootstrappers parse their manifests with, on libxml2 and libxslt.
-    xml_root = source / "sdk/lib/3rdparty/libxml2"
-    iconv_root = source / "sdk/lib/3rdparty/libwin-iconv"
-    xml_flags = ["-U__WINESRC__", "-U_WINE", "-D_CRT_DECLARE_NONSTDC_NAMES=1", "-D__MINGW32__", "-D_DLL", "-D__USE_CRTIMP", "-DLIBXML_STATIC", "-D_REENTRANT", "-D_MBCS", "-D_WINDOWS", "-DWIN32", "-DHAVE_CONFIG_H", "-DICONV_CONST=const",
-                 "-I" + str(xml_root / "include"), "-I" + str(xml_root), "-I" + str(iconv_root), "-I" + str(zlib_include)]
+    # libxml2's configuration: its own one for Windows compilers, and the version header with the features listed above. Files are
+    # examined with the C runtime's plain stat, for libxslt as well.
+    shutil.copyfile(xml_root / "include/win32config.h", xml_root / "config.h")
+    major, minor, micro = (int(part) for part in UPSTREAM["libxml2"]["version"].split("."))
+    configure_file(xml_root / "include/libxml/xmlversion.h.in", xml_root / "include/libxml/xmlversion.h", dict(
+        XML_FEATURES, VERSION=UPSTREAM["libxml2"]["version"], LIBXML_VERSION_NUMBER=major * 10000 + minor * 100 + micro, LIBXML_VERSION_EXTRA=""))
+    xml_flags = ["-DNO_LARGEFILE_SOURCE", "-D_CRT_DECLARE_NONSTDC_NAMES=1", "-D__MINGW32__", "-D_DLL", "-D__USE_CRTIMP", "-DLIBXML_STATIC", "-D_REENTRANT", "-D_MBCS", "-D_WINDOWS", "-DWIN32", "-DHAVE_CONFIG_H",
+                 "-I" + str(xml_root / "include"), "-I" + str(xml_root), "-I" + str(zlib_include)]
     # The C runtime's mathematics, which mingw's msvcrt import library would bring in as static code of its own.
     (output / "crtmath.def").write_text("LIBRARY msvcrt.dll\nEXPORTS\n" + "".join(" " + name + "\n" for name in
                                         ("floor", "ceil", "fabs", "fmod", "log", "log10", "exp", "pow", "sqrt", "atan", "atan2", "tan",
                                          "floorf", "ceilf", "_hypot")))
     run([triple + "-dlltool", "-d", output / "crtmath.def", "-l", output / "libcrtmath.a"])
-    xml = [compile(iconv_root / "win_iconv.c", "iconv_win_iconv", xml_flags, wine_module=False)]
-    xml_sources = sorted(path for path in xml_root.glob("*.c"))
+    xml_sources = [xml_root / name for name in XML_SOURCES]
     with ThreadPoolExecutor(max_workers=2) as pool:
-        xml += list(pool.map(lambda path: compile(path, "libxml2_" + path.stem, xml_flags, wine_module=False), xml_sources))
-    xslt_root = source / "dll/3rdparty/libxslt"
-    xslt_flags = [*xml_flags, "-DHAVE_WIN32_THREADS", "-I" + str(xslt_root), "-I" + str(source / "sdk/include/reactos/libs/libxslt"), "-I" + str(source / "sdk/include/reactos/libs")]
+        xml = list(pool.map(lambda path: compile(path, "libxml2_" + path.stem, xml_flags), xml_sources))
+    # libxslt's configuration: its own one for Windows, which its internal header reads as config.h under mingw, and a version header
+    # with the debugger, profiler, plugins and trio left out.
+    shutil.copyfile(xslt_root / "libxslt/win32config.h", xslt_root / "libxslt/config.h")
+    major, minor, micro = (int(part) for part in UPSTREAM["libxslt"]["version"].split("."))
+    configure_file(xslt_root / "libxslt/xsltconfig.h.in", xslt_root / "libxslt/xsltconfig.h", dict(
+        VERSION=UPSTREAM["libxslt"]["version"], LIBXSLT_VERSION_NUMBER=major * 10000 + minor * 100 + micro, LIBXSLT_VERSION_EXTRA="",
+        WITH_XSLT_DEBUG=0, WITH_TRIO=0, WITH_DEBUGGER=0, WITH_PROFILER=0, WITH_MODULES=0, LIBXSLT_DEFAULT_PLUGINS_PATH=""))
+    xslt_flags = [*xml_flags, "-DHAVE_WIN32_THREADS", "-I" + str(xslt_root), "-I" + str(xslt_root / "libxslt")]
     with ThreadPoolExecutor(max_workers=2) as pool:
-        xslt = list(pool.map(lambda path: compile(path, "libxslt_" + path.stem, xslt_flags, wine_module=False), sorted(xslt_root.glob("*.c"))))
+        xslt = list(pool.map(lambda path: compile(path, "libxslt_" + path.stem, xslt_flags), sorted((xslt_root / "libxslt").glob("*.c"))))
     # Its registration scripts' type library comes from the public headers, and stays with stdole2's for what else needs it.
     run([*widl, "-t", "-T", generated / "stdole2.tlb", repo / "native/upstream/raven-oleaut32/stdole2.idl"])
     own_msxml = repo / "native/upstream/raven-msxml3"
@@ -353,16 +373,17 @@ interface probe {
     run([*widl, "-I", headers, "-L", generated, "-t", "-o", generated / "msxml3.tlb", generated / "msxml3.idl"])
     run([triple + "-windres", "-O", "coff", "-I", generated, "-i", own_msxml / "resources.rc", "-o", objects / "msxml3_resources.o"])
     msxml_flags = ["-O2", "-std=gnu11", "-D_WIN32_WINNT=0x601", "-DUNICODE", "-DLIBXML_STATIC", "-DLIBXSLT_STATIC", "-DCONST_VTABLE", "-I" + str(own_msxml),
-                   "-I" + str(xml_root / "include"), "-I" + str(xml_root), "-I" + str(source / "sdk/include/reactos/libs")]
+                   "-I" + str(xml_root / "include"), "-I" + str(xml_root), "-I" + str(xslt_root)]
     msxml_objects = [objects / "msxml3_resources.o"]
     for path in sorted(own_msxml.glob("*.c")):
         target = objects / ("msxml3_" + path.stem + ".o")
         run([triple + "-gcc", "-c", *msxml_flags, path, "-o", target])
         msxml_objects.append(target)
     (output / "msxml3.def").write_text("LIBRARY msxml3.dll\nEXPORTS\n" + (own_msxml / "exports.txt").read_text())
+    # MinGW-w64's own support library brings the C99 formatting and the stat path handling its headers route those calls through.
     run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{'_DllMain@12' if x86 else 'DllMain'},--image-base,{bases['msxml']:#x},--no-insert-timestamp,--allow-multiple-definition", *link_extra,
-         "-o", output / "msxml3.dll", *msxml_objects, *xslt, *xml, *zlib, objects / "installer_support.o", *debug, output / "msxml3.def", output / "libcrtmath.a",
-         output / "libcrtimports.a", *runtime(f"-l{library}" for library in ("urlmon", "ws2_32", "shlwapi", "oleaut32", "ole32", "user32", "advapi32", "msvcrt", "kernel32", "ntdll", "uuid", "gcc", "kernel32", "msvcrt"))])
+         "-o", output / "msxml3.dll", *msxml_objects, *xslt, *xml, *zlib, objects / "installer_support.o", output / "msxml3.def", output / "libcrtmath.a",
+         *runtime(f"-l{library}" for library in ("urlmon", "ws2_32", "shlwapi", "oleaut32", "ole32", "user32", "advapi32", "msvcrt", "mingwex", "kernel32", "ntdll", "uuid", "gcc", "kernel32", "msvcrt", "kernel32"))])
     # atl100.dll: the ATL registrar, which reads the registration scripts libraries register their classes with, and the control host.
     own_atl = repo / "native/upstream/raven-atl100"
     atl_objects = []
@@ -395,46 +416,46 @@ interface probe {
     # their specification and the libraries they import. Their base addresses count down from below the ones above.
     next_base = [0x1c4000000 if not x86 else 0x1c400000]
 
-    def listed_sources(root):
-        text = (root / "CMakeLists.txt").read_text()
-        names = []
-        for block in re.findall(r"list\(APPEND SOURCE(.*?)\)", text, re.S)[:1]:
-            names += [token for token in block.split() if token.endswith(".c") and not token.startswith(("#", "$"))]
-        return [root / name for name in names]
-
-    def library(name, root, extra_flags=(), libraries=(), wine_module=True, sources=None, objects_more=(), helpers=(), rc=None, interfaces=()):
+    def library(name, root, extra_flags=(), libraries=(), sources=(), objects_more=()):
         stem = Path(name).stem
         spec = root / (stem + ".spec") if (root / (stem + ".spec")).exists() else next(root.glob("*.spec"))
-        run([output / "spec2def", spec_arch, "-n=" + name, "-d=" + str(output / (stem + ".def")), "-s=" + str(generated / (stem + "_stubs.c")), spec])
+        (output / (stem + ".def")).write_text(spec_exports(spec, name, x86))
         flags_here = [*extra_flags, "-I" + str(root)]
-        parts = sources if sources is not None else listed_sources(root)
         with ThreadPoolExecutor(max_workers=2) as pool:
-            built = list(pool.map(lambda path: compile(path, stem + "_" + path.stem.replace(".", "_"), flags_here, wine_module), parts))
-        built.append(compile(generated / (stem + "_stubs.c"), stem + "_spec_stubs", flags_here, wine_module))
-        # The identifiers of the public interfaces it names, which mingw-w64's uuid library does not all have.
-        for interface in interfaces:
-            run([*widl, "-u", "-U", generated / (interface + "_i.c"), source / "sdk/include/psdk" / (interface + ".idl")])
-            built.append(compile(generated / (interface + "_i.c"), stem + "_" + interface + "_i", flags_here, wine_module))
-        for helper in helpers:
-            built.append(compile(source / "sdk/lib/3rdparty/libwine" / helper, stem + "_" + Path(helper).stem, flags_here))
-        if rc:
-            run([triple + "-windres", "--preprocessor=" + str(wrapper), "-O", "coff", "-DLANGUAGE_EN_US", "-D__REACTOS__", "-D__WINESRC__",
-                 "-D_M_IX86" if x86 else "-D_M_AMD64", "-I" + str(root), "-I" + str(generated), "-i", root / rc, "-o", objects / (stem + ".res.o")])
-            built.append(objects / (stem + ".res.o"))
+            built = list(pool.map(lambda path: compile(path, stem + "_" + path.stem.replace(".", "_"), flags_here), sources))
         next_base[0] -= 0x400000 if x86 else 0x4000000
-        link(name, next_base[0], [*built, *objects_more, objects / "installer_support.o", *debug], output / (stem + ".def"),
-             ["-L" + str(output), "-lcrtmath", *[f"-l{library}" for library in (*libraries, "msvcrt", "kernel32", "ntdll", "uuid", "gcc", "kernel32", "msvcrt")]],
+        link(name, next_base[0], [*built, *objects_more, objects / "installer_support.o"], output / (stem + ".def"),
+             ["-L" + str(output), "-lcrtmath", *[f"-l{library}" for library in (*libraries, "msvcrt", "mingwex", "kernel32", "ntdll", "uuid", "gcc", "kernel32", "msvcrt", "kernel32")]],
              output / ("lib" + stem + ".a"))
 
-    plain = ["-U__WINESRC__", "-U_WINE", "-D_CRT_DECLARE_NONSTDC_NAMES=1", "-D_DLL", "-DWIN32", "-D_WINDOWS"]
+    plain = ["-D_CRT_DECLARE_NONSTDC_NAMES=1", "-D_DLL", "-DWIN32", "-D_WINDOWS"]
     entry_object = compile(support / "dllmain.c", "plain_dllmain")
-    libs = source / "sdk/include/reactos/libs"
-    library("libpng.dll", source / "dll/3rdparty/libpng", [*plain, "-DNDEBUG=", "-DPNG_BUILD_DLL", "-I" + str(libs / "libpng"), "-I" + str(zlib_include)],
-            wine_module=False, objects_more=[*zlib, entry_object])
-    library("libjpeg.dll", source / "dll/3rdparty/libjpeg", [*plain, "-D_MBCS", "-DJPEG_DLL", "-Dmain=mainptr", "-I" + str(libs / "libjpeg")], wine_module=False,
-            objects_more=[entry_object])
-    library("libtiff.dll", source / "dll/3rdparty/libtiff", [*plain, "-DNDEBUG=", "-DUSE_WIN32_FILEIO", "-DTIF_PLATFORM_CONSOLE", "-I" + str(libs / "libtiff"),
-            "-I" + str(libs / "libjpeg"), "-I" + str(zlib_include)], ["libjpeg", "user32"], wine_module=False, objects_more=[*zlib, entry_object])
+    # libjpeg.dll: the library's sources as its makefile lists them, with the memory manager that needs no temporary files, exporting the
+    # whole interface jpeglib.h declares.
+    jpeg_sources = re.search(r"^LIBSOURCES *=(.*?)\n\n", (jpeg_source / "Makefile.am").read_text(), re.S | re.M).group(1)
+    jpeg_sources = [jpeg_source / name.replace("@MEMORYMGR@", "jmemnobs") for name in jpeg_sources.replace("\\", " ").split()]
+    jpeg_interface = sorted(set(re.findall(r"EXTERN\([^)]*\) +(jpeg_\w+)", (jpeg_source / "jpeglib.h").read_text())))
+    (jpeg_source / "libjpeg.spec").write_text("".join(f"@ cdecl {name}()\n" for name in jpeg_interface))
+    library("libjpeg.dll", jpeg_source, [*plain, "-I" + str(jpeg_source)], sources=jpeg_sources, objects_more=[entry_object])
+    # libtiff.dll: configured as its CMake build would be for Windows, with the codecs on JPEG and zlib and the ones needing other
+    # libraries left out, exporting the interface its own definition file lists.
+    size = 4 if x86 else 8
+    configure_file(tiff_source / "tif_config.h.cmake.in", tiff_source / "tif_config.h", dict(
+        CCITT_SUPPORT=1, CHECK_JPEG_YCBCR_SUBSAMPLING=1, HAVE_ASSERT_H=1, HAVE_FCNTL_H=1, HAVE_FSEEKO=1, HAVE_IO_H=1, HAVE_SETMODE=1,
+        HAVE_STRINGS_H=1, HAVE_SYS_TYPES_H=1, HAVE_UNISTD_H=1, USE_WIN32_FILEIO=1, STRIP_SIZE_DEFAULT=8192, TIFF_MAX_DIR_COUNT=1048576,
+        SIZEOF_SIZE_T=size, LIBJPEG_12_PATH="", PACKAGE_NAME="LibTIFF Software", PACKAGE_BUGREPORT="tiff@lists.osgeo.org",
+        PACKAGE_TARNAME="tiff", PACKAGE_URL=""))
+    configure_file(tiff_source / "tiffconf.h.cmake.in", tiff_source / "tiffconf.h", dict(
+        TIFF_INT8_T="int8_t", TIFF_INT16_T="int16_t", TIFF_INT32_T="int32_t", TIFF_INT64_T="int64_t", TIFF_UINT8_T="uint8_t",
+        TIFF_UINT16_T="uint16_t", TIFF_UINT32_T="uint32_t", TIFF_UINT64_T="uint64_t", TIFF_SSIZE_T=f"int{size * 8}_t", HAVE_IEEEFP=1,
+        HOST_BIG_ENDIAN=0, CCITT_SUPPORT=1, JPEG_SUPPORT=1, LOGLUV_SUPPORT=1, LZW_SUPPORT=1, NEXT_SUPPORT=1, PACKBITS_SUPPORT=1,
+        PIXARLOG_SUPPORT=1, THUNDER_SUPPORT=1, ZIP_SUPPORT=1, STRIPCHOP_DEFAULT=1, SUBIFD_SUPPORT=1, DEFAULT_EXTRASAMPLE_AS_ALPHA=1,
+        CHECK_JPEG_YCBCR_SUBSAMPLING=1, MDI_SUPPORT=1))
+    tiff_interface = (tiff_source / "libtiff.def").read_text().split("EXPORTS", 1)[1].split()
+    (tiff_source / "libtiff.spec").write_text("".join(f"@ cdecl {name}()\n" for name in tiff_interface))
+    library("libtiff.dll", tiff_source, [*plain, "-DNDEBUG=", "-DALLOW_TIFF_NON_EXT_ALLOC_FUNCTIONS", "-I" + str(tiff_source),
+            "-I" + str(jpeg_source), "-I" + str(zlib_include)], ["libjpeg", "user32"],
+            sources=[tiff_source / name for name in TIFF_SOURCES], objects_more=[*zlib, entry_object])
     registration = ("register.c", "dll_register.c", "dll_canunload.c")
     # propsys.dll: property values, the in-memory store and the system's property table, generated from the public key list.
     own_propsys = repo / "native/upstream/raven-propsys"
@@ -476,7 +497,7 @@ interface probe {
     for path in [*sorted(own_codecs.glob("*.c")), repo / "native/upstream/raven-comctl32/crt.c"]:
         target = objects / ("codecs_" + path.stem + ".o")
         run([triple + "-gcc", "-c", "-O2", "-std=gnu11", "-fno-builtin", "-D_WIN32_WINNT=0x601", "-DUNICODE", "-D_CRTIMP=", "-DCOBJMACROS", "-I" + str(own_codecs),
-             "-I" + str(libs / "libjpeg"), "-I" + str(libs / "libtiff"), "-w", path, "-o", target])
+             "-I" + str(jpeg_source), "-I" + str(tiff_source), "-w", path, "-o", target])
         codecs_objects.append(target)
     codecs_exports = (own_codecs / "exports.txt").read_text()
     (output / "windowscodecs.def").write_text("LIBRARY windowscodecs.dll\nEXPORTS\n" + codecs_exports)
@@ -548,7 +569,7 @@ interface probe {
         "IID_IRichEditOleCallback", "IID_ITextHost", "IID_ITextHost2", "IID_ITextServices", "REExtendedRegisterClass", "RichEdit10ANSIWndProc",
         "RichEditANSIWndProc")))
     next_base[0] -= 0x400000 if x86 else 0x4000000
-    link("msftedit.dll", next_base[0], [compile(support / "msftedit.c", "msftedit", plain, False)], output / "msftedit.def",
+    link("msftedit.dll", next_base[0], [compile(support / "msftedit.c", "msftedit", plain)], output / "msftedit.def",
          ["-L" + str(output), *[f"-l{library}" for library in ("riched20", "kernel32", "gcc")]])
     # msvfw32.dll: Raven's own video for Windows: the codec manager, DrawDib and the MCI window.
     own_vfw = repo / "native/upstream/raven-msvfw32"
@@ -562,7 +583,7 @@ interface probe {
          "-o", output / "msvfw32.dll", *vfw_objects, repo / "native/upstream/raven-comctl32/crt.c", output / "msvfw32.def", "-lcomdlg32", "-ladvapi32", "-lgdi32", "-luser32", "-lkernel32", "-lgcc"])
     # xmllite.dll: the streaming XML reader and writer, which the Office Click-to-Run client reads its configuration with.
     xmllite_root = repo / "native/upstream/raven-xmllite"
-    library("xmllite.dll", xmllite_root, wine_module=False, sources=[xmllite_root / name for name in ("guid.c", "reader.c", "writer.c")])
+    library("xmllite.dll", xmllite_root, sources=[xmllite_root / name for name in ("guid.c", "reader.c", "writer.c")])
     # raven-appx.dll: the packaging API (the AppxFactory and AppxBundleFactory classes), which package managers read .appx and .msix
     # packages with. Raven code on the MinGW headers and the interface declarations generated from Microsoft's metadata; it reads the
     # manifests with xmllite and inflates with the zlib cabinet.dll is built on.
@@ -570,7 +591,7 @@ interface probe {
     appx = []
     for name in ("package.c", "archive.c", "blockmap.c", "manifest.c", "support.c"):
         target = objects / ("appx_" + Path(name).stem + ".o")
-        run([triple + "-gcc", "-c", "-O2", "-Wall", "-Wno-unused-parameter", f"-ffile-prefix-map={repo}=raven", f"-ffile-prefix-map={source}=reactos",
+        run([triple + "-gcc", "-c", "-O2", "-Wall", "-Wno-unused-parameter", f"-ffile-prefix-map={repo}=raven",
              "-I" + str(appx_root), "-I" + str(zlib_include), appx_root / name, "-o", target])
         appx.append(target)
     (output / "raven-appx.def").write_text("NAME raven-appx.dll\nEXPORTS\n")
@@ -679,13 +700,19 @@ interface probe {
     run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{'_DllMain@12' if x86 else 'DllMain'},--image-base,{next_base[0]:#x},--no-insert-timestamp", *link_extra,
          "-o", output / "jscript.dll", *jscript_objects, output / "jscript.def", "-lole32", "-loleaut32", "-luser32", "-luuid", "-lmsvcrt",
          "-lkernel32", "-lgcc"])
-    result = dict(revision=REVISION, archive_sha256=ARCHIVE_SHA256, arch=args.arch, commands=records,
-                  license_notices=preserve_notices(source, output),
+    notices = {}
+    for name, release in UPSTREAM.items():
+        for notice in release["notices"]:
+            relative = f"{name}-{release['version']}/{notice}"
+            target = output / "licenses" / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(upstream_sources[name] / notice, target)
+            notices[relative] = hashlib.sha256(target.read_bytes()).hexdigest()
+    result = dict(upstream={name: dict(version=release["version"], sha256=release["sha256"]) for name, release in UPSTREAM.items()}, arch=args.arch,
+                  commands=records, license_notices=notices,
                   component_sha256={name: hashlib.sha256((output / name).read_bytes()).hexdigest() for name in COMPONENTS},
                   storage_exports=exported,
-                  patches={patch.name: hashlib.sha256(patch.read_bytes()).hexdigest() for patch in patches},
-                  source_hashes={path.relative_to(source).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-                                 for path in sorted(source.rglob("*")) if path.is_file() and not path.is_relative_to(overlay)})
+                  patches={patch.name: hashlib.sha256(patch.read_bytes()).hexdigest() for patch in patches})
     (output / "provenance.json").write_text(json.dumps(result, indent=2) + "\n")
     for name in COMPONENTS:
         print(output / name)

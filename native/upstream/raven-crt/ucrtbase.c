@@ -630,21 +630,22 @@ static ErrorState *thread_errors(void)
 CRT int *_errno(void) { return &thread_errors()->error; }
 CRT unsigned long *__doserrno(void) { return &thread_errors()->dos_error; }
 typedef void (__cdecl *RavenInvalidParameterHandler)(const wchar_t *, const wchar_t *, const wchar_t *, unsigned, uintptr_t);
-static RavenInvalidParameterHandler invalid_parameter_handler;
+typedef RavenInvalidParameterHandler invalid_parameter_handler;
+static RavenInvalidParameterHandler process_parameter_handler;
 /* The TLS slot of a thread's own handler, which _set_thread_local_invalid_parameter_handler allocates when first used. */
-static DWORD thread_parameter_slot = TLS_OUT_OF_INDEXES;
+static DWORD invalid_parameter_slot;
 CRT RavenInvalidParameterHandler _set_invalid_parameter_handler(RavenInvalidParameterHandler handler)
 {
-	RavenInvalidParameterHandler previous = invalid_parameter_handler;
-	invalid_parameter_handler = handler;
+	RavenInvalidParameterHandler previous = process_parameter_handler;
+	process_parameter_handler = handler;
 	return previous;
 }
 CRT void _invalid_parameter_noinfo(void)
 {
-	RavenInvalidParameterHandler handler = thread_parameter_slot == TLS_OUT_OF_INDEXES ? NULL :
-		(RavenInvalidParameterHandler)TlsGetValue(thread_parameter_slot);
+	RavenInvalidParameterHandler handler = invalid_parameter_slot == TLS_OUT_OF_INDEXES ? NULL :
+		(RavenInvalidParameterHandler)TlsGetValue(invalid_parameter_slot);
 	if (!handler)
-		handler = invalid_parameter_handler;
+		handler = process_parameter_handler;
 	if (handler) handler(NULL, NULL, NULL, 0, 0);
 }
 CRT void _invalid_parameter_noinfo_noreturn(void) { ExitProcess(3); }
@@ -1044,3 +1045,4 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 #include "ucrtbase_more.c"
 #include "ucrtbase_fiber.c"
 #include "ucrtbase_office.c"
+#include "ucrtbase_vc2022.c"

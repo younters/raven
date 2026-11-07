@@ -714,10 +714,41 @@ int raven_entry(void)
 	WCHAR spec[MAX_PATH] = L"C:\\a\\b.txt";
 	if (!remove_spec || remove_spec(spec, MAX_PATH) || lstrcmpW(spec, L"C:\\a") || remove_spec(spec, MAX_PATH) || lstrcmpW(spec, L"C:\\") ||
 		remove_spec(spec, MAX_PATH) != S_FALSE || lstrcmpW(spec, L"C:\\")) return 179;
+	/* PathAllocCanonicalize returns the same form in memory the caller frees with LocalFree; past MAX_PATH only when long paths are allowed. */
+	HRESULT (WINAPI *alloc_canonicalize)(const WCHAR *, ULONG, WCHAR **) =
+		(void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "PathAllocCanonicalize");
+	WCHAR *allocated = NULL, long_path[MAX_PATH + 40] = L"C:\\";
+	if (!alloc_canonicalize || alloc_canonicalize(L"C:\\a\\.\\b\\..\\c.txt", 0, &allocated) || !allocated ||
+		lstrcmpW(allocated, L"C:\\a\\c.txt") || LocalFree(allocated)) return 179;
+	if (alloc_canonicalize(NULL, 0, &allocated) != E_INVALIDARG || alloc_canonicalize(L"C:\\a", 0, NULL) != E_INVALIDARG) return 179;
+	for (int index = 3; index < MAX_PATH + 20; ++index)
+		long_path[index] = index % 50 ? L'a' : L'\\';
+	if (SUCCEEDED(alloc_canonicalize(long_path, 0, &allocated)) || alloc_canonicalize(long_path, 1, &allocated) || !allocated ||
+		lstrcmpW(allocated, long_path) || LocalFree(allocated)) return 179;
 	if ((key_size = click_to_run_natives(key))) return 180 + (int)key_size;
 	if ((key_size = server_natives())) return (int)key_size;
-	RegDeleteKeyW(key, L"Inner");
+	/* NtDeleteKey deletes the open key itself, though not while it has subkeys; the user's Run key is there in every prefix. */
+	LONG (WINAPI *NtDeleteKey)(HANDLE) = (void *)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtDeleteKey");
+	if (!NtDeleteKey || NtDeleteKey(key) != (LONG)0xc0000121) return 220;
+	if (RegOpenKeyExW(key, L"Inner", 0, KEY_ALL_ACCESS, &child) || NtDeleteKey(child)) return 221;
+	RegCloseKey(child);
+	if (!RegOpenKeyExW(key, L"Inner", 0, KEY_READ, &child)) return 222;
+	if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &child)) return 223;
+	RegCloseKey(child);
 	RegCloseKey(key);
 	RegDeleteKeyW(HKEY_CURRENT_USER, L"Software\\RavenKeyInformation");
+	/* MapVirtualKeyEx with the layout a program got from GetKeyboardLayout: 'A' is scan code 0x1e and back, as MapVirtualKey says. */
+	HMODULE user32 = LoadLibraryW(L"user32.dll");
+	UINT (WINAPI *map_key_ex)(UINT, UINT, HKL) = (void *)GetProcAddress(user32, "MapVirtualKeyExW");
+	UINT (WINAPI *map_key_ex_ansi)(UINT, UINT, HKL) = (void *)GetProcAddress(user32, "MapVirtualKeyExA");
+	HKL (WINAPI *layout_of)(DWORD) = (void *)GetProcAddress(user32, "GetKeyboardLayout");
+	if (!map_key_ex || !map_key_ex_ansi || !layout_of) return 224;
+	if (map_key_ex('A', 0, layout_of(0)) != 0x1e || map_key_ex(0x1e, 1, layout_of(0)) != 'A' || map_key_ex_ansi('A', 0, layout_of(0)) != 0x1e)
+		return 225;
+	/* CheckElevationEnabled, which elevation helpers ask before restarting elevated: User Account Control is on. */
+	DWORD (WINAPI *elevation_enabled)(BOOL *) = (void *)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "CheckElevationEnabled");
+	BOOL enabled = FALSE;
+	if (!elevation_enabled || elevation_enabled(&enabled) != ERROR_SUCCESS || !enabled || elevation_enabled(NULL) != ERROR_INVALID_PARAMETER)
+		return 226;
 	return 0;
 }

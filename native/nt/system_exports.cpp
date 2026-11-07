@@ -138,6 +138,10 @@ std::span<const std::pair<std::string_view, uint16_t>> system_export_ordinals(st
 		return xinput1_4_ordinals;
 	if (dll == "xinput1_3.dll")
 		return xinput1_3_ordinals;
+	if (dll == "activeds.dll")
+		return activeds_spec_ordinals;
+	if (dll == "winspool.drv")
+		return winspool_spec_ordinals;
 	return {};
 }
 

@@ -37,34 +37,50 @@ std::u16string trim(std::u16string value)
 	return value;
 }
 
-// The file's lines, trimmed: UTF-16 after a byte order mark, as Windows writes Unicode profiles, otherwise bytes widened to characters.
-std::optional<std::vector<std::u16string>> read_lines(const std::filesystem::path &file, bool keep_whitespace = false, bool *unicode_file = nullptr)
+// A profile's lines without their line ends, and whether the file is Unicode: UTF-16 after a byte order mark, as Windows writes Unicode
+// profiles, otherwise bytes widened to characters.
+struct ProfileFile {
+	std::vector<std::u16string> lines;
+	bool unicode = false;
+};
+
+std::optional<ProfileFile> read_file(const std::filesystem::path &file)
 {
 	std::ifstream input(file, std::ios::binary);
 	if (!input)
 		return std::nullopt;
 	const std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+	ProfileFile result;
 	std::u16string content;
-	const bool unicode = bytes.size() >= 2 && uint8_t(bytes[0]) == 0xff && uint8_t(bytes[1]) == 0xfe;
-	if (unicode_file) *unicode_file = unicode;
-	if (unicode) {
+	if (bytes.size() >= 2 && uint8_t(bytes[0]) == 0xff && uint8_t(bytes[1]) == 0xfe) {
+		result.unicode = true;
 		for (size_t index = 2; index + 1 < bytes.size(); index += 2)
 			content.push_back(char16_t(uint8_t(bytes[index]) | uint8_t(bytes[index + 1]) << 8));
 	} else {
 		content = widen(bytes);
 	}
-	std::vector<std::u16string> lines;
-	size_t start = 0;
-	while (start <= content.size()) {
+	for (size_t start = 0; start < content.size();) {
 		auto end = content.find(u'\n', start);
 		if (end == content.npos)
 			end = content.size();
 		auto line = content.substr(start, end - start);
-		if (keep_whitespace && !line.empty() && line.back() == u'\r') line.pop_back();
-		lines.push_back(keep_whitespace ? std::move(line) : trim(std::move(line)));
+		if (!line.empty() && line.back() == u'\r')
+			line.pop_back();
+		result.lines.push_back(std::move(line));
 		start = end + 1;
 	}
-	return lines;
+	return result;
+}
+
+// The file's lines, trimmed.
+std::optional<std::vector<std::u16string>> read_lines(const std::filesystem::path &file)
+{
+	auto contents = read_file(file);
+	if (!contents)
+		return std::nullopt;
+	for (auto &line : contents->lines)
+		line = trim(std::move(line));
+	return std::move(contents->lines);
 }
 
 // The lines of one section that are not comments, in file order.
@@ -135,20 +151,20 @@ std::vector<std::u16string> section_names(const std::filesystem::path &file)
 
 std::string narrow_line(std::u16string_view value)
 {
-	// The file is read as bytes widened to characters, so it is written the same way; what does not fit a byte becomes a question mark.
+	// A file that is not Unicode is read as bytes widened to characters, so it is written the same way; what does not fit a byte becomes a
+	// question mark.
 	std::string result;
 	for (const auto character : value)
 		result.push_back(character <= 0xff ? char(character) : '?');
 	return result;
 }
 
-// Sets, replaces or removes a value (or a whole section) in an INI file, keeping every other line as it was.
+// Sets, replaces or removes a value (or a whole section) in an INI file, keeping every other line as it was. The documentation of
+// WritePrivateProfileString: a file created with Unicode characters gets Unicode characters, any other file ANSI ones.
 bool write_value(const std::filesystem::path &file, std::u16string_view section, const std::u16string *key, const std::u16string *value)
 {
-	bool unicode = false;
-	auto lines = read_lines(file, true, &unicode).value_or(std::vector<std::u16string>{});
-	// Splitting a file ending in a newline leaves one empty sentinel, not another line to write.
-	if (!lines.empty() && lines.back().empty()) lines.pop_back();
+	auto contents = read_file(file).value_or(ProfileFile{});
+	auto &lines = contents.lines;
 	const auto wanted_section = fold(section);
 	const auto wanted_key = key ? fold(*key) : std::u16string{};
 	size_t section_start = lines.size(), section_end = lines.size();
@@ -184,7 +200,7 @@ bool write_value(const std::filesystem::path &file, std::u16string_view section,
 				if (equals == text.npos || fold(trim(text.substr(0, equals))) != wanted_key)
 					continue;
 				if (value) {
-					lines[index] = std::u16string(*key) + u"=" + *value;
+					lines[index] = *key + u"=" + *value;
 				} else {
 					lines.erase(lines.begin() + static_cast<ptrdiff_t>(index));
 				}
@@ -192,7 +208,7 @@ bool write_value(const std::filesystem::path &file, std::u16string_view section,
 				break;
 			}
 		if (!replaced && value) {
-			const std::u16string entry = std::u16string(*key) + u"=" + *value;
+			const std::u16string entry = *key + u"=" + *value;
 			if (found_section) {
 				// After the last line of the section that is not blank.
 				size_t at = section_end;
@@ -207,18 +223,21 @@ bool write_value(const std::filesystem::path &file, std::u16string_view section,
 			}
 		}
 	}
+	std::string bytes = contents.unicode ? "\xff\xfe" : "";
+	for (const auto &line : lines) {
+		if (contents.unicode) {
+			for (const auto character : line + u"\r\n") {
+				bytes.push_back(char(character & 0xff));
+				bytes.push_back(char(character >> 8));
+			}
+		} else {
+			bytes += narrow_line(line) + "\r\n";
+		}
+	}
 	std::ofstream output(file, std::ios::binary | std::ios::trunc);
 	if (!output)
 		return false;
-	if (unicode) output.write("\xff\xfe", 2);
-	for (const auto &line : lines) {
-		if (unicode) {
-			for (const auto character : line + u"\r\n") {
-				output.put(char(character));
-				output.put(char(character >> 8));
-			}
-		} else output << narrow_line(line) << "\r\n";
-	}
+	output << bytes;
 	return bool(output);
 }
 
