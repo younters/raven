@@ -151,6 +151,19 @@ void NativeX86System::lock_shared(uint64_t address)
 	++lock.shared;
 }
 
+void NativeX86System::clear_tls_slot(uint32_t index)
+{
+	// Every thread's copy goes, as on Windows: a program that takes this slot next must find zero wherever it looks.
+	for (auto &[thread, values] : tls_values)
+		values.erase(index);
+	if (index >= 64)
+		return;
+	const uint32_t zero = 0;
+	for (const auto block : threads.thread_blocks())
+		process.write_memory(block + 0xe10 + index * 4, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&zero), 4));
+	process.write_memory(environment.teb() + 0xe10 + index * 4, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&zero), 4));
+}
+
 bool NativeX86System::dispatch(std::string_view name)
 {
 	if (name == "GetThreadContext" || name == "SetThreadContext") return false;
@@ -278,7 +291,9 @@ bool NativeX86System::dispatch(std::string_view name)
 			fail(1168, UINT32_MAX);
 		} else {
 			*free = true;
-			process.return_api(uint32_t(free - tls_used.begin()));
+			const auto index = uint32_t(free - tls_used.begin());
+			clear_tls_slot(index);
+			process.return_api(index);
 		}
 	} else if (name == "TlsFree") {
 		const auto index = uint32_t(args[0]);
@@ -286,12 +301,7 @@ bool NativeX86System::dispatch(std::string_view name)
 			fail(87);
 		} else {
 			tls_used[index] = false;
-			for (auto &[thread, values] : tls_values)
-				values.erase(index);
-			if (index < 64) {
-				const uint32_t zero = 0;
-				process.write_memory(environment.teb() + 0xe10 + index * 4, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&zero), 4));
-			}
+			clear_tls_slot(index);
 			process.return_api(1);
 		}
 	} else if (name == "TlsGetValue") {
@@ -300,22 +310,28 @@ bool NativeX86System::dispatch(std::string_view name)
 			fail(87);
 		} else {
 			environment.set_last_error(0);
-			const auto &values = tls_values[threads.current_id()];
-			const auto found = values.find(index);
-			process.return_api(found == values.end() ? 0 : found->second);
+			if (index < 64) {
+				const auto bytes = process.read_memory(environment.teb() + 0xe10 + index * 4, 4);
+				process.return_api(uint32_t(bytes[0]) | uint32_t(bytes[1]) << 8 | uint32_t(bytes[2]) << 16 | uint32_t(bytes[3]) << 24);
+			} else {
+				const auto &values = tls_values[threads.current_id()];
+				const auto found = values.find(index);
+				process.return_api(found == values.end() ? 0 : found->second);
+			}
 		}
 	} else if (name == "TlsSetValue") {
 		const auto index = uint32_t(args[0]);
 		if (index >= tls_used.size() || !tls_used[index]) {
 			fail(87);
 		} else {
-			tls_values[threads.current_id()][index] = uint32_t(args[1]);
-			// The first 64 slots also live in the thread's TEB, TlsSlots at 0xe10, where code that reads its slot through fs: finds them, as
-			// the .NET runtime's thread lookups do.
+			// The first 64 slots live in the thread's TEB, TlsSlots at 0xe10, as on Windows: the guest-side paths read them there, and so does
+			// code that reads its slot through fs:, as the .NET runtime's thread lookups do.
 			if (index < 64) {
 				const auto value = uint32_t(args[1]);
 				process.write_memory(environment.teb() + 0xe10 + index * 4,
 					std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&value), 4));
+			} else {
+				tls_values[threads.current_id()][index] = uint32_t(args[1]);
 			}
 			process.return_api(1);
 		}

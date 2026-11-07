@@ -18,6 +18,10 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 // Where the breakpoint of a 64-bit provider export sits inside its stub: past the guest-side path of a fast or served stub, at its start
 // otherwise.
 size_t fast_stub_trap_offset(std::string_view module, std::string_view name);
+// Whether providers carry guest-side paths; RAVEN_NO_GUEST_PATHS serves every call in the runtime, to compare behaviour.
+bool guest_paths();
+// Where the breakpoint of a 32-bit provider export sits: past the guest-side path of a fast stub, at its start otherwise.
+uint64_t x86_api_trap_address(const PEModule &provider, uint32_t address);
 // The breakpoint a 64-bit provider export ends in when the runtime serves it: behind a guest-side prelude when the export has one.
 uint64_t api_trap_address(const PEModule &provider, std::string_view module, std::string_view name, uint32_t address);
 // Device information sets belong to the runtime; the installer component handles INF files and queues.

@@ -583,16 +583,16 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		for (const auto &item : kernel32_table())
 			own_names.push_back(item.name);
 		const auto names = with_imports("kernel32.dll", own_names);
-		const auto size = PEImage(runtime_provider("kernel32.dll", 0x70000000ULL, names, true)).image_size;
+		const auto size = PEImage(runtime_provider("kernel32.dll", 0x70000000ULL, names, true, {}, {}, guest_paths())).image_size;
 		const auto base = provider_base(modules, size);
-		auto &provider = modules.add("kernel32.dll", runtime_provider("kernel32.dll", base, names, true), base);
+		auto &provider = modules.add("kernel32.dll", runtime_provider("kernel32.dll", base, names, true, {}, {}, guest_paths()), base);
 		provider.runtime_api = true;
 		for (const auto &symbol : provider.exports) {
 			const auto &exported = symbol.names.at(0);
 			const auto found = std::find_if(kernel32_table().begin(), kernel32_table().end(), [&](const auto &item) { return item.name == exported; });
 			const auto view = std::find(names.begin(), names.end(), exported);
 			const uint32_t fixed = found != kernel32_table().end() ? found->words : registry_words(exported) != UINT32_MAX ? registry_words(exported) : 0;
-			traps.emplace(provider.loaded.base() + symbol.address, std::pair{*view, words_of("kernel32.dll", exported, fixed) * 4});
+			traps.emplace(x86_api_trap_address(provider, symbol.address), std::pair{*view, words_of("kernel32.dll", exported, fixed) * 4});
 		}
 	}
 	const auto add_desktop = [&](const char *dll, std::span<const std::string_view> implemented, std::span<const std::string_view> pending) {
@@ -672,9 +672,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		std::vector<std::pair<std::string_view, uint16_t>> numbered(published_numbers.begin(), published_numbers.end());
 		if (const auto extra = unknown_ordinals.find(dll); extra != unknown_ordinals.end())
 			numbered.insert(numbered.end(), extra->second.begin(), extra->second.end());
-		const auto size = PEImage(runtime_provider(dll, 0x70000000ULL, merged, true, data, numbered)).image_size;
+		const auto size = PEImage(runtime_provider(dll, 0x70000000ULL, merged, true, data, numbered, guest_paths())).image_size;
 		const auto base = provider_base(modules, size);
-		auto &provider = modules.add(provider_key, runtime_provider(dll, base, merged, true, data, numbered), base);
+		auto &provider = modules.add(provider_key, runtime_provider(dll, base, merged, true, data, numbered, guest_paths()), base);
 		provider.runtime_api = true;
 		overlay(provider, dll);
 		for (const auto &symbol : provider.exports) {
@@ -696,7 +696,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			const auto stable = std::find(merged.begin(), merged.end(), exported);
 			if (stable == merged.end())
 				throw std::runtime_error("native x86 provider export is not in its list: " + std::string(dll) + "!" + exported);
-			traps.emplace(provider.loaded.base() + symbol.address, std::pair{*stable, words_of(dll, exported, count(exported)) * 4});
+			traps.emplace(x86_api_trap_address(provider, symbol.address), std::pair{*stable, words_of(dll, exported, count(exported)) * 4});
 		}
 	};
 	// KernelBase serves the same kernel entry points, including the PathCch functions missing from the public import-library lists.

@@ -238,6 +238,32 @@ if(RAVEN_FEX_MODHOST AND RAVEN_MINGW64)
     endforeach()
 endif()
 
+if(RAVEN_FEX_MODHOST AND RAVEN_MINGW32 AND RAVEN_MINGW64)
+    # The calls answered in the guest behave as on Windows and stay there.
+    foreach(width 32 64)
+        if(width EQUAL 32)
+            set(fast_calls_compiler ${RAVEN_MINGW32})
+            set(fast_calls_entry _raven_entry)
+        else()
+            set(fast_calls_compiler ${RAVEN_MINGW64})
+            set(fast_calls_entry raven_entry)
+        endif()
+        set(fast_calls_fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-fast-calls${width}.exe)
+        add_fex_parity_fixture(${fast_calls_fixture} "${fast_calls_compiler}" ${fast_calls_entry}
+            ${RAVEN_DARWIN_DIR}/fex/fast_calls_client.c)
+        add_custom_target(fex_fast_calls${width}_fixture DEPENDS ${fast_calls_fixture})
+        add_dependencies(raven fex_fast_calls${width}_fixture)
+        foreach(engine native fex)
+            add_test(NAME native_fast_calls_x${width}_${engine} COMMAND ${Python3_EXECUTABLE}
+                ${PROJECT_SOURCE_DIR}/scripts/test-fex-process.py --require-modules --backend ${engine}
+                --raven $<TARGET_FILE:raven> --fixture ${fast_calls_fixture}
+                --modules "${RAVEN_FEX_MODULE_ROOT}")
+            set_tests_properties(native_fast_calls_x${width}_${engine} PROPERTIES TIMEOUT 30
+                LABELS "engine-parity;cpu")
+        endforeach()
+    endforeach()
+endif()
+
 if(RAVEN_FEX_MODHOST AND RAVEN_MINGW32)
     set(bit_memory_fixture ${CMAKE_CURRENT_BINARY_DIR}/fex-bit-memory32.exe)
     add_fex_parity_fixture(${bit_memory_fixture} "${RAVEN_MINGW32}" _raven_entry

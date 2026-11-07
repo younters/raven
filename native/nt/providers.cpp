@@ -114,6 +114,63 @@ struct FastStub {
 	std::vector<uint8_t> code;
 };
 
+// The same for 32-bit programs, on their thread block at fs. A call into the runtime costs microseconds and these are called constantly: the
+// C runtime and the program's allocator ask for a thread slot and the last error around almost everything they do.
+const std::vector<FastStub> &fast_stubs_x86()
+{
+	static const std::vector<FastStub> stubs = {
+		// mov eax, fs:[0x34]; ret
+		{"GetLastError", {0x64, 0xa1, 0x34, 0, 0, 0, 0xc3}},
+		// mov eax,[esp+4]; mov fs:[0x34],eax; ret 4
+		{"SetLastError", {0x8b, 0x44, 0x24, 0x04, 0x64, 0xa3, 0x34, 0, 0, 0, 0xc2, 0x04, 0}},
+		// mov eax, fs:[0x24]; ret (the thread's ClientId.UniqueThread)
+		{"GetCurrentThreadId", {0x64, 0xa1, 0x24, 0, 0, 0, 0xc3}},
+		// mov eax, fs:[0x20]; ret (the thread's ClientId.UniqueProcess)
+		{"GetCurrentProcessId", {0x64, 0xa1, 0x20, 0, 0, 0, 0xc3}},
+		// mov eax,-1; ret (the pseudo handle of the current process)
+		{"GetCurrentProcess", {0xb8, 0xff, 0xff, 0xff, 0xff, 0xc3}},
+		// mov eax,-2; ret (the pseudo handle of the current thread)
+		{"GetCurrentThread", {0xb8, 0xfe, 0xff, 0xff, 0xff, 0xc3}},
+		// Slots below 64 live in TlsSlots at 0xe10; the others are served. The last error is cleared, as Windows does.
+		// mov eax,[esp+4]; cmp eax,64; jae slow; mov dword fs:[0x34],0; mov eax,fs:[eax*4+0xe10]; ret 4
+		{"TlsGetValue", {0x8b, 0x44, 0x24, 0x04, 0x83, 0xf8, 0x40, 0x73, 0x27, 0x64, 0xc7, 0x05, 0x34, 0, 0, 0, 0, 0, 0, 0,
+			0x64, 0x8b, 0x04, 0x85, 0x10, 0x0e, 0, 0, 0xc2, 0x04, 0}},
+		// mov eax,[esp+4]; cmp eax,64; jae slow; mov ecx,[esp+8]; mov fs:[eax*4+0xe10],ecx; mov eax,1; ret 8
+		{"TlsSetValue", {0x8b, 0x44, 0x24, 0x04, 0x83, 0xf8, 0x40, 0x73, 0x27, 0x8b, 0x4c, 0x24, 0x08,
+			0x64, 0x89, 0x0c, 0x85, 0x10, 0x0e, 0, 0, 0xb8, 1, 0, 0, 0, 0xc2, 0x08, 0}},
+		// The slot array the runtime keeps at 0x17c8, of 8-byte entries, once the thread has one.
+		// mov eax,fs:[0x17c8]; test eax,eax; jz slow; mov ecx,[esp+4]; cmp ecx,4080; jae slow; mov eax,[eax+ecx*8]; mov dword fs:[0x34],0; ret 4
+		{"FlsGetValue", {0x64, 0xa1, 0xc8, 0x17, 0, 0, 0x85, 0xc0, 0x74, 0x26, 0x8b, 0x4c, 0x24, 0x04, 0x81, 0xf9, 0xf0, 0x0f, 0, 0, 0x73, 0x1a,
+			0x8b, 0x04, 0xc8, 0x64, 0xc7, 0x05, 0x34, 0, 0, 0, 0, 0, 0, 0, 0xc2, 0x04, 0}},
+		// The same without touching the last error, as the second form does.
+		{"FlsGetValue2", {0x64, 0xa1, 0xc8, 0x17, 0, 0, 0x85, 0xc0, 0x74, 0x26, 0x8b, 0x4c, 0x24, 0x04, 0x81, 0xf9, 0xf0, 0x0f, 0, 0, 0x73, 0x1a,
+			0x8b, 0x04, 0xc8, 0xc2, 0x04, 0}},
+		// Pointers are not encoded here. mov eax,[esp+4]; ret 4
+		{"EncodePointer", {0x8b, 0x44, 0x24, 0x04, 0xc2, 0x04, 0}},
+		{"DecodePointer", {0x8b, 0x44, 0x24, 0x04, 0xc2, 0x04, 0}},
+		{"EncodeSystemPointer", {0x8b, 0x44, 0x24, 0x04, 0xc2, 0x04, 0}},
+		{"DecodeSystemPointer", {0x8b, 0x44, 0x24, 0x04, 0xc2, 0x04, 0}},
+		// Waiters of an address look again on their own, so a wake has nothing to do. ret 4
+		{"WakeByAddressSingle", {0xc2, 0x04, 0}},
+		{"WakeByAddressAll", {0xc2, 0x04, 0}},
+		// In the guest these are atomic against other threads that run at the same time, which a served call cannot be.
+		// mov ecx,[esp+4]; mov eax,1; lock xadd [ecx],eax; inc eax; ret 4
+		{"InterlockedIncrement", {0x8b, 0x4c, 0x24, 0x04, 0xb8, 1, 0, 0, 0, 0xf0, 0x0f, 0xc1, 0x01, 0x40, 0xc2, 0x04, 0}},
+		// mov ecx,[esp+4]; mov eax,-1; lock xadd [ecx],eax; dec eax; ret 4
+		{"InterlockedDecrement", {0x8b, 0x4c, 0x24, 0x04, 0xb8, 0xff, 0xff, 0xff, 0xff, 0xf0, 0x0f, 0xc1, 0x01, 0x48, 0xc2, 0x04, 0}},
+		// mov ecx,[esp+4]; mov eax,[esp+8]; xchg [ecx],eax; ret 8
+		{"InterlockedExchange", {0x8b, 0x4c, 0x24, 0x04, 0x8b, 0x44, 0x24, 0x08, 0x87, 0x01, 0xc2, 0x08, 0}},
+		// mov ecx,[esp+4]; mov eax,[esp+8]; lock xadd [ecx],eax; ret 8
+		{"InterlockedExchangeAdd", {0x8b, 0x4c, 0x24, 0x04, 0x8b, 0x44, 0x24, 0x08, 0xf0, 0x0f, 0xc1, 0x01, 0xc2, 0x08, 0}},
+		// mov ecx,[esp+4]; mov edx,[esp+8]; mov eax,[esp+12]; lock cmpxchg [ecx],edx; ret 12
+		{"InterlockedCompareExchange", {0x8b, 0x4c, 0x24, 0x04, 0x8b, 0x54, 0x24, 0x08, 0x8b, 0x44, 0x24, 0x0c, 0xf0, 0x0f, 0xb1, 0x11, 0xc2, 0x0c, 0}},
+	};
+	for (const auto &stub : stubs)
+		if (stub.code.size() > 0x30)
+			throw std::runtime_error("native x86 fast stub overlaps its trap");
+	return stubs;
+}
+
 const std::vector<FastStub> &fast_stubs()
 {
 	static const std::vector<FastStub> stubs = {
@@ -1770,6 +1827,13 @@ uint64_t api_trap_address(const PEModule &provider, std::string_view module, std
 	return provider.loaded.base() + stub + fast_stub_trap_offset(module, name);
 }
 
+uint64_t x86_api_trap_address(const PEModule &provider, uint32_t address)
+{
+	// Any export that does not start with its breakpoint is a fast stub, whose slow path sits at the fixed offset.
+	const auto image = provider.loaded.data();
+	return provider.loaded.base() + address + (address < image.size() && image[address] != 0xcc ? 0x30 : 0);
+}
+
 // Offset of the slow-path breakpoint inside a fast or served stub.
 size_t fast_stub_trap_offset(std::string_view module, std::string_view name)
 {
@@ -1843,11 +1907,12 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 	const size_t module_name = ordinals + exports.size() * 2;
 	// Each data export owns one zeroed 16-byte slot after the strings; the section becomes writable for them.
 	const size_t data_start = (module_name + string_size + 15) & ~size_t(15);
-	const bool kernel_module = fast_paths && !x86 && (name == "kernel32.dll" || name == "kernelbase.dll");
+	const bool kernel_module = fast_paths && (name == "kernel32.dll" || name == "kernelbase.dll");
+	const auto &stubs = x86 ? fast_stubs_x86() : fast_stubs();
 	size_t fast_count = 0;
 	if (kernel_module)
 		for (const auto symbol : exports)
-			for (const auto &stub : fast_stubs())
+			for (const auto &stub : stubs)
 				fast_count += stub.name == symbol;
 	const size_t fast_start = (data_start + data_exports.size() * 16 + 63) & ~size_t(63);
 	size_t served_count = 0;
@@ -1873,7 +1938,7 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 	const size_t commit_start = clock_start + clock_count * clock_prelude_size;
 	const size_t strings_start = commit_start + commit_count * commit_prelude_size;
 	size_t strings_size = 0;
-	if (kernel_module)
+	if (kernel_module && !x86)
 		for (const auto symbol : exports)
 			if (const auto *prelude = string_prelude(name, symbol))
 				strings_size += string_prelude_slot(*prelude);
@@ -1976,7 +2041,7 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 			std::memcpy(bytes_of.data() + bytes_of.size() - 4, &relative, 4);
 			std::copy(bytes_of.begin(), bytes_of.end(), bytes.begin() + ptrdiff_t(code));
 		}
-		if (const auto *prelude = kernel_module ? string_prelude(name, exports[index]) : nullptr) {
+		if (const auto *prelude = kernel_module && !x86 ? string_prelude(name, exports[index]) : nullptr) {
 			const size_t trap = code;
 			code = strings_next;
 			strings_next += string_prelude_slot(*prelude);
@@ -1994,7 +2059,7 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 			std::copy(prelude.begin(), prelude.end(), bytes.begin() + ptrdiff_t(code));
 		}
 		if (kernel_module)
-			for (const auto &stub : fast_stubs())
+			for (const auto &stub : stubs)
 				if (stub.name == exports[index]) {
 					code = fast_start + fast_next++ * 64;
 					std::copy(stub.code.begin(), stub.code.end(), bytes.begin() + ptrdiff_t(code));
@@ -2043,7 +2108,7 @@ struct ServedThreadScope {
 };
 
 // RAVEN_NO_GUEST_PATHS builds the providers without the paths the guest answers itself, for comparing the two.
-static bool guest_paths()
+bool guest_paths()
 {
 	static const bool enabled = !std::getenv("RAVEN_NO_GUEST_PATHS");
 	return enabled;
