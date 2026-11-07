@@ -1,4 +1,4 @@
-/* rep movsb and rep stosb in a 32-bit process: every alignment, lengths around the chunk sizes, both directions and overlapping copies,
+/* rep movs and rep stos of bytes, words and doublewords in a 32-bit process: every alignment, lengths around the chunk sizes, both directions and overlapping copies,
    hashed with the registers they leave, so engines can be compared bit for bit. A copy that runs into a guard page must stop with the
    registers at the first byte it could not write (built with RAVEN_STRING_GUARD). Build with RAVEN_STRING_PRINT to write the hash to
    C:\stringhash.txt. */
@@ -25,27 +25,50 @@ static void reset(void)
 		area[i] = (unsigned char)(i * 7 + 3);
 }
 
-static void copy(unsigned to, unsigned from, unsigned count, int backward)
+/* Copies and fills count bytes as elements of 1, 2 or 4 bytes; a backward string starts at its last element. */
+static void copy(unsigned to, unsigned from, unsigned count, int backward, int width)
 {
 	unsigned char *d = area + to;
 	const unsigned char *s = area + from;
-	unsigned n = count;
-	if (backward)
+	unsigned n = count / width;
+	if (backward) {
+		d -= width - 1;
+		s -= width - 1;
+	}
+	if (width == 1 && backward)
 		__asm__ volatile("std\n\trep movsb\n\tcld" : "+D"(d), "+S"(s), "+c"(n) : : "memory", "cc");
-	else
+	else if (width == 1)
 		__asm__ volatile("rep movsb" : "+D"(d), "+S"(s), "+c"(n) : : "memory");
+	else if (width == 2 && backward)
+		__asm__ volatile("std\n\trep movsw\n\tcld" : "+D"(d), "+S"(s), "+c"(n) : : "memory", "cc");
+	else if (width == 2)
+		__asm__ volatile("rep movsw" : "+D"(d), "+S"(s), "+c"(n) : : "memory");
+	else if (backward)
+		__asm__ volatile("std\n\trep movsl\n\tcld" : "+D"(d), "+S"(s), "+c"(n) : : "memory", "cc");
+	else
+		__asm__ volatile("rep movsl" : "+D"(d), "+S"(s), "+c"(n) : : "memory");
 	const unsigned registers[3] = {(unsigned)(d - area), (unsigned)(s - area), n};
 	mix(registers, sizeof registers);
 }
 
-static void fill(unsigned to, unsigned count, unsigned char value, int backward)
+static void fill(unsigned to, unsigned count, unsigned value, int backward, int width)
 {
 	unsigned char *d = area + to;
-	unsigned n = count;
+	unsigned n = count / width;
 	if (backward)
+		d -= width - 1;
+	if (width == 1 && backward)
 		__asm__ volatile("std\n\trep stosb\n\tcld" : "+D"(d), "+c"(n) : "a"(value) : "memory", "cc");
-	else
+	else if (width == 1)
 		__asm__ volatile("rep stosb" : "+D"(d), "+c"(n) : "a"(value) : "memory");
+	else if (width == 2 && backward)
+		__asm__ volatile("std\n\trep stosw\n\tcld" : "+D"(d), "+c"(n) : "a"(value) : "memory", "cc");
+	else if (width == 2)
+		__asm__ volatile("rep stosw" : "+D"(d), "+c"(n) : "a"(value) : "memory");
+	else if (backward)
+		__asm__ volatile("std\n\trep stosl\n\tcld" : "+D"(d), "+c"(n) : "a"(value) : "memory", "cc");
+	else
+		__asm__ volatile("rep stosl" : "+D"(d), "+c"(n) : "a"(value) : "memory");
 	const unsigned registers[2] = {(unsigned)(d - area), n};
 	mix(registers, sizeof registers);
 }
@@ -66,25 +89,27 @@ static LONG CALLBACK guard_handler(EXCEPTION_POINTERS *info)
 int raven_entry(void)
 {
 	static const unsigned lengths[] = {0, 1, 2, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 200, 255, 256, 257, 300};
-	for (unsigned l = 0; l < sizeof lengths / sizeof *lengths; ++l)
-		for (unsigned to = 0; to < 16; ++to)
-			for (unsigned from = 0; from < 16; from += 3)
-				for (int backward = 0; backward < 2; ++backward) {
-					const unsigned count = lengths[l];
-					/* Separate buffers, then source and destination overlapping in each direction. */
-					reset();
-					copy(400 + to + (backward ? count : 0), 16 + from + (backward ? count : 0), count, backward);
-					mix(area, sizeof area);
-					reset();
-					copy(100 + to + (backward ? count : 0), 96 + from + (backward ? count : 0), count, backward);
-					mix(area, sizeof area);
-					reset();
-					copy(96 + to + (backward ? count : 0), 100 + from + (backward ? count : 0), count, backward);
-					mix(area, sizeof area);
-					reset();
-					fill(300 + to + (backward ? count : 0), count, (unsigned char)(to * 31 + l), backward);
-					mix(area, sizeof area);
-				}
+	for (int width = 1; width <= 4; width *= 2)
+		for (unsigned l = 0; l < sizeof lengths / sizeof *lengths; ++l)
+			for (unsigned to = 0; to < 16; ++to)
+				for (unsigned from = 0; from < 16; from += 3)
+					for (int backward = 0; backward < 2; ++backward) {
+						const unsigned count = lengths[l];
+						const unsigned end = backward ? count : 0;
+						/* Separate buffers, then source and destination overlapping in each direction. */
+						reset();
+						copy(400 + to + end, 16 + from + end, count, backward, width);
+						mix(area, sizeof area);
+						reset();
+						copy(100 + to + end, 96 + from + end, count, backward, width);
+						mix(area, sizeof area);
+						reset();
+						copy(96 + to + end, 100 + from + end, count, backward, width);
+						mix(area, sizeof area);
+						reset();
+						fill(300 + to + end, count, 0x9e3779b9u * (to * 31 + l + 1), backward, width);
+						mix(area, sizeof area);
+					}
 
 #ifdef RAVEN_STRING_GUARD
 	/* Exceptions reach a 32-bit program's handlers through the C runtime, which an import loads. */
@@ -122,6 +147,6 @@ int raven_entry(void)
 	CloseHandle(out);
 	return 0;
 #else
-	return hash == 0x5e20e68b10bcd4fdULL ? 0 : 1;
+	return hash == 0x57d13b0052566471ULL ? 0 : 1;
 #endif
 }

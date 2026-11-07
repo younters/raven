@@ -1,7 +1,7 @@
 diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 --- a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
 +++ b/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp
-@@ -3211,7 +3211,10 @@
+@@ -3211,8 +3211,15 @@
      return;
    }
  
@@ -9,20 +9,39 @@ diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source
 +  // Raven: 32-bit programs copy through the same chunks, with 32-bit offsets and arithmetic. Their C runtimes move every block of 128
 +  // bytes or more with rep movsb, which a byte at a time ran at 400 MB/s.
 +  const bool Flat32 = !Is64BitMode && AddrSize == OpSize::i32Bit;
-+  const bool ChunkBytes = ((Is64BitMode && AddrSize == OpSize::i64Bit) || Flat32) && Size == OpSize::i8Bit &&
++  // Elements of 2 and 4 bytes go 4 and 2 to a chunk, as older C runtimes copy with rep movsd; 8-byte elements one to a chunk.
++  const bool ChunkBytes = ((Is64BitMode && AddrSize == OpSize::i64Bit) || Flat32) &&
      !(Op->Flags & X86Tables::DecodeFlags::FLAG_SEGMENTS) && !CTX->IsMemcpyAtomicTSOEnabled();
++  const auto ElementBytes = IR::OpSizeToSize(Size);
++  const auto ElementShift = FEXCore::ilog2(ElementBytes);
++  const uint64_t ChunkElements = 8 >> ElementShift;
    CalculateDeferredFlags();
    ForeachDirection([&](int32_t PtrDir) {
-@@ -3231,14 +3234,17 @@
+     if (ChunkBytes && PtrDir == 1) {
+@@ -3223,7 +3230,9 @@
+       SetFalseJumpTarget(Unaligned, Header);
+       SetCurrentCodeBlock(Header);
+       StartNewBlock();
+-      auto Tail = CondJump(_Bfe(OpSize::i64Bit, 61, 3, LoadGPRRegister(X86State::REG_RCX, AddrSize)), CondClass::EQ);
++      // At least one chunk's worth of elements left.
++      auto Tail = CondJump(_Bfe(OpSize::i64Bit, 64 - (3 - ElementShift), 3 - ElementShift, LoadGPRRegister(X86State::REG_RCX, AddrSize)),
++                           CondClass::EQ);
+       auto Body = CreateNewCodeBlockAfter(Header);
+       SetFalseJumpTarget(Tail, Body);
+       SetCurrentCodeBlock(Body);
+@@ -3231,14 +3240,19 @@
        _GuestOpcode(Op->PC - Entry);
        Ref Src = Copy ? LoadGPRRegister(X86State::REG_RSI, AddrSize) : Invalid();
        Ref Dest = LoadGPRRegister(X86State::REG_RDI, AddrSize);
 -      Ref Value = Copy ? _LoadMem(RegClass::GPR, OpSize::i64Bit, Src, Invalid(), OpSize::i64Bit, MemOffsetType::SXTX, 1)
+-        : _Mul(OpSize::i64Bit, _Bfe(OpSize::i64Bit, 8, 0, LoadGPRRegister(X86State::REG_RAX)), Constant(0x0101010101010101ULL));
 +      // A 32-bit offset becomes an address through its segment, as each element's does.
 +      Ref SrcAddress = Copy && Flat32 ? AppendSegmentOffset(Src, Op->Flags, X86Tables::DecodeFlags::FLAG_DS_PREFIX) : Src;
 +      Ref DestAddress = Flat32 ? AppendSegmentOffset(Dest, 0, X86Tables::DecodeFlags::FLAG_ES_PREFIX, true) : Dest;
 +      Ref Value = Copy ? _LoadMem(RegClass::GPR, OpSize::i64Bit, SrcAddress, Invalid(), OpSize::i64Bit, MemOffsetType::SXTX, 1)
-         : _Mul(OpSize::i64Bit, _Bfe(OpSize::i64Bit, 8, 0, LoadGPRRegister(X86State::REG_RAX)), Constant(0x0101010101010101ULL));
++        : ElementBytes == 8 ? LoadGPRRegister(X86State::REG_RAX)
++        : _Mul(OpSize::i64Bit, _Bfe(OpSize::i64Bit, ElementBytes * 8, 0, LoadGPRRegister(X86State::REG_RAX)),
++               Constant(ElementBytes == 1 ? 0x0101010101010101ULL : ElementBytes == 2 ? 0x0001000100010001ULL : 0x0000000100000001ULL));
        // Aligned 8-byte accesses cannot straddle a protection page or overlap within a chunk.
        // Load each chunk after the preceding store, retaining scalar propagation at distance 8.
 -      _StoreMem(RegClass::GPR, OpSize::i64Bit, Value, Dest, Invalid(), OpSize::i64Bit, MemOffsetType::SXTX, 1);
@@ -32,7 +51,7 @@ diff --git a/FEXCore/Source/Interface/Core/OpcodeDispatcher.cpp b/FEXCore/Source
 +      _StoreMem(RegClass::GPR, OpSize::i64Bit, Value, DestAddress, Invalid(), OpSize::i64Bit, MemOffsetType::SXTX, 1);
 +      StoreOffset(X86State::REG_RDI, Add(ArithmeticSize, Dest, 8));
 +      if (Copy) StoreOffset(X86State::REG_RSI, Add(ArithmeticSize, Src, 8));
-+      StoreOffset(X86State::REG_RCX, Sub(ArithmeticSize, LoadGPRRegister(X86State::REG_RCX, AddrSize), 8));
++      StoreOffset(X86State::REG_RCX, Sub(ArithmeticSize, LoadGPRRegister(X86State::REG_RCX, AddrSize), ChunkElements));
        Jump(Header);
        auto Scalar = CreateNewCodeBlockAfter(Body);
        SetTrueJumpTarget(Unaligned, Scalar);
