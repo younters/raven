@@ -495,6 +495,12 @@ FexProcess::FexProcess(std::span<LoadedImage *const> images, const std::string &
 	if (!wow64_module) raven_code_cache::prepare(path);
 	if (map_module(2, argv, resolve, inspect_image, initialize_process, module_mapping))
 		throw std::runtime_error("FEX module initialization failed");
+	// macOS cannot name the frames of a PE image: scripts/darwin-time-profile.py finds the translator's place here.
+	if (const char *folder = std::getenv("RAVEN_PROFILE_MAP"))
+		if (FILE *map = fopen((std::string(folder) + "/" + std::to_string(getpid()) + ".map").c_str(), "a")) {
+			fprintf(map, "%llx %zu %s\n", (unsigned long long)uintptr_t(module_mapping->base), module_mapping->size, path.c_str());
+			fclose(map);
+		}
 	if (!wow64_module) raven_code_cache::started(thread_environment->teb.data());
 	if (!wow64_module && std::getenv("RAVEN_FEX_PROFILE_COMPILE")) {
         uint64_t args[8]{1, 0};

@@ -2676,26 +2676,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				process.abandon_call();
 				throw ProcessExit{code,result.instruction};
 			}
-			// RAVEN_TRACE_API is 1 for every call or a comma-separated list of API names to follow.
-			bool tracing = false;
-			static const char *const trace_selection = std::getenv("RAVEN_TRACE_API");
+			const bool tracing = api_trace_selected(entry.name, api_name);
 			static const char *const trace_program = std::getenv("RAVEN_TRACE_PROGRAM");
-			if (const char *selection = trace_selection; selection &&
-				(!trace_program || equal_fold(from_utf8(entry.name), from_utf8(trace_program)))) {
-				const std::string wanted = std::string(",") + selection + ",";
-				tracing = wanted == ",1," || wanted.find("," + api_name + ",") != wanted.npos;
-			}
-			// RAVEN_TRACE_API_ON names a file: while it exists every call is traced, checked at most ten times a second.
-			static const char *const trace_switch = std::getenv("RAVEN_TRACE_API_ON");
-			if (trace_switch && !tracing) {
-				static auto checked = std::chrono::steady_clock::time_point{};
-				static bool switched = false;
-				if (const auto now = std::chrono::steady_clock::now(); now - checked > std::chrono::milliseconds(100)) {
-					checked = now;
-					switched = ::access(trace_switch, F_OK) == 0;
-				}
-				tracing = switched;
-			}
 			if (tracing) {
 				static const bool trace_time = std::getenv("RAVEN_TRACE_TIME") != nullptr;
 				if (trace_time)

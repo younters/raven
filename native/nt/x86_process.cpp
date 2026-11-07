@@ -37,6 +37,7 @@
 #include "platform/darwin/dxmt/presentation.h"
 #include "platform/darwin/unix_calls.h"
 #endif
+#include "runtime_profile.h"
 #include "x86_thread_api.h"
 
 #include <unistd.h>
@@ -1078,7 +1079,19 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			if (found == traps.end())
 				return result;
 			const auto api = found->second.first;
-			if (getenv("RAVEN_TRACE_X86")) {
+			// Every way back from this call to the guest passes here, so the call's time and the guest's run to its next call are told apart.
+			const auto call_started = RuntimeProfile::instance().enabled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+			const auto return_to_guest = [&](auto limit) {
+				if (!RuntimeProfile::instance().enabled())
+					return process.resume(limit);
+				const auto served = std::chrono::steady_clock::now();
+				RuntimeProfile::instance().api(std::string(api), served - call_started);
+				auto next = process.resume(limit);
+				RuntimeProfile::instance().guest(std::chrono::steady_clock::now() - served);
+				return next;
+			};
+			static const bool trace_x86 = getenv("RAVEN_TRACE_X86") != nullptr;
+			if (trace_x86 || api_trace_selected(entry.name, api)) {
 				std::ostringstream line;
 				if (getenv("RAVEN_TRACE_X86_THREADS"))
 					line << '[' << environment.thread_id() << "] ";
@@ -1189,7 +1202,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				}
 				process.return_api(inner.result);
 				budget = remaining();
-				result = process.resume(budget);
+				result = return_to_guest(budget);
 				continue;
 			}
 			if (api == "VerSetConditionMask" || api == "VerifyVersionInfoW" || api == "RtlVerifyVersionInfo") {
@@ -1206,7 +1219,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				entry->second(inner);
 				process.return_api(inner.result);
 				budget = remaining();
-				result = process.resume(budget);
+				result = return_to_guest(budget);
 				continue;
 			}
 			if (api == "StopTraceA" || api == "StopTraceW" || api == "ControlTraceA" || api == "ControlTraceW") {
@@ -1223,7 +1236,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				entry->second(inner);
 				process.return_api(inner.result);
 				budget = remaining();
-				result = process.resume(budget);
+				result = return_to_guest(budget);
 				continue;
 			}
 			if (api == "SetFilePointerEx") {
@@ -1238,7 +1251,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				entry->second(inner);
 				process.return_api(inner.result);
 				budget = remaining();
-				result = process.resume(budget);
+				result = return_to_guest(budget);
 				continue;
 			}
 			// Exceptions are dispatched in the program, by its vectored handlers and along the frames its threads register, by the C runtime
@@ -1266,7 +1279,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 						native.registers.orig_rax = uint64_t(-1);
 						process.redirect(native, process.callback_depth());
 						budget = remaining();
-						result = process.resume(budget);
+						result = return_to_guest(budget);
 						continue;
 					}
 				}
@@ -1289,7 +1302,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				entry->second(inner);
 				process.return_api(inner.result);
 				budget = remaining();
-				result = process.resume(budget);
+				result = return_to_guest(budget);
 				continue;
 			}
 			// A POINT passed by value is two words here and one packed word in the shared handler: the words of each call and where its
@@ -1310,7 +1323,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				entry->second(inner);
 				process.return_api(inner.result);
 				budget = remaining();
-				result = process.resume(budget);
+				result = return_to_guest(budget);
 				continue;
 			}
 			if (api == "DuplicateHandle") {
@@ -1324,7 +1337,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				entry->second(inner);
 				process.return_api(inner.result);
 				budget = remaining();
-				result = process.resume(budget);
+				result = return_to_guest(budget);
 				continue;
 			}
 			if (api == "TerminateProcess") {
@@ -1335,7 +1348,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 					entry->second(inner);
 					process.return_api(inner.result);
 					budget = remaining();
-					result = process.resume(budget);
+					result = return_to_guest(budget);
 					continue;
 				}
 				process.abandon_call();
@@ -1375,7 +1388,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			budget = remaining();
 			if (budget.count() <= 0)
 				return NativeResult{NativeStop::timeout, 0, result.instruction, 0};
-			result = process.resume(budget);
+			result = return_to_guest(budget);
 		}
 		if (result.stop == NativeStop::fault && (getenv("RAVEN_TRACE_X86") || getenv("RAVEN_TRACE_FAULT"))) {
 			// What a crash needs: the registers, the bytes at the instruction and the top of the stack.
