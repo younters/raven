@@ -1853,6 +1853,55 @@ std::string_view x86_fast_stub_slow_name(std::string_view name)
 	return name;
 }
 
+// RAVEN_SAMPLE_GUEST=1 reports every five seconds where the guest spent its running time, by module and 256-byte block, for either loop.
+void install_guest_sampler(NativeProcess &process, ModuleSet &modules)
+{
+	if (std::getenv("RAVEN_SAMPLE_GUEST")) {
+		auto samples = std::make_shared<std::map<uint64_t, uint32_t>>();
+		auto reported = std::make_shared<std::chrono::steady_clock::time_point>(std::chrono::steady_clock::now());
+		process.set_guest_sampler(std::chrono::milliseconds(2), [&modules, samples, reported](uint64_t rip) {
+			++(*samples)[rip & ~uint64_t(255)];
+			if (std::chrono::steady_clock::now() - *reported < std::chrono::seconds(5))
+				return;
+			*reported = std::chrono::steady_clock::now();
+			std::vector<std::pair<uint32_t, uint64_t>> top;
+			uint32_t total = 0;
+			for (const auto &[where, count] : *samples) {
+				top.emplace_back(count, where);
+				total += count;
+			}
+			std::sort(top.rbegin(), top.rend());
+			std::cerr << "samples: " << total << " in the last period\n";
+			for (size_t index = 0; index < std::min<size_t>(top.size(), 15); ++index) {
+				std::string place = "?";
+				for (const auto &[module_name, module] : modules.all())
+					if (top[index].second >= module->loaded.base() && top[index].second < module->loaded.base() + module->image.image_size) {
+						std::ostringstream text;
+						text << module_name << '+' << std::hex << top[index].second - module->loaded.base();
+						place = text.str();
+					}
+				std::cerr << "  " << top[index].first << ' ' << place << '\n';
+			}
+			// Then the modules, which show where the time goes when no single block stands out.
+			std::map<std::string_view, uint32_t> by_module;
+			for (const auto &[where, count] : *samples) {
+				std::string_view name = "?";
+				for (const auto &[module_name, module] : modules.all())
+					if (where >= module->loaded.base() && where < module->loaded.base() + module->image.image_size)
+						name = module_name;
+				by_module[name] += count;
+			}
+			std::vector<std::pair<uint32_t, std::string_view>> ranked;
+			for (const auto &[name, count] : by_module)
+				ranked.emplace_back(count, name);
+			std::sort(ranked.rbegin(), ranked.rend());
+			for (size_t index = 0; index < std::min<size_t>(ranked.size(), 10); ++index)
+				std::cerr << "  module " << ranked[index].first << ' ' << ranked[index].second << '\n';
+			samples->clear();
+		});
+	}
+}
+
 uint64_t x86_api_trap_address(const PEModule &provider, uint32_t address)
 {
 	// A trap is a breakpoint, or mov eax,trap; int 0x2e for FEX, where the trap is the int's last byte. An export that starts with neither is a
@@ -3260,51 +3309,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		published[3] = second[3];
 		__atomic_store_n(&published[1], second[1], __ATOMIC_RELEASE);
 	});
-	// RAVEN_SAMPLE_GUEST=1 reports every five seconds where the guest spent its running time, by module and 256-byte block.
-	if (std::getenv("RAVEN_SAMPLE_GUEST")) {
-		auto samples = std::make_shared<std::map<uint64_t, uint32_t>>();
-		auto reported = std::make_shared<std::chrono::steady_clock::time_point>(std::chrono::steady_clock::now());
-		process.set_guest_sampler(std::chrono::milliseconds(2), [&modules, samples, reported](uint64_t rip) {
-			++(*samples)[rip & ~uint64_t(255)];
-			if (std::chrono::steady_clock::now() - *reported < std::chrono::seconds(5))
-				return;
-			*reported = std::chrono::steady_clock::now();
-			std::vector<std::pair<uint32_t, uint64_t>> top;
-			uint32_t total = 0;
-			for (const auto &[where, count] : *samples) {
-				top.emplace_back(count, where);
-				total += count;
-			}
-			std::sort(top.rbegin(), top.rend());
-			std::cerr << "samples: " << total << " in the last period\n";
-			for (size_t index = 0; index < std::min<size_t>(top.size(), 15); ++index) {
-				std::string place = "?";
-				for (const auto &[module_name, module] : modules.all())
-					if (top[index].second >= module->loaded.base() && top[index].second < module->loaded.base() + module->image.image_size) {
-						std::ostringstream text;
-						text << module_name << '+' << std::hex << top[index].second - module->loaded.base();
-						place = text.str();
-					}
-				std::cerr << "  " << top[index].first << ' ' << place << '\n';
-			}
-			// Then the modules, which show where the time goes when no single block stands out.
-			std::map<std::string_view, uint32_t> by_module;
-			for (const auto &[where, count] : *samples) {
-				std::string_view name = "?";
-				for (const auto &[module_name, module] : modules.all())
-					if (where >= module->loaded.base() && where < module->loaded.base() + module->image.image_size)
-						name = module_name;
-				by_module[name] += count;
-			}
-			std::vector<std::pair<uint32_t, std::string_view>> ranked;
-			for (const auto &[name, count] : by_module)
-				ranked.emplace_back(count, name);
-			std::sort(ranked.rbegin(), ranked.rend());
-			for (size_t index = 0; index < std::min<size_t>(ranked.size(), 10); ++index)
-				std::cerr << "  module " << ranked[index].first << ' ' << ranked[index].second << '\n';
-			samples->clear();
-		});
-	}
+	install_guest_sampler(process, modules);
 	kernel_ptr=&kernel;
 	NativeUnwinder unwinder(process, modules);
 	register_exception_api(api_registry, kernel, unwinder);

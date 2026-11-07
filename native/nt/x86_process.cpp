@@ -845,6 +845,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 #endif
 	for (const auto &[address, api] : traps)
 		process.add_api_trap(address, api.second);
+	install_guest_sampler(process, modules);
 	NativeEnvironment environment(process, entry.loaded.base(), uint32_t(::getpid()), 1);
 	NativeX86D3D9 direct3d9(process);
 	NativeX86DirectSound directsound(process);

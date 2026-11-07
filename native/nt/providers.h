@@ -18,6 +18,10 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 // Where the breakpoint of a 64-bit provider export sits inside its stub: past the guest-side path of a fast or served stub, at its start
 // otherwise.
 size_t fast_stub_trap_offset(std::string_view module, std::string_view name);
+class ModuleSet;
+class NativeProcess;
+// RAVEN_SAMPLE_GUEST=1: where the guest spends its running time, by module and block, every five seconds.
+void install_guest_sampler(NativeProcess &process, ModuleSet &modules);
 // Whether providers carry guest-side paths; RAVEN_NO_GUEST_PATHS serves every call in the runtime, to compare behaviour.
 bool guest_paths();
 // Where the breakpoint of a 32-bit provider export sits: past the guest-side path of a fast stub, at its start otherwise.
