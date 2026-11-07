@@ -3274,19 +3274,37 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	}, std::move(queued_stubs));
 	// The guest reads the performance counter itself once the time stamp counter is calibrated against it over 200 ms: the base is taken
 	// when published, so the guest's count goes on from the runtime's, and the multiplier is written last.
+	// The time stamp counter as the guest reads it. Rosetta gives the generic timer in nanoseconds, which __rdtsc reads too. FEX gives the
+	// generic timer's ticks shifted left until their rate reaches 1 GHz (FEXCore's SmallTSCScale, on by default): the same shift here makes
+	// the calibration match what its guest's RDTSC returns, so QueryPerformanceCounter is answered in the guest under FEX as well.
+	static const auto guest_time_stamp = [] {
+#if defined(RAVEN_FEX_PROCESS) && defined(__aarch64__)
+		if (fex_execution_selected()) {
+			static const unsigned shift = [] {
+				uint64_t frequency;
+				__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
+				unsigned bits = 0;
+				while (frequency && frequency < 1000000000) {
+					frequency <<= 1;
+					++bits;
+				}
+				return bits;
+			}();
+			uint64_t counter;
+			__asm__ volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(counter) : : "memory");
+			return counter << shift;
+		}
+#endif
+		return uint64_t(__rdtsc());
+	};
 	struct ClockCalibration {
-		uint64_t counter = __rdtsc(), ticks = counter_ticks();
+		uint64_t counter = guest_time_stamp(), ticks = counter_ticks();
 		bool published = false;
 	};
 	threads.add_service([served_block, calibration = std::make_shared<ClockCalibration>()] {
-#ifdef RAVEN_FEX_PROCESS
-		// FEX scales its guest RDTSC. A calibration from Darwin CNTVCT is not
-		// valid for that counter; keep QueryPerformanceCounter on the host API.
-		if (fex_execution_selected()) return;
-#endif
 		if (calibration->published || counter_ticks() - calibration->ticks < 2000000)
 			return;
-		const uint64_t counter = __rdtsc(), ticks = counter_ticks();
+		const uint64_t counter = guest_time_stamp(), ticks = counter_ticks();
 		if (counter <= calibration->counter)
 			return;
 		uint64_t *published = served_block + clock_calibration / 8;
