@@ -67,6 +67,8 @@ void wasapi(ApiCall &call, std::string_view type, std::string_view method) {
 		} else if (method == "RegisterEndpointNotificationCallback") {
 			if (!call[1]) { call.ret(invalid); return; }
 			if (std::find(endpoint_callbacks.begin(),endpoint_callbacks.end(),call[1]) == endpoint_callbacks.end()) {
+				// The device in use when the first listener comes is what a later change is told against.
+				if (endpoint_callbacks.empty()) default_output=current_output();
 				notification_reference(call[1],1); endpoint_callbacks.push_back(call[1]);
 			}
 		} else if (method == "UnregisterEndpointNotificationCallback") {
@@ -269,6 +271,12 @@ void wasapi(ApiCall &call, std::string_view type, std::string_view method) {
 	call.ret(ok);
 }
 std::map<uint64_t,uint32_t> collections;
+AudioDeviceID current_output() {
+	AudioDeviceID current=0; UInt32 size=sizeof(current);
+	AudioObjectPropertyAddress property{kAudioHardwarePropertyDefaultOutputDevice,kAudioObjectPropertyScopeGlobal,kAudioObjectPropertyElementMain};
+	return AudioObjectGetPropertyData(kAudioObjectSystemObject,&property,0,nullptr,&size,&current) ? 0 : current;
+}
+
 void service_clients() {
 	const auto now = std::chrono::steady_clock::now();
 	if (now-last_event < std::chrono::milliseconds(10)) return;
@@ -278,9 +286,10 @@ void service_clients() {
 		std::fprintf(stderr,"Raven audio: clients=%zu clock=%llu CoreAudio callbacks=%llu\n",clients.size(),
 			(unsigned long long)mixer().clock(),(unsigned long long)mixer().callbacks());
 	}
-	AudioDeviceID current=0; UInt32 size=sizeof(current);
-	AudioObjectPropertyAddress property{kAudioHardwarePropertyDefaultOutputDevice,kAudioObjectPropertyScopeGlobal,kAudioObjectPropertyElementMain};
-	if (!AudioObjectGetPropertyData(kAudioObjectSystemObject,&property,0,nullptr,&size,&current)) {
+	// Only a program that listens for endpoint changes needs the default device watched: asking CoreAudio every 10 ms started its
+	// client in every process, about 25 ms of a short program's life, and kept a round trip to the audio daemon going after that.
+	AudioDeviceID current=endpoint_callbacks.empty() ? 0 : current_output();
+	if (current) {
 		if (default_output && default_output!=current && !endpoint_callbacks.empty()) {
 			constexpr std::u16string_view id=u"{raven.coreaudio.default.render}";
 			const auto address=context.allocator.allocate((id.size()+1)*2);
