@@ -55,10 +55,14 @@ int main(int argc, char **argv) {
 		return 2;
 	}
 	try {
-		std::ifstream input(argv[1], std::ios::binary);
+		std::ifstream input(argv[1], std::ios::binary | std::ios::ate);
 		if (!input)
 			throw std::runtime_error("cannot open input");
-		std::vector<uint8_t> file((std::istreambuf_iterator<char>(input)), {});
+		// One read of the whole module: taking it a character at a time through a stream iterator was a tenth of every process's start.
+		std::vector<uint8_t> file(size_t(std::max<std::streamoff>(input.tellg(), 0)));
+		input.seekg(0);
+		if (!input.read(reinterpret_cast<char *>(file.data()), std::streamsize(file.size())))
+			throw std::runtime_error("cannot read input");
 		Bytes f{file.data(), file.size()};
 		if (f.get<uint16_t>(0) != 0x5a4d)
 			throw std::runtime_error("not MZ");
