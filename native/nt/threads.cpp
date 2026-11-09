@@ -106,6 +106,30 @@ std::vector<uint64_t> NativeThreads::thread_blocks() const
 	return result;
 }
 
+uint32_t set_thread_priority(GuestThread &thread, int32_t priority, bool current)
+{
+	constexpr int32_t background_begin = 0x10000, background_end = 0x20000;
+	// Background mode is a resource-scheduling mode, not a priority value. A thread enters and leaves it only for itself, and fails to
+	// enter it twice (ERROR_THREAD_MODE_ALREADY_BACKGROUND) or to leave it when not in it (ERROR_THREAD_MODE_NOT_BACKGROUND). While it
+	// lasts the thread reports a background priority, and it gets its old one back after.
+	if (priority == background_begin || priority == background_end) {
+		if (!current)
+			return 87;
+		if (thread.background_mode == (priority == background_begin))
+			return priority == background_begin ? 400 : 401;
+		if (priority == background_begin) {
+			thread.priority_before_background = thread.priority;
+			thread.priority = -2;
+		} else {
+			thread.priority = thread.priority_before_background;
+		}
+		thread.background_mode = priority == background_begin;
+		return 0;
+	}
+	thread.priority = priority;
+	return 0;
+}
+
 std::shared_ptr<GuestThread> NativeThreads::find(uint32_t id) const
 {
 	for (const auto &thread : threads)

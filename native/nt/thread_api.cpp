@@ -1084,28 +1084,15 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(uint32_t(thread->priority));
 	});
-	registry.add("SetThreadPriority", 2, [thread_from](ApiCall &call) {
+	registry.add("SetThreadPriority", 2, [thread_from, &threads](ApiCall &call) {
 		const auto thread = thread_from(call[0]);
 		if (!thread) {
 			call.fail(6);
 			return;
 		}
-		const auto priority = call.i32(1);
-		// Background mode is a resource-scheduling mode, not a priority value.
-		// Expose a background priority while it is active and restore the old one.
-		if (priority == 0x10000) {
-			if (!thread->background_mode) {
-				thread->priority_before_background = thread->priority;
-				thread->background_mode = true;
-				thread->priority = -2;
-			}
-		} else if (priority == 0x20000) {
-			if (thread->background_mode) {
-				thread->priority = thread->priority_before_background;
-				thread->background_mode = false;
-			}
-		} else {
-			thread->priority = priority;
+		if (const auto error = set_thread_priority(*thread, call.i32(1), thread->id == threads.current_id())) {
+			call.fail(error);
+			return;
 		}
 		call.ret(1);
 	});

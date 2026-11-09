@@ -64,6 +64,9 @@ struct GuestThread {
 	std::vector<int> exit_reports;
 };
 
+// SetThreadPriority's effect on a thread, for the 32-bit and 64-bit entry points alike: 0, or the Windows error it fails with.
+uint32_t set_thread_priority(GuestThread &thread, int32_t priority, bool current);
+
 class ThreadObject : public KernelObject {
 public:
 	std::u16string_view type_name() const override { return u"Thread"; }

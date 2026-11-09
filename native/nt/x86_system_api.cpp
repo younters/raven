@@ -352,7 +352,12 @@ bool NativeX86System::dispatch(std::string_view name)
 	} else if (name == "GetCurrentThread") {
 		process.return_api(current_thread_pseudo);
 	} else if (name == "GetThreadPriority") {
-		process.return_api(0);
+		const auto object = args[0] == current_thread_pseudo ? nullptr : objects.object_as<ThreadObject>(args[0]);
+		const auto thread = object ? object->thread : args[0] == current_thread_pseudo ? threads.find(threads.current_id()) : nullptr;
+		if (thread)
+			process.return_api(uint32_t(thread->priority));
+		else
+			fail(6, 0x7fffffff);
 	} else if (name == "SuspendThread") {
 		const auto thread = objects.object_as<ThreadObject>(args[0]);
 		if (!thread) {
