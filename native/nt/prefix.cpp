@@ -1,6 +1,7 @@
 #include "prefix.h"
 #include "system_exports.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -55,7 +56,25 @@ void NativePrefix::place_runtime_components(const std::filesystem::path &runtime
 	// The loader takes these libraries from beside the runtime whatever the prefix holds: the copies only answer programs that search for,
 	// read or hash them. A newer runtime refreshes them.
 	const auto windows = directory / "drive_c" / "windows";
-	for (const auto &[source, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}})
+	for (const auto &[source, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}}) {
+#ifdef __APPLE__
+		// Sweep the copies an interrupted refresh abandoned, in one listing of the folder: a listing for every component was dozens of
+		// listings of a folder of thousands of files in every process's start.
+		{
+			std::error_code error;
+			const auto stale = std::filesystem::file_time_type::clock::now() - std::chrono::hours(24);
+			for (std::filesystem::directory_iterator it(windows / folder, error), end; !error && it != end; it.increment(error)) {
+				const auto name = it->path().filename().string();
+				const auto mark = name.find(".tmp.");
+				if (mark == name.npos || std::find(std::begin(runtime_components), std::end(runtime_components), name.substr(0, mark)) ==
+					std::end(runtime_components))
+					continue;
+				std::error_code ignored;
+				if (std::filesystem::last_write_time(it->path(), ignored) < stale && !ignored)
+					std::filesystem::remove(it->path(), ignored);
+			}
+		}
+#endif
 		for (const auto name : runtime_components) {
 			std::error_code error;
 			const auto from = source / name;
@@ -63,18 +82,7 @@ void NativePrefix::place_runtime_components(const std::filesystem::path &runtime
 				continue;
 			const auto destination = windows / folder / name;
 #ifdef __APPLE__
-            // Sweep abandoned copies, then publish a complete replacement atomically.
-            const auto stem = destination.filename().string() + ".tmp.";
-            for (std::filesystem::directory_iterator it(destination.parent_path(), error), end;
-                 !error && it != end; it.increment(error)) {
-                if (it->path().filename().string().starts_with(stem) &&
-                    std::filesystem::last_write_time(it->path(), error) <
-                        std::filesystem::file_time_type::clock::now() - std::chrono::hours(24) && !error) {
-                    std::error_code ignored;
-                    std::filesystem::remove(it->path(), ignored);
-                }
-            }
-            error.clear();
+            // Publish a complete replacement atomically.
             const auto size = std::filesystem::file_size(destination, error);
             if (!error && size == std::filesystem::file_size(from, error) && !error) {
                 const auto stamp = std::filesystem::last_write_time(destination, error);
@@ -102,6 +110,7 @@ void NativePrefix::place_runtime_components(const std::filesystem::path &runtime
 			std::filesystem::copy_file(from, destination, std::filesystem::copy_options::update_existing, error);
 #endif
 		}
+	}
 	// The Windows Runtime metadata stands in each system directory's WinMetadata folder, where the type resolution of the Windows Runtime
 	// looks for it.
 	for (const auto folder : {"system32", "syswow64"}) {
