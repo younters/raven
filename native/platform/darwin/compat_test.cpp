@@ -7,6 +7,7 @@
 #include <raven_darwin_system.h>
 #include <sys/eventfd.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <poll.h>
 #include <unistd.h>
@@ -92,6 +93,36 @@ static void pixels()
 	close(descriptor);
 }
 
+// A poll that does not wait asks select first; what it reports must match the real poll's answer in every case it takes.
+static void polls()
+{
+	check(poll(nullptr, 0, 0) == 0, "an empty poll found something");
+	int pipe_ends[2];
+	check(pipe(pipe_ends) == 0, "cannot create a pipe");
+	pollfd input{pipe_ends[0], POLLIN, 0x7fff};
+	check(poll(&input, 1, 0) == 0 && input.revents == 0, "an empty pipe polled ready or kept stale events");
+	check(write(pipe_ends[1], "x", 1) == 1, "cannot write the pipe");
+	check(poll(&input, 1, 0) == 1 && (input.revents & POLLIN), "a pipe with data did not poll readable");
+	char byte;
+	check(read(pipe_ends[0], &byte, 1) == 1, "cannot read the pipe");
+	pollfd output{pipe_ends[1], POLLOUT, 0};
+	check(poll(&output, 1, 0) == 1 && (output.revents & POLLOUT), "a pipe with room did not poll writable");
+	pollfd pair[]{{-1, POLLIN, 0}, {pipe_ends[0], POLLIN, 0}};
+	check(poll(pair, 2, 0) == 0, "a negative descriptor or an empty pipe polled ready");
+	close(pipe_ends[1]);
+	check(poll(&input, 1, 0) == 1 && (input.revents & POLLHUP), "a pipe whose writer closed did not report the hang-up");
+	close(pipe_ends[0]);
+	pollfd closed{pipe_ends[0], POLLIN, 0};
+	check(poll(&closed, 1, 0) == 1 && (closed.revents & POLLNVAL), "a closed descriptor did not report POLLNVAL");
+	int sockets[2];
+	check(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0, "cannot create a socket pair");
+	pollfd socket{sockets[0], POLLIN, 0};
+	check(poll(&socket, 1, 0) == 0, "an idle socket polled ready");
+	close(sockets[1]);
+	check(poll(&socket, 1, 0) == 1 && (socket.revents & (POLLIN | POLLHUP)), "a socket whose peer closed did not poll ready");
+	close(sockets[0]);
+}
+
 static void guest_memory(const char *bootstrap)
 {
 	raven::ModuleSet modules;
@@ -160,6 +191,7 @@ int main(int argc, char **argv)
 	try {
 		check(argc == 2, "bootstrap path required");
 		events();
+		polls();
 		pixels();
 		guest_memory(argv[1]);
 		uint64_t memory = 0;
@@ -177,7 +209,7 @@ int main(int argc, char **argv)
 		const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
 		check(after > before && after - before > uint64_t(elapsed / 2) && after - before < uint64_t(elapsed * 2),
 			"host TSC is not the guest's monotonic nanosecond counter");
-		std::cout << "Darwin event counters, shared pixel offsets, SMBIOS, host identity, fonts and TSC passed\n";
+		std::cout << "Darwin event counters, polls, shared pixel offsets, SMBIOS, host identity, fonts and TSC passed\n";
 		return 0;
 	} catch (const std::exception &error) {
 		std::cerr << error.what() << '\n';
