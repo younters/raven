@@ -67,7 +67,11 @@ void retain_foreground_ticket()
 		setenv("RAVEN_FOREGROUND_LEASE_FD",std::to_string(foreground_lease).c_str(),1);
 		setenv("RAVEN_FOREGROUND_LEASE_PATH",foreground_lease_path.c_str(),1);
 	}
-	if (foreground_lease >= 0) std::atexit(cleanup_foreground_ticket);
+	// A static object's destructor, not atexit: atexit finds the handler's image through dladdr, a walk of this binary's symbol table.
+	if (foreground_lease >= 0) {
+		static const struct Cleanup { ~Cleanup() { cleanup_foreground_ticket(); } } cleanup;
+		(void)cleanup;
+	}
 }
 
 void update_registered_name(NSString *name)

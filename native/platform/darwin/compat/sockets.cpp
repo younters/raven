@@ -539,6 +539,16 @@ void release_all()
 	state.count = 0;
 }
 
+// Runs release_all when the process exits. atexit looks up which image a handler belongs to with dladdr, a walk of this binary's whole
+// symbol table that took about 10 ms of every process's start; a static object's destructor is registered with its image known.
+void release_at_exit()
+{
+	static const struct Release {
+		~Release() { release_all(); }
+	} release;
+	(void)release;
+}
+
 // The files of names whose processes ended without closing them, removed under their own lock so that a bind cannot race it.
 void sweep(Bindings &state)
 {
@@ -619,7 +629,7 @@ int bind_abstract(int descriptor, const Names &names)
 	++state.count;
 	if (!state.exit_registered) {
 		state.exit_registered = true;
-		atexit(release_all);
+		release_at_exit();
 	}
 	return 0;
 }
@@ -692,7 +702,7 @@ int raven_darwin_adopt_unix_binding(int descriptor, int lock)
 	++state.count;
 	if (!state.exit_registered) {
 		state.exit_registered = true;
-		atexit(release_all);
+		release_at_exit();
 	}
 	return 0;
 }
