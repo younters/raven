@@ -156,8 +156,12 @@ public:
 
 private:
 	void sync_window_updates();
+	// Reads the mailboxes again when the prefix's placement word moved, noting which threads have a placement waiting.
+	void probe_window_updates();
 	bool syncing_window_updates=false;
 	std::chrono::steady_clock::time_point window_updates_checked{};
+	std::optional<uint32_t> window_updates_seen;
+	std::set<uint32_t> window_update_threads;
 	void refresh_screen();
 	NativeProcess &process;
 	NativeEnvironment &environment;

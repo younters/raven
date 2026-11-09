@@ -38,6 +38,9 @@ struct ForeignWindowUpdate {
 };
 bool request_window_update(uint64_t window, const ForeignWindowUpdate &update);
 std::optional<ForeignWindowUpdate> take_window_update(uint64_t window, bool consume = true);
+// A word of the prefix that every request_window_update bumps, so an owner reads its mailboxes only after one was written; null when the
+// prefix has no shared words.
+std::atomic<uint32_t> *window_update_word();
 // Drawing side: the client size of a window another live process of the prefix owns.
 std::optional<std::pair<uint32_t, uint32_t>> foreign_window_size(uint64_t window);
 // The process that owns a window another live process of the prefix created.

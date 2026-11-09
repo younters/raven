@@ -793,6 +793,24 @@ if(TARGET raven AND RAVEN_MINGW64)
             add_test(NAME native_darwin_desktop_dpi_x${width} COMMAND raven --run-process --execution=native --desktop=macos ${dpi_client})
             set_tests_properties(native_darwin_desktop_dpi_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
                 ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/desktop-dpi-prefix)
+            # Named events and window placements between two processes on the macOS desktop wake their waiting threads at once.
+            set(wakes_client ${CMAKE_CURRENT_BINARY_DIR}/cross-process-wakes${width}.exe)
+            add_custom_command(OUTPUT ${wakes_client}
+                COMMAND ${dpi_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                    -Wl,--entry,${dpi_entry},--no-insert-timestamp -o ${wakes_client}
+                    ${RAVEN_DARWIN_DIR}/tests/cross_process_wakes.c -luser32 -lkernel32
+                DEPENDS ${RAVEN_DARWIN_DIR}/tests/cross_process_wakes.c VERBATIM)
+            add_custom_target(darwin_cross_process_wakes${width}_fixture ALL DEPENDS ${wakes_client})
+            foreach(engine native fex)
+                if(engine STREQUAL "fex" AND NOT RAVEN_FEX_MODHOST)
+                    continue()
+                endif()
+                add_test(NAME native_darwin_cross_process_wakes_x${width}_${engine}
+                    COMMAND raven --run-process --execution=${engine} --timeout-ms=50000 --desktop=macos ${wakes_client})
+                set_tests_properties(native_darwin_cross_process_wakes_x${width}_${engine} PROPERTIES TIMEOUT 60
+                    PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                    ENVIRONMENT "RAVEN_PARALLEL=1;RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/cross-process-wakes-prefix${width}${engine}")
+            endforeach()
         endif()
     endforeach()
 endif()

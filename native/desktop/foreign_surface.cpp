@@ -3,6 +3,7 @@
 #include "shared_pixels.h"
 #include "nt/host_names.h"
 #include "nt/prefix.h"
+#include "nt/shared_file.h"
 
 #include <algorithm>
 #include <atomic>
@@ -196,7 +197,20 @@ bool request_window_update(uint64_t window, const ForeignWindowUpdate &update)
 	}
 	pending.mask|=update.mask;
 	const bool ok=::pwrite(fd,&pending,sizeof(pending),0)==sizeof(pending);
-	::flock(fd,LOCK_UN);::close(fd);return ok;
+	::flock(fd,LOCK_UN);::close(fd);
+	// The owner may be asleep in a message wait: it is told, as Windows sends a window its placement, instead of finding the mailbox the
+	// next time it happens to look.
+	if (ok) {
+		if (auto *word=window_update_word()) word->fetch_add(1);
+		announce_shared_change();
+	}
+	return ok;
+}
+
+std::atomic<uint32_t> *window_update_word()
+{
+	auto *words=shared_changes();
+	return words ? words+1 : nullptr;
 }
 
 std::optional<ForeignWindowUpdate> take_window_update(uint64_t window, bool consume)

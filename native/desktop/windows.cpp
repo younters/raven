@@ -3,6 +3,7 @@
 #include "windows.h"
 #include "nt/actctx.h"
 #include "nt/text.h"
+#include "nt/shared_file.h"
 #include "brush.h"
 #include "nt/nls.h"
 #include "gdi.h"
@@ -503,6 +504,8 @@ uint32_t NativeWindows::queue_status(uint32_t thread,uint32_t mask,bool clear)
 		if (!message.thread || message.thread==thread) current|=message.kinds;
 	if (quits.contains(thread)) current|=0x108;
 	if (sent_for(thread)) current|=0x40;
+	probe_window_updates();
+	if (window_update_threads.contains(thread)) current|=0x40;
 	for (const auto &event : pending_events)
 		if (!event_thread(event) || event_thread(event)==thread) current|=event_kinds(event);
 	auto &state=queues[thread];
@@ -2737,11 +2740,36 @@ void NativeWindows::publish_words()
 	}
 }
 
+void NativeWindows::probe_window_updates()
+{
+	auto *word=window_update_word();
+	if (!word) return;
+	listen_shared_changes();
+	const auto seen=word->load(std::memory_order_acquire);
+	if (window_updates_seen==seen) return;
+	window_updates_seen=seen;
+	window_update_threads.clear();
+	for (const auto handle:objects.window_handles())
+		if (const auto *owned=std::as_const(objects).window(handle); owned && take_window_update(handle,false))
+			window_update_threads.insert(owned->thread);
+}
+
 void NativeWindows::sync_window_updates()
 {
-	const auto now=std::chrono::steady_clock::now();
-	if (syncing_window_updates || now-window_updates_checked<std::chrono::milliseconds(8)) return;
-	window_updates_checked=now;syncing_window_updates=true;
+	if (syncing_window_updates) return;
+	// Placements from other processes are announced through the prefix's word, so the mailboxes are read only after one was written and
+	// only for a thread that has one. Without the word they are looked at every 8 ms.
+	if (window_update_word()) {
+		probe_window_updates();
+		const auto thread=environment.thread_id();
+		if (!window_update_threads.contains(thread) && !window_update_threads.contains(0)) return;
+		window_update_threads.erase(thread);
+	} else {
+		const auto now=std::chrono::steady_clock::now();
+		if (now-window_updates_checked<std::chrono::milliseconds(8)) return;
+		window_updates_checked=now;
+	}
+	syncing_window_updates=true;
 	try {
 		for (const auto handle:objects.window_handles()) {
 			const auto *owned=std::as_const(objects).window(handle);
@@ -2753,6 +2781,7 @@ void NativeWindows::sync_window_updates()
 			if (process.serving() && !process.parallel()) {
 				process.decline_served();
 				window_updates_checked={};
+				window_updates_seen.reset();
 				break;
 			}
 			const auto update=take_window_update(handle);
