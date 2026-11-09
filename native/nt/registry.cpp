@@ -49,6 +49,11 @@ std::u16string decode_utf8(std::string_view text)
 	result.reserve(text.size());
 	for (size_t index = 0; index < text.size();) {
 		const auto lead = static_cast<unsigned char>(text[index]);
+		if (lead < 0x80) {
+			result.push_back(char16_t(lead));
+			++index;
+			continue;
+		}
 		const size_t extra = lead < 0x80 ? 0 : lead < 0xe0 ? 1 : lead < 0xf0 ? 2 : 3;
 		if (extra && index + extra >= text.size())
 			throw std::runtime_error("registry hive contains truncated UTF-8");
@@ -87,10 +92,21 @@ std::vector<uint8_t> unhex(std::string_view text)
 		if (c >= 'a' && c <= 'f') return uint8_t(c - 'a' + 10);
 		throw std::runtime_error("registry hive contains invalid hexadecimal data");
 	};
-	std::vector<uint8_t> result;
-	result.reserve(text.size() / 2);
-	for (size_t index = 0; index < text.size(); index += 2)
-		result.push_back(uint8_t(nibble(text[index]) << 4 | nibble(text[index + 1])));
+	// A table of the sixteen digits, 0xff for anything else; the hive holds lowercase digits only.
+	static const auto digits = [] {
+		std::array<uint8_t, 256> table;
+		table.fill(0xff);
+		for (int digit = 0; digit < 10; ++digit) table[size_t('0' + digit)] = uint8_t(digit);
+		for (int digit = 0; digit < 6; ++digit) table[size_t('a' + digit)] = uint8_t(10 + digit);
+		return table;
+	}();
+	std::vector<uint8_t> result(text.size() / 2);
+	for (size_t index = 0; index < result.size(); ++index) {
+		const uint8_t high = digits[static_cast<unsigned char>(text[2 * index])], low = digits[static_cast<unsigned char>(text[2 * index + 1])];
+		if ((high | low) == 0xff)
+			nibble(text[2 * index + (high == 0xff ? 0 : 1)]);
+		result[index] = uint8_t(high << 4 | low);
+	}
 	return result;
 }
 
@@ -114,12 +130,14 @@ std::string unescape(std::string_view text)
 		return std::string(text);
 	std::string result;
 	result.reserve(text.size());
+	// The text between escapes is taken a run at a time: every path in a hive escapes its backslashes.
 	for (size_t index = 0; index < text.size(); ++index) {
-		if (text[index] != '\\') {
-			result.push_back(text[index]);
-			continue;
-		}
-		if (++index >= text.size())
+		const auto escape = text.find('\\', index);
+		result.append(text.substr(index, (escape == text.npos ? text.size() : escape) - index));
+		if (escape == text.npos)
+			break;
+		index = escape + 1;
+		if (index >= text.size())
 			throw std::runtime_error("registry hive ends inside an escape");
 		result.push_back(text[index] == 't' ? '\t' : text[index] == 'n' ? '\n' : text[index] == 'r' ? '\r' : text[index]);
 	}
@@ -965,7 +983,11 @@ void NativeRegistry::apply(std::string_view line, ReplayCursor &cursor)
 		// A key made now may be the one a kept lookup found missing.
 		cursor.valid = false;
 		const auto path = decode_utf8(unescape(fields[1]));
-		keys.emplace(fold(path), Key{path, {}});
+		// A compacted hive lists keys in the order the map keeps them: the end is where each new one goes, which spares a search
+		// through tens of thousands of long paths that share their first characters. A key out of order still goes where it belongs.
+		auto folded = fold(path);
+		const auto hint = keys.empty() || keys.rbegin()->first < folded ? keys.end() : keys.lower_bound(folded);
+		if (hint == keys.end() || hint->first != folded) keys.emplace_hint(hint, std::move(folded), Key{path, {}});
 	} else if (fields[0] == "V" && count == 5) {
 		// The values of a key follow one another in a hive, so the key looked up for one is kept for the next.
 		if (!cursor.valid || cursor.path != fields[1]) {
@@ -976,8 +998,12 @@ void NativeRegistry::apply(std::string_view line, ReplayCursor &cursor)
 		const auto found = cursor.key;
 		const auto name = decode_utf8(unescape(fields[2]));
 		// A value set by a process that had not yet read another one's deletion of the key is lost with the key, as on Windows.
-		if (found != keys.end())
-			found->second.values[fold(name)] = Value{name, uint32_t(std::stoul(std::string(fields[3]))), unhex(fields[4])};
+		if (found != keys.end()) {
+			auto &values = found->second.values;
+			auto folded = fold(name);
+			const auto hint = values.empty() || values.rbegin()->first < folded ? values.end() : values.lower_bound(folded);
+			values.insert_or_assign(hint, std::move(folded), Value{name, uint32_t(std::stoul(std::string(fields[3]))), unhex(fields[4])});
+		}
 	} else if (fields[0] == "Y" && count == 3) {
 		// A value deleted.
 		if (const auto found = keys.find(fold(decode_utf8(unescape(fields[1])))); found != keys.end())
