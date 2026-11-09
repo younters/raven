@@ -527,7 +527,7 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			if (window_under(call[0],target,local_parent)) { call.fail(87);return; }
 			ForeignWindowUpdate update{};update.mask=1;update.parent=target;
 			if (!request_window_update(call[0],update)) {call.fail(1400);return;}
-			call.ret(foreign->parent);return;
+			call.ret(foreign->parent ? foreign->parent : desktop_window());return;
 		}
 		if (target && !std::as_const(objects).window(target) && !foreign_window_info(target)) {
 			call.fail(1400);
@@ -561,7 +561,9 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		shift_window(call[0], new_x - old_x, new_y - old_y);
 		objects.restack(call[0], true);
 		objects.update_window_dcs(call[0]);
-		call.ret(previous);
+		// The previous parent of a top-level window is the desktop window, as Windows reports it: a caller that checks for NULL would
+		// otherwise take a successful move for a failure.
+		call.ret(previous ? previous : desktop_window());
 	});
 	registry.add("BringWindowToTop", 1, [this](ApiCall &call) {
 		if (!std::as_const(objects).window(call[0])) {

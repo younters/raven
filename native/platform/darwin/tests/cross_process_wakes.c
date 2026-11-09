@@ -38,8 +38,8 @@ static int child(HWND parent)
 	if (!RegisterClassW(&kind)) return 30;
 	HWND window = CreateWindowExW(0, kind.lpszClassName, L"", WS_POPUP, 0, 0, 10, 10, NULL, NULL, kind.hInstance, NULL);
 	if (!window) return 31;
-	SetLastError(0);
-	if (!SetParent(window, parent) && GetLastError()) return 32;
+	/* A top-level window's previous parent is the desktop window, as Windows reports it. */
+	if (SetParent(window, parent) != GetDesktopWindow()) return 32;
 	HWND *slot = MapViewOfFile((HANDLE)words[shared], FILE_MAP_WRITE, 0, 0, sizeof(HWND));
 	if (!slot) return 33;
 	*slot = window;
