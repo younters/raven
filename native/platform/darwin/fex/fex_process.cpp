@@ -25,6 +25,9 @@ static bool raven_unix_fault_pc(uintptr_t pc);
 #include <unistd.h>
 #include <dlfcn.h>
 #include <fstream>
+#include <cstring>
+
+extern char **environ;
 #include "../guest/protocol.h"
 
 namespace {
@@ -241,6 +244,11 @@ void notify_memory(const char *name, uint64_t *args, size_t after, const std::fu
 void initialize_process(Bytes bytes, size_t opt)
 {
 	if (!wow64_module) raven_code_cache::configure(*process_environment);
+	// FEX reads its options from the environment its module's CRT sees, which is this one and not the host's. A FEX_ variable given to
+	// Raven reaches it as it would reach FEX anywhere; it comes after Raven's own entries, so it wins over them.
+	for (char **entry = environ; entry && *entry; ++entry)
+		if (!strncmp(*entry, "FEX_", 4))
+			process_environment->add_environment(raven_code_cache::widen(*entry));
 	initialize_image(bytes, opt, process_dispatch, process_exception);
 }
 }
