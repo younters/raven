@@ -180,8 +180,13 @@ struct CocoaPresentation::State {
 	std::optional<std::pair<int32_t, int32_t>> screen_size;
 	id screen_observer = nil;
 	raven::DarwinIdleWaitQueue idle_wait_queue;
-	CFFileDescriptorRef wait_source = nullptr;
-	CFRunLoopSourceRef wait_runloop_source = nullptr;
+	// A thread that sleeps on the idle queue and posts an application event when an armed descriptor fires, which ends the wait in
+	// nextEventMatchingMask. A CFFileDescriptor on the queue did this from the run loop, but a registration that fired between arming
+	// and enabling its callbacks left the queue readable with no new edge: the wait slept out its budget, and a named event another
+	// process set reached a windowed process 20 ms late about a third of the time.
+	std::thread idle_waker;
+	std::atomic<bool> idle_wake_posted{false};
+	bool idle_waker_failed = false;
 	std::vector<CFFileDescriptorRef> wait_descriptors;
 	RavenApplicationDelegate *delegate = nil;
 	std::map<uint64_t, std::unique_ptr<Surface>> surfaces;
@@ -259,11 +264,12 @@ struct CocoaPresentation::State {
 	~State()
 	{
 		watch_waits({});
-		if (wait_runloop_source) {
-			CFRunLoopRemoveSource(CFRunLoopGetMain(), wait_runloop_source, kCFRunLoopCommonModes);
-			CFRelease(wait_runloop_source);
+		if (idle_waker.joinable()) {
+			struct kevent stop;
+			EV_SET(&stop, 1, EVFILT_USER, 0, NOTE_TRIGGER, 0, nullptr);
+			kevent(idle_wait_queue.descriptor(), &stop, 1, nullptr, 0, nullptr);
+			idle_waker.join();
 		}
-		if (wait_source) { CFFileDescriptorInvalidate(wait_source); CFRelease(wait_source); }
 		if (screen_observer)
 			[NSNotificationCenter.defaultCenter removeObserver:screen_observer];
 		surfaces.clear();
@@ -960,34 +966,55 @@ struct CocoaPresentation::State {
 		return true;
 	}
 
+	bool start_idle_waker()
+	{
+		if (idle_waker.joinable()) return true;
+		const int queue = idle_wait_queue.descriptor();
+		if (idle_waker_failed || queue < 0) return false;
+		// The thread leaves on a user event the destructor triggers; the queue's own registrations never use that filter.
+		struct kevent stop;
+		EV_SET(&stop, 1, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, nullptr);
+		if (kevent(queue, &stop, 1, nullptr, 0, nullptr) != 0) { idle_waker_failed = true; return false; }
+		try {
+			idle_waker = std::thread([this, queue] {
+				for (;;) {
+					std::array<struct kevent, 16> fired;
+					const int count = kevent(queue, nullptr, 0, fired.data(), int(fired.size()), nullptr);
+					if (count < 0) {
+						if (errno == EINTR) continue;
+						return;
+					}
+					bool wake = false;
+					for (int index = 0; index < count; ++index) {
+						if (fired[size_t(index)].filter == EVFILT_USER) return;
+						wake = true;
+					}
+					// One application event per armed wait is enough to end it; postEvent may be called from any thread.
+					if (wake && !idle_wake_posted.exchange(true))
+						@autoreleasepool {
+							[NSApp postEvent:[NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint modifierFlags:0
+								timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:0 context:nil subtype:0 data1:0 data2:0] atStart:NO];
+						}
+				}
+			});
+		} catch (...) {
+			idle_waker_failed = true;
+			return false;
+		}
+		return true;
+	}
+
 	void watch_waits(std::span<const pollfd> descriptors)
 	{
-		if (wait_source) CFFileDescriptorDisableCallBacks(wait_source, kCFFileDescriptorReadCallBack);
 		if (raven::darwin_idle_wait_mode(descriptors, true) == raven::DarwinIdleWaitMode::none) {
 			idle_wait_queue.disarm();
 			legacy_watch_waits({});
 			return;
 		}
-		if (!wait_source && idle_wait_queue.descriptor() >= 0) {
-			CFFileDescriptorContext context{0, this, nullptr, nullptr, nullptr};
-			const auto wake = [](CFFileDescriptorRef, CFOptionFlags, void *info) {
-				auto &state = *static_cast<State *>(info);
-				if (!state.idle_wait_queue.consume()) return;
-				// A run-loop descriptor callback alone does not return an NSEvent from nextEventMatchingMask.
-				[NSApp postEvent:[NSEvent otherEventWithType:NSEventTypeApplicationDefined location:NSZeroPoint modifierFlags:0
-					timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:0 context:nil subtype:0 data1:0 data2:0] atStart:NO];
-			};
-			wait_source = CFFileDescriptorCreate(kCFAllocatorDefault, idle_wait_queue.descriptor(), false, wake, &context);
-			if (wait_source) {
-				wait_runloop_source = CFFileDescriptorCreateRunLoopSource(kCFAllocatorDefault, wait_source, 0);
-				if (wait_runloop_source) CFRunLoopAddSource(CFRunLoopGetMain(), wait_runloop_source, kCFRunLoopCommonModes);
-				else { CFFileDescriptorInvalidate(wait_source); CFRelease(wait_source); wait_source = nullptr; }
-			}
-		}
-		if (raven::darwin_idle_wait_mode(descriptors, wait_source != nullptr) == raven::DarwinIdleWaitMode::queue &&
-			idle_wait_queue.arm(descriptors)) {
+		const bool waker = start_idle_waker();
+		if (waker) idle_wake_posted.store(false);
+		if (raven::darwin_idle_wait_mode(descriptors, waker) == raven::DarwinIdleWaitMode::queue && idle_wait_queue.arm(descriptors)) {
 			legacy_watch_waits({});
-			CFFileDescriptorEnableCallBacks(wait_source, kCFFileDescriptorReadCallBack);
 		} else {
 			// Keep the previous path for descriptors kqueue cannot watch, or resource exhaustion; drop the queue's earlier registrations.
 			idle_wait_queue.disarm();
