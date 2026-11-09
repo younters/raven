@@ -241,11 +241,15 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 				return wait_timeout;
 			// A timer among the handles turns signaled at its due time with nobody announcing it: the wait looks again then.
 			auto until = wake;
+			std::vector<pollfd> announced;
 			for (const auto handle : resolved)
-				if (const auto object = objects.object(handle))
+				if (const auto object = objects.object(handle)) {
 					if (const auto due = object->wakes_at(); due && (!until || *due < *until))
 						until = due;
-			threads.block(ready, until);
+					if (const int descriptor = object->wake_descriptor(); descriptor >= 0)
+						announced.push_back({descriptor, POLLIN, 0});
+				}
+			threads.block(ready, until, announced);
 		}
 	};
 	registry.add("WaitForSingleObject", 2, [wait](ApiCall &call) { call.ret(wait(call, {call[0]}, false, call.u32(1), false)); });
@@ -378,9 +382,12 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			if (alertable && !me->apcs.empty() && run_apcs()) return wait_io_completion;
 			if (!milliseconds || (wake && std::chrono::steady_clock::now() >= *wake)) return wait_timeout;
 			auto until = wake;
+			std::vector<pollfd> announced;
 			for (const auto handle : handles)
-				if (const auto object = objects.object(handle))
+				if (const auto object = objects.object(handle)) {
 					if (const auto due = object->wakes_at(); due && (!until || *due < *until)) until = due;
+					if (const int descriptor = object->wake_descriptor(); descriptor >= 0) announced.push_back({descriptor, POLLIN, 0});
+				}
 			HostWait waiting;
 			threads.block([&] {
 				if (alertable && !me->apcs.empty()) return true;
@@ -392,7 +399,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 					every &= state == 1;
 				}
 				return all ? every && input() : any || input();
-			}, until);
+			}, until, announced);
 		}
 	};
 	registry.add("MsgWaitForMultipleObjects", 5, [message_wait](ApiCall &call) {

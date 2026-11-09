@@ -23,6 +23,7 @@ public:
 	~ProcessObject() override;
 	// Waiting for a process succeeds once it has ended; the host reports that, not another guest thread.
 	int signaled(uint32_t) const override { return exited() ? 1 : 0; }
+	int wake_descriptor() const override;
 	bool describe(InheritedHandle &record) const override
 	{
 		record.kind = "process";
@@ -48,6 +49,8 @@ public:
 private:
 	void reap() const;
 	mutable bool done = false;
+	// A kqueue that reports the process's end, made the first time something waits for it.
+	mutable int exit_watch = -2;
 	mutable uint32_t code = 259;
 	uint32_t requested = 0;
 	bool killed = false;

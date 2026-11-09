@@ -38,6 +38,9 @@ public:
 	virtual uint32_t default_access() const { return 0x1f0003; }
 	// When the object turns signaled by itself, as a timer does at its due time; a waiter wakes then to look again.
 	virtual std::optional<std::chrono::steady_clock::time_point> wakes_at() const { return std::nullopt; }
+	// A descriptor that turns readable when the object may have turned signaled by itself, as a child process's does when it ends: a
+	// waiter's sleep ends then instead of at the scheduler's next look. -1 when nothing announces it.
+	virtual int wake_descriptor() const { return -1; }
 };
 
 class NativeObjects;

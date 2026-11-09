@@ -60,10 +60,14 @@ uint32_t NativeX86Threads::wait(uint64_t handle, uint32_t milliseconds)
 		}
 		// An object that turns signaled by itself, such as a timer, is looked at again when it says.
 		auto until = wake;
-		if (const auto object = objects.object(handle))
+		std::vector<pollfd> announced;
+		if (const auto object = objects.object(handle)) {
 			if (const auto due = object->wakes_at(); due && (!until || *due < *until))
 				until = due;
-		threads.block(ready, until);
+			if (const int descriptor = object->wake_descriptor(); descriptor >= 0)
+				announced.push_back({descriptor, POLLIN, 0});
+		}
+		threads.block(ready, until, announced);
 	}
 }
 

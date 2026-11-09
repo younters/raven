@@ -26,6 +26,9 @@
 #include <sys/mman.h>
 #include <spawn.h>
 #include <sys/wait.h>
+#ifdef __APPLE__
+#include <sys/event.h>
+#endif
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -54,6 +57,32 @@ ProcessObject::~ProcessObject()
 		remove_child_channel(channel.get());
 	if (exit_file >= 0)
 		::close(exit_file);
+	if (exit_watch >= 0)
+		::close(exit_watch);
+}
+
+int ProcessObject::wake_descriptor() const
+{
+#ifdef __APPLE__
+	// A process's end was found by the scheduler's look every 20 ms (waitpid has nothing to wait on alongside other descriptors), so every
+	// wait for a child took that long after it ended. A kqueue watching for its exit turns readable at once.
+	if (exit_watch == -2) {
+		exit_watch = -1;
+		if (!done && pid > 0) {
+			const int queue = ::kqueue();
+			if (queue >= 0) {
+				::fcntl(queue, F_SETFD, FD_CLOEXEC);
+				struct kevent change;
+				EV_SET(&change, pid, EVFILT_PROC, EV_ADD | EV_ONESHOT, NOTE_EXIT, 0, nullptr);
+				if (::kevent(queue, &change, 1, nullptr, 0, nullptr) == 0) exit_watch = queue;
+				else ::close(queue);
+			}
+		}
+	}
+	return exit_watch;
+#else
+	return -1;
+#endif
 }
 
 bool ProcessObject::exited() const
