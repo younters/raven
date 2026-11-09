@@ -99,6 +99,8 @@ void NativeDesktop::register_print_api(ApiRegistry &registry, KernelContext &con
 		registry.add(wide ? "CreateICW" : "CreateICA", 4, registry.find(wide ? "CreateDCW" : "CreateDCA")->second);
 		registry.add(wide ? "GetDefaultPrinterW" : "GetDefaultPrinterA", 2, protect([=, this](ApiCall &call) {
 			const auto name = host_default_printer();
+			// With no printers there is no default one (ERROR_FILE_NOT_FOUND).
+			if (name.empty()) { call.fail(2); return; }
 			const auto ansi = to_ansi(from_utf8(name),0);
 			const auto units = wide ? from_utf8(name).size() + 1 : ansi.size() + 1;
 			const auto capacity = call.load<uint32_t>(call[1]); call.store<uint32_t>(call[1], uint32_t(units));
@@ -108,6 +110,8 @@ void NativeDesktop::register_print_api(ApiRegistry &registry, KernelContext &con
 		}));
 		// Printer handles are process-local identifiers, kept separate from GDI handles.
 		registry.add(wide ? "OpenPrinterW" : "OpenPrinterA", 3, protect([=, this](ApiCall &call) {
+			// A printer that cannot be opened leaves no handle behind.
+			if (call[1]) call.store_pointer(call[1], 0);
 			const auto name = printer_name(call, call[0], wide); validate_printer(name);
 			const uint64_t handle = (*next_handle)++;
 			(*handles)[handle] = name; call.store_pointer(call[1], handle); call.ret(1);
@@ -143,8 +147,9 @@ void NativeDesktop::register_print_api(ApiRegistry &registry, KernelContext &con
 				fields.push_back(std::move(row));
 			}
 			call.store<uint32_t>(needed_at,uint32_t(needed));
-			if (!buffer || size < needed) { call.fail(122); return false; }
-			call.write(buffer,std::vector<uint8_t>(needed,0));
+			// Nothing to list needs no buffer: the call succeeds with nothing written.
+			if (needed && (!buffer || size < needed)) { call.fail(122); return false; }
+			if (needed) call.write(buffer,std::vector<uint8_t>(needed,0));
 			uint64_t at = buffer + stride * names.size();
 			for (size_t n=0; n<names.size(); ++n) {
 				const auto row = buffer+n*stride;

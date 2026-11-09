@@ -129,8 +129,11 @@ public:
 	}
 };
 }
+// RAVEN_PRINT_NONE presents a machine with no printers at all, not even Raven PDF, as programs and tests written for one expect.
+static bool no_printers() { return std::getenv("RAVEN_PRINT_NONE") != nullptr; }
 std::vector<std::string> host_printers()
 {
+	if (no_printers()) return {};
 	std::vector<std::string> result{"Raven PDF"};
 	if (!std::getenv("RAVEN_PRINT_PDF_ONLY"))
 		for (NSString *name in NSPrinter.printerNames) result.push_back(text(name));
@@ -138,6 +141,7 @@ std::vector<std::string> host_printers()
 }
 std::string host_default_printer()
 {
+	if (no_printers()) return {};
 	if (std::getenv("RAVEN_PRINT_PDF_ONLY")) return "Raven PDF";
 	const auto name = text([NSPrintInfo sharedPrintInfo].printer.name);
 	return name.empty() ? "Raven PDF" : name;

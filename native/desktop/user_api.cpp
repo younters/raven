@@ -11,6 +11,12 @@
 
 namespace raven {
 
+static uint64_t &message_extra_info()
+{
+	thread_local uint64_t value = 0;
+	return value;
+}
+
 namespace {
 
 struct Rect {
@@ -169,7 +175,13 @@ void NativeWindows::register_api(ApiRegistry &registry)
 	registry.add("LoadKeyboardLayoutEx", 3, [](ApiCall &call) { call.ret(0x04090409); });
 	registry.add("ActivateKeyboardLayout", 2, [](ApiCall &call) { call.ret(0x04090409); });
 	registry.add("UnloadKeyboardLayout", 1, [](ApiCall &call) { call.ret(1); });
-	registry.add("GetMessageExtraInfo", 0, [](ApiCall &call) { call.ret(0); });
+	// The extra information of a thread's last message: what the thread itself set, since no input source attaches any.
+	registry.add("GetMessageExtraInfo", 0, [](ApiCall &call) { call.ret(message_extra_info()); });
+	registry.add("SetMessageExtraInfo", 1, [](ApiCall &call) {
+		const uint64_t previous = message_extra_info();
+		message_extra_info() = call[0];
+		call.ret(previous);
+	});
 	// The one keyboard layout, US English, by its KLID.
 	registry.add("GetKeyboardLayoutNameW", 1, [](ApiCall &call) {
 		call.put_wide(call[0], u"00000409", 9);

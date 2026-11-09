@@ -38,18 +38,25 @@ public:
 	~PipeObject() override;
 	bool describe(InheritedHandle &record) const override
 	{
-		// A listening server passes its listener so the child can accept the first connection.
-		if (descriptor < 0 && !listener)
-			return false;
+		// A server end that no client has opened yet hands over the socket its clients connect to, and waits for them there.
+		if (descriptor < 0) {
+			if (!server || !listener || listener->descriptor < 0)
+				return false;
+			record.kind = "pipe";
+			record.descriptor = listener->descriptor;
+			record.access = access;
+			record.flags = flags;
+			record.bits = (message_mode ? 1U : 0U) | 2U | (read_messages ? 4U : 0U) | 8U;
+			record.size = uint64_t(uint32_t(listener->type)) << 32 | listener->maximum;
+			record.path = listener->address;
+			record.text = name;
+			return true;
+		}
 		record.kind = "pipe";
-		record.descriptor = descriptor >= 0 ? descriptor : listener->descriptor;
+		record.descriptor = descriptor;
 		record.access = access;
 		record.flags = flags;
-		record.bits = (message_mode ? 1U : 0U) | (server ? 2U : 0U) | (descriptor < 0 ? 4U : 0U) | (read_messages ? 8U : 0U);
-		if (descriptor < 0) {
-			record.size = listener->maximum;
-			record.path = listener->address;
-		}
+		record.bits = (message_mode ? 1U : 0U) | (server ? 2U : 0U) | (read_messages ? 4U : 0U);
 		record.text = name;
 		return true;
 	}
@@ -74,6 +81,9 @@ struct PipeState {
 	std::vector<std::shared_ptr<PendingIo>> pending;
 };
 
+// The listening socket of a pipe that a server end received from another process carries, which later instances of the pipe made
+// in this process share.
+std::shared_ptr<PipeListener> adopt_pipe_listener(int descriptor, const std::string &address, int type, uint32_t maximum);
 // A server end whose client has opened the pipe takes that connection: true when the end is connected.
 bool ensure_pipe_connected(PipeObject &pipe);
 void register_pipe_api(ApiRegistry &registry, KernelContext &context);

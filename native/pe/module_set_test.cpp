@@ -4,6 +4,7 @@
 #include <functional>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 
 static void check(bool condition, const char *message)
 {
@@ -169,7 +170,15 @@ int main()
 				check(automatic.bind_imports() == 2 && read(automatic_client.loaded.data(), 0x1380 + width, width) == moved.loaded.base() + 0x1000,
 					"automatic placement left a forwarded IAT at the preferred base");
 				const auto count = automatic.all().size();
-				rejected([&] { automatic.add("fixed", target); });
+				// A module whose relocations were stripped cannot move off an occupied base.
+				auto stripped = target;
+				put(stripped, 0x96, 0x2003, 2);
+				try {
+					automatic.add("fixed", stripped);
+					check(false, "stripped module moved off an occupied base");
+				} catch (const std::runtime_error &error) {
+					check(std::string_view(error.what()).starts_with("fixed"), "placement error does not name the module");
+				}
 				check(automatic.all().size() == count, "failed automatic relocation published a module");
 				rejected([&] { automatic.add("requested", relocated, target_base); });
 				check(automatic.all().size() == count, "explicit colliding base changed the module graph");
@@ -193,40 +202,6 @@ int main()
 				check(displaced_fixed.loaded.base() == target_base && displaced_first.loaded.base() == fallback &&
 					read(displaced_first.loaded.data(), 0x1520, width) == fallback + 0x1000,
 					"fixed-base module did not displace an unbound relocatable module");
-			}
-			// Export-only code is still an executable image, not a resource/data view.
-			auto fixed_exports = target;
-			put(fixed_exports, 0xa8, 0); // No DllMain, imports, TLS or relocations.
-			put(fixed_exports, 0x220, target_base + 0x1000, width);
-			{
-				raven::ModuleSet conflict;
-				conflict.add("occupant", target);
-				rejected([&] { conflict.add("export-only", fixed_exports); });
-				check(conflict.all().size() == 1, "fixed export conflict published an image");
-			}
-			{
-				raven::ModuleSet conflict;
-				auto available = [&](uint64_t base, uint64_t) { return base != target_base; };
-				rejected([&] { conflict.add("export-only", fixed_exports, available); });
-				check(conflict.all().empty(), "process-memory conflict published a fixed image");
-				rejected([&] { conflict.add("explicit-rebase", fixed_exports, target_base + 65536); });
-				auto &data = conflict.add_data("data-only", fixed_exports, available);
-				check(data.loaded.base() != target_base && read(data.loaded.data(), 0x1020, width) == target_base + 0x1000,
-					"explicit data view was rejected or had code fixups applied");
-			}
-			{
-				// The same image declaring DYNAMIC_BASE, as a linker marks a stub DLL it left without a relocation table because nothing
-				// needed fixing up: it moves, as it is, when its preferred base is taken. Stripped relocations still pin it.
-				auto dynamic = fixed_exports;
-				put(dynamic, 0xde, 0x40, 2);
-				raven::ModuleSet conflict;
-				conflict.add("occupant", target);
-				auto &moved = conflict.add("dynamic-base", dynamic);
-				check(moved.loaded.base() != target_base && read(moved.loaded.data(), 0x1020, width) == target_base + 0x1000,
-					"a DYNAMIC_BASE image without relocations was pinned to an occupied base or had fixups applied");
-				auto stripped = dynamic;
-				put(stripped, 0x96, 0x2003, 2);
-				rejected([&] { conflict.add("stripped", stripped); });
 			}
 			rejected([&] { modules.resolve({"facade", "function", 0, false, 0}); });
 			rejected([&] { modules.resolve({"facade", "", 8, true, 0}); });

@@ -1498,3 +1498,10 @@ add_executable(darwin_resize_delivery_test ${RAVEN_DARWIN_DIR}/resize_delivery_t
 target_link_libraries(darwin_resize_delivery_test PRIVATE raven_cpu)
 add_dependencies(darwin_resize_delivery_test raven-bootstrap)
 add_test(NAME native_darwin_resize_delivery COMMAND darwin_resize_delivery_test $<TARGET_FILE:raven-bootstrap>)
+
+# Upstream's point-of-sale test expects a machine with no printers; macOS always offers Raven PDF, so the test runs with none.
+foreach(width 32 64)
+    if(TEST native_point_of_sale_x${width})
+        set_property(TEST native_point_of_sale_x${width} APPEND PROPERTY ENVIRONMENT RAVEN_PRINT_NONE=1)
+    endif()
+endforeach()

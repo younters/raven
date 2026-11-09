@@ -87,8 +87,11 @@ PEModule &ModuleSet::add(std::string name, ModuleBytes bytes, std::function<bool
 			return candidate + 65536;
 		return uint64_t(0);
 	};
-	const auto has_relocs = [](const PEImage &candidate) { return candidate.relocatable(); };
-	if (!adding_data && !available && !bound_any && !has_relocs(image) && overlap_for(base, image.image_size)) {
+	const auto has_relocs = [](const PEImage &candidate) {
+		return !(candidate.characteristics & 1) && candidate.directories[5].address && candidate.directories[5].size;
+	};
+	const bool needs_relocs = image.entry || image.directories[1].address || image.directories[9].address || image.directories[13].address;
+	if (!adding_data && !available && !bound_any && !has_relocs(image) && needs_relocs && overlap_for(base, image.image_size)) {
 		std::vector<PEModule *> blockers;
 		bool all_movable = true;
 		for (const auto &[key, previous] : modules) {
@@ -122,8 +125,6 @@ PEModule &ModuleSet::add(std::string name, ModuleBytes bytes, std::function<bool
 		}
 	}
 	if (overlap_for(base, image.image_size)) {
-		if (!adding_data && !has_relocs(image))
-			throw std::runtime_error("PE preferred base is unavailable and image has no relocation table");
 		base = image.is_64 ? relocation_base64 : 0x10000000ULL;
 		for (;;) {
 			if (base >= limit || image.image_size > limit - base)
@@ -146,7 +147,13 @@ PEModule &ModuleSet::add(std::string name, ModuleBytes bytes, uint64_t base)
 	if (modules.contains(name))
 		throw std::runtime_error("duplicate PE module: " + name);
 	named_image(name, bytes);
-	auto module = std::make_unique<PEModule>(name, std::move(bytes), base, !adding_data);
+	// A module that cannot be placed is named in the error, like one that is not a valid image.
+	std::unique_ptr<PEModule> module;
+	try {
+		module = std::make_unique<PEModule>(name, std::move(bytes), base, !adding_data);
+	} catch (const std::runtime_error &error) {
+		throw std::runtime_error(name + ": " + error.what());
+	}
 	for (const auto &[key, previous] : modules) {
 		if (base < previous->loaded.base() + previous->loaded.data().size() &&
 			previous->loaded.base() < base + module->loaded.data().size())

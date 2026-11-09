@@ -279,6 +279,40 @@ int collate(std::u16string_view left, std::u16string_view right, uint32_t flags)
 	return 0;
 }
 
+// A sort key: bytes whose order and equality, compared as bytes, follow collate() under the same flags. The first level is the text
+// with case folded and, in word sort, without the hyphens and apostrophes that only break ties; the second the length and the whole folded text; the
+// third the case of each unit, left out when case is ignored. Each unit takes three bytes from 2 up, so the separator 1 and the closing 0
+// sort below every unit.
+static std::vector<uint8_t> sort_key(std::u16string_view text, uint32_t flags)
+{
+	const bool ignore_case = flags & (0x1 | 0x10000000 | 0x10), string_sort = flags & 0x1000;
+	std::vector<uint8_t> key;
+	const auto put = [&](unsigned value) {
+		key.push_back(uint8_t((value >> 14) + 2));
+		key.push_back(uint8_t(((value >> 7) & 0x7f) + 2));
+		key.push_back(uint8_t((value & 0x7f) + 2));
+	};
+	const auto level = [&](auto keep, auto unit_of) {
+		for (const char16_t unit : text)
+			if (keep(unit))
+				put(unit_of(unit));
+		key.push_back(1);
+	};
+	const auto everything = [](char16_t) { return true; };
+	level([&](char16_t unit) { return string_sort || (unit != u'-' && unit != u'\''); }, fold_case);
+	// Texts equal but for the units set aside order by length first, as collate() breaks the tie.
+	put(unsigned(std::min<size_t>(text.size(), 0xffff)));
+	level(everything, fold_case);
+	// Case: at the first unit where two texts differ only in case, the lower-case one sorts first.
+	if (!ignore_case) {
+		for (const char16_t unit : text)
+			key.push_back(fold_case(unit) == unit ? 2 : 3);
+		key.push_back(1);
+	}
+	key.push_back(0);
+	return key;
+}
+
 // Windows date and time pictures: d dd ddd dddd M MM MMM MMMM y yy yyyy and quoted literals; h hh H HH m mm s ss t tt.
 std::u16string picture(std::u16string_view format, const uint16_t *time, bool date)
 {
@@ -930,6 +964,33 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(left < right ? 1 : left == right ? 2 : 3);
 	});
+	// Where one text occurs in another code unit by code unit, optionally after upper-casing both: FIND_FROMSTART, FIND_FROMEND,
+	// FIND_STARTSWITH or FIND_ENDSWITH, exactly one of them. The index is the answer, -1 with no error when the value is not there.
+	registry.add("FindStringOrdinal", 6, [](ApiCall &call) {
+		const uint32_t flags = call.u32(0);
+		if (!call[1] || !call[3] || (flags != 0x400000 && flags != 0x800000 && flags != 0x100000 && flags != 0x200000)) {
+			call.fail(87, uint64_t(int64_t(-1)));
+			return;
+		}
+		auto source = counted_wide(call, call[1], call.i32(2)), value = counted_wide(call, call[3], call.i32(4));
+		if (call.u32(5)) {
+			for (auto &character : source)
+				character = upper_case(character);
+			for (auto &character : value)
+				character = upper_case(character);
+		}
+		size_t found = source.npos;
+		if (value.size() <= source.size()) {
+			if (flags == 0x100000)
+				found = source.compare(0, value.size(), value) ? source.npos : 0;
+			else if (flags == 0x200000)
+				found = source.compare(source.size() - value.size(), value.size(), value) ? source.npos : source.size() - value.size();
+			else
+				found = flags == 0x800000 ? source.rfind(value) : source.find(value);
+		}
+		call.set_last_error(0);
+		call.ret(found == source.npos ? uint64_t(int64_t(-1)) : uint64_t(found));
+	});
 	// LCMAP_LOWERCASE and LCMAP_UPPERCASE.
 	const auto map_case = [](uint32_t flags, std::u16string text) {
 		if (flags & 0x100) for (auto &character : text) character = fold_case(character);
@@ -953,6 +1014,12 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 	};
 	const auto map_wide = [map_case, deliver](ApiCall &call, size_t source_at) {
 		const int32_t length = call.i32(source_at + 1);
+		// LCMAP_SORTKEY answers with the key's bytes rather than text.
+		if (call.u32(1) & 0x400) {
+			const auto key = sort_key(counted_wide(call, call[source_at], length), call.u32(1));
+			deliver(call, key, key.size(), call[source_at + 2], call.i32(source_at + 3));
+			return;
+		}
 		auto text = map_case(call.u32(1), counted_wide(call, call[source_at], length));
 		if (length < 0)
 			text.push_back(u'\0');
@@ -983,8 +1050,9 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 			call.ret(result->size());
 			return;
 		}
+		// A destination too small fails and answers with the length it needs, negated.
 		if (capacity < 0 || result->size() > size_t(capacity)) {
-			call.fail(122);
+			call.fail(122, uint32_t(-int32_t(result->size())));
 			return;
 		}
 		std::vector<uint8_t> bytes(result->size() * 2);
@@ -1061,6 +1129,11 @@ void register_text_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("LCMapStringA", 6, [&, map_case, deliver, ansi_page](ApiCall &call) {
 		const int32_t length = call.i32(3);
 		const auto page = ansi_page(0);
+		if (call.u32(1) & 0x400) {
+			const auto key = sort_key(decode_ansi(counted_narrow(call, call[2], length), page), call.u32(1));
+			deliver(call, key, key.size(), call[4], call.i32(5));
+			return;
+		}
 		auto result = encode_ansi(map_case(call.u32(1), decode_ansi(counted_narrow(call, call[2], length), page)), page);
 		if (length < 0)
 			result.push_back('\0');

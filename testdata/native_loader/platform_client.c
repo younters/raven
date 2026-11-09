@@ -13,6 +13,7 @@
 #include <wincrypt.h>
 #include <aclapi.h>
 #include <psapi.h>
+#include <mmsystem.h>
 
 static void clear(void *memory, int length)
 {
@@ -381,6 +382,16 @@ int raven_entry(void)
 	if (SHGetKnownFolderPath(&FOLDERID_UserProfiles, 0, NULL, &folder) != S_OK || lstrcmpiW(folder, L"C:\\Users"))
 		return 240;
 	CoTaskMemFree(folder);
+	/* A program installed for one user goes under its local application data, where Inno Setup's {autopf} points then. */
+	if (SHGetKnownFolderPath(&FOLDERID_UserProgramFiles, 0, NULL, &folder) != S_OK || !contains(folder, L"AppData\\Local\\Programs"))
+		return 241;
+	CoTaskMemFree(folder);
+	{
+		/* No MIDI port: none is listed, and the mapper finds no device behind it. */
+		HMIDIOUT output = (HMIDIOUT)1;
+		if (midiInGetNumDevs() || midiOutGetNumDevs() || midiOutOpen(&output, MIDI_MAPPER, 0, 0, CALLBACK_NULL) != MIDIERR_NODEVICE || output)
+			return 242;
+	}
 	if ((size = known_folder_manager()))
 		return 230 + (int)size;
 	if ((size = virtual_package_files()))
@@ -440,6 +451,20 @@ int raven_entry(void)
 			return 64;
 		if (GetNetworkParams(&fixed, &fixed_size) != NO_ERROR || !fixed.HostName[0])
 			return 65;
+	}
+	{
+		/* The resolvers of an adapter, here the loopback one (index 1); an index no adapter has gives no data. */
+		ULONG per_size = 0;
+		if (GetPerAdapterInfo(1, NULL, NULL) != ERROR_INVALID_PARAMETER || GetPerAdapterInfo(0x7fffffff, NULL, &per_size) != ERROR_NO_DATA)
+			return 66;
+		if (GetPerAdapterInfo(1, NULL, &per_size) != ERROR_BUFFER_OVERFLOW || per_size < sizeof(IP_PER_ADAPTER_INFO))
+			return 67;
+		IP_PER_ADAPTER_INFO *per = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, per_size);
+		if (!per || GetPerAdapterInfo(1, per, &per_size) != NO_ERROR || per->AutoconfigEnabled)
+			return 68;
+		if (per->CurrentDnsServer && per->CurrentDnsServer != &per->DnsServerList)
+			return 69;
+		HeapFree(GetProcessHeap(), 0, per);
 	}
 
 	if (!CryptProtectData(&plain, L"note", &entropy, NULL, NULL, 0, &sealed) || sealed.cbData <= plain.cbData)

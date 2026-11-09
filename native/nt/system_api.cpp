@@ -692,28 +692,6 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		std::memcpy(bytes.data() + 44, &level, 2);
 		call.write(call[0], bytes);
 	};
-	// The processor state the system saves for threads: the x87 and SSE registers; programs then take the paths that need no more.
-	registry.add("InitializeContext", 4, [](ApiCall &call) {
-		if (!call[3] || !call[2]) { call.fail(87); return; }
-		const bool wide = call.pointer_width() == 8;
-		const uint32_t size = wide ? 1232 : 716, flags = call.u32(1);
-		const bool extended = flags & 0x40;
-		const uint32_t required = size + 15 + (extended ? 24 + 63 + 64 : 0);
-		const auto capacity = call.load<uint32_t>(call[3]);
-		call.store<uint32_t>(call[3], required);
-		if (!call[0] || capacity < required) { call.fail(122); return; }
-		const auto address = (call[0] + 15) & ~uint64_t(15);
-		call.write(address, std::vector<uint8_t>(size));
-		call.store<uint32_t>(address + (wide ? 0x30 : 0), flags);
-		if (extended) {
-			const auto ex = address + size, xs = (ex + 24 + 63) & ~uint64_t(63);
-			call.store<int32_t>(ex, -int32_t(size)); call.store<uint32_t>(ex+4, xs+64-address);
-			call.store<int32_t>(ex+8, -int32_t(size)); call.store<uint32_t>(ex+12, size);
-			call.store<int32_t>(ex+16, xs-ex); call.store<uint32_t>(ex+20,64);
-			call.write(xs,std::vector<uint8_t>(64));
-		}
-		call.store_pointer(call[2],address); call.ret(1);
-	});
 	registry.add("CopyContext", 3, [](ApiCall &call) {
 		if (!call[0] || !call[2]) { call.fail(87); return; }
 		const bool wide=call.pointer_width()==8;
@@ -751,6 +729,48 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			call.store<uint32_t>(call[2], feature == 0 ? 512 : wide ? 256 : 128);
 		call.ret(feature == 0 ? save_area : save_area + 160);
 	});
+	// A CONTEXT laid out in a caller's buffer: the record itself, aligned as the processor's context must be (16 bytes on x64, 4 on x86),
+	// followed by the CONTEXT_EX that describes its parts. A buffer that is missing or too small learns the length it needs. The x87 and
+	// SSE state, the only extended features enabled, live in the record; a request for extended state (CONTEXT_XSTATE) also gets the
+	// XSAVE header after it, aligned to 64 bytes, which is all its chunk holds.
+	const auto initialize_context = [](ApiCall &call) {
+		const bool wide = call.pointer_width() == 8;
+		const uint32_t record = wide ? 0x4d0 : 0x2cc, alignment = wide ? 16 : 4, extension = 24, header = 64;
+		const bool extended = call.u32(1) & 0x40U;
+		const uint32_t required = record + extension + alignment - 1 + (extended ? 63 + header : 0);
+		if (!call[3]) {
+			call.fail(87);
+			return;
+		}
+		if (!call[0] || call.load<uint32_t>(call[3]) < required) {
+			call.store<uint32_t>(call[3], required);
+			call.fail(122);
+			return;
+		}
+		const uint64_t context = (call[0] + alignment - 1) & ~uint64_t(alignment - 1);
+		const uint64_t state = extended ? (context + record + extension + 63) & ~uint64_t(63) : context + record + extension;
+		std::vector<uint8_t> bytes(record + extension);
+		const uint32_t flags = extended ? call.u32(1) : call.u32(1) & ~0x40U;
+		std::memcpy(bytes.data() + (wide ? 0x30 : 0), &flags, 4);
+		const int32_t back = -int32_t(record);
+		const uint32_t whole = uint32_t(state - context) + (extended ? header : 0), state_offset = uint32_t(state - context - record),
+			state_length = extended ? header : 0;
+		std::memcpy(bytes.data() + record, &back, 4);
+		std::memcpy(bytes.data() + record + 4, &whole, 4);
+		std::memcpy(bytes.data() + record + 8, &back, 4);
+		std::memcpy(bytes.data() + record + 12, &record, 4);
+		std::memcpy(bytes.data() + record + 16, &state_offset, 4);
+		std::memcpy(bytes.data() + record + 20, &state_length, 4);
+		call.write(context, bytes);
+		if (extended)
+			call.write(state, std::vector<uint8_t>(header));
+		if (call[2])
+			call.store_pointer(call[2], context);
+		call.ret(1);
+	};
+	registry.add("InitializeContext", 4, initialize_context);
+	// The second form also names which extended features to keep compacted; none lives outside the record, so the mask changes nothing.
+	registry.add("InitializeContext2", 5, initialize_context);
 	// The number of file handles a process may have is no longer limited: the request is answered as asked.
 	registry.add("SetHandleCount", 1, [](ApiCall &call) { call.ret(call.u32(0)); });
 	registry.add("GetSystemInfo", 1, system_information);

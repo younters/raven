@@ -57,15 +57,12 @@ struct GuestThread {
 	// the next one. Each is taken by the wait it ends.
 	bool alerted = false, alerted_by_id = false;
 	int priority = 0;
-	bool background_mode = false;
-	int priority_before_background = 0;
+	// Background processing mode, which only the thread itself enters and leaves; meanwhile it reports idle priority.
+	bool background = false;
 	std::shared_ptr<AccessToken> impersonation;
 	// Pipes to the processes that hold a handle to this thread: each gets the exit code when the thread ends.
 	std::vector<int> exit_reports;
 };
-
-// SetThreadPriority's effect on a thread, for the 32-bit and 64-bit entry points alike: 0, or the Windows error it fails with.
-uint32_t set_thread_priority(GuestThread &thread, int32_t priority, bool current);
 
 class ThreadObject : public KernelObject {
 public:

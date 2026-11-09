@@ -109,6 +109,9 @@ std::vector<InheritedHandle> parse_inherited(std::span<const uint8_t> bytes)
 std::shared_ptr<KernelObject> object_from_record(const InheritedHandle &item)
 {
 	if (item.kind == "process") {
+		// The process is named by its id; the pidfd only kept it from being mistaken for another while the handle travelled.
+		if (item.descriptor >= 0)
+			::close(item.descriptor);
 		if (item.size == uint64_t(::getpid()))
 			return std::make_shared<SelfProcessObject>();
 		auto process = find_child(pid_t(item.size));
@@ -130,19 +133,22 @@ std::shared_ptr<KernelObject> object_from_record(const InheritedHandle &item)
 		// The creator keeps the duty to delete a file that closes with its last handle.
 		return std::make_shared<FileObject>(item.descriptor, item.access, item.bits & 1, std::filesystem::path(item.path), item.text, item.flags & ~0x04000000U);
 	}
-	if (item.kind == "pipe") {
-		auto pipe = std::make_shared<PipeObject>(item.bits & 4 ? -1 : item.descriptor, item.access, item.flags);
-		pipe->connected = !(item.bits & 4);
-		if (item.bits & 4) {
-			pipe->listener = std::make_shared<PipeListener>();
-			pipe->listener->descriptor = item.descriptor;
-			pipe->listener->maximum = uint32_t(item.size);
-			pipe->listener->instances = 1;
-			pipe->listener->address = item.path;
-			pipe->listener->type = item.bits & 1 ? SOCK_SEQPACKET : SOCK_STREAM;
-		}
+	if (item.kind == "pipe" && (item.bits & 8)) {
+		// A server end that waits for its client: the listening socket came instead of a connection.
+		auto pipe = std::make_shared<PipeObject>(-1, item.access, item.flags);
+		pipe->listener = adopt_pipe_listener(item.descriptor, item.path, int(item.size >> 32), uint32_t(item.size));
+		pipe->server = true;
 		pipe->message_mode = item.bits & 1;
-		pipe->read_messages = item.bits & 8;
+		pipe->read_messages = item.bits & 4;
+		pipe->inherit = true;
+		pipe->name = item.text;
+		return pipe;
+	}
+	if (item.kind == "pipe") {
+		auto pipe = std::make_shared<PipeObject>(item.descriptor, item.access, item.flags);
+		pipe->connected = true;
+		pipe->message_mode = item.bits & 1;
+		pipe->read_messages = item.bits & 4;
 		pipe->server = item.bits & 2;
 		pipe->inherit = true;
 		pipe->name = item.text;
@@ -187,8 +193,8 @@ void adopt_inherited(NativeObjects &objects, const std::vector<InheritedHandle> 
 			objects.set_inherit(item.handle, true);
 			continue;
 		}
-		if (item.kind != "process")
-			pending.descriptor = -1;
+		// The object takes the descriptor; a process closes its own, which only named it on the way.
+		pending.descriptor = -1;
 		const auto object = object_from_record(item);
 		if (!object) {
 			::close(item.descriptor);

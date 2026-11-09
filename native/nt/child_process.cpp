@@ -25,6 +25,7 @@
 #include <string>
 #include <sys/mman.h>
 #include <spawn.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #ifdef __APPLE__
 #include <sys/event.h>
@@ -57,6 +58,8 @@ ProcessObject::~ProcessObject()
 		remove_child_channel(channel.get());
 	if (exit_file >= 0)
 		::close(exit_file);
+	if (process_descriptor >= 0)
+		::close(process_descriptor);
 	if (exit_watch >= 0)
 		::close(exit_watch);
 }
@@ -83,6 +86,42 @@ int ProcessObject::wake_descriptor() const
 #else
 	return -1;
 #endif
+}
+
+bool describe_process(pid_t pid, int &descriptor, InheritedHandle &record)
+{
+#ifdef __APPLE__
+	(void)descriptor;
+#else
+	if (descriptor < 0)
+		descriptor = int(::syscall(SYS_pidfd_open, pid, 0));
+	if (descriptor < 0)
+		return false;
+	::fcntl(descriptor, F_SETFD, FD_CLOEXEC);
+	record.descriptor = descriptor;
+#endif
+	record.kind = "process";
+	record.size = uint64_t(pid);
+	return true;
+}
+
+bool ProcessObject::describe(InheritedHandle &record) const
+{
+	if (!describe_process(pid, process_descriptor, record))
+		return false;
+	record.text = name;
+	return true;
+}
+
+SelfProcessObject::~SelfProcessObject()
+{
+	if (process_descriptor >= 0)
+		::close(process_descriptor);
+}
+
+bool SelfProcessObject::describe(InheritedHandle &record) const
+{
+	return describe_process(::getpid(), process_descriptor, record);
 }
 
 bool ProcessObject::exited() const
@@ -254,7 +293,8 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 		if (source >= 0)
 			record.descriptor = pass(source);
 #ifdef __APPLE__
-		if (record.kind == "pipe" && (record.bits & 4)) {
+		// A server end that waits for its client hands over its listening socket (bit 8); the child takes the name it is bound to too.
+		if (record.kind == "pipe" && (record.bits & 8)) {
 			const int lock = raven_darwin_unix_binding_lock(source);
 			if (lock >= 0) {
 				owned.push_back(lock);

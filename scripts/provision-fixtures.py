@@ -2,23 +2,49 @@
 """Build test programs and fetch checksum-qualified third-party fixtures outside the source tree."""
 
 import argparse
+import atexit
 import hashlib
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
+import time
 import urllib.request
 import zipfile
 
 
 DOWNLOADS = (
-    ("npp.zip", "https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.6/npp.8.7.6.portable.x64.zip",
+    # The release asset through the API too, which keeps answering when the release download page times out.
+    ("npp.zip", ("https://github.com/notepad-plus-plus/notepad-plus-plus/releases/download/v8.7.6/npp.8.7.6.portable.x64.zip",
+                 "https://api.github.com/repos/notepad-plus-plus/notepad-plus-plus/releases/assets/224197116"),
      "8947bbdf3b87f466dea39ccab2f992177a132404b3907a669a4483484fc691cc", "npp"),
     ("sqlite.zip", "https://www.sqlite.org/2025/sqlite-tools-win-x64-3500400.zip",
      "8ce18347ea86a1ce65f33b533d2f144d8d1237140529fbf818574ca11fa13ad5", "."),
     ("busybox", "https://busybox.net/downloads/binaries/1.35.0-x86_64-linux-musl/busybox",
      "6e123e7f3202a8c1e9b1f94d8941580a25135382b99e8d3e34fb858bba311348", None),
 )
+
+
+def download(urls, path):
+    # Download servers answer with a gateway error or stall now and then; a few spaced attempts ride it out, then the next address is tried.
+    # A missing file does not come back.
+    urls = (urls,) if isinstance(urls, str) else urls
+    for index, url in enumerate(urls):
+        for attempt in range(4):
+            try:
+                request = urllib.request.Request(url, headers={"Accept": "application/octet-stream"})
+                with urllib.request.urlopen(request, timeout=120) as response, open(path, "wb") as file:
+                    shutil.copyfileobj(response, file)
+                return
+            except OSError as error:
+                if isinstance(error, urllib.error.HTTPError) and error.code < 500:
+                    raise
+                if attempt == 3:
+                    if index == len(urls) - 1:
+                        raise
+                    break
+                time.sleep(15 * (attempt + 1))
 
 
 def fetch(output):
@@ -29,7 +55,7 @@ def fetch(output):
         if not archive.exists():
             temporary = archive.with_suffix(archive.suffix + ".part")
             try:
-                urllib.request.urlretrieve(url, temporary)
+                download(url, temporary)
                 if hashlib.sha256(temporary.read_bytes()).hexdigest() != checksum:
                     raise RuntimeError("fixture checksum differs: " + name)
                 temporary.replace(archive)
@@ -68,7 +94,11 @@ def main():
     if output == source or source in output.parents:
         raise RuntimeError("fixture output must be outside testdata")
     output.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, TMPDIR=str(output), TMP=str(output), TEMP=str(output))
+    # The tools' temporary files go to a directory of their own, removed on exit, so none of them stays in the output.
+    output.mkdir(parents=True, exist_ok=True)
+    scratch = tempfile.mkdtemp(prefix=".tmp-", dir=output)
+    atexit.register(shutil.rmtree, scratch, True)
+    env = dict(os.environ, TMPDIR=scratch, TMP=scratch, TEMP=scratch)
     for path in source.rglob("*.hex"):
         target = output / path.relative_to(source).with_suffix("")
         target.parent.mkdir(parents=True, exist_ok=True)

@@ -2177,6 +2177,101 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(total);
 	});
+	// WSAPoll(entries, count, milliseconds): each WSAPOLLFD is the socket, the events asked for and the events found. A socket that is
+	// not one reports POLLNVAL, and an entry whose socket is negative is passed over. The result is the number of entries with events.
+	registry.add("WSAPoll", 3, [socket_of, fail, &threads](ApiCall &call) {
+		constexpr uint16_t read_normal = 0x100, read_band = 0x200, priority = 0x400, write_normal = 0x10, write_band = 0x20, error = 0x1,
+			hangup = 0x2, invalid = 0x4;
+		const size_t width = call.pointer_width(), stride = width == 4 ? 8 : 16;
+		const uint32_t count = call.u32(1);
+		if (!call[0] || !count) {
+			fail(call, !call[0] && count ? wsaefault : wsaeinval);
+			return;
+		}
+		struct Entry {
+			uint64_t handle;
+			int descriptor;
+			uint16_t asked;
+		};
+		std::vector<Entry> entries;
+		for (uint32_t index = 0; index < count; ++index) {
+			const uint64_t at = call[0] + index * stride;
+			const uint64_t handle = call.load_pointer(at);
+			const uint16_t asked = call.load<uint16_t>(at + width);
+			if (asked & ~(read_normal | read_band | priority | write_normal | write_band)) {
+				fail(call, wsaeinval);
+				return;
+			}
+			const bool negative = width == 4 ? int32_t(handle) < 0 : int64_t(handle) < 0;
+			const auto socket = negative ? nullptr : socket_of(handle);
+			entries.push_back({handle, negative ? -1 : socket ? socket->descriptor : -2, asked});
+		}
+		const auto poll_once = [&](std::vector<pollfd> &found) {
+			found.clear();
+			for (const auto &entry : entries) {
+				short events = 0;
+				if (entry.asked & (read_normal | read_band)) events |= POLLIN;
+				if (entry.asked & priority) events |= POLLPRI;
+				if (entry.asked & (write_normal | write_band)) events |= POLLOUT;
+				found.push_back({entry.descriptor >= 0 ? entry.descriptor : -1, events, 0});
+			}
+			int ready = ::poll(found.data(), nfds_t(found.size()), 0);
+			for (const auto &entry : entries)
+				ready += ready >= 0 && entry.descriptor == -2;
+			return ready;
+		};
+		std::vector<pollfd> found;
+		int ready = poll_once(found);
+		const int32_t timeout = call.i32(2);
+		if (ready == 0 && timeout != 0) {
+			std::optional<std::chrono::steady_clock::time_point> wake;
+			if (timeout > 0)
+				wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout);
+			HostWait waiting;
+			threads.block([&] {
+				std::vector<pollfd> again;
+				return poll_once(again) != 0;
+			}, wake);
+			ready = poll_once(found);
+		}
+		if (ready < 0) {
+			fail(call, wsa_error(errno));
+			return;
+		}
+		uint32_t total = 0;
+		for (size_t index = 0; index < entries.size(); ++index) {
+			const auto &entry = entries[index];
+			const short got = found[index].revents;
+			uint16_t result = 0;
+			if (entry.descriptor == -2)
+				result = invalid;
+			if (got & POLLIN) result |= entry.asked & (read_normal | read_band);
+			if (got & POLLPRI) result |= priority & entry.asked;
+			if (got & POLLOUT) result |= entry.asked & (write_normal | write_band);
+			if (got & POLLERR) result |= error;
+			if (got & POLLHUP) result |= hangup;
+			if ((got & POLLOUT) && !(got & POLLERR))
+				if (const auto socket = socket_of(entry.handle); socket && socket->connecting)
+					socket->connecting = false;
+			call.store<uint16_t>(call[0] + index * stride + width + 2, result);
+			total += result != 0;
+		}
+		call.ret(total);
+	});
+	// Remote access: the machine has no dial-up or VPN connections, so the list is empty and there is nothing to watch.
+	for (const auto *name : {"RasEnumConnectionsA", "RasEnumConnectionsW"})
+		registry.add(name, 3, [](ApiCall &call) {
+			if (!call[1] || !call[2]) {
+				call.ret(87);
+				return;
+			}
+			call.store<uint32_t>(call[2], 0);
+			call.ret(0);
+		});
+	for (const auto *name : {"RasGetConnectStatusA", "RasGetConnectStatusW"})
+		registry.add(name, 2, [](ApiCall &call) { call.ret(6); });
+	for (const auto *name : {"RasConnectionNotificationA", "RasConnectionNotificationW"})
+		registry.add(name, 3, [](ApiCall &call) { call.ret(call[1] ? 0 : 87); });
 	registry.add("__WSAFDIsSet", 2, [set_at](ApiCall &call) {
 		const auto address = call[1];
 		if (!address) {
@@ -2196,18 +2291,21 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 	// Names: the answers come from the host resolver, and the result is one block of guest memory that freeaddrinfo gives back.
 	// getaddrinfo and GetAddrInfoW: the host resolver's answer as a chain of ADDRINFOA or ADDRINFOW records in one block the program
 	// frees with freeaddrinfo or FreeAddrInfoW. The two records differ only in the width of the canonical name.
-	const auto resolve_names = [&context](ApiCall &call, bool wide) {
+	// The hints and the answer list are at these arguments: getaddrinfo's, or GetAddrInfoEx's, whose namespace and provider come between.
+	const auto resolve_names = [&context](ApiCall &call, bool wide, bool extended = false) {
 		const size_t width = call.pointer_width();
-		// ADDRINFOA: four ints, the address length, then the canonical name, the address and the next entry.
-		const size_t record = 16 + 4 * width;
-		const size_t length_at = 16, canon_at = 16 + width, address_at = 16 + 2 * width, next_at = 16 + 3 * width;
+		const size_t hints_at = extended ? 4 : 2, result_at = extended ? 5 : 3;
+		// ADDRINFOA: four ints, the address length, then the canonical name, the address and the next entry. ADDRINFOEX puts a blob, its
+		// length and the provider between the address and the next entry.
+		const size_t record = 16 + (extended ? 7 : 4) * width;
+		const size_t length_at = 16, canon_at = 16 + width, address_at = 16 + 2 * width, next_at = 16 + (extended ? 6 : 3) * width;
 		addrinfo hints{};
 		const addrinfo *use = nullptr;
-		if (call[2]) {
-			hints.ai_flags = call.load<int32_t>(call[2]) & (AI_PASSIVE | AI_CANONNAME | AI_NUMERICHOST);
-			hints.ai_family = host_family(call.load<int32_t>(call[2] + 4));
-			hints.ai_socktype = call.load<int32_t>(call[2] + 8);
-			hints.ai_protocol = call.load<int32_t>(call[2] + 12);
+		if (call[hints_at]) {
+			hints.ai_flags = call.load<int32_t>(call[hints_at]) & (AI_PASSIVE | AI_CANONNAME | AI_NUMERICHOST);
+			hints.ai_family = host_family(call.load<int32_t>(call[hints_at] + 4));
+			hints.ai_socktype = call.load<int32_t>(call[hints_at] + 8);
+			hints.ai_protocol = call.load<int32_t>(call[hints_at] + 12);
 			use = &hints;
 		}
 		const auto text = [&](uint64_t address, size_t limit) { return wide ? to_utf8(call.wide(address, limit)) : call.narrow(address, limit); };
@@ -2266,12 +2364,32 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			previous = self;
 		}
 		::freeaddrinfo(found);
-		call.store_pointer(call[3], block);
+		call.store_pointer(call[result_at], block);
 		call.ret(0);
 		(void)count;
 	};
 	registry.add("getaddrinfo", 4, [resolve_names](ApiCall &call) { resolve_names(call, false); });
 	registry.add("GetAddrInfoW", 4, [resolve_names](ApiCall &call) { resolve_names(call, true); });
+	// GetAddrInfoEx resolves at once even when the caller passes an OVERLAPPED: the answer is the result, which the caller handles as a
+	// call that completed without waiting, and OVERLAPPED.Internal holds it for GetAddrInfoExOverlappedResult. No lookup stays pending,
+	// so the cancel handle is null and nothing is left to cancel.
+	const auto resolve_extended = [resolve_names](ApiCall &call, bool wide) {
+		if (!call[5]) {
+			call.fail(wsaeinval, wsaeinval);
+			return;
+		}
+		resolve_names(call, wide, true);
+		if (call[7])
+			call.store<uint32_t>(call[7], uint32_t(call.result));
+		if (call[9])
+			call.store_pointer(call[9], 0);
+	};
+	registry.add("GetAddrInfoExW", 10, [resolve_extended](ApiCall &call) { resolve_extended(call, true); });
+	registry.add("GetAddrInfoExA", 10, [resolve_extended](ApiCall &call) { resolve_extended(call, false); });
+	registry.add("GetAddrInfoExOverlappedResult", 1, [](ApiCall &call) {
+		call.ret(call[0] ? call.load<uint32_t>(call[0]) : uint32_t(wsaeinval));
+	});
+	registry.add("GetAddrInfoExCancel", 1, [](ApiCall &call) { call.ret(6); });
 	// getnameinfo and GetNameInfoW: the host and service of an address, by the host resolver, with Winsock's NI_ flags.
 	const auto name_of_address = [](ApiCall &call, bool wide) {
 		const auto address = host_address(call, call[0], size_t(call.i32(1)));
@@ -2307,7 +2425,8 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("getnameinfo", 7, [name_of_address](ApiCall &call) { name_of_address(call, false); });
 	registry.add("GetNameInfoW", 7, [name_of_address](ApiCall &call) { name_of_address(call, true); });
 
-	for (const char *name : {"freeaddrinfo", "FreeAddrInfoW"})
+	// An ADDRINFOEX list is one block like an ADDRINFO list, whatever the form.
+	for (const char *name : {"freeaddrinfo", "FreeAddrInfoW", "FreeAddrInfoEx", "FreeAddrInfoExW"})
 		registry.add(name, 1, [&context](ApiCall &call) {
 			if (call[0])
 				context.allocator.release(call[0]);

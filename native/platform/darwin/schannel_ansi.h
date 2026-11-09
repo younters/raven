@@ -21,6 +21,9 @@ inline void register_schannel_ansi(ApiRegistry &registry, KernelContext &context
 		Adapter{"SetContextAttributesA", "SetContextAttributesW", {}, 4},
 		Adapter{"SetCredentialsAttributesA", "SetCredentialsAttributesW", {}, 4},
 		Adapter{"ChangeAccountPasswordA", "ChangeAccountPasswordW", {0,1,2,3,4}, 8}}) {
+		// An ANSI form the shared provider already has is its own; the adapter only fills in the ones it lacks.
+		if (registry.find(entry.narrow))
+			continue;
 		const auto base = registry.find(entry.wide);
 		if (!base) {
 			registry.add(entry.narrow, entry.words, [](ApiCall &call) { call.ret(0x80090302U); });
@@ -47,6 +50,8 @@ inline void register_schannel_ansi(ApiRegistry &registry, KernelContext &context
 			call.ret(inner.result);
 		});
 	}
+	if (registry.find("InitSecurityInterfaceA"))
+		return;
 	const auto wide_entry = registry.find("InitSecurityInterfaceW");
 	if (!wide_entry) {
 		registry.add("InitSecurityInterfaceA", 0, [](ApiCall &call) { call.fail(120); });

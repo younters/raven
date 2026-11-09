@@ -241,6 +241,22 @@ private:
 
 }
 
+void register_midi_api(ApiRegistry &registry)
+{
+	// No MIDI port, in or out: a program lists none, and opening one finds no such device; the mapper finds no device behind it.
+	constexpr uint32_t midierr_nodevice = 68, midi_mapper = 0xffffffffU;
+	for (const char *name : {"midiInGetNumDevs", "midiOutGetNumDevs"})
+		registry.add(name, 0, [](ApiCall &call) { call.ret(0); });
+	for (const char *name : {"midiInGetDevCapsW", "midiInGetDevCapsA", "midiOutGetDevCapsW", "midiOutGetDevCapsA"})
+		registry.add(name, 3, [](ApiCall &call) { call.ret(mmsyserr_baddeviceid); });
+	for (const char *name : {"midiInOpen", "midiOutOpen"})
+		registry.add(name, 5, [](ApiCall &call) {
+			if (call[0])
+				call.store_pointer(call[0], 0);
+			call.ret(call.u32(1) == midi_mapper ? midierr_nodevice : mmsyserr_baddeviceid);
+		});
+}
+
 void register_wave_api(ApiRegistry &registry, KernelContext &context)
 {
 #ifdef __APPLE__
@@ -251,6 +267,7 @@ void register_wave_api(ApiRegistry &registry, KernelContext &context)
 		return raven_darwin::AudioFormat{value->rate, value->channels, value->bits, value->block, value->floating};
 	});
 #endif
+	register_midi_api(registry);
 	auto &objects = context.objects;
 	auto devices = std::make_shared<std::map<uint64_t, std::weak_ptr<WaveOut>>>();
 	const auto device_of = [&objects](uint64_t handle) { return objects.object_as<WaveOut>(handle); };
@@ -291,6 +308,12 @@ void register_wave_api(ApiRegistry &registry, KernelContext &context)
 #endif
 	});
 #ifndef __APPLE__
+	// System and file sounds are accepted without being played, so a program that beeps or chimes goes on as if it had.
+	for (const auto *name : {"PlaySound", "PlaySoundA", "PlaySoundW"})
+		registry.add(name, 3, [](ApiCall &call) { call.ret(1); });
+	for (const auto *name : {"sndPlaySoundA", "sndPlaySoundW"})
+		registry.add(name, 2, [](ApiCall &call) { call.ret(1); });
+	// There is no capture device: recording programs hear that none exists.
 	registry.add("waveInGetNumDevs", 0, [](ApiCall &call) { call.ret(0); });
 	// There is no capture device and no mixer: their calls report a bad device or no driver, as Windows does on such a machine.
 	registry.add("waveInMessage", 4, [](ApiCall &call) { call.ret(2); });

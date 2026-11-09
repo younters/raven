@@ -1502,8 +1502,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_platform_api(shared_api, kernel);
 	register_actctx_api(shared_api, kernel);
 	register_mmio_api(shared_api, kernel);
-	register_wave_api(shared_api, kernel);
 #ifdef __APPLE__
+	// macOS plays and records waveform audio for 32-bit programs as for 64-bit ones.
+	register_wave_api(shared_api, kernel);
 	raven_darwin::register_audio_api(shared_api, kernel);
 #endif
 	register_process_api(shared_api, kernel);
@@ -1541,6 +1542,14 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		paths.redirect((call.u32(0) & 0xff) != 0);
 		call.ret(1);
 	});
+#ifndef __APPLE__
+	// Waveform audio for 32-bit programs has no device yet: they hear that none exists, as on a machine without sound, and go on silent.
+	shared_api.add("waveOutGetNumDevs", 0, [](ApiCall &call) { call.ret(0); });
+	shared_api.add("waveInGetNumDevs", 0, [](ApiCall &call) { call.ret(0); });
+	for (const auto *name : {"waveOutGetDevCapsW", "waveOutGetDevCapsA", "waveInGetDevCapsW", "waveInGetDevCapsA"})
+		shared_api.add(name, 3, [](ApiCall &call) { call.ret(2); });
+	register_midi_api(shared_api);
+#endif
 	register_profile_api(shared_api, profile);
 	register_ansi_adapters(shared_api);
 	register_legacy_file_api(shared_api);

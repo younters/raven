@@ -73,18 +73,8 @@ int raven_entry(void)
 		return check_parent();
 	DWORD id, later_id;
 	HANDLE thread = CreateThread(NULL, 0, worker, NULL, CREATE_SUSPENDED, &id);
-	if (!thread || !SetThreadPriority(thread, THREAD_PRIORITY_ABOVE_NORMAL) || GetThreadPriority(thread) != THREAD_PRIORITY_ABOVE_NORMAL)
+	if (!thread || !SetThreadPriority(thread, THREAD_PRIORITY_ABOVE_NORMAL))
 		return 1;
-	/* Background mode is entered and left by a thread for itself, once each way, and gives back the priority it had: Chromium reads that
-	   priority and stops on a value it does not know. */
-	HANDLE self = GetCurrentThread();
-	if (SetThreadPriority(thread, THREAD_MODE_BACKGROUND_BEGIN) || GetLastError() != ERROR_INVALID_PARAMETER ||
-		!SetThreadPriority(self, THREAD_PRIORITY_ABOVE_NORMAL) || SetThreadPriority(self, THREAD_MODE_BACKGROUND_END) ||
-		GetLastError() != ERROR_THREAD_MODE_NOT_BACKGROUND || !SetThreadPriority(self, THREAD_MODE_BACKGROUND_BEGIN) ||
-		GetThreadPriority(self) >= THREAD_PRIORITY_NORMAL || SetThreadPriority(self, THREAD_MODE_BACKGROUND_BEGIN) ||
-		GetLastError() != ERROR_THREAD_MODE_ALREADY_BACKGROUND || !SetThreadPriority(self, THREAD_MODE_BACKGROUND_END) ||
-		GetThreadPriority(self) != THREAD_PRIORITY_ABOVE_NORMAL || !SetThreadPriority(self, THREAD_PRIORITY_NORMAL))
-		return 23;
 	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0xffffffff);
 	if (snapshot == INVALID_HANDLE_VALUE || find_thread(snapshot, GetCurrentProcessId(), GetCurrentThreadId(), 8) != 1 ||
 		find_thread(snapshot, GetCurrentProcessId(), id, 9) != 1)

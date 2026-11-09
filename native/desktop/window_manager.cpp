@@ -81,6 +81,37 @@ void NativeWindows::shift_window(uint64_t handle, int32_t dx, int32_t dy)
 		shift_window(child, dx, dy);
 }
 
+uint64_t NativeWindows::successor(uint64_t leaving) const
+{
+	const auto *window = std::as_const(objects).window(leaving);
+	if (!window || !window->owner)
+		return 0;
+	const auto owner = objects.window_root(window->owner);
+	const auto *record = std::as_const(objects).window(owner);
+	if (!record || owner == leaving || record->destroying || !record->visible || (record->style & ws_disabled))
+		return 0;
+	return owner;
+}
+
+void NativeWindows::expose(uint64_t parent, DesktopRect area, uint64_t leaving)
+{
+	const auto *record = std::as_const(objects).window(parent);
+	if (!record || area.right <= area.left || area.bottom <= area.top)
+		return;
+	const auto inside = [](int64_t value) { return int32_t(std::clamp(value, int64_t(INT32_MIN), int64_t(INT32_MAX))); };
+	if (!objects.invalidate(parent, {inside(int64_t(area.left) - record->x), inside(int64_t(area.top) - record->y), inside(int64_t(area.right) - record->x),
+		inside(int64_t(area.bottom) - record->y)}, true))
+		throw uint32_t(8);
+	for (const auto child : objects.child_windows(parent)) {
+		const auto *other = std::as_const(objects).window(child);
+		if (child == leaving || !other || !other->visible || other->destroying)
+			continue;
+		const DesktopRect under{std::max(area.left, other->outer.left), std::max(area.top, other->outer.top), std::min(area.right, other->outer.right),
+			std::min(area.bottom, other->outer.bottom)};
+		expose(child, under, 0);
+	}
+}
+
 void NativeWindows::invalidate_tree(uint64_t handle, bool erase)
 {
 	const auto *window = std::as_const(objects).window(handle);
@@ -174,6 +205,13 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 	window = objects.window(handle);
 	window->visible = !hide;
 	window->style = (window->style & ~ws_visible) | (window->visible ? ws_visible : 0);
+	// A hidden active window hands the activation, and with it the keyboard, to its owner.
+	if (hide && previous && !window->parent && active == handle) {
+		activate(successor(handle));
+		window = objects.window(handle);
+		if (!window)
+			throw uint32_t(1400);
+	}
 	objects.update_window_dcs(window->parent ? window->parent : handle);
 	if (!window->parent) {
 		publish_traits(handle);
@@ -194,11 +232,8 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 	window = objects.window(handle);
 	if (!window)
 		throw uint32_t(1400);
-	if (!window->visible && previous && window->parent) {
-		const auto *parent = std::as_const(objects).window(window->parent);
-		if (parent) objects.invalidate(window->parent, {window->outer.left - parent->x, window->outer.top - parent->y, window->outer.right - parent->x,
-			window->outer.bottom - parent->y}, true);
-	}
+	if (!window->visible && previous && window->parent)
+		expose(window->parent, window->outer, handle);
 	send(handle, 0x18, window->visible, 0);
 	// The size and position messages an overlapped window did not get while it was created come with its first showing.
 	window = objects.window(handle);
@@ -306,14 +341,24 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 	const bool resized = target.right - target.left != old.right - old.left || target.bottom - target.top != old.bottom - old.top;
 	if (target.right - target.left < 0 || target.bottom - target.top < 0 || target.right - target.left > 8192 || target.bottom - target.top > 8192)
 		throw uint32_t(87);
+	const auto client_of = [&](const DesktopWindow &record) {
+		const auto *parent = record.parent ? std::as_const(objects).window(record.parent) : nullptr;
+		return std::array<int64_t, 4>{int64_t(record.x) - (parent ? parent->x : 0), int64_t(record.y) - (parent ? parent->y : 0), record.width,
+			record.height};
+	};
+	const auto old_client = client_of(*window);
+	struct Placing {
+		std::set<uint64_t> &set;
+		uint64_t handle;
+		bool added;
+		~Placing() { if (added) set.erase(handle); }
+	} placing_guard{placing, handle, placing.insert(handle).second};
 	if (shifted && !resized && !window->parent) {
 		shift_window(handle, target.left - old.left, target.top - old.top);
 	} else if (shifted || resized) {
 		const auto old_client_x = window->x, old_client_y = window->y;
-		if (window->parent && was_visible) {
-			const auto *parent = std::as_const(objects).window(window->parent);
-			if (parent) objects.invalidate(window->parent, {old.left - parent->x, old.top - parent->y, old.right - parent->x, old.bottom - parent->y}, true);
-		}
+		if (window->parent && was_visible)
+			expose(window->parent, old, handle);
 		if (window->parent || !resized) {
 			if (shifted)
 				shift_window(handle, target.left - old.left, target.top - old.top);
@@ -335,12 +380,9 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 		if (!window)
 			return;
 		const bool client_moved = window->x != old_client_x || window->y != old_client_y;
-		if (window->parent && client_moved && !resized) {
-			// Moving a child in its parent changes where its whole subtree draws.
+		// Moving a child in its parent changes where its whole subtree draws.
+		if (window->parent && client_moved && !resized)
 			objects.update_window_dcs(handle);
-			const auto *parent = std::as_const(objects).window(window->parent);
-			send(handle, 3, 0, uint16_t(window->x - (parent ? parent->x : 0)) | (uint64_t(uint16_t(window->y - (parent ? parent->y : 0))) << 16));
-		}
 		window = objects.window(handle);
 		if (window && window->parent && objects.window_visible(handle) && !(effective & swp_noredraw)) {
 			objects.update_window_dcs(window->parent);
@@ -363,7 +405,14 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 		show_window(handle, 0);
 	if (!std::as_const(objects).window(handle))
 		return;
-	// WM_WINDOWPOSCHANGED tells the window what actually happened; the default procedure turns it into WM_MOVE and WM_SIZE.
+	// WM_WINDOWPOSCHANGED tells the window what actually happened; the default procedure turns it into WM_MOVE and WM_SIZE, which
+	// SWP_NOCLIENTMOVE and SWP_NOCLIENTSIZE leave out when the client area stayed where it was.
+	window = objects.window(handle);
+	const auto new_client = client_of(*window);
+	const uint32_t client_flags = (new_client[0] == old_client[0] && new_client[1] == old_client[1] ? 0x800U : 0U) |
+		(new_client[2] == old_client[2] && new_client[3] == old_client[3] ? 0x1000U : 0U);
+	placing.erase(handle);
+	placing_guard.added = false;
 	const auto scratch = process.map_memory(4096, PROT_READ | PROT_WRITE);
 	try {
 		window = objects.window(handle);
@@ -376,7 +425,7 @@ void NativeWindows::place_window(uint64_t handle, DesktopRect outer, uint64_t in
 		store(layout.pointer * 2 + 4, uint32_t(rel.top), 4);
 		store(layout.pointer * 2 + 8, uint32_t(rel.right - rel.left), 4);
 		store(layout.pointer * 2 + 12, uint32_t(rel.bottom - rel.top), 4);
-		store(layout.flags, (effective & ~(swp_nomove | swp_nosize)) | (shifted ? 0 : swp_nomove) | (resized ? 0 : swp_nosize), 4);
+		store(layout.flags, (effective & ~(swp_nomove | swp_nosize | 0x1800U)) | (shifted ? 0 : swp_nomove) | (resized ? 0 : swp_nosize) | client_flags, 4);
 		process.write_memory(scratch, bytes);
 		send(handle, 0x47, 0, scratch);
 	} catch (...) {

@@ -71,12 +71,6 @@ public:
 	uint64_t stack_reserve;
 	// IMAGE_SUBSYSTEM_*: 2 for a windowed program, 3 for a console one.
 	uint16_t subsystem;
-	// IMAGE_DLLCHARACTERISTICS_*; 0x40, DYNAMIC_BASE, says the image may load at any base.
-	uint16_t dll_characteristics = 0;
-	// Whether the image may load away from its preferred base: its relocations were not stripped, and it has a relocation table or
-	// declares DYNAMIC_BASE. A linker leaves the table out of an image with nothing to fix up (a stub DLL with no absolute addresses)
-	// while still marking it DYNAMIC_BASE; such an image moves with no fixups. One with neither keeps its preferred base.
-	bool relocatable() const;
 	uint64_t heap_reserve;
 	uint64_t heap_commit;
 	uint32_t image_size;

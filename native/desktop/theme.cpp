@@ -263,7 +263,7 @@ void draw_part(Shapes &shapes, const Palette &tone, const std::string &klass, in
 	else if (klass == "rebar") {
 		if (part == 4) // RP_CHEVRON
 			shapes.chevron(box.cx(), box.cy(), 6, 'r', tone.glyph);
-		else if (part == 0 || part == 3)
+		else if (part == 0 || part == 3 || part == 6) // the band and RP_BACKGROUND
 			shapes.fill(box.left, box.top, box.right, box.bottom, tone.surface);
 	} else if (klass == "status") {
 		if (part == 0)
@@ -295,6 +295,37 @@ void draw_part(Shapes &shapes, const Palette &tone, const std::string &klass, in
 			shapes.rounded(box.left, box.top, box.right, box.bottom, 3, state == 3 ? tone.subtle_pressed : tone.subtle_hot, std::nullopt);
 		const char direction = part == 1 ? 'u' : part == 2 ? 'd' : part == 3 ? 'r' : 'l';
 		shapes.chevron(box.cx(), box.cy(), std::min(box.width(), box.height()) * 0.45, direction, state == 4 ? tone.text_disabled : tone.glyph);
+	} else if (klass == "taskdialog") {
+		// The panels of a task dialog, which message boxes drawn with visual styles also paint their body with.
+		if (part == 8 || part == 10 || part == 12) { // TDLG_SECONDARYPANEL, TDLG_FOOTNOTEPANE, TDLG_EXPANDEDFOOTERAREA
+			shapes.fill(box.left, box.top, box.right, box.bottom, tone.surface);
+			if (part == 8 && box.height() >= 1)
+				shapes.fill(box.left, box.top, box.right, box.top + 1, tone.divider);
+		} else if (part == 11) { // TDLG_FOOTNOTESEPARATOR
+			shapes.fill(box.left, std::floor(box.cy()), box.right, std::floor(box.cy()) + 1, tone.divider);
+		} else {
+			shapes.fill(box.left, box.top, box.right, box.bottom, tone.white);
+		}
+	} else if (klass == "tooltip") {
+		shapes.rounded(box.left, box.top, box.right, box.bottom, 4, tone.white, tone.stroke);
+	} else if (klass == "menu") {
+		if (part == 7) // MENU_BARBACKGROUND
+			shapes.fill(box.left, box.top, box.right, box.bottom, tone.surface);
+		else if (part == 9 || part == 10) // MENU_POPUPBACKGROUND, MENU_POPUPBORDERS
+			shapes.rounded(box.left, box.top, box.right, box.bottom, 4, tone.white, tone.stroke);
+		else if ((part == 8 && (state == 2 || state == 3)) || (part == 14 && state == 2)) // MENU_BARITEM hot or pushed, MENU_POPUPITEM hot
+			shapes.rounded(box.left + 2, box.top + 1, box.right - 2, box.bottom - 1, 4, tone.subtle_hot, std::nullopt);
+		else if (part == 15) // MENU_POPUPSEPARATOR
+			shapes.fill(box.left + 4, std::floor(box.cy()), box.right - 4, std::floor(box.cy()) + 1, tone.divider);
+		else if (part == 16) // MENU_POPUPSUBMENU
+			shapes.chevron(box.cx(), box.cy(), 6, 'r', state == 2 ? tone.text_disabled : tone.glyph);
+	} else if (klass == "window") {
+		if (part == 29) // WP_DIALOG
+			shapes.fill(box.left, box.top, box.right, box.bottom, tone.surface);
+	} else if (klass == "explorerbar") {
+		shapes.fill(box.left, box.top, box.right, box.bottom, tone.surface);
+	} else if (klass == "datepicker") {
+		draw_field(shapes, tone, state, box, focused);
 	}
 }
 
@@ -327,7 +358,8 @@ std::optional<DesktopRegion> clipped(const std::optional<DesktopRegion> &clip, c
 
 bool rounded_part(const std::string &klass, int part)
 {
-	return klass == "button" || (klass == "tab" && part != 9 && part != 10) || klass == "combobox" || klass == "edit" || klass == "spin";
+	return klass == "button" || (klass == "tab" && part != 9 && part != 10) || klass == "combobox" || klass == "edit" || klass == "spin"
+		|| klass == "datepicker" || klass == "tooltip" || (klass == "menu" && part != 7) || (klass == "taskdialog" && part == 11);
 }
 
 }
@@ -523,20 +555,22 @@ void NativeWindows::register_theme_api(ApiRegistry &registry)
 		}
 		const int32_t dx = window->x - parent->x, dy = window->y - parent->y;
 		const uint64_t parent_handle = window->parent;
-		const auto saved_x = dc->origin_x, saved_y = dc->origin_y;
+		const auto saved_x = dc->origin_x, saved_y = dc->origin_y, saved_user_x = dc->user_dx, saved_user_y = dc->user_dy;
 		const auto saved_clip = dc->application_clip;
 		if (call[2])
 			dc->application_clip = clipped(dc->application_clip, read_box(call, call[2]));
-		// The clip is kept in the control's coordinates, so it moves with the origin.
-		if (dc->application_clip)
-			dc->application_clip->offset(dx, dy);
+		// The viewport moves, as OffsetViewportOrgEx would: every clip stays in the control's device pixels.
 		dc->origin_x -= dx;
 		dc->origin_y -= dy;
+		dc->user_dx -= dx;
+		dc->user_dy -= dy;
 		send(parent_handle, 0x14, call[1], 0);
 		send(parent_handle, 0x318, call[1], 4);
 		if (auto *again = objects.dc(call[1])) {
 			again->origin_x = saved_x;
 			again->origin_y = saved_y;
+			again->user_dx = saved_user_x;
+			again->user_dy = saved_user_y;
 			again->application_clip = saved_clip;
 		}
 		call.ret(s_ok);
@@ -628,7 +662,8 @@ void NativeWindows::register_theme_api(ApiRegistry &registry)
 			break;
 		case 3802: // TMT_FILLCOLOR
 		case 3821: // TMT_FILLCOLORHINT
-			color = found->second == "status" || found->second == "rebar" || found->second == "toolbar" ? tone.surface : tone.white;
+			color = found->second == "status" || found->second == "rebar" || found->second == "toolbar" || found->second == "window"
+				|| (found->second == "taskdialog" && (call.i32(1) == 8 || call.i32(1) == 10 || call.i32(1) == 12)) ? tone.surface : tone.white;
 			break;
 		case 3801: // TMT_BORDERCOLOR
 		case 3822: // TMT_BORDERCOLORHINT

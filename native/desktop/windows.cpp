@@ -27,6 +27,22 @@
 
 namespace raven {
 
+namespace {
+
+// A key's state as Windows keeps it: SHIFT, CONTROL and MENU also have a left and a right key, told apart by the scan code of right
+// SHIFT and the extended bit of the right CONTROL and ALT, and the shared key is down while either side is.
+void record_key(std::array<uint8_t,256> &state,uint32_t code,uint64_t lparam,bool down)
+{
+	const auto set=[&](uint32_t key,bool held) { state[key]=held ? (state[key] | 0x80) : (state[key] & 0x7f); };
+	if (code<0x10 || code>0x12) { set(code & 255,down); return; }
+	const bool right=code==0x10 ? ((lparam>>16) & 0xff)==0x36 : ((lparam>>24) & 1)!=0;
+	const uint32_t left_key=0xa0+(code-0x10)*2;
+	set(left_key+(right ? 1 : 0),down);
+	set(code,(state[left_key] & 0x80) || (state[left_key+1] & 0x80));
+}
+
+}
+
 static uint64_t read(std::span<const uint8_t> bytes,size_t at,size_t width);
 
 NativeWindows::NativeWindows(NativeProcess &process, NativeEnvironment &environment, DesktopObjects &objects)
@@ -1071,9 +1087,10 @@ void NativeWindows::receive(const DesktopEvent &event)
 				const uint32_t code=0x10+index;
 				const bool active=keyboard_map.modifier_active(code),down=(vk_async[code] & 0x80)!=0;
 				if (active==down) continue;
-				const bool system=code==0x12 || (vk_async[0x12] & 0x80);
-				vk_async[code]=active ? (vk_async[code] | 0x80) : (vk_async[code] & 0x7f);
-				queue({focus,code,1 | (uint64_t(scans[index])<<16) | (uint64_t(!active)<<30) | (uint64_t(!active)<<31) | (code==0x12 ? uint64_t(1)<<29 : 0),
+				const bool system=(code==0x12 || (vk_async[0x12] & 0x80)) && (code==0x11 ? !active : !(vk_async[0x11] & 0x80));
+				const uint64_t lparam=1 | (uint64_t(scans[index])<<16) | (uint64_t(!active)<<30) | (uint64_t(!active)<<31) | (system ? uint64_t(1)<<29 : 0);
+				record_key(vk_async,code,lparam,active);
+				queue({focus,code,lparam,
 					active ? (system ? 0x104U : 0x100U) : (system ? 0x105U : 0x101U),message_time(),cursor_x,cursor_y,0},1);
 			}
 		}
@@ -1156,11 +1173,13 @@ void NativeWindows::receive(const DesktopEvent &event)
 		const bool modifier=key.code>=0x10 && key.code<=0x12;
 		// A modifier already reported through the keymap state is not announced twice.
 		if (modifier && ((vk_async[key.code] & 0x80)!=0)==pressed) return;
-		const bool system=key.code==0x12 || (vk_async[0x12] & 0x80);
-		const uint64_t flags=1 | (uint64_t(key.scan)<<16) | (uint64_t(key.extended)<<24) | (system && key.code!=0x12 ? uint64_t(1)<<29 : 0) |
-			(key.code==0x12 ? uint64_t(1)<<29 : 0) | (uint64_t(previous)<<30) | (uint64_t(!pressed)<<31);
+		// ALT makes a key a system key, unless CONTROL is held with it: CTRL+ALT combinations, AltGr among them, are ordinary keys.
+		const bool alt=key.code==0x12 || (vk_async[0x12] & 0x80),control=key.code==0x11 ? pressed : (vk_async[0x11] & 0x80)!=0;
+		const bool system=(alt && !control) || key.code==0x79;
+		const uint64_t flags=1 | (uint64_t(key.scan)<<16) | (uint64_t(key.extended)<<24) | (system && alt ? uint64_t(1)<<29 : 0) |
+			(uint64_t(previous)<<30) | (uint64_t(!pressed)<<31);
 		queue({focus,key.code,flags,system ? (pressed ? 0x104U : 0x105U) : (pressed ? 0x100U : 0x101U),message_time(),cursor_x,cursor_y,pressed ? key.character : 0},1);
-		vk_async[key.code&255]=pressed ? (vk_async[key.code&255] | 0x80) : (vk_async[key.code&255] & 0x7f);
+		record_key(vk_async,key.code&255,flags,pressed);
 		if (pressed && !previous && (key.code==0x14 || key.code==0x90 || key.code==0x91)) vk_async[key.code]^=1;
 		return;
 	}
@@ -1193,14 +1212,20 @@ void NativeWindows::receive(const DesktopEvent &event)
 		return;
 	}
 	if (event.kind==DesktopEventKind::pointer_wheel) {
-		// The wheel goes to the focus window with the screen position of the pointer.
+		// The wheel goes to the window under the pointer, as Windows scrolls inactive windows by default, with the screen position of
+		// the pointer; to the focus window when the pointer is over none of the program's.
 		const auto *source=std::as_const(objects).window(event.window);
-		if (!source || !focus || !std::as_const(objects).window(focus) || messages.size()>=10000) return;
+		if (!source || messages.size()>=10000) return;
 		const auto x=int64_t(source->outer.left)+event.x,y=int64_t(source->outer.top)+event.y;
 		if (x<INT16_MIN || x>INT16_MAX || y<INT16_MIN || y>INT16_MAX) return;
+		uint64_t target=capture && std::as_const(objects).window(capture) ? capture : 0;
+		if (!target && source->visible && x>=source->outer.left && y>=source->outer.top && x<source->outer.right && y<source->outer.bottom)
+			target=pointer_child(event.window,int32_t(x),int32_t(y));
+		if (!target || !objects.window_visible(target)) target=focus;
+		if (!target || !std::as_const(objects).window(target)) return;
 		const auto delta=uint64_t(uint16_t(int16_t(int32_t(event.message))));
 		if (raw_mouse.registered) raw_mouse_input(0,0,event.wparam ? 0x800 : 0x400,int16_t(int32_t(event.message)));
-		queue({focus,(delta<<16)|mouse_buttons|keyboard_map.mouse_modifiers(),uint16_t(x)|(uint64_t(uint16_t(y))<<16),event.wparam ? 0x20eU : 0x20aU,message_time(),int32_t(x),int32_t(y)},4);
+		queue({target,(delta<<16)|mouse_buttons|keyboard_map.mouse_modifiers(),uint16_t(x)|(uint64_t(uint16_t(y))<<16),event.wparam ? 0x20eU : 0x20aU,message_time(),int32_t(x),int32_t(y)},4);
 		return;
 	}
 	if (event.x<INT16_MIN || event.x>INT16_MAX || event.y<INT16_MIN || event.y>INT16_MAX)
@@ -1340,9 +1365,23 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 		tracking={};
 		post(target,nonclient ? 0x2a2 : 0x2a3,0,0);
 	}
-	// Over the frame the window hears WM_NCMOUSEMOVE; programs that draw their own caption light its buttons from it.
-	if (message==0x200 && hit!=1 && messages.size()<10000) post(target,0xa0,hit,uint16_t(x)|(uint64_t(uint16_t(y))<<16));
-	if (hit!=1) { nonclient_pointer(target,hit,message,int32_t(event.x),int32_t(event.y)); return; }
+	// Outside the client area the window hears the WM_NC* form of the message, with the hit code and the screen position; the default
+	// procedure runs the frame from it, so a program that draws its own caption can take the press first.
+	if (hit!=1) {
+		if (messages.size()>=10000) throw std::runtime_error("guest input queue limit reached");
+		const auto nonclient=message-0x200+0xa0;
+		const Message input{target,hit,uint16_t(x)|(uint64_t(uint16_t(y))<<16),nonclient,message_time(),int32_t(x),int32_t(y)};
+		if (nonclient==0xa0 && !messages.empty() && messages.back().message==0xa0 && messages.back().window==target) {
+			const auto thread=messages.back().thread;
+			messages.back()=input;
+			messages.back().thread=thread;
+			messages.back().kinds=2;
+			queue_changed(thread,2);
+			return;
+		}
+		queue(input,nonclient==0xa0 ? 2 : 4);
+		return;
+	}
 	// A second press of the same button on the same window within the double-click time (500 ms) and rectangle (SM_CXDOUBLECLK, 4 by 4)
 	// is a double click when the window's class asks for them (CS_DBLCLKS); the press after a double click starts over.
 	if (message==0x201 || message==0x204 || message==0x207) {
@@ -1435,7 +1474,7 @@ uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking)
 					const auto code=uint32_t(value.wparam & 255);
 					const bool down=value.message==0x100 || value.message==0x104;
 					const bool repeat=(value.lparam>>30) & 1;
-					vk_state[code]=down ? (vk_state[code] | 0x80) : (vk_state[code] & 0x7f);
+					record_key(vk_state,code,value.lparam,down);
 					if (down && !repeat && (code==0x14 || code==0x90 || code==0x91)) vk_state[code]^=1;
 				}
 			}
@@ -1730,7 +1769,8 @@ bool NativeWindows::destroy(uint64_t handle)
 	if (!window || window->destroying) throw uint32_t(5);
 	window->destroying=true;window->visible=false;window->style&=~0x10000000U;
 	withdraw_window(handle);
-	if (active==handle) activate(0);
+	// The owner of a closing active window, a dialog's among them, becomes active and takes the keyboard back.
+	if (active==handle) activate(successor(handle));
 	if (focus==handle || objects.is_child(handle,focus)) set_focus(0);
 	parent_notify(handle,2);
 	send(handle,2,0,0);
@@ -1739,11 +1779,7 @@ bool NativeWindows::destroy(uint64_t handle)
 	window=objects.window(handle);
 	if (window && window->parent) {
 		const auto *parent=std::as_const(objects).window(window->parent);
-		if (parent && !parent->destroying) {
-			const auto relative=[](int64_t value) { return int32_t(std::clamp(value,int64_t(INT32_MIN),int64_t(INT32_MAX))); };
-			if (!objects.invalidate(window->parent,{relative(int64_t(window->outer.left)-parent->x),relative(int64_t(window->outer.top)-parent->y),
-				relative(int64_t(window->outer.right)-parent->x),relative(int64_t(window->outer.bottom)-parent->y)},true)) throw uint32_t(8);
-		}
+		if (parent && !parent->destroying) expose(window->parent,window->outer,handle);
 	}
 	// Detach host backing even when a driver still holds its own reference to the surface.
 	if (hosted_windows.contains(handle) && presentation.host_surface) {
@@ -1764,7 +1800,12 @@ bool NativeWindows::destroy(uint64_t handle)
 	dark_allowed_windows.erase(handle);
 	foreign_content.erase(handle);
 	foreign_black.erase(handle);
-	return objects.erase(handle);
+	// A parent that clips its children draws where this one was again.
+	const auto *leaving=std::as_const(objects).window(handle);
+	const auto parent=leaving ? leaving->parent : 0;
+	const bool erased=objects.erase(handle);
+	if (erased && parent && std::as_const(objects).window(parent)) objects.update_window_dcs(parent);
+	return erased;
 }
 
 uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
@@ -1782,6 +1823,30 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 		const auto x=uint16_t(int64_t(window->x)+int16_t(uint16_t(args[3])));
 		const auto y=uint16_t(int64_t(window->y)+int16_t(uint16_t(args[3]>>16)));
 		send(args[0],0x7b,args[0],uint32_t(x)|(uint32_t(y)<<16));
+		return 0;
+	}
+	// WM_NCMOUSEMOVE to WM_NCMBUTTONDBLCLK: the frame answers the pointer, given in screen coordinates, as the window's host saw it.
+	if (message>=0xa0 && message<=0xa9) {
+		const auto root=objects.window_root(args[0]);
+		const auto *host=std::as_const(objects).window(root);
+		if (!host) return 0;
+		const auto x=int32_t(int16_t(uint16_t(args[3])))-host->outer.left,y=int32_t(int16_t(uint16_t(args[3]>>16)))-host->outer.top;
+		const auto pointer=message==0xa3 ? 0x201U : message==0xa6 ? 0x204U : message==0xa9 ? 0x207U : message-0xa0+0x200;
+		nonclient_pointer(args[0],args[2],pointer,x,y);
+		return 0;
+	}
+	// WM_WINDOWPOSCHANGED: the window hears where its client area went, unless SWP_NOCLIENTMOVE or SWP_NOCLIENTSIZE say it stayed.
+	if (message==0x47 && args[3]) {
+		const bool narrow=process.mode()==NativeMode::x86;
+		uint32_t flags=0;
+		const auto bytes=process.read_memory(args[3]+(narrow ? 24 : 32),4);
+		std::memcpy(&flags,bytes.data(),4);
+		const auto *parent=window->parent ? std::as_const(objects).window(window->parent) : nullptr;
+		const int64_t x=int64_t(window->x)-(parent ? parent->x : 0),y=int64_t(window->y)-(parent ? parent->y : 0);
+		const uint64_t kind=(window->style & 0x01000000U) ? 2 : (window->style & 0x20000000U) ? 1 : 0;
+		const uint64_t size=uint16_t(window->width) | (uint64_t(uint16_t(window->height))<<16);
+		if (!(flags & 0x800U)) send(args[0],3,0,uint16_t(x) | (uint64_t(uint16_t(y))<<16));
+		if (!(flags & 0x1000U) && std::as_const(objects).window(args[0])) send(args[0],5,kind,size);
 		return 0;
 	}
 	if (message==0x210 && (uint16_t(args[2])==1 || uint16_t(args[2])==2 || uint16_t(args[2])==0x201 || uint16_t(args[2])==0x204 || uint16_t(args[2])==0x207)) return 0;
@@ -1875,7 +1940,8 @@ uint64_t NativeWindows::default_message(std::span<const uint64_t> args)
 	}
 	if (message==0x0f && args[2]) return 0;
 	if (message==0x0f) {
-		if (window->painting) throw uint32_t(170);
+		// Inside a paint the window already began, the update is taken: nothing is left for the default procedure to paint.
+		if (window->painting) return 0;
 		start_paint(args[0]); finish_paint(args[0]);
 		return 0;
 	}
@@ -3085,10 +3151,25 @@ bool NativeWindows::dispatch(std::string_view name)
 		}
 		else if (name=="BeginPaint") {
 			auto *window=objects.window(args[0]); if (!window) throw uint32_t(1400);
-			if (window->painting) throw uint32_t(170);
 			const bool narrow=process.mode()==NativeMode::x86;
 			const size_t P=narrow ? 4 : 8;
 			const auto old=process.read_memory(args[1],narrow ? 64 : 72); process.write_memory(args[1],old);
+			if (window->painting) {
+				// A paint begun inside another of the same window gets a context of its own over what is left to update, which the
+				// first paint already took: nothing, and an empty paint rectangle.
+				surface_dc(args[0]);
+				const auto *painted=std::as_const(objects).window(args[0]);
+				DesktopDC device{painted->bitmap,painted->bitmap,args[0]}; device.leased=true;
+				objects.configure_window_dc(args[0],device,false);
+				device.clip=DesktopRegion{};
+				result=objects.add(device);
+				if (!result) throw uint32_t(8);
+				std::vector<uint8_t> output(old.size());
+				put(output,0,result,P);
+				process.write_memory(args[1],output);
+				process.return_api(result);
+				return true;
+			}
 			const auto paint=start_paint(args[0]);
 			std::vector<uint8_t> output(old.size());
 			put(output,0,paint.dc,P); put(output,P,paint.erase,4);
@@ -3101,7 +3182,15 @@ bool NativeWindows::dispatch(std::string_view name)
 			const auto paint=process.read_memory(args[1],narrow ? 64 : 72);
 			// A paint the window's surface ended early, when the window changed size inside it, has nothing left to finish; EndPaint
 			// still succeeds, as it always does on Windows.
-			if (window->painting && read(paint,0,narrow ? 4 : 8)!=window->dc) throw uint32_t(87);
+			const uint64_t context=read(paint,0,narrow ? 4 : 8);
+			if (window->painting && context!=window->dc) {
+				// The end of a paint begun inside another: its own context goes, and the outer paint goes on.
+				const auto *device=objects.dc(context);
+				if (!device || !device->leased || device->window!=args[0]) throw uint32_t(87);
+				objects.erase(context);
+				process.return_api(1);
+				return true;
+			}
 			if (window->painting) finish_paint(args[0]);
 			result=1;
 		}

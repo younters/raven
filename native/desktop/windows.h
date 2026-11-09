@@ -296,6 +296,8 @@ private:
 	struct SpareSurface { std::shared_ptr<SharedPixels> pixels; uint64_t address=0; size_t size=0; uint32_t width=0, height=0; };
 	std::map<uint64_t,SpareSurface> spare_surfaces;
 	bool resizing=false;
+	// Windows that SetWindowPos is placing: their WM_MOVE and WM_SIZE come from the default answer to WM_WINDOWPOSCHANGED instead.
+	std::set<uint64_t> placing;
 	void drop_spare_surface(uint64_t handle);
 	// The compositor took the keyboard from the program's windows; applied once no window of the program receives it right after.
 	bool focus_leaving=false;
@@ -488,6 +490,11 @@ private:
 	std::vector<uint64_t> top_level_windows() const;
 	uint64_t window_at(int32_t x,int32_t y);
 	bool enable_window(uint64_t window,bool enable);
+	// Invalidates what a window going away or moving leaves uncovered: the screen area in the parent and in every other visible child of
+	// it, with their own children, that lies under it.
+	void expose(uint64_t parent,DesktopRect area,uint64_t leaving);
+	// The window that becomes active when the active one closes or hides: its owner, when that can take the keyboard.
+	uint64_t successor(uint64_t leaving) const;
 	void invalidate_tree(uint64_t window,bool erase);
 	// Window messages registered by name (RegisterWindowMessage); ids start at 0xc000 like atoms.
 	std::map<std::u16string,uint32_t> registered_messages;

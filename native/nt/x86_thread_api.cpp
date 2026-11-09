@@ -206,12 +206,12 @@ bool NativeX86Threads::dispatch(std::string_view name)
 		threads.resume(*object->thread);
 		process.return_api(uint32_t(previous));
 	} else if (name == "SetThreadPriority") {
-		const auto object = uint32_t(args[0]) == 0xfffffffeU ? nullptr : objects.object_as<ThreadObject>(args[0]);
-		const auto thread = object ? object->thread : uint32_t(args[0]) == 0xfffffffeU ? threads.find(threads.current_id()) : nullptr;
-		const uint32_t error = thread ? set_thread_priority(*thread, int32_t(args[1]), thread->id == threads.current_id()) : 6;
-		if (error)
-			environment.set_last_error(error);
-		process.return_api(!error);
+		const auto object = objects.object_as<ThreadObject>(args[0]);
+		// Entering or leaving background processing mode is no priority: the thread keeps the one it has.
+		const bool mode = args[1] == 0x10000 || args[1] == 0x20000;
+		if (object && !mode)
+			object->thread->priority = int32_t(args[1]);
+		process.return_api(object != nullptr);
 	} else if (name == "Sleep") {
 		const uint32_t milliseconds = uint32_t(args[0]);
 		if (!milliseconds) {
