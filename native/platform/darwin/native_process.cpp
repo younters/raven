@@ -1675,6 +1675,12 @@ void NativeProcess::pause_thread(NativeThreadState &thread)
 	state->stopped = stopped;
 }
 
+bool NativeProcess::await_stop()
+{
+	FEX_RETURN(await_stop);
+	return false;
+}
+
 void NativeProcess::resume_context_thread(NativeThreadState &thread)
 {
 	FEX_RETURN(resume_context_thread, thread);

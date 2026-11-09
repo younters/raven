@@ -417,6 +417,11 @@ void NativeThreads::schedule()
 		// than after the next sleep.
 		if (pick(true))
 			continue;
+#ifdef __APPLE__
+		// A thread whose call is a moment away is answered without the controller and its worker both going to sleep and waking again.
+		if (process.await_stop())
+			continue;
+#endif
 		auto wake = std::chrono::steady_clock::time_point::max();
 		bool any = false;
 		for (const auto &thread : threads)

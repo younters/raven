@@ -419,6 +419,41 @@ struct FexProcess::State {
 	NativeMode mode = NativeMode::x64;
 	// When the scheduler last looked at the other threads, which a run of quickly answered calls leaves waiting.
 	uint64_t last_scheduled = 0;
+	// How many of the scheduler's watches over all running workers ran out in a row, and a count to look again now and then.
+	unsigned scheduler_misses = 0, scheduler_skips = 0;
+	// The scheduler has no thread ready: it watches every running worker for a stop, as stop_arrived_soon watches one. With several
+	// threads calling the runtime, each call otherwise cost a wake of the controller from its descriptor and of the worker from its
+	// condition, and four threads reading files took 100 us a call where one took 6. A worker seen watched leaves the descriptor alone.
+	bool any_stop_soon()
+	{
+		if (scheduler_misses >= 4 && (++scheduler_skips & 15))
+			return false;
+		bool watching = false;
+		for (auto &[id, worker] : workers)
+			if (!worker->stopped.load(std::memory_order_acquire)) {
+				worker->controller_watching.store(true, std::memory_order_seq_cst);
+				watching = true;
+			}
+		if (!watching)
+			return false;
+		bool arrived = false;
+		for (const auto limit = handoff_ticks() + ticks_of(handoff_patience); !arrived && handoff_ticks() < limit;) {
+			for (auto &[id, worker] : workers)
+				if (worker->controller_watching.load(std::memory_order_relaxed) && worker->stopped.load(std::memory_order_seq_cst)) {
+					arrived = true;
+					break;
+				}
+			asm volatile("yield");
+		}
+		// Order against each worker's stop: one that stopped after its watch ended sees it ended and writes the descriptor.
+		for (auto &[id, worker] : workers)
+			if (worker->controller_watching.load(std::memory_order_relaxed)) {
+				worker->controller_watching.store(false, std::memory_order_seq_cst);
+				arrived |= worker->stopped.load(std::memory_order_seq_cst);
+			}
+		scheduler_misses = arrived ? 0 : std::min(scheduler_misses + 1, 64u);
+		return arrived;
+	}
 	// Watches a resumed worker for a stop without entering the scheduler. Gives up at once if another worker has a stop to answer, and now and
 	// then regardless: timeouts, window events and threads this one woke only move in the scheduler.
 	bool stop_arrived_soon(FexWorker &worker)
@@ -1560,6 +1595,7 @@ NativeThreadState FexProcess::new_thread(uint64_t stack_top, uint64_t teb)
 	return thread;
 }
 int FexProcess::execution_descriptor() const { return state->execution; }
+bool FexProcess::await_stop() { return state->parallel && state->any_stop_soon(); }
 void FexProcess::drain_execution()
 {
 	uint64_t value;

@@ -157,6 +157,8 @@ public:
 	void pause_thread(NativeThreadState &thread);
 #ifdef __APPLE__
 	void resume_context_thread(NativeThreadState &thread);
+	// Before the scheduler sleeps with nothing ready: whether a running thread stopped with a call while it watched for a moment.
+	bool await_stop();
 #endif
 	// The general registers a thread that is not running continues with: a thread paused in its own task gets them there, a saved
 	// thread in its snapshot (SetThreadContext on a suspended thread).

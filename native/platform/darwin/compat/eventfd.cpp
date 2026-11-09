@@ -51,11 +51,21 @@ struct Counter {
 	Counter(uint64_t value, bool semaphore) : value(value), semaphore(semaphore) {}
 };
 
+// Every read, write and close in the process comes through here, file transfers included: one flag per low descriptor number says
+// without a lock that it is not an event, where a lookup under the table's lock made loader threads queue on each other's reads.
+constexpr int flagged_limit = 65536;
+
 struct Events {
 	std::mutex mutex;
 	std::map<int, std::shared_ptr<Counter>> descriptors;
 	std::atomic<size_t> count{0};
+	std::atomic<bool> flagged[flagged_limit]{};
 };
+
+bool flagged(int descriptor)
+{
+	return descriptor >= 0 && descriptor < flagged_limit;
+}
 
 Events &events()
 {
@@ -68,6 +78,8 @@ std::shared_ptr<Counter> counter(int descriptor)
 {
 	auto &table = events();
 	if (!table.count.load(std::memory_order_relaxed))
+		return nullptr;
+	if (flagged(descriptor) && !table.flagged[descriptor].load(std::memory_order_acquire))
 		return nullptr;
 	std::lock_guard lock(table.mutex);
 	const auto found = table.descriptors.find(descriptor);
@@ -115,6 +127,8 @@ extern "C" int eventfd(unsigned int initial, int flags)
 		std::lock_guard lock(table.mutex);
 		table.descriptors.emplace(descriptor, std::move(state));
 		table.count.fetch_add(1, std::memory_order_relaxed);
+		if (flagged(descriptor))
+			table.flagged[descriptor].store(true, std::memory_order_release);
 		return descriptor;
 	} catch (...) {
 		system_close(descriptor);
@@ -194,7 +208,7 @@ extern "C" int close(int descriptor)
 {
 	raven_socket_closing(descriptor);
 	auto &table = events();
-	if (table.count.load(std::memory_order_relaxed)) {
+	if (table.count.load(std::memory_order_relaxed) && (!flagged(descriptor) || table.flagged[descriptor].load(std::memory_order_acquire))) {
 		std::lock_guard lock(table.mutex);
 		const auto found = table.descriptors.find(descriptor);
 		if (found != table.descriptors.end()) {
@@ -204,6 +218,8 @@ extern "C" int close(int descriptor)
 			state->changed.notify_all();
 			table.descriptors.erase(found);
 			table.count.fetch_sub(1, std::memory_order_relaxed);
+			if (flagged(descriptor))
+				table.flagged[descriptor].store(false, std::memory_order_release);
 		}
 	}
 	return system_close(descriptor);

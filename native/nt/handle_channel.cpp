@@ -422,9 +422,18 @@ void receive_handles(NativeObjects &objects)
 		descriptors.push_back({channel->host_descriptor(), POLLIN, 0});
 	for (const auto &channel : peers)
 		descriptors.push_back({channel->host_descriptor(), POLLIN, 0});
+	// The scheduler asks on every call it serves, so each channel is peeked and the listener is asked for a connection outright: a poll
+	// with no timeout costs about 20 us on macOS 26, a peek or a refused accept a fiftieth of that. Anything but "nothing yet" counts
+	// as ready, so a closed or failed channel is still received from.
 	int ready = 0;
-	if (!descriptors.empty())
-		do ready = ::poll(descriptors.data(), descriptors.size(), 0); while (ready < 0 && errno == EINTR);
+	if (listener)
+		descriptors[0].revents = POLLIN;
+	for (size_t index = listener; index < descriptors.size(); ++index) {
+		char byte;
+		if (descriptors[index].fd >= 0 && (::recv(descriptors[index].fd, &byte, 1, MSG_PEEK | MSG_DONTWAIT) >= 0 ||
+			(errno != EAGAIN && errno != EWOULDBLOCK)))
+			descriptors[index].revents = POLLIN;
+	}
 	// A failed readiness query falls back to the nonblocking receives rather than losing pending transfers.
 	if (listener && (ready < 0 || descriptors[0].revents)) {
 		for (;;) {
