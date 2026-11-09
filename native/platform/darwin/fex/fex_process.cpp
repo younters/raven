@@ -244,6 +244,10 @@ void notify_memory(const char *name, uint64_t *args, size_t after, const std::fu
 void initialize_process(Bytes bytes, size_t opt)
 {
 	if (!wow64_module) raven_code_cache::configure(*process_environment);
+	// x86 orders every store, SSE ones too, and programs hand data between threads on it; without this about one in ten paired movups
+	// stores reached another thread out of order. GravityMark showed no cost beyond its run-to-run noise (Vulkan 49.1 to 50.1 FPS, D3D11
+	// 51.1 to 48.8). FEX leaves it off by default.
+	process_environment->add_environment(u"FEX_VECTORTSOENABLED=1");
 	// FEX reads its options from the environment its module's CRT sees, which is this one and not the host's. A FEX_ variable given to
 	// Raven reaches it as it would reach FEX anywhere; it comes after Raven's own entries, so it wins over them.
 	for (char **entry = environ; entry && *entry; ++entry)
