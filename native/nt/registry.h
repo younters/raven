@@ -84,7 +84,13 @@ private:
 	void load();
 	// The hive file's records from `from` on: each applies to the keys in the order the file holds them. The size read is returned.
 	long long replay(long long from);
-	void apply(const std::string &record);
+	// The key the previous value record of a replay was set in, kept for the next one.
+	struct ReplayCursor {
+		bool valid = false;
+		std::string path;
+		std::map<std::u16string, Key>::iterator key;
+	};
+	void apply(std::string_view record, ReplayCursor &cursor);
 	// Appends the records of one change under the prefix's lock, after reading what other processes appended first.
 	void journal(const std::string &records);
 	mutable long long loaded = 0, compacted = 0;

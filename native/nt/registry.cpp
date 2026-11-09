@@ -7,6 +7,8 @@
 #include "nls.h"
 
 #include <algorithm>
+#include <array>
+#include <string_view>
 #include <cstring>
 #include <fstream>
 #include <initializer_list>
@@ -44,6 +46,7 @@ std::u16string fold(std::u16string_view text)
 std::u16string decode_utf8(std::string_view text)
 {
 	std::u16string result;
+	result.reserve(text.size());
 	for (size_t index = 0; index < text.size();) {
 		const auto lead = static_cast<unsigned char>(text[index]);
 		const size_t extra = lead < 0x80 ? 0 : lead < 0xe0 ? 1 : lead < 0xf0 ? 2 : 3;
@@ -85,6 +88,7 @@ std::vector<uint8_t> unhex(std::string_view text)
 		throw std::runtime_error("registry hive contains invalid hexadecimal data");
 	};
 	std::vector<uint8_t> result;
+	result.reserve(text.size() / 2);
 	for (size_t index = 0; index < text.size(); index += 2)
 		result.push_back(uint8_t(nibble(text[index]) << 4 | nibble(text[index + 1])));
 	return result;
@@ -106,7 +110,10 @@ std::string escape(std::u16string_view text)
 
 std::string unescape(std::string_view text)
 {
+	if (text.find('\\') == text.npos)
+		return std::string(text);
 	std::string result;
+	result.reserve(text.size());
 	for (size_t index = 0; index < text.size(); ++index) {
 		if (text[index] != '\\') {
 			result.push_back(text[index]);
@@ -917,42 +924,67 @@ void NativeRegistry::load()
 
 long long NativeRegistry::replay(long long from)
 {
-	std::ifstream input(file, std::ios::binary);
-	input.seekg(from);
-	std::string line;
+	// Every process reads the whole hive when it starts, and a prefix with a few installers in it holds megabytes: the rest of the file
+	// is read at once and its lines taken in place, where reading it a line at a time into new strings was a third of a short process's
+	// life.
+	std::string text;
+	const int descriptor = ::open(file.c_str(), O_RDONLY | O_CLOEXEC);
+	if (descriptor >= 0) {
+		struct stat status{};
+		if (::fstat(descriptor, &status) == 0 && status.st_size > from) {
+			text.resize(size_t(status.st_size - from));
+			size_t got = 0;
+			while (got < text.size()) {
+				const auto count = ::pread(descriptor, text.data() + got, text.size() - got, off_t(from + (long long)got));
+				if (count <= 0) break;
+				got += size_t(count);
+			}
+			text.resize(got);
+		}
+		::close(descriptor);
+	}
 	long long position = from;
+	ReplayCursor cursor;
 	// Only whole lines count: a record another process is still writing is read the next time.
-	while (std::getline(input, line) && !input.eof()) {
-		position += (long long)line.size() + 1;
-		apply(line);
+	for (size_t start = 0, end; (end = text.find('\n', start)) != text.npos; start = end + 1) {
+		apply(std::string_view(text).substr(start, end - start), cursor);
+		position = from + (long long)end + 1;
 	}
 	loaded = position;
 	return position;
 }
 
-void NativeRegistry::apply(const std::string &line)
+void NativeRegistry::apply(std::string_view line, ReplayCursor &cursor)
 {
-	std::vector<std::string> fields;
-	size_t start = 0;
-	for (size_t tab; (tab = line.find('\t', start)) != line.npos; start = tab + 1)
-		fields.push_back(line.substr(start, tab - start));
-	fields.push_back(line.substr(start));
-	if (fields[0] == "K" && fields.size() == 2) {
+	std::array<std::string_view, 6> fields;
+	size_t count = 0, start = 0;
+	for (size_t tab; count + 1 < fields.size() && (tab = line.find('\t', start)) != line.npos; start = tab + 1)
+		fields[count++] = line.substr(start, tab - start);
+	fields[count++] = line.substr(start);
+	if (fields[0] == "K" && count == 2) {
+		// A key made now may be the one a kept lookup found missing.
+		cursor.valid = false;
 		const auto path = decode_utf8(unescape(fields[1]));
 		keys.emplace(fold(path), Key{path, {}});
-	} else if (fields[0] == "V" && fields.size() == 5) {
-		const auto path = decode_utf8(unescape(fields[1]));
+	} else if (fields[0] == "V" && count == 5) {
+		// The values of a key follow one another in a hive, so the key looked up for one is kept for the next.
+		if (!cursor.valid || cursor.path != fields[1]) {
+			cursor.key = keys.find(fold(decode_utf8(unescape(fields[1]))));
+			cursor.path.assign(fields[1]);
+			cursor.valid = true;
+		}
+		const auto found = cursor.key;
 		const auto name = decode_utf8(unescape(fields[2]));
-		const auto found = keys.find(fold(path));
 		// A value set by a process that had not yet read another one's deletion of the key is lost with the key, as on Windows.
 		if (found != keys.end())
-			found->second.values[fold(name)] = Value{name, uint32_t(std::stoul(fields[3])), unhex(fields[4])};
-	} else if (fields[0] == "Y" && fields.size() == 3) {
+			found->second.values[fold(name)] = Value{name, uint32_t(std::stoul(std::string(fields[3]))), unhex(fields[4])};
+	} else if (fields[0] == "Y" && count == 3) {
 		// A value deleted.
 		if (const auto found = keys.find(fold(decode_utf8(unescape(fields[1])))); found != keys.end())
 			found->second.values.erase(fold(decode_utf8(unescape(fields[2]))));
-	} else if (fields[0] == "X" && fields.size() == 3) {
+	} else if (fields[0] == "X" && count == 3) {
 		// A key deleted with everything below it, or emptied ("0") when it stays.
+		cursor.valid = false;
 		const auto folded = fold(decode_utf8(unescape(fields[1])));
 		const auto prefix = folded + u'\\';
 		keys.erase(keys.lower_bound(prefix), std::find_if(keys.lower_bound(prefix), keys.end(), [&](const auto &item) { return !item.first.starts_with(prefix); }));
