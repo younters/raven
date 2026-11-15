@@ -1774,6 +1774,17 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         add_custom_target(focus_pe_fixture ALL DEPENDS ${FOCUS_FIXTURE})
         add_test(NAME native_focus_cli COMMAND raven --run-process --execution=native ${FOCUS_FIXTURE})
         set_tests_properties(native_focus_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        if(RAVEN_MINGW32)
+            set(FOCUS_FIXTURE32 ${CMAKE_CURRENT_BINARY_DIR}/focus-fixture32.exe)
+            add_custom_command(OUTPUT ${FOCUS_FIXTURE32}
+                COMMAND ${RAVEN_MINGW32} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                    -Wl,--entry,_raven_entry,--no-insert-timestamp
+                    -o ${FOCUS_FIXTURE32} ${PROJECT_SOURCE_DIR}/testdata/native_loader/focus_client.c -lkernel32 -luser32
+                DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/focus_client.c VERBATIM)
+            add_custom_target(focus_pe32_fixture ALL DEPENDS ${FOCUS_FIXTURE32})
+            add_test(NAME native_focus_cli_x32 COMMAND raven --run-process --execution=native ${FOCUS_FIXTURE32})
+            set_tests_properties(native_focus_cli_x32 PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        endif()
         set(GEOMETRY_NEGATIVE ${CMAKE_CURRENT_BINARY_DIR}/geometry-negative.exe)
         add_custom_command(OUTPUT ${GEOMETRY_NEGATIVE}
             COMMAND ${RAVEN_MINGW64} -nostdlib

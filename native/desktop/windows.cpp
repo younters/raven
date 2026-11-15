@@ -1851,8 +1851,15 @@ void NativeWindows::activate(uint64_t handle)
 					notify(previous,6,0,handle);
 				}
 				if (handle && !std::as_const(objects).window(handle)) handle=0;
+				// WM_ACTIVATEAPP: the program as a whole gains the foreground when none of its windows was active, and loses it when
+				// none will be. The other side is not a program of this process, so lParam names no thread.
+				if (!handle && previous && std::as_const(objects).window(previous)) notify(previous,0x1c,0,0);
 				active=handle;
-				if (handle) { notify(handle,0x86,1,previous); notify(handle,6,1,previous); }
+				if (handle) {
+					if (!previous) notify(handle,0x1c,1,0);
+					notify(handle,0x86,1,previous);
+					notify(handle,6,1,previous);
+				}
 				activating=false;
 			} catch (...) { activating=false; has_queued_activation=false; throw; }
 		}
