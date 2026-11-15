@@ -2398,6 +2398,27 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             add_custom_target(platform_fixture ALL DEPENDS ${PLATFORM_CLIENT})
             add_test(NAME native_platform_services COMMAND raven --run-process --execution=native --timeout-ms=30000 ${PLATFORM_CLIENT})
             set_tests_properties(native_platform_services PROPERTIES TIMEOUT 40 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+            # MapVirtualKey's extended scan codes and left and right modifiers, through all four forms, from 64-bit and 32-bit callers.
+            foreach(width 64 32)
+                if(width EQUAL 64)
+                    set(map_key_compiler ${RAVEN_MINGW64})
+                    set(map_key_entry raven_entry)
+                else()
+                    set(map_key_compiler ${RAVEN_MINGW32})
+                    set(map_key_entry _raven_entry)
+                endif()
+                if(map_key_compiler)
+                    set(map_key_client ${CMAKE_CURRENT_BINARY_DIR}/map-key${width}.exe)
+                    add_custom_command(OUTPUT ${map_key_client}
+                        COMMAND ${map_key_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${map_key_entry},--no-insert-timestamp
+                            -o ${map_key_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/map_key_client.c -lkernel32 -luser32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/map_key_client.c VERBATIM)
+                    add_custom_target(map_key${width}_fixture ALL DEPENDS ${map_key_client})
+                    add_test(NAME native_map_virtual_key_x${width} COMMAND raven --run-process --execution=native ${map_key_client})
+                    set_tests_properties(native_map_virtual_key_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                endif()
+            endforeach()
             set(ETW_CLIENTS)
             set(PROCESS_ENUM_CLIENTS)
             set(WORKSTATION_CLIENTS)

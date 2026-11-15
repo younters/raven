@@ -6,6 +6,7 @@
 #include <cctype>
 #include <cstring>
 #include <iostream>
+#include <iterator>
 #include <sys/mman.h>
 #include <utility>
 
@@ -705,40 +706,76 @@ void NativeWindows::register_ext_api(ApiRegistry &registry)
 	const auto map_key = [](ApiCall &call) {
 		const uint32_t code = call.u32(0), type = call.u32(1);
 		if (type == 0 || type == 4) {
-			for (uint32_t scan = 1; scan < 89; ++scan)
-				if (scan_to_vk[scan] == code || (code == 0xa0 && scan == 42) || (code == 0xa1 && scan == 54) || (code == 0xa2 && scan == 29) || (code == 0xa4 && scan == 56)) {
-					call.ret(scan);
-					return;
-				}
-			call.ret(0);
+			// MAPVK_VK_TO_VSC_EX gives an extended key its 0xe0 prefix; MAPVK_VK_TO_VSC gives the same code without it.
+			if (!code || code > 0xff) {
+				call.ret(0);
+				return;
+			}
+			uint32_t scan = 0;
+			switch (code) {
+			case 0xa0: scan = 0x2a; break;
+			case 0xa1: scan = 0x36; break;
+			case 0xa2: scan = 0x1d; break;
+			case 0xa3: scan = 0xe01d; break;
+			case 0xa4: scan = 0x38; break;
+			case 0xa5: scan = 0xe038; break;
+			case 0x21: scan = 0xe049; break;
+			case 0x22: scan = 0xe051; break;
+			case 0x23: scan = 0xe04f; break;
+			case 0x24: scan = 0xe047; break;
+			case 0x25: scan = 0xe04b; break;
+			case 0x26: scan = 0xe048; break;
+			case 0x27: scan = 0xe04d; break;
+			case 0x28: scan = 0xe050; break;
+			case 0x2d: scan = 0xe052; break;
+			case 0x2e: scan = 0xe053; break;
+			case 0x5b: scan = 0xe05b; break;
+			case 0x5c: scan = 0xe05c; break;
+			case 0x5d: scan = 0xe05d; break;
+			case 0x6f: scan = 0xe035; break;
+			default:
+				for (uint32_t at = 1; at < std::size(scan_to_vk); ++at)
+					if (scan_to_vk[at] == code) {
+						scan = at;
+						break;
+					}
+			}
+			call.ret(type == 4 ? scan : scan & 0xff);
 		} else if (type == 1 || type == 3) {
-			call.ret(code < 89 ? scan_to_vk[code] : 0);
+			// A scan code may carry the 0xe0 prefix of an extended key. MAPVK_VSC_TO_VK_EX tells left and right keys apart.
+			const uint32_t scan = code & 0xff;
+			const bool extended = (code & 0xff00) == 0xe000;
+			uint32_t vk = code < std::size(scan_to_vk) ? scan_to_vk[code] : 0;
+			if (extended) {
+				switch (scan) {
+				case 0x1c: vk = 0x0d; break;
+				case 0x1d: vk = 0x11; break;
+				case 0x35: vk = 0x6f; break;
+				case 0x38: vk = 0x12; break;
+				case 0x47: case 0x48: case 0x49: case 0x4b: case 0x4d: case 0x4f:
+				case 0x50: case 0x51: case 0x52: case 0x53: vk = scan_to_vk[scan]; break;
+				case 0x5b: vk = 0x5b; break;
+				case 0x5c: vk = 0x5c; break;
+				case 0x5d: vk = 0x5d; break;
+				}
+			}
+			if (type == 3) {
+				if (vk == 0x10) vk = scan == 0x36 ? 0xa1 : 0xa0;
+				else if (vk == 0x11) vk = extended ? 0xa3 : 0xa2;
+				else if (vk == 0x12) vk = extended ? 0xa5 : 0xa4;
+			}
+			call.ret(vk);
 		} else if (type == 2) {
-			call.ret(key_characters(code).second ? std::toupper(key_characters(code).first) : 0);
+			call.ret(key_characters(code).first ? std::toupper(key_characters(code).first) : 0);
 		} else {
 			call.ret(0);
 		}
 	};
-	// There is one keyboard layout, whichever layout the Ex forms name.
+	// There is one keyboard layout, whichever layout the Ex forms name, and on it the ANSI and Unicode forms agree.
 	registry.add("MapVirtualKeyW", 2, map_key);
 	registry.add("MapVirtualKeyExW", 3, map_key);
-	const auto map_key_ansi = [](ApiCall &call) {
-		const uint32_t code = call.u32(0), type = call.u32(1);
-		if (type == 1 || type == 3)
-			call.ret(code < 89 ? scan_to_vk[code] : 0);
-		else if (type == 0) {
-			for (uint32_t scan = 1; scan < 89; ++scan)
-				if (scan_to_vk[scan] == code) {
-					call.ret(scan);
-					return;
-				}
-			call.ret(0);
-		} else {
-			call.ret(key_characters(code).first ? std::toupper(key_characters(code).first) : 0);
-		}
-	};
-	registry.add("MapVirtualKeyA", 2, map_key_ansi);
-	registry.add("MapVirtualKeyExA", 3, map_key_ansi);
+	registry.add("MapVirtualKeyA", 2, map_key);
+	registry.add("MapVirtualKeyExA", 3, map_key);
 	// There is one keyboard layout, whichever layout VkKeyScanEx names.
 	const auto key_scan = [](ApiCall &call) {
 		const char16_t c = char16_t(call.u32(0));
