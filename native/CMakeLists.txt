@@ -2925,6 +2925,17 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_test(NAME native_crt_errors_x${width} COMMAND raven --run-process --execution=native ${crt_client})
                     set_tests_properties(native_crt_errors_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
                         ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/crt-errors-prefix${width})
+                    # The forms with a 32-bit time_t, and in the 32-bit library msvcrt.dll's names for them.
+                    set(crt_time32_client ${CMAKE_CURRENT_BINARY_DIR}/crt-time32-${width}.exe)
+                    add_custom_command(OUTPUT ${crt_time32_client}
+                        COMMAND ${crt_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${crt_entry},--no-insert-timestamp
+                            -o ${crt_time32_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/crt_time32_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/crt_time32_client.c VERBATIM)
+                    add_custom_target(crt_time32_fixture${width} ALL DEPENDS ${crt_time32_client})
+                    add_test(NAME native_crt_time32_x${width} COMMAND raven --run-process --execution=native ${crt_time32_client})
+                    set_tests_properties(native_crt_time32_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/crt-time32-prefix${width})
                     set(shell_info_client ${CMAKE_CURRENT_BINARY_DIR}/shell-info${width}.exe)
                     add_custom_command(OUTPUT ${shell_info_client}
                         COMMAND ${crt_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector

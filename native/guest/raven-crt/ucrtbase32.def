@@ -36,3 +36,16 @@ EXPORTS
 	raven_add_vectored_continue = raven_add_vectored_continue@8
 	raven_remove_vectored = raven_remove_vectored@4
 	?terminate@@YAXXZ = terminate
+	; msvcrt.dll's names for the forms with a 32-bit time_t, which 32-bit programs built against it import (time and _stati64 are
+	; defined under their own names)
+	gmtime = _gmtime32
+	localtime = _localtime32
+	mktime = _mktime32
+	ctime = _ctime32
+	difftime = _difftime32
+	_fstat = _fstat32
+	_wstati64 = _wstat32i64
+	_fstati64 = _fstat32i64
+	_findfirst = _findfirst32
+	_findnext = _findnext32
+	_ftime = _ftime32
