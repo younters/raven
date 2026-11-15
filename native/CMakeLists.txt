@@ -2915,6 +2915,17 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     set(crt_entry _raven_entry)
                 endif()
                 if(crt_compiler)
+                    # C99 math entry points, the long double forms with Microsoft's double ABI among them.
+                    set(crt_math_client ${CMAKE_CURRENT_BINARY_DIR}/crt-math${width}.exe)
+                    add_custom_command(OUTPUT ${crt_math_client}
+                        COMMAND ${crt_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${crt_entry},--no-insert-timestamp
+                            -o ${crt_math_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/crt_math_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/crt_math_client.c VERBATIM)
+                    add_custom_target(crt_math_fixture${width} ALL DEPENDS ${crt_math_client})
+                    add_test(NAME native_crt_math_x${width} COMMAND raven --run-process --execution=native ${crt_math_client})
+                    set_tests_properties(native_crt_math_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/crt-math-prefix${width})
                     set(crt_client ${CMAKE_CURRENT_BINARY_DIR}/crt-errors${width}.exe)
                     add_custom_command(OUTPUT ${crt_client}
                         COMMAND ${crt_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
