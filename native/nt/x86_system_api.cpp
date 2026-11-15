@@ -1,5 +1,7 @@
 #include "x86_system_api.h"
 
+#include "processors.h"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -379,16 +381,18 @@ bool NativeX86System::dispatch(std::string_view name)
 	} else if (name == "DeviceIoControl") {
 		fail(1);
 	} else if (name == "GetProcessAffinityMask") {
+		// The processors GetSystemInfo reports, all of which the process may use.
 		if (args[1])
-			write32(args[1], 0xf);
+			write32(args[1], uint32_t(reported_processor_mask(4)));
 		if (args[2])
-			write32(args[2], 0xf);
+			write32(args[2], uint32_t(reported_processor_mask(4)));
 		process.return_api(1);
 	} else if (name == "SetProcessAffinityMask") {
 		process.return_api(1);
 	} else if (name == "GetSystemInfo") {
+		// The processor count and mask are the ones the shared GetSystemInfo and the ideal-processor calls use (processors.h).
 		std::vector<uint8_t> info(36);
-		const uint32_t fields[] = {0, 4096, 0x10000, 0x7ffeffff, 0xf, 4, 586, 65536, 0x0a000006};
+		const uint32_t fields[] = {0, 4096, 0x10000, 0x7ffeffff, uint32_t(reported_processor_mask(4)), reported_processors(4), 586, 65536, 0x0a000006};
 		for (size_t index = 0; index < 9; ++index)
 			for (size_t byte = 0; byte < 4; ++byte)
 				info[index * 4 + byte] = uint8_t(fields[index] >> (byte * 8));

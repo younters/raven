@@ -2,6 +2,7 @@
 #include "child_process.h"
 #include "kernel_context.h"
 #include "mutex.h"
+#include "processors.h"
 #include "event.h"
 #include "kernel_waits.h"
 #include "security_attributes.h"
@@ -1263,6 +1264,76 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	registry.add("SetThreadAffinityMask", 2, [](ApiCall &call) { call.ret(1); });
+	// An ideal processor is a hint the host scheduler does not take, but it is kept so the Get and Set calls agree. A processor the program
+	// was not told about in GetSystemInfo, or another group, is refused with ERROR_INVALID_PARAMETER (Raven's choice: Microsoft Learn names
+	// no error code). MAXIMUM_PROCESSORS (winnt.h: 32 for a 32-bit program, 64 otherwise) only asks.
+	const auto processor_count = [](const ApiCall &call) { return reported_processors(call.pointer_width()); };
+	// Where a handle's ideal processor is kept: in the thread for one of this process, in the handle's object for a thread of another
+	// process. A handle that is not a thread's is ERROR_INVALID_HANDLE, one without the access the call needs (THREAD_SET_INFORMATION to
+	// set, THREAD_QUERY_LIMITED_INFORMATION to ask) ERROR_ACCESS_DENIED; the codes are Raven's choice.
+	struct IdealTarget {
+		uint32_t error;
+		std::shared_ptr<std::atomic<uint32_t>> slot;
+	};
+	const auto ideal_target = [thread_from, &objects](uint64_t handle, uint32_t needed) -> IdealTarget {
+		std::shared_ptr<std::atomic<uint32_t>> slot;
+		if (const auto thread = thread_from(handle))
+			slot = {thread, &thread->ideal_processor};
+		else if (const auto child = objects.object_as<ChildThreadObject>(handle))
+			slot = {child, &child->ideal_processor};
+		else if (const auto remote = objects.object_as<RemoteThreadObject>(handle))
+			slot = {remote, &remote->ideal_processor};
+		else
+			return {6, nullptr};
+		// Duplicated handles may carry unexpanded rights: query-information also grants limited-query access.
+		if (handle != current_thread_pseudo && handle != 0xfffffffeULL && !(thread_access(objects.access_of(handle)) & needed))
+			return {5, nullptr};
+		return {0, std::move(slot)};
+	};
+	registry.add("SetThreadIdealProcessor", 2, [ideal_target, processor_count](ApiCall &call) {
+		const auto target = ideal_target(call[0], 0x20);
+		if (target.error) {
+			call.fail(target.error, UINT32_MAX);
+			return;
+		}
+		const uint32_t wanted = call.u32(1);
+		if (wanted == (call.pointer_width() == 4 ? 32U : 64U)) {
+			call.ret(target.slot->load());
+			return;
+		}
+		if (wanted >= processor_count(call)) {
+			call.fail(87, UINT32_MAX);
+			return;
+		}
+		call.ret(target.slot->exchange(wanted));
+	});
+	// PROCESSOR_NUMBER (winnt.h): the group in the low word, the number in the byte after it. There is one group.
+	registry.add("SetThreadIdealProcessorEx", 3, [ideal_target, processor_count](ApiCall &call) {
+		const auto target = ideal_target(call[0], 0x20);
+		if (target.error) {
+			call.fail(target.error);
+			return;
+		}
+		if (!call[1] || call.load<uint16_t>(call[1]) || call.load<uint8_t>(call[1] + 2) >= processor_count(call)) {
+			call.fail(87);
+			return;
+		}
+		// The two structures may be one: read the request before writing the previous processor over it.
+		const uint32_t wanted = call.load<uint8_t>(call[1] + 2);
+		const uint32_t previous = target.slot->exchange(wanted);
+		if (call[2])
+			call.store<uint32_t>(call[2], previous << 16);
+		call.ret(1);
+	});
+	registry.add("GetThreadIdealProcessorEx", 2, [ideal_target](ApiCall &call) {
+		const auto target = ideal_target(call[0], 0x800);
+		if (target.error) {
+			call.fail(target.error);
+			return;
+		}
+		call.store<uint32_t>(call[1], target.slot->load() << 16);
+		call.ret(1);
+	});
 	registry.add("SetThreadStackGuarantee", 1, [](ApiCall &call) { call.ret(1); });
 	registry.add("OpenThread", 3, [&threads, &objects, handle_of](ApiCall &call) {
 		const auto thread = threads.find(call.u32(2));

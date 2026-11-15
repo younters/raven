@@ -4,6 +4,7 @@
 #include "handle_channel.h"
 #include "objects.h"
 
+#include <atomic>
 #include <filesystem>
 #include <string>
 #include <memory>
@@ -97,6 +98,8 @@ public:
 		return 1;
 	}
 	void hold(int descriptor) { gate = descriptor; }
+	// The processor SetThreadIdealProcessor last named through this handle's object; the child's own thread does not see it.
+	std::atomic<uint32_t> ideal_processor{0};
 	~ChildThreadObject() override
 	{
 		if (gate >= 0)

@@ -3461,6 +3461,20 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         raven_kernel_fixture(alpha-blend alpha_blend_client.c 0x1c1000000 "-lkernel32;-lgdi32")
         add_test(NAME native_alpha_blend COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/alpha-blend.exe)
         set_tests_properties(native_alpha_blend PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        # A thread's ideal processor, for threads of this process and of a child, from 64-bit and 32-bit callers.
+        raven_kernel_fixture(ideal-processor ideal_processor_client.c 0x1c4000000 "-lkernel32")
+        add_test(NAME native_ideal_processor COMMAND raven --run-process --execution=native --timeout-ms=30000 ${CMAKE_CURRENT_BINARY_DIR}/ideal-processor.exe)
+        set_tests_properties(native_ideal_processor PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        if(RAVEN_MINGW32)
+            add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/ideal-processor32.exe
+                COMMAND ${RAVEN_MINGW32} -O1 -nostdlib -fno-stack-protector -fno-builtin
+                    -Wl,--entry,_raven_entry,--no-insert-timestamp
+                    -o ${CMAKE_CURRENT_BINARY_DIR}/ideal-processor32.exe ${LOADER_SOURCES}/ideal_processor_client.c -lkernel32
+                DEPENDS ${LOADER_SOURCES}/ideal_processor_client.c VERBATIM)
+            add_custom_target(ideal_processor32_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/ideal-processor32.exe)
+            add_test(NAME native_ideal_processor_x32 COMMAND raven --run-process --execution=native --timeout-ms=30000 ${CMAKE_CURRENT_BINARY_DIR}/ideal-processor32.exe)
+            set_tests_properties(native_ideal_processor_x32 PROPERTIES TIMEOUT 60 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        endif()
         # The AVX part of a thread's state in its context, which the .NET runtime asks for before it uses the code compiled ahead for AVX2.
         raven_kernel_fixture(xstate-context xstate_context_client.c 0x1c0000000 "-lkernel32")
         add_test(NAME native_xstate_context COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/xstate-context.exe)
