@@ -7,6 +7,7 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <sys/user.h>
 #include <utility>
@@ -134,9 +135,13 @@ public:
 	void set_execution_wait(std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> wait);
 	void stop_thread(const NativeThreadState &thread);
 	void pause_thread(NativeThreadState &thread);
-	// The general registers a thread that is not running continues with: a thread paused in its own task gets them there, a saved
-	// thread in its snapshot (SetThreadContext on a suspended thread).
-	void set_thread_registers(NativeThreadState &thread, const user_regs_struct &registers);
+	// The whole state, general registers and extended state, of a thread other than the loaded one (never the caller's own: its task
+	// would be paused under it), from where it lives: the task of a parallel thread, which is paused first if it runs and goes on at its
+	// next turn, or else its saved state (GetThreadContext). Empty when that task has ended, as it can while its thread is ending.
+	std::optional<NativeContext> thread_context(NativeThreadState &thread);
+	// The state such a thread continues with, put in the same place (SetThreadContext); a running thread must be paused first. False
+	// when its task has ended.
+	bool set_thread_context(NativeThreadState &thread, const NativeContext &context);
 	// A fault stop becomes an API-style stop, so host code may run guest callbacks and redirect execution.
 	void enter_fault_dispatch();
 	// Continues the guest at a new context, dropping callbacks nested above depth (exception unwinding abandons them).
@@ -189,6 +194,9 @@ private:
 	struct State;
 	std::unique_ptr<State> state;
 	void install_segment(uint32_t entry, uint64_t base);
+	// Runs an action with another thread's task as the stopped guest, then selects the caller's again.
+	void in_task(pid_t task, const std::function<void()> &action);
+	bool reach_task(const NativeThreadState &thread, const std::function<void()> &action);
 	uint64_t memory_syscall(uint64_t number, uint64_t a1, uint64_t a2, uint64_t a3 = 0,
 		uint64_t a4 = 0, uint64_t a5 = 0, uint64_t a6 = 0);
 	NativeResult begin_call(uint64_t address, std::span<const uint64_t> arguments,

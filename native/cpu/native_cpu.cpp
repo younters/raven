@@ -103,6 +103,12 @@ public:
 	bool take_stop(pid_t task, int &status);
 	void stop_task(pid_t task);
 	void pause_task();
+	// Whether a task of the guest is still alive: the event thread forgets one once its end is reaped.
+	bool has_task(pid_t task)
+	{
+		std::lock_guard lock(events_mutex);
+		return tasks.contains(task);
+	}
 	int execution_descriptor() const { return execution_wake; }
 	void drain_execution();
 	// While a slice is set, wait() returns -2 once it has passed without the guest stopping.
@@ -321,8 +327,15 @@ void NativeChild::pause_task()
 		throw std::runtime_error("cannot interrupt native task");
 	set_timeout(std::chrono::seconds(2));
 	const int status = wait();
-	if (!WIFSTOPPED(status))
+	if (!WIFSTOPPED(status)) {
+		// The end is put back for the frame that runs this task, which reports it.
+		if (status != -1) {
+			std::lock_guard lock(events_mutex);
+			stops[pid].push_front(status);
+			stops_generation.fetch_add(1, std::memory_order_release);
+		}
 		throw std::runtime_error("native task ended while being suspended");
+	}
 	if (WSTOPSIG(status) != SIGSTOP) {
 		// Its own trap won the race. Drain our pending signal without losing the trap or its fault information.
 		siginfo_t info{};
@@ -1586,57 +1599,88 @@ void NativeProcess::stop_thread(const NativeThreadState &thread)
 	}
 }
 
+void NativeProcess::in_task(pid_t task, const std::function<void()> &action)
+{
+	auto &child = *state->child;
+	const pid_t caller = child.pid;
+	const bool stopped = state->stopped;
+	const uint64_t teb = state->thread_teb;
+	const auto restore = [&] {
+		child.pid = caller;
+		state->stopped = stopped;
+		state->thread_teb = teb;
+		forget_registers();
+	};
+	try {
+		child.pid = task;
+		state->stopped = true;
+		forget_registers();
+		action();
+	} catch (...) {
+		restore();
+		throw;
+	}
+	restore();
+}
+
 void NativeProcess::pause_thread(NativeThreadState &thread)
 {
 	if (!parallel() || thread.stopped)
 		return;
 	if (thread.task <= 0)
 		throw std::runtime_error("native thread has no execution task");
-	auto &child = *state->child;
-	const pid_t caller = child.pid;
-	const bool stopped = state->stopped;
-	try {
-		child.pid = thread.task;
-		child.pause_task();
-		state->stopped = true;
+	in_task(thread.task, [&] {
+		state->child->pause_task();
 		drain_queued_calls(true);
 		forget_registers();
 		thread.context = context();
-	} catch (...) {
-		child.pid = caller;
-		state->stopped = stopped;
-		forget_registers();
-		throw;
-	}
-	child.pid = caller;
-	state->stopped = stopped;
-	forget_registers();
+	});
 }
 
-void NativeProcess::set_thread_registers(NativeThreadState &thread, const user_regs_struct &registers)
+// A parallel thread keeps its registers in its task while it runs and once the scheduler set it aside (save_thread(false) copies only
+// the general registers then); the snapshot holds them only for a thread that has not run yet, or for every thread without tasks.
+static bool registers_in_task(bool parallel, const NativeThreadState &thread)
 {
-	thread.context.registers = registers;
-	if (!parallel() || (thread.stopped && !thread.context_in_task))
-		return;
-	if (thread.task <= 0)
-		throw std::runtime_error("native thread has no execution task");
-	auto &child = *state->child;
-	const pid_t caller = child.pid;
-	const bool stopped = state->stopped;
+	return parallel && thread.task > 0 && (!thread.stopped || thread.context_in_task);
+}
+
+// An action on a thread's task that fails because the task has already ended, which a thread that is ending can do before the scheduler
+// marks it done, reports false; any other failure is thrown as before.
+bool NativeProcess::reach_task(const NativeThreadState &thread, const std::function<void()> &action)
+{
 	try {
-		child.pid = thread.task;
-		state->stopped = true;
-		forget_registers();
-		trace(PTRACE_SETREGS, child.pid, &thread.context.registers);
-	} catch (...) {
-		child.pid = caller;
-		state->stopped = stopped;
-		forget_registers();
+		action();
+		return true;
+	} catch (const std::runtime_error &) {
+		if (thread.task > 0 && !state->child->has_task(thread.task))
+			return false;
 		throw;
 	}
-	child.pid = caller;
-	state->stopped = stopped;
-	forget_registers();
+}
+
+std::optional<NativeContext> NativeProcess::thread_context(NativeThreadState &thread)
+{
+	const bool reached = reach_task(thread, [&] {
+		pause_thread(thread);
+		if (registers_in_task(parallel(), thread) && thread.stopped)
+			in_task(thread.task, [&] { thread.context = context(); });
+	});
+	if (!reached)
+		return std::nullopt;
+	return thread.context;
+}
+
+bool NativeProcess::set_thread_context(NativeThreadState &thread, const NativeContext &context)
+{
+	if (!registers_in_task(parallel(), thread)) {
+		thread.context = context;
+		return true;
+	}
+	// A running thread was paused by thread_context; its own turn continues it with these registers.
+	if (!reach_task(thread, [&] { in_task(thread.task, [&] { set_context(context); }); }))
+		return false;
+	thread.context = context;
+	return true;
 }
 
 void NativeProcess::enter_fault_dispatch()

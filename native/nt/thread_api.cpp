@@ -757,10 +757,18 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			--thread->suspend_count;
 		call.ret(uint32_t(previous));
 	});
-	// The registers of a thread as a CONTEXT (x64), from where the thread stopped: the control and integer groups, the floating-point
-	// state, and the upper halves of the YMM registers when the context has an extended area whose mask asks for them. The .NET runtime
-	// takes all of it from a thread it interrupts for a collection, and puts it back when the thread goes on.
-	registry.add("GetThreadContext", 2, [thread_from, &threads](ApiCall &call) {
+	// A thread's registers as a CONTEXT (x64), read or written by the groups its flags name: control, integer, segments (read only:
+	// the selectors stay as the runtime set them), the floating-point state, and the upper halves of the YMM registers when the context
+	// has an extended area whose mask asks for them (a set whose mask leaves them out clears them). The .NET runtime takes all of it
+	// from a thread it interrupts for a collection, and puts it back when the thread goes on. The caller reads its own registers at
+	// this call (Raven's choice: Windows says such a context "is not valid"). Another thread's whole state is read first, from where it
+	// lives (the task of a parallel thread, paused if it runs), so a set keeps the groups it does not name, and is written back there.
+	// Windows asks for the thread to be suspended and leaves the result undefined otherwise (GetThreadContext: "You cannot get a valid
+	// context for a running thread"; SetThreadContext: "the results are unpredictable"). Raven's choice for a thread that runs is to
+	// pause it for the call, so a read gives the registers it holds and a set moves it on from the new context. Also Raven's choices: a
+	// thread cannot set its own context, an ended thread's cannot be set, and both fail with ERROR_ACCESS_DENIED; a thread whose task
+	// has already ended while it is ending is treated as ended (a read gives its saved state).
+	const auto thread_context = [thread_from, &threads](ApiCall &call, bool set) {
 		if (call.pointer_width() == 4 || !call[1]) {
 			call.fail(call[1] ? 50 : 87);
 			return;
@@ -770,89 +778,91 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(6);
 			return;
 		}
-		const auto &registers = thread->id == threads.current_id() ? call.process.context().registers : thread->snapshot.context.registers;
-		const uint32_t flags = call.load<uint32_t>(call[1] + 0x30);
-		const auto put = [&](size_t at, uint64_t value) { call.store<uint64_t>(call[1] + at, value); };
-		if (flags & 0x1) {
-			call.store<uint16_t>(call[1] + 0x38, uint16_t(registers.cs));
-			call.store<uint16_t>(call[1] + 0x42, uint16_t(registers.ss));
-			call.store<uint32_t>(call[1] + 0x44, uint32_t(registers.eflags));
-			put(0x98, registers.rsp);
-			put(0xa0, registers.rbp);
-			put(0xf8, registers.rip);
-		}
-		if (flags & 0x2) {
-			put(0x78, registers.rax); put(0x80, registers.rcx); put(0x88, registers.rdx); put(0x90, registers.rbx);
-			put(0xa8, registers.rsi); put(0xb0, registers.rdi);
-			put(0xb8, registers.r8); put(0xc0, registers.r9); put(0xc8, registers.r10); put(0xd0, registers.r11);
-			put(0xd8, registers.r12); put(0xe0, registers.r13); put(0xe8, registers.r14); put(0xf0, registers.r15);
-		}
-		const auto &state = thread->id == threads.current_id() ? call.process.context() : thread->snapshot.context;
-		if ((flags & 0x8) && state.xstate.size() >= 512) {
-			call.write(call[1] + x64_context::float_area, std::span<const uint8_t>(state.xstate.data(), 512));
-			call.write(call[1] + x64_context::mxcsr, std::span<const uint8_t>(state.xstate.data() + 24, 4));
-		}
-		if (const uint64_t area = context_extended_area(call.process, call[1])) {
-			const uint64_t asked = call.load<uint64_t>(area) & x64_context::avx_mask;
-			call.store<uint64_t>(area, asked);
-			if (asked) {
-				const auto halves = native_avx(state);
-				call.write(area + x64_context::extended_header, halves);
-			}
-		}
-		call.ret(1);
-	});
-	// The registers of a suspended thread from a CONTEXT (x64), which it continues with when resumed: the control and integer groups,
-	// the floating-point state, and the upper halves of the YMM registers from an extended area, which are cleared when its mask leaves
-	// them out. A thread that is not suspended, the caller among them, keeps its registers: Windows leaves the outcome of that undefined.
-	registry.add("SetThreadContext", 2, [thread_from, &threads, &context](ApiCall &call) {
-		if (call.pointer_width() == 4 || !call[1]) {
-			call.fail(call[1] ? 50 : 87);
-			return;
-		}
-		const auto thread = thread_from(call[0]);
-		if (!thread) {
-			call.fail(6);
-			return;
-		}
-		if (thread->id == threads.current_id() || !thread->suspend_count) {
+		const bool self = thread->id == threads.current_id(), done = thread->state == GuestThread::State::done;
+		if (set && (self || done)) {
 			call.fail(5);
 			return;
 		}
-		auto registers = thread->snapshot.context.registers;
-		const uint32_t flags = call.load<uint32_t>(call[1] + 0x30);
-		const auto get = [&](size_t at) { return call.load<uint64_t>(call[1] + at); };
+		NativeContext state;
+		if (self) {
+			state = call.process.context();
+		} else if (auto found = done ? std::nullopt : call.process.thread_context(thread->snapshot)) {
+			state = std::move(*found);
+		} else if (set) {
+			call.fail(5);
+			return;
+		} else {
+			state = thread->snapshot.context;
+		}
+		auto &registers = state.registers;
+		const auto original = registers;
+		const uint32_t flags = call.load<uint32_t>(call[1] + x64_context::flags);
+		const auto word = [&](size_t at, auto &value, size_t width) {
+			if (!set)
+				width == 8 ? call.store<uint64_t>(call[1] + at, value) : width == 4 ? call.store<uint32_t>(call[1] + at, uint32_t(value)) :
+					call.store<uint16_t>(call[1] + at, uint16_t(value));
+			else
+				value = width == 8 ? call.load<uint64_t>(call[1] + at) : width == 4 ? call.load<uint32_t>(call[1] + at) :
+					call.load<uint16_t>(call[1] + at);
+		};
 		if (flags & 0x1) {
-			// The flags a program may change: the status flags, direction and trap; the rest stay as the processor needs them.
-			registers.eflags = (registers.eflags & ~uint64_t(0xdd5)) | (call.load<uint32_t>(call[1] + 0x44) & 0xdd5);
-			registers.rsp = get(0x98);
-			registers.rbp = get(0xa0);
-			registers.rip = get(0xf8);
+			word(0x38, registers.cs, 2);
+			word(0x42, registers.ss, 2);
+			word(x64_context::eflags, registers.eflags, 4);
+			word(x64_context::rsp, registers.rsp, 8);
+			word(0xa0, registers.rbp, 8);
+			word(x64_context::rip, registers.rip, 8);
+			if (set) {
+				// The flags a program may change: the status flags, direction and trap; the rest stay as the processor needs them.
+				registers.eflags = (original.eflags & ~uint64_t(0xdd5)) | (registers.eflags & 0xdd5);
+				registers.cs = original.cs;
+				registers.ss = original.ss;
+			}
 		}
 		if (flags & 0x2) {
-			registers.rax = get(0x78); registers.rcx = get(0x80); registers.rdx = get(0x88); registers.rbx = get(0x90);
-			registers.rsi = get(0xa8); registers.rdi = get(0xb0);
-			registers.r8 = get(0xb8); registers.r9 = get(0xc0); registers.r10 = get(0xc8); registers.r11 = get(0xd0);
-			registers.r12 = get(0xd8); registers.r13 = get(0xe0); registers.r14 = get(0xe8); registers.r15 = get(0xf0);
+			unsigned long long *const general[] = {&registers.rax, &registers.rcx, &registers.rdx, &registers.rbx, nullptr, nullptr,
+				&registers.rsi, &registers.rdi, &registers.r8, &registers.r9, &registers.r10, &registers.r11, &registers.r12, &registers.r13,
+				&registers.r14, &registers.r15};
+			for (size_t index = 0; index < 16; ++index)
+				if (general[index])
+					word(x64_context::general + index * 8, *general[index], 8);
 		}
-		context.process.set_thread_registers(thread->snapshot, registers);
-		// The floating-point and extended state wait in the thread's saved state for its next turn; a thread that runs on a task of its
-		// own keeps what it has.
-		auto &state = thread->snapshot.context;
-		if (!context.process.parallel()) {
-			if ((flags & 0x8) && state.xstate.size() >= 512) {
+		if ((flags & 0x4) && !set) {
+			word(0x3a, registers.ds, 2);
+			word(0x3c, registers.es, 2);
+			word(0x3e, registers.fs, 2);
+			word(0x40, registers.gs, 2);
+		}
+		if ((flags & 0x8) && state.xstate.size() >= 576) {
+			if (set) {
 				const auto area = call.read(call[1] + x64_context::float_area, 512);
 				std::memcpy(state.xstate.data(), area.data(), 512);
-			}
-			if (const uint64_t area = context_extended_area(call.process, call[1])) {
-				if (call.load<uint64_t>(area) & x64_context::avx_mask)
-					set_native_avx(state, call.read(area + x64_context::extended_header, x64_context::avx_size).data());
-				else
-					set_native_avx(state, nullptr);
+				std::memcpy(state.xstate.data() + 24, call.read(call[1] + x64_context::mxcsr, 4).data(), 4);
+				// The legacy area is loaded only for the components the header marks as saved.
+				state.xstate[512] = uint8_t(state.xstate[512] | 3);
+			} else {
+				call.write(call[1] + x64_context::float_area, std::span<const uint8_t>(state.xstate.data(), 512));
+				call.write(call[1] + x64_context::mxcsr, std::span<const uint8_t>(state.xstate.data() + 24, 4));
 			}
 		}
+		if (const uint64_t area = context_extended_area(call.process, call[1])) {
+			const uint64_t asked = call.load<uint64_t>(area) & x64_context::avx_mask;
+			if (set) {
+				set_native_avx(state, asked ? call.read(area + x64_context::extended_header, x64_context::avx_size).data() : nullptr);
+			} else {
+				call.store<uint64_t>(area, asked);
+				if (asked)
+					call.write(area + x64_context::extended_header, native_avx(state));
+			}
+		}
+		if (set && !call.process.set_thread_context(thread->snapshot, state)) {
+			call.fail(5);
+			return;
+		}
 		call.ret(1);
-	});
+	};
+	registry.add("GetThreadContext", 2, [thread_context](ApiCall &call) { thread_context(call, false); });
+	registry.add("SetThreadContext", 2, [thread_context](ApiCall &call) { thread_context(call, true); });
 	// A thread's description is a name the program gives it; it is kept per thread and handed back in memory the program frees with LocalFree.
 	auto descriptions = std::make_shared<std::map<uint32_t, std::u16string>>();
 	registry.add("SetThreadDescription", 2, [thread_from, descriptions](ApiCall &call) {

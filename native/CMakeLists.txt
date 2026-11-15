@@ -3411,7 +3411,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         # The AVX part of a thread's state in its context, which the .NET runtime asks for before it uses the code compiled ahead for AVX2.
         raven_kernel_fixture(xstate-context xstate_context_client.c 0x1c0000000 "-lkernel32")
         add_test(NAME native_xstate_context COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/xstate-context.exe)
-        set_tests_properties(native_xstate_context PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        # A parallel thread keeps its extended state in its own task, where SetThreadContext now puts it.
+        add_test(NAME native_xstate_context_parallel COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/xstate-context.exe)
+        set_tests_properties(native_xstate_context native_xstate_context_parallel PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        set_property(TEST native_xstate_context_parallel APPEND PROPERTY ENVIRONMENT RAVEN_PARALLEL=1)
         raven_kernel_fixture(guest-answers guest_answers_client.c 0x1bf000000 "-lkernel32;-luser32;-lole32")
         foreach(mode default parallel)
             add_test(NAME native_guest_answers_${mode} COMMAND raven --run-process --execution=native
@@ -3444,7 +3447,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                 set(parallel_base 0x19980000)
             endif()
             if(parallel_compiler)
-                foreach(kind guest suspend remote lifecycle served wait)
+                foreach(kind guest suspend remote lifecycle served wait context)
                     set(parallel_client ${CMAKE_CURRENT_BINARY_DIR}/parallel-${kind}${width}.exe)
                     add_custom_command(OUTPUT ${parallel_client}
                         COMMAND ${parallel_compiler} -O2 -nostdlib -fno-builtin -fno-stack-protector
@@ -3469,6 +3472,13 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     if(NOT kind STREQUAL lifecycle OR Python3_Interpreter_FOUND)
                         set_tests_properties(native_parallel_${kind}_x${width} PROPERTIES TIMEOUT 30
                             ENVIRONMENT "RAVEN_PARALLEL=1;RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/parallel-${kind}-prefix${width}")
+                    endif()
+                    # Thread contexts also live in the saved state of threads that share one task.
+                    if(kind STREQUAL context)
+                        add_test(NAME native_thread_context_x${width} COMMAND raven --run-process --execution=native
+                            --timeout-ms=12000 ${parallel_client})
+                        set_tests_properties(native_thread_context_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                            ENVIRONMENT "RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/thread-context-prefix${width}")
                     endif()
                 endforeach()
             endif()
