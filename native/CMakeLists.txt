@@ -4150,6 +4150,15 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     add_custom_target(cursor_picture_fixture${width} ALL DEPENDS ${cursor_picture_client})
                     add_test(NAME native_cursor_picture_x${width} COMMAND raven --run-process --execution=native --timeout-ms=20000 ${cursor_picture_client})
                     set_tests_properties(native_cursor_picture_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    # Bitmaps whose headers promise more color table or rows than the picture's data holds.
+                    set(ole_picture_bounds_client ${CMAKE_CURRENT_BINARY_DIR}/ole-picture-bounds${width}.exe)
+                    add_custom_command(OUTPUT ${ole_picture_bounds_client}
+                        COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${webservices_entry},--no-insert-timestamp
+                            -o ${ole_picture_bounds_client} ${LOADER_SOURCES}/ole_picture_bounds_client.c -loleaut32 -lole32 -luuid -lkernel32
+                        DEPENDS ${LOADER_SOURCES}/ole_picture_bounds_client.c VERBATIM)
+                    add_custom_target(ole_picture_bounds_fixture${width} ALL DEPENDS ${ole_picture_bounds_client})
+                    add_test(NAME native_ole_picture_bounds_x${width} COMMAND raven --run-process --execution=native --timeout-ms=20000 ${ole_picture_bounds_client})
+                    set_tests_properties(native_ole_picture_bounds_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                     set(memory_lock_client ${CMAKE_CURRENT_BINARY_DIR}/memory-lock${width}.exe)
                     add_custom_command(OUTPUT ${memory_lock_client}
                         COMMAND ${webservices_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -Wl,--entry,${webservices_entry},--no-insert-timestamp
