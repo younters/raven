@@ -5425,6 +5425,31 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             add_test(NAME native_clipboard_formats COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/clipboard.exe)
             set_tests_properties(native_clipboard_formats PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
                 ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/clipboard-prefix)
+            # A data object put on the OLE clipboard, as Firefox copies, read back through OLE and Win32 and replaced by a Win32 copy. The shell
+            # component, which comes with the controls, implements the OLE clipboard.
+            foreach(width 64 32)
+                if(width EQUAL 64)
+                    set(ole_clipboard_compiler ${RAVEN_MINGW64})
+                    set(ole_clipboard_entry raven_entry)
+                    set(ole_clipboard_components ${RAVEN_CONTROLS_COMPONENT_DIR})
+                else()
+                    set(ole_clipboard_compiler ${RAVEN_MINGW32})
+                    set(ole_clipboard_entry _raven_entry)
+                    set(ole_clipboard_components ${RAVEN_CONTROLS32_COMPONENT_DIR})
+                endif()
+                if(ole_clipboard_compiler AND ole_clipboard_components)
+                    set(ole_clipboard_client ${CMAKE_CURRENT_BINARY_DIR}/ole-clipboard${width}.exe)
+                    add_custom_command(OUTPUT ${ole_clipboard_client}
+                        COMMAND ${ole_clipboard_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${ole_clipboard_entry},--no-insert-timestamp
+                            -o ${ole_clipboard_client} ${LOADER_SOURCES}/ole_clipboard_client.c -lole32 -luser32 -lkernel32
+                        DEPENDS ${LOADER_SOURCES}/ole_clipboard_client.c VERBATIM)
+                    add_custom_target(ole_clipboard_fixture${width} ALL DEPENDS ${ole_clipboard_client})
+                    add_test(NAME native_ole_clipboard_x${width} COMMAND raven --run-process --execution=native ${ole_clipboard_client})
+                    set_tests_properties(native_ole_clipboard_x${width} PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/ole-clipboard-prefix${width})
+                endif()
+            endforeach()
             add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/legacy_file.exe
                 COMMAND ${RAVEN_MINGW64} -O2 -nostdlib -fno-stack-protector
                     -Wl,--entry,raven_entry,--no-insert-timestamp
