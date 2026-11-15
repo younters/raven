@@ -279,6 +279,9 @@ struct ComState {
 	std::map<uint64_t, Thread> threads;
 	uint64_t main_sta = 0;
 	int mta_threads = 0;
+	// The cookies CoIncrementMTAUsage handed out and not yet returned; each keeps the multithreaded apartment alive as a thread in it does.
+	std::vector<uint64_t> mta_usage;
+	uint64_t last_usage_cookie = 0;
 	// The IInitializeSpy objects each thread registered, in order, with their cookies. A registration outlives the thread's
 	// initialization, so it is kept apart from it.
 	struct Spy {
@@ -889,21 +892,33 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// No activation is ever handed to a filter, so registering one succeeds and it is never consulted.
 	registry.add("CoRegisterActivationFilter", 1, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
-	// The multithreaded apartment stays alive while a usage cookie is out; the cookie names nothing beyond itself.
-	registry.add("CoIncrementMTAUsage", 1, [](ApiCall &call) {
+	// The multithreaded apartment exists while a usage cookie is out, so a thread that has not initialized COM is in it implicitly. Each
+	// call hands out a cookie of its own, which CoDecrementMTAUsage takes back once; one it did not hand out, or one already returned, is
+	// E_INVALIDARG.
+	registry.add("CoIncrementMTAUsage", 1, [com](ApiCall &call) {
 		if (!call[0]) {
-			call.ret(0x80070057U);
+			call.ret(e_invalidarg);
 			return;
 		}
-		call.store_pointer(call[0], 1);
+		const uint64_t cookie = ++com->last_usage_cookie;
+		com->mta_usage.push_back(cookie);
+		call.store_pointer(call[0], cookie);
 		call.ret(s_ok);
 	});
-	registry.add("CoDecrementMTAUsage", 1, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
+	registry.add("CoDecrementMTAUsage", 1, [com](ApiCall &call) {
+		const auto found = std::find(com->mta_usage.begin(), com->mta_usage.end(), call[0]);
+		if (found == com->mta_usage.end()) {
+			call.ret(e_invalidarg);
+			return;
+		}
+		com->mta_usage.erase(found);
+		call.ret(s_ok);
+	});
 	// The lock keeps an object alive for clients in other processes. Nothing here hands an object outside the process, so its own references
 	// are all that keep it, and locking or unlocking leaves it as it is.
 	registry.add("CoLockObjectExternal", 3, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
 	// APTTYPE: STA 0, MTA 1, main STA 3. A thread that never initialized COM is in the multithreaded apartment implicitly while any
-	// thread of the process holds it (qualifier APTTYPEQUALIFIER_IMPLICIT_MTA).
+	// thread of the process holds it or a usage cookie keeps it (qualifier APTTYPEQUALIFIER_IMPLICIT_MTA).
 	registry.add("CoGetApartmentType", 2, [com, &context](ApiCall &call) {
 		if (!call[0] || !call[1]) {
 			call.ret(e_invalidarg);
@@ -914,7 +929,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		uint32_t type = 0, qualifier = 0;
 		if (found != com->threads.end() && found->second.count) {
 			type = found->second.multithreaded ? 1 : com->main_sta == thread ? 3 : 0;
-		} else if (com->mta_threads) {
+		} else if (com->mta_threads || !com->mta_usage.empty()) {
 			type = 1;
 			qualifier = 1;
 		} else {

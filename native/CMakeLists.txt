@@ -2451,6 +2451,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     list(APPEND INITIALIZE_SPY_CLIENTS ${initialize_spy_client})
                     add_test(NAME native_initialize_spy_x${width} COMMAND raven --run-process --execution=native ${initialize_spy_client})
                     set_tests_properties(native_initialize_spy_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+                    # The multithreaded apartment that CoIncrementMTAUsage cookies keep, and the implicit apartment of a thread outside COM.
+                    set(com_usage_client ${CMAKE_CURRENT_BINARY_DIR}/com-usage${width}.exe)
+                    add_custom_command(OUTPUT ${com_usage_client}
+                        COMMAND ${etw_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector -mno-stack-arg-probe
+                            -Wl,--entry,${etw_entry},--image-base,0x1ec00000,--no-insert-timestamp
+                            -o ${com_usage_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/com_usage_client.c -lole32 -luuid -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/com_usage_client.c VERBATIM)
+                    list(APPEND INITIALIZE_SPY_CLIENTS ${com_usage_client})
+                    add_test(NAME native_com_mta_usage_x${width} COMMAND raven --run-process --execution=native ${com_usage_client})
+                    set_tests_properties(native_com_mta_usage_x${width} PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
                     # Values written to Unicode and ANSI profiles, as installers' page files are.
                     set(profile_client ${CMAKE_CURRENT_BINARY_DIR}/profile-client${width}.exe)
                     add_custom_command(OUTPUT ${profile_client}
