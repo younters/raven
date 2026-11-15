@@ -1475,8 +1475,13 @@ void NativeWindows::place_pointer(const DesktopEvent &event,uint32_t message,uin
 		int64_t(window->width)!=int64_t(window->outer.right)-window->outer.left ||
 		int64_t(window->height)!=int64_t(window->outer.bottom)-window->outer.top;
 	const bool inside=x>=window->outer.left && y>=window->outer.top && x<window->outer.right && y<window->outer.bottom;
-	const auto hit=!capture && inset && inside ? send(target,0x84,0,uint16_t(x)|(uint64_t(uint16_t(y))<<16)) : 1;
+	// A top-level window asks where the pointer is even when its client area covers it: a program that draws its own frame answers
+	// HTCAPTION or a sizing edge there. A frameless child is client area (pointer_child has asked it for HTTRANSPARENT already).
+	const auto hit=!capture && (inset || !window->parent) && inside ? send(target,0x84,0,uint16_t(x)|(uint64_t(uint16_t(y))<<16)) : 1;
 	window=objects.window(target);
+	// HTTRANSPARENT leaves the point to the window beneath. The compositor reports the pointer over this one host window, so the event
+	// is not passed to another of the program's windows that may be under it: the window hears nothing.
+	if (int32_t(hit)==-1) return;
 	if (trace_buttons_enabled() && message!=0x200)
 		fprintf(stderr,"button %x target %llx hit %llx visible %d\n",message,(unsigned long long)target,(unsigned long long)hit,
 			window && objects.window_visible(target) ? 1 : 0);
