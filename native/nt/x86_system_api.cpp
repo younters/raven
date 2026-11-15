@@ -20,7 +20,8 @@ constexpr std::array exported{
 	Export{"kernel32.dll", "WakeAllConditionVariable", 1}, Export{"kernel32.dll", "WaitOnAddress", 4}, Export{"kernel32.dll", "WakeByAddressSingle", 1},
 	Export{"kernel32.dll", "WakeByAddressAll", 1}, Export{"kernel32.dll", "TlsAlloc", 0}, Export{"kernel32.dll", "TlsFree", 1},
 	Export{"kernel32.dll", "TlsGetValue", 1}, Export{"kernel32.dll", "TlsSetValue", 2}, Export{"kernel32.dll", "CreateSemaphoreA", 4},
-	Export{"kernel32.dll", "CreateSemaphoreW", 4}, Export{"kernel32.dll", "ReleaseSemaphore", 3},
+	Export{"kernel32.dll", "CreateSemaphoreW", 4}, Export{"kernel32.dll", "ReleaseSemaphore", 3}, Export{"ntdll.dll", "NtQuerySemaphore", 5},
+	Export{"ntdll.dll", "ZwQuerySemaphore", 5},
 	Export{"kernel32.dll", "WaitForMultipleObjects", 4},
 	Export{"kernel32.dll", "GetCurrentThread", 0}, Export{"kernel32.dll", "GetThreadPriority", 1}, Export{"kernel32.dll", "SuspendThread", 1},
 	Export{"kernel32.dll", "GetThreadContext", 2}, Export{"kernel32.dll", "SetThreadContext", 2},
@@ -324,6 +325,29 @@ bool NativeX86System::dispatch(std::string_view name)
 			}
 			semaphore->count += amount;
 			process.return_api(1);
+		}
+	} else if (name == "NtQuerySemaphore") {
+		// The semaphores made here; every other handle, and the statuses for it, are the shared handler's. The checks and their order are
+		// the shared handler's (thread_api.cpp), including SEMAPHORE_QUERY_STATE or an unmapped GENERIC_READ on the handle.
+		const auto semaphore = objects.object_as<SemaphoreObject>(args[0]);
+		if (!semaphore)
+			return false;
+		if (uint32_t(args[1])) {
+			process.return_api(0xc0000003U);
+		} else if (uint32_t(args[3]) != 8) {
+			process.return_api(0xc0000004U);
+		} else if (!(objects.access_of(args[0]) & (0x0001U | 0x80000000U))) {
+			process.return_api(0xc0000022U);
+		} else {
+			try {
+				write32(args[2], uint32_t(semaphore->count));
+				write32(args[2] + 4, uint32_t(semaphore->maximum));
+				if (args[4])
+					write32(args[4], 8);
+				process.return_api(0);
+			} catch (const std::runtime_error &) {
+				process.return_api(0xc0000005U);
+			}
 		}
 	} else if (name == "WaitForMultipleObjects") {
 		const uint32_t count = uint32_t(args[0]);

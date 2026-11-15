@@ -3442,6 +3442,20 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         endforeach()
         set_property(TEST native_served_semaphore_parallel APPEND PROPERTY ENVIRONMENT RAVEN_PARALLEL=1)
         set_property(TEST native_served_semaphore_table APPEND PROPERTY ENVIRONMENT RAVEN_NTSYNC=0)
+        # NtQuerySemaphore's basic information and its statuses, from 64-bit and 32-bit callers.
+        raven_kernel_fixture(semaphore-query semaphore_query_client.c 0x1c2000000 "-lkernel32")
+        add_test(NAME native_semaphore_query COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/semaphore-query.exe)
+        set_tests_properties(native_semaphore_query PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        if(RAVEN_MINGW32)
+            add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/semaphore-query32.exe
+                COMMAND ${RAVEN_MINGW32} -O1 -nostdlib -fno-stack-protector -fno-builtin
+                    -Wl,--entry,_raven_entry,--no-insert-timestamp
+                    -o ${CMAKE_CURRENT_BINARY_DIR}/semaphore-query32.exe ${LOADER_SOURCES}/semaphore_query_client.c -lkernel32
+                DEPENDS ${LOADER_SOURCES}/semaphore_query_client.c VERBATIM)
+            add_custom_target(semaphore_query32_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/semaphore-query32.exe)
+            add_test(NAME native_semaphore_query_x32 COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/semaphore-query32.exe)
+            set_tests_properties(native_semaphore_query_x32 PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        endif()
         raven_kernel_fixture(api-hook api_hook_client.c 0x1b6000000 "-lkernel32;-luser32")
         # GdiAlphaBlend between 32-bit surfaces, and the time a window-sized blend may take.
         raven_kernel_fixture(alpha-blend alpha_blend_client.c 0x1c1000000 "-lkernel32;-lgdi32")

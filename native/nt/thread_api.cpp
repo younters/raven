@@ -1704,6 +1704,46 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		semaphore->state = static_cast<SemaphoreState *>(semaphore->shared->data);
 		call.ret(objects.add_object(semaphore).value);
 	});
+	// NtQuerySemaphore has no Microsoft Learn page, so the contract below is Raven's choice, matching Wine 10.0 (dlls/ntdll/unix/sync.c and
+	// server/handle.c, consulted for behaviour only): class 0 only, a length of exactly SEMAPHORE_BASIC_INFORMATION, then the handle's type,
+	// then its access. A handle needs SEMAPHORE_QUERY_STATE (0x0001, ddk/wdm.h); CreateSemaphore and OpenSemaphore record
+	// SEMAPHORE_ALL_ACCESS, which holds it, and DuplicateHandle records what the copy asked for, keeping GENERIC_READ unmapped.
+	// ZwQuerySemaphore reaches this handler as well: ntdll's Zw exports trap as their Nt twins.
+	registry.add("NtQuerySemaphore", 5, [&objects](ApiCall &call) {
+		constexpr uint32_t basic_information_size = 2 * sizeof(int32_t), query_state = 0x0001, generic_read = 0x80000000U;
+		if (call.u32(1)) {
+			call.ret(0xc0000003U);
+			return;
+		}
+		if (call.u32(3) != basic_information_size) {
+			call.ret(0xc0000004U);
+			return;
+		}
+		const auto semaphore = objects.object_as<SemaphoreObject>(call[0]);
+		// type_name also knows file handles, which hold no KernelObject: any handle in the table that is not a semaphore's is the wrong type.
+		if (!semaphore) {
+			call.ret(objects.type_name(call[0]) ? 0xc0000024U : 0xc0000008U);
+			return;
+		}
+		if (!(objects.access_of(call[0]) & (query_state | generic_read))) {
+			call.ret(0xc0000022U);
+			return;
+		}
+		// A semaphore the wait table holds keeps its count there; the state keeps only the maximum.
+		uint32_t count = uint32_t(semaphore->state->count.load());
+		if (semaphore->waits_object)
+			raven_waits_query(kernel_waits(), semaphore->waits_object, &count);
+		const int32_t info[]{int32_t(count), semaphore->state->maximum};
+		try {
+			call.write(call[2], std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(info), sizeof(info)));
+			if (call[4])
+				call.store<uint32_t>(call[4], uint32_t(sizeof(info)));
+		} catch (const ApiFault &) {
+			call.ret(0xc0000005U);
+			return;
+		}
+		call.ret(0);
+	});
 	registry.add("ReleaseSemaphore", 3, [&objects](ApiCall &call) {
 		const auto semaphore = objects.object_as<SemaphoreObject>(call[0]);
 		const int32_t amount = call.i32(1);
