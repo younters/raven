@@ -294,7 +294,8 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context, NativeReg
 	registry.add("SHCloneSpecialIDList", 3, [folder_list](ApiCall &call) {
 		call.ret(folder_list(call, call.i32(1) & 0xff, call.i32(2) || (call.i32(1) & 0x8000)).first);
 	});
-	const auto path_from_list = [](ApiCall &call, size_t capacity) {
+	// The path of a list, in UTF-16 or, for the A form, in the ANSI code page.
+	const auto path_from_list = [](ApiCall &call, size_t capacity, bool ansi) {
 		if (!call[0] || !call[1]) {
 			call.ret(0);
 			return;
@@ -322,13 +323,17 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context, NativeReg
 			call.ret(0);
 			return;
 		}
-		call.put_wide(call[1], text, capacity);
+		if (ansi)
+			call.put_narrow(call[1], to_ansi(text, 1252), capacity);
+		else
+			call.put_wide(call[1], text, capacity);
 		call.ret(1);
 	};
 	// The recent list only feeds the shell's own menus, which nothing here shows.
 	registry.add("SHAddToRecentDocs", 2, [](ApiCall &call) { call.ret(0); });
-	registry.add("SHGetPathFromIDListW", 2, [path_from_list](ApiCall &call) { path_from_list(call, 260); });
-	registry.add("SHGetPathFromIDListEx", 4, [path_from_list](ApiCall &call) { path_from_list(call, call.u32(2)); });
+	registry.add("SHGetPathFromIDListW", 2, [path_from_list](ApiCall &call) { path_from_list(call, 260, false); });
+	registry.add("SHGetPathFromIDListA", 2, [path_from_list](ApiCall &call) { path_from_list(call, 260, true); });
+	registry.add("SHGetPathFromIDListEx", 4, [path_from_list](ApiCall &call) { path_from_list(call, call.u32(2), false); });
 	for (const bool ansi : {false, true})
 		registry.add(ansi ? "SHGetSpecialFolderPathA" : "SHGetSpecialFolderPathW", 4, [&paths, ansi](ApiCall &call) {
 			const int csidl = call.i32(2);

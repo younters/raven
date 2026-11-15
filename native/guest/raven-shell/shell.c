@@ -1031,6 +1031,69 @@ static BOOL classic_dialog(OPENFILENAMEW *request, BOOL save)
 	return accepted;
 }
 
+PIDLIST_ABSOLUTE WINAPI ILCreateFromPathW(PCWSTR path);
+
+/* The classic folder browser is the file dialog picking a folder. The list it answers is the task allocator's, which the caller frees with
+ * CoTaskMemFree or ILFree. The root list only chooses the folder it starts in, and the flags are not consulted. */
+PIDLIST_ABSOLUTE WINAPI SHBrowseForFolderW(LPBROWSEINFOW request)
+{
+	DialogState *state;
+	PIDLIST_ABSOLUTE result = NULL;
+	if (!request)
+		return NULL;
+	state = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(DialogState));
+	if (!state)
+		return NULL;
+	state->options = FOS_PICKFOLDERS | FOS_PATHMUSTEXIST;
+	state->browse_callback = request->lpfn;
+	state->browse_data = request->lParam;
+	copy_text(state->title, 128, request->lpszTitle);
+	if (request->pidlRoot) {
+		/* The host answers this call, under the shell's name. */
+		BOOL (WINAPI *path_of)(PCIDLIST_ABSOLUTE, LPWSTR) = (void *)GetProcAddress(LoadLibraryW(L"shell32.dll"), "SHGetPathFromIDListW");
+		if (!path_of || !path_of(request->pidlRoot, state->dir))
+			state->dir[0] = 0;
+	}
+	/* A callback is the program's code, so the dialog that calls it runs in the program's process instead of the picker. */
+	if (state->browse_callback ? show_dialog(request->hwndOwner, state) : run_dialog(request->hwndOwner, state)) {
+		result = ILCreateFromPathW(state->result);
+		if (result && request->pszDisplayName) {
+			const WCHAR *name = file_part(state->result);
+			copy_text(request->pszDisplayName, MAX_PATH, name[0] ? name : state->result);
+		}
+		request->iImage = ICON_FOLDER;
+	}
+	HeapFree(GetProcessHeap(), 0, state);
+	return result;
+}
+
+PIDLIST_ABSOLUTE WINAPI SHBrowseForFolderA(LPBROWSEINFOA request)
+{
+	BROWSEINFOW wide;
+	WCHAR title[MAX_PATH], display[MAX_PATH];
+	PIDLIST_ABSOLUTE result;
+	if (!request)
+		return NULL;
+	memset(&wide, 0, sizeof wide);
+	title[0] = display[0] = 0;
+	if (request->lpszTitle && !MultiByteToWideChar(CP_ACP, 0, request->lpszTitle, -1, title, MAX_PATH))
+		title[0] = 0;
+	wide.hwndOwner = request->hwndOwner;
+	wide.pidlRoot = request->pidlRoot;
+	wide.pszDisplayName = display;
+	wide.lpszTitle = title;
+	wide.ulFlags = request->ulFlags;
+	wide.lpfn = request->lpfn;
+	wide.lParam = request->lParam;
+	result = SHBrowseForFolderW(&wide);
+	if (result) {
+		if (request->pszDisplayName && !WideCharToMultiByte(CP_ACP, 0, display, -1, request->pszDisplayName, MAX_PATH, NULL, NULL))
+			request->pszDisplayName[0] = 0;
+		request->iImage = wide.iImage;
+	}
+	return result;
+}
+
 BOOL WINAPI GetOpenFileNameW(LPOPENFILENAMEW request) { return classic_dialog(request, FALSE); }
 BOOL WINAPI GetSaveFileNameW(LPOPENFILENAMEW request) { return classic_dialog(request, TRUE); }
 DWORD WINAPI CommDlgExtendedError(void) { return 0; }

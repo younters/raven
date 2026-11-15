@@ -155,7 +155,7 @@ constexpr std::string_view shared_allowed[] = {
 	"IsWindowEnabled", "EnableWindow", "FindWindowExW", "SetForegroundWindow", "GetMessagePos", "OpenClipboard", "EmptyClipboard",
 	"SetClipboardData", "CloseClipboard", "CharNextA", "CharNextW", "CharPrevA", "CharPrevW", "SystemParametersInfoW", "GetSystemMenu",
 	"EnableMenuItem", "AppendMenuW", "CreatePopupMenu", "LoadBitmapW", "LoadImageW",
-	"SHGetSpecialFolderLocation", "SHCloneSpecialIDList", "SHGetPathFromIDListW", "SHGetFileInfoW", "SHGetFileInfoA", "ShellExecuteW", "ShellExecuteExW", "SHFileOperationW",
+	"SHGetSpecialFolderLocation", "SHCloneSpecialIDList", "SHGetPathFromIDListW", "SHGetPathFromIDListA", "SHGetFileInfoW", "SHGetFileInfoA", "ShellExecuteW", "ShellExecuteExW", "SHFileOperationW",
 	"OleInitialize", "OleUninitialize", "CoTaskMemFree", "CoCreateInstance", "CoInitializeSecurity", "CoRegisterPSClsid", "CoSetProxyBlanket",
 	"WinHttpGetDefaultProxyConfiguration", "WinHttpSetDefaultProxyConfiguration",
 	"GetTempPathW", "GetTempPath2W", "GetTempPath2A", "CompareFileTime", "MoveFileExW", "lstrcatW", "lstrcpynW", "GetTempFileNameW", "GetTempFileNameA", "GetDiskFreeSpaceW", "GetExitCodeProcess",

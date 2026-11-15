@@ -53,6 +53,9 @@ void WINAPI raven_program_entry(void)
 	state->check_count = state->check_count > MAX_CHECKS ? MAX_CHECKS : state->check_count;
 	for (index = 0; index < state->filter_count; ++index)
 		state->filters[index].name[63] = state->filters[index].spec[255] = 0;
+	/* Only the program's own process can call its folder browser callback. */
+	state->browse_callback = NULL;
+	state->browse_data = 0;
 	state->title[127] = state->ok_label[31] = state->name_label[31] = state->dir[MAX_PATH - 1] = state->name[MAX_PATH - 1] = state->defext[15] = 0;
 	start_in_prefix(state);
 	if (show_dialog(NULL, state)) {

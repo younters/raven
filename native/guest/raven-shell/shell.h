@@ -7,6 +7,7 @@
 
 #include <windows.h>
 #include <shobjidl.h>
+#include <shlobj.h>
 #include <commctrl.h>
 
 #define MAX_FILTERS 32
@@ -37,6 +38,10 @@ typedef struct {
 	BOOL has_result;
 	struct { DWORD id; BOOL checked; WCHAR label[64]; } checks[MAX_CHECKS];
 	UINT check_count;
+	/* The classic folder browser's callback and the value it is given (SHBrowseForFolder). The callback is the program's code, so a
+	 * dialog that has one runs in the program's process; the picker clears both. */
+	BFFCALLBACK browse_callback;
+	LPARAM browse_data;
 } DialogState;
 
 void copy_text(WCHAR *to, size_t capacity, const WCHAR *from);

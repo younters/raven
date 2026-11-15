@@ -2365,6 +2365,37 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
             add_custom_target(edit_text_fixture ALL DEPENDS ${EDIT_TEXT_CLIENT})
             add_test(NAME native_edit_text_contract COMMAND raven --run-process --execution=native ${EDIT_TEXT_CLIENT})
             set_tests_properties(native_edit_text_contract PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+            # The classic folder browser of the shell component, with its callback, from 64-bit and 32-bit programs. The harness keeps the
+            # dialog's surfaces in memory, so the dialog runs without a desktop.
+            add_executable(folder_browser_test desktop/folder_browser_test.cpp)
+            target_link_libraries(folder_browser_test PRIVATE raven_cpu)
+            foreach(width 64 32)
+                if(width EQUAL 64)
+                    set(folder_browser_compiler ${RAVEN_MINGW64})
+                    set(folder_browser_entry raven_entry)
+                    set(folder_browser_components $<TARGET_FILE_DIR:raven>)
+                    set(folder_browser_ready TRUE)
+                else()
+                    set(folder_browser_compiler ${RAVEN_MINGW32})
+                    set(folder_browser_entry _raven_entry)
+                    set(folder_browser_components $<TARGET_FILE_DIR:raven>/x86)
+                    set(folder_browser_ready ${RAVEN_CONTROLS32_COMPONENT_DIR})
+                endif()
+                if(folder_browser_compiler AND folder_browser_ready)
+                    set(folder_browser_client ${CMAKE_CURRENT_BINARY_DIR}/folder-browser${width}.exe)
+                    add_custom_command(OUTPUT ${folder_browser_client}
+                        COMMAND ${folder_browser_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${folder_browser_entry},--no-insert-timestamp
+                            -o ${folder_browser_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/folder_browser_client.c -lkernel32 -luser32 -lgdi32 -lshell32 -lole32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/folder_browser_client.c VERBATIM)
+                    add_custom_target(folder_browser_fixture${width} ALL DEPENDS ${folder_browser_client})
+                    add_dependencies(folder_browser_test folder_browser_fixture${width} raven-bootstrap)
+                    add_test(NAME native_folder_browser_x${width} COMMAND folder_browser_test
+                        $<TARGET_FILE:raven-bootstrap> ${folder_browser_client} ${folder_browser_components})
+                    set_tests_properties(native_folder_browser_x${width} PROPERTIES TIMEOUT 30
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/folder-browser-prefix${width})
+                endif()
+            endforeach()
             # DirectWrite: fonts, a face, metrics, tables, an outline and a rendered glyph run, through the public interfaces.
             set(DWRITE_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/dwrite-client.exe)
             add_custom_command(OUTPUT ${DWRITE_CLIENT}

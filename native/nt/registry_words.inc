@@ -1072,6 +1072,7 @@
 {"SHGetFileInfoW", 5},
 {"SHGetFolderPathW", 5},
 {"SHGetKnownFolderPath", 4},
+{"SHGetPathFromIDListA", 2},
 {"SHGetPathFromIDListEx", 4},
 {"SHGetPathFromIDListW", 2},
 {"SHGetSettings", 2},
