@@ -2692,6 +2692,30 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                     -o ${UCRT_IO_CLIENT} ${PROJECT_SOURCE_DIR}/testdata/native_loader/ucrt_io_client.c -lucrtbase -lkernel32
                 DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/ucrt_io_client.c VERBATIM)
             add_custom_target(ucrt_io_fixture ALL DEPENDS ${UCRT_IO_CLIENT})
+            # Aligned allocation arithmetic and error handling, independently at both guest widths.
+            foreach(width 64 32)
+                if(width EQUAL 64)
+                    set(aligned_compiler ${RAVEN_MINGW64})
+                    set(aligned_entry raven_entry)
+                else()
+                    set(aligned_compiler ${RAVEN_MINGW32})
+                    set(aligned_entry _raven_entry)
+                endif()
+                if(aligned_compiler)
+                    set(aligned_client ${CMAKE_CURRENT_BINARY_DIR}/crt-aligned-allocation${width}.exe)
+                    add_custom_command(OUTPUT ${aligned_client}
+                        COMMAND ${aligned_compiler} -nostdlib -O1 -fno-builtin -fno-stack-protector
+                            -Wl,--entry,${aligned_entry},--no-insert-timestamp
+                            -o ${aligned_client} ${PROJECT_SOURCE_DIR}/testdata/native_loader/crt_aligned_allocation_client.c -lkernel32
+                        DEPENDS ${PROJECT_SOURCE_DIR}/testdata/native_loader/crt_aligned_allocation_client.c VERBATIM)
+                    add_custom_target(crt_aligned_allocation_fixture${width} ALL DEPENDS ${aligned_client})
+                    add_test(NAME native_crt_aligned_allocation_x${width}
+                        COMMAND raven --run-process --execution=native ${aligned_client})
+                    set_tests_properties(native_crt_aligned_allocation_x${width} PROPERTIES TIMEOUT 30
+                        PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                        ENVIRONMENT RAVEN_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/crt-aligned-allocation-prefix${width})
+                endif()
+            endforeach()
             # The C runtime entry points Visual C++ 2019 and 2022 programs and their libraries import, resolved and called by name.
             set(UCRT_VC2022_CLIENT ${CMAKE_CURRENT_BINARY_DIR}/ucrt-vc2022.exe)
             add_custom_command(OUTPUT ${UCRT_VC2022_CLIENT}

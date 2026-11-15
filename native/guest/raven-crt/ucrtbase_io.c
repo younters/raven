@@ -527,13 +527,22 @@ CRT void *_aligned_malloc(size_t size, size_t alignment)
 {
 	char *raw;
 	uintptr_t aligned;
-	if (!alignment || (alignment & (alignment - 1)))
+	if (!size || !alignment || (alignment & (alignment - 1))) {
+		set_errno(22);
 		return NULL;
+	}
 	if (alignment < sizeof(void *))
 		alignment = sizeof(void *);
-	raw = HeapAlloc(GetProcessHeap(), 0, size + alignment + sizeof(void *));
-	if (!raw)
+	/* A power-of-two alignment is at most SIZE_MAX / 2 + 1. */
+	if (size > (size_t)-1 - alignment - sizeof(void *)) {
+		set_errno(12);
 		return NULL;
+	}
+	raw = HeapAlloc(GetProcessHeap(), 0, size + alignment + sizeof(void *));
+	if (!raw) {
+		set_errno(12);
+		return NULL;
+	}
 	aligned = ((uintptr_t)raw + sizeof(void *) + alignment - 1) & ~(uintptr_t)(alignment - 1);
 	((void **)aligned)[-1] = raw;
 	return (void *)aligned;
@@ -550,12 +559,18 @@ CRT void *_aligned_offset_malloc(size_t size, size_t alignment, size_t offset)
 {
 	char *raw;
 	uintptr_t aligned;
-	if (!alignment || (alignment & (alignment - 1)) || (size && offset >= size)) {
+	if (!alignment || (alignment & (alignment - 1)) || (offset && offset >= size)) {
 		set_errno(22);
 		return NULL;
 	}
 	if (alignment < sizeof(void *))
 		alignment = sizeof(void *);
+	if (size > (size_t)-1 - alignment - 2 * sizeof(void *)) {
+		set_errno(12);
+		return NULL;
+	}
+	/* Only the offset modulo alignment affects the returned address. */
+	offset &= alignment - 1;
 	raw = HeapAlloc(GetProcessHeap(), 0, size + alignment + 2 * sizeof(void *));
 	if (!raw) {
 		set_errno(12);
