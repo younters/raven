@@ -394,6 +394,101 @@ done:
 	return result;
 }
 
+// --a uses the supplied restricted token; --d uses the default. --n keeps the caller's local primary token, whose integrity
+// test_child set to 2222, instead of the supplied token (LOGON_NETCREDENTIALS_ONLY, CreateProcessWithTokenW on Microsoft Learn).
+static int as_user_child(char mode)
+{
+	HANDLE token = NULL;
+	int result;
+	if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return 139;
+	result = integrity(token) != (mode == 'a' ? 4096U : mode == 'n' ? 2222U : 8192U) ? 140 :
+		traversal(token) != (mode == 'a' ? 1U : 3U) ? 141 : 0;
+	CloseHandle(token);
+	return result;
+}
+
+typedef BOOL (WINAPI *create_with_token)(HANDLE, DWORD, const WCHAR *, WCHAR *, DWORD, void *, const WCHAR *, STARTUPINFOW *, PROCESS_INFORMATION *);
+
+// Starts this program again as a child of the given mode with the token; the child's exit code, or 0xffff when it could not run.
+static DWORD run_as_flags(HANDLE token, char mode, BOOL with_token, HANDLE retune, DWORD logon_flags)
+{
+	create_with_token create = (create_with_token)GetProcAddress(GetModuleHandleW(L"advapi32.dll"), "CreateProcessWithTokenW");
+	STARTUPINFOW startup;
+	PROCESS_INFORMATION child;
+	WCHAR command[512];
+	DWORD length, code = 0xffff;
+	BOOL started;
+	unsigned index;
+	for (index = 0; index < sizeof(startup); ++index)
+		((BYTE *)&startup)[index] = 0;
+	command[0] = '"';
+	length = GetModuleFileNameW(NULL, command + 1, 480);
+	if (!length || length >= 480 || (with_token && !create)) return 0xffff;
+	command[++length] = '"'; command[++length] = ' '; command[++length] = '-'; command[++length] = '-'; command[++length] = mode; command[++length] = 0;
+	startup.cb = sizeof(startup);
+	started = with_token ? create(token, logon_flags, NULL, command, CREATE_SUSPENDED, NULL, NULL, &startup, &child) :
+		CreateProcessAsUserW(token, NULL, command, NULL, NULL, FALSE, CREATE_SUSPENDED, NULL, NULL, &startup, &child);
+	if (!started) return 0xffff;
+	// Raven's choice: the child runs with a copy, so what the creator changes in the token once the process exists does not reach it.
+	if ((!retune || set_integrity(retune, 6000)) && ResumeThread(child.hThread) == 1 &&
+		WaitForSingleObject(child.hProcess, 15000) == WAIT_OBJECT_0 && GetExitCodeProcess(child.hProcess, &code)) {
+	} else {
+		code = 0xffff;
+		TerminateProcess(child.hProcess, 99);
+		WaitForSingleObject(child.hProcess, 5000);
+	}
+	CloseHandle(child.hThread);
+	CloseHandle(child.hProcess);
+	return code;
+}
+
+static DWORD run_as(HANDLE token, char mode, BOOL with_token, HANDLE retune)
+{
+	return run_as_flags(token, mode, with_token, retune, 0);
+}
+
+// A token handle CreateProcessAsUserW must refuse: the call fails with the error and starts nothing.
+static BOOL refused(HANDLE token, DWORD error, BOOL with_token)
+{
+	return run_as(token, 'a', with_token, NULL) == 0xffff && GetLastError() == error;
+}
+
+static int test_process_as_user(HANDLE source)
+{
+	HANDLE primary = NULL, restricted = NULL, query_only = NULL;
+	DWORD code;
+	int result = 0;
+	if (!DuplicateTokenEx(source, TOKEN_ALL_ACCESS, NULL, SecurityImpersonation, TokenPrimary, &primary) ||
+		!CreateRestrictedToken(primary, DISABLE_MAX_PRIVILEGE, 0, NULL, 0, NULL, 0, NULL, &restricted) ||
+		!set_integrity(restricted, 4096) || !set_traversal(restricted, 0) ||
+		!DuplicateHandle(GetCurrentProcess(), restricted, GetCurrentProcess(), &query_only, TOKEN_QUERY | TOKEN_DUPLICATE, FALSE, 0)) {
+		result = 142;
+		goto done;
+	}
+	// The token must be primary and its handle must allow TOKEN_QUERY, TOKEN_DUPLICATE and TOKEN_ASSIGN_PRIMARY (Microsoft Learn,
+	// CreateProcessAsUserW and CreateProcessWithTokenW); the error codes are Raven's choice.
+	if (!refused(source, ERROR_BAD_TOKEN_TYPE, FALSE) || !refused(query_only, ERROR_ACCESS_DENIED, FALSE) ||
+		!refused((HANDLE)(ULONG_PTR)0x12345678, ERROR_INVALID_HANDLE, FALSE) || !refused(source, ERROR_BAD_TOKEN_TYPE, TRUE) ||
+		!refused(query_only, ERROR_ACCESS_DENIED, TRUE)) {
+		result = 143;
+		goto done;
+	}
+	if ((code = run_as(restricted, 'a', FALSE, restricted)) != 0) { result = code == 0xffff ? 144 : (int)code; goto done; }
+	if (!set_integrity(restricted, 4096)) { result = 144; goto done; }
+	// Windows also asks the caller of CreateProcessWithTokenW for SeImpersonatePrivilege, which Raven does not model.
+	if ((code = run_as(restricted, 'a', TRUE, restricted)) != 0) { result = code == 0xffff ? 145 : (int)code; goto done; }
+	// Raven's choice: without a token the child starts as CreateProcessW would start it.
+	if ((code = run_as(NULL, 'd', FALSE, NULL)) != 0) { result = code == 0xffff ? 146 : (int)code; goto done; }
+	// The supplied token now has integrity 6000, distinct from the caller's 2222 and the fresh default's 8192.
+	if ((code = run_as_flags(restricted, 'n', TRUE, NULL, LOGON_NETCREDENTIALS_ONLY)) != 0)
+		result = code == 0xffff ? 147 : (int)code;
+done:
+	if (query_only) CloseHandle(query_only);
+	if (restricted) CloseHandle(restricted);
+	if (primary) CloseHandle(primary);
+	return result;
+}
+
 int raven_entry(void)
 {
 	const WCHAR *line = GetCommandLineW();
@@ -412,6 +507,9 @@ int raven_entry(void)
 	for (index = 0; line[index]; ++index)
 		if (line[index] == '-' && line[index + 1] == '-' && line[index + 2] == 'c')
 			return child_entry();
+	for (index = 0; line[index]; ++index)
+		if (line[index] == '-' && line[index + 1] == '-' && (line[index + 2] == 'a' || line[index + 2] == 'd' || line[index + 2] == 'n'))
+			return as_user_child((char)line[index + 2]);
 	if (!open || !open_ex)
 		return 1;
 	result = test_mandatory_ace();
@@ -453,6 +551,9 @@ int raven_entry(void)
 	if (result)
 		return result;
 	result = test_child(open, first);
+	if (result)
+		return result;
+	result = test_process_as_user(copy);
 	if (result)
 		return result;
 	if (integrity(first) != 2222 || integrity(copy) != 4096 || !set_integrity(copy, 8192) || integrity(first) != 2222)

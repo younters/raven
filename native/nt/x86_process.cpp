@@ -1428,6 +1428,8 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	GuestAllocator allocator(memory, guest_heap);
 	compat.set_global_blocks([&allocator](uint64_t address) { return allocator.size(address); }, [&allocator](uint64_t address) { return allocator.release(address); });
 	KernelContext kernel{process, environment, memory, allocator, kernel_objects, guest_threads, paths, modules, entry, *launch, invoke};
+	if (launch->process_token_fd >= 0)
+		kernel.process_token = std::make_shared<AccessToken>(launch->process_token_fd);
 	guest_threads.set_watched([reactor = kernel.reactor](std::vector<pollfd> &descriptors) { reactor->watch(descriptors); });
 	// Waits that also wake for messages ask the window system, and the window system sleeps as the scheduler does.
 	kernel.queue_status = [&windows](uint32_t thread,uint32_t mask,bool clear) { return windows.queue_status(thread,mask,clear); };
