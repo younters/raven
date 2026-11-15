@@ -6363,6 +6363,25 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         set_tests_properties(native_initial_dependency_contract PROPERTIES TIMEOUT 15)
         set_tests_properties(native_initial_dependency_prefer_local PROPERTIES TIMEOUT 15 ENVIRONMENT RAVEN_PREFER_LOCAL_DLLS=1)
         set_tests_properties(native_initial_dependency_cli native_initial_forwarder_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        # The process-status and version API sets resolve to the libraries that export their functions, for 64-bit and 32-bit programs.
+        foreach(width "" _x32)
+            if(width STREQUAL "")
+                set(apiset_compiler ${RAVEN_MINGW64})
+                set(apiset_entry raven_entry)
+            else()
+                set(apiset_compiler ${RAVEN_MINGW32})
+                set(apiset_entry _raven_entry)
+            endif()
+            if(apiset_compiler)
+                add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/apiset-hosts${width}.exe
+                    COMMAND ${apiset_compiler} -O2 -nostdlib -fno-stack-protector -fno-builtin -Wl,--entry,${apiset_entry},--no-insert-timestamp
+                        -o ${CMAKE_CURRENT_BINARY_DIR}/apiset-hosts${width}.exe ${LOADER_SOURCES}/apiset_hosts.c -lkernel32
+                    DEPENDS ${LOADER_SOURCES}/apiset_hosts.c VERBATIM)
+                add_custom_target(apiset_hosts${width}_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/apiset-hosts${width}.exe)
+                add_test(NAME native_apiset_hosts${width} COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/apiset-hosts${width}.exe)
+                set_tests_properties(native_apiset_hosts${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+            endif()
+        endforeach()
     endif()
 endif()
 
