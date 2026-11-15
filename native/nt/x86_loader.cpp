@@ -132,8 +132,6 @@ PEModule *NativeX86Loader::bring(const std::string &requested)
 			modules.add_alias(name, host);
 		name = host;
 	}
-	if (const auto found = modules.all().find(name); found != modules.all().end())
-		return found->second.get();
 	// A system library named by its path is the runtime's, as it is by its name; any library named by its path in the system directory is
 	// looked for as by its name, so a program that loads comctl32.dll from System32 gets the one the runtime has.
 	if (const auto slash = name.find_last_of("/\\:"); slash != std::string::npos) {
@@ -150,10 +148,14 @@ PEModule *NativeX86Loader::bring(const std::string &requested)
 			return bring(base);
 		}
 	}
+	// Raven keeps its provider reachable through SEARCH_SYSTEM32 beside a program's replacement DLL, as the x64 loader does.
+	// This is Raven's wrapper-library policy (10515aec), not a Windows guarantee that directory flags bypass loaded-name reuse.
 	if ((library_flags & 0x1f00) == 0x800) {
 		if (const auto fallback = modules.all().find("system32-" + name); fallback != modules.all().end())
 			return fallback->second.get();
 	}
+	if (const auto found = modules.all().find(name); found != modules.all().end())
+		return found->second.get();
 	std::string identity;
 	std::filesystem::path file;
 	auto bytes = read_library(name, identity, file);
