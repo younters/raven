@@ -89,14 +89,30 @@ uint64_t map_image(ApiCall &call, NativeMemory &memory, int descriptor, uint64_t
 			const uint32_t page = u32(blocks, at), size = u32(blocks, at + 4);
 			if (size < 8 || size > blocks.size() - at)
 				break;
+			// A large library has hundreds of fixups on a page: the page, with the bytes a fixup at its end reaches into the next one, is
+			// read once and written back once, rather than read and written through the guest's memory for every fixup.
+			std::vector<uint8_t> bytes;
+			if (page < image_size)
+				bytes = call.read(address + page, std::min<uint64_t>(4096 + 7, image_size - page));
+			bool changed = false;
 			for (size_t item = at + 8; item + 2 <= at + size; item += 2) {
-				const uint32_t value = u16(blocks, item), kind = value >> 12;
-				const uint64_t target = address + page + (value & 0xfff);
-				if (kind == 10 && page + (value & 0xfff) + 8 <= image_size)
-					call.store<uint64_t>(target, call.load<uint64_t>(target) + delta);
-				else if (kind == 3 && page + (value & 0xfff) + 4 <= image_size)
-					call.store<uint32_t>(target, uint32_t(call.load<uint32_t>(target) + delta));
+				const uint32_t value = u16(blocks, item), kind = value >> 12, offset = value & 0xfff;
+				if (kind == 10 && offset + 8 <= bytes.size()) {
+					uint64_t pointer;
+					std::memcpy(&pointer, bytes.data() + offset, 8);
+					pointer += delta;
+					std::memcpy(bytes.data() + offset, &pointer, 8);
+					changed = true;
+				} else if (kind == 3 && offset + 4 <= bytes.size()) {
+					uint32_t pointer;
+					std::memcpy(&pointer, bytes.data() + offset, 4);
+					pointer += uint32_t(delta);
+					std::memcpy(bytes.data() + offset, &pointer, 4);
+					changed = true;
+				}
 			}
+			if (changed)
+				call.write(address + page, bytes);
 			at += size;
 		}
 	}

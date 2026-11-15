@@ -6363,6 +6363,34 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         set_tests_properties(native_initial_dependency_contract PROPERTIES TIMEOUT 15)
         set_tests_properties(native_initial_dependency_prefer_local PROPERTIES TIMEOUT 15 ENVIRONMENT RAVEN_PREFER_LOCAL_DLLS=1)
         set_tests_properties(native_initial_dependency_cli native_initial_forwarder_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        # A library mapped as an image section is relocated whole, a page dense with fixups and a fixup across a page boundary among them,
+        # for 64-bit and 32-bit programs.
+        foreach(width "" _x32)
+            if(width STREQUAL "")
+                set(relocations_compiler ${RAVEN_MINGW64})
+                set(relocations_entry raven_entry)
+                set(relocations_dll_entry DllMain)
+            else()
+                set(relocations_compiler ${RAVEN_MINGW32})
+                set(relocations_entry _raven_entry)
+                set(relocations_dll_entry _DllMain@12)
+            endif()
+            if(relocations_compiler)
+                set(relocations_directory ${CMAKE_CURRENT_BINARY_DIR}/image-relocations${width})
+                set(relocations_flags -O2 -nostdlib -fno-stack-protector -fno-builtin)
+                add_custom_command(OUTPUT ${relocations_directory}/relocations.dll ${relocations_directory}/client.exe
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${relocations_directory}
+                    COMMAND ${relocations_compiler} ${relocations_flags} -shared -DRAVEN_RELOCATIONS_LIBRARY
+                        -Wl,--entry,${relocations_dll_entry},--no-insert-timestamp
+                        -o ${relocations_directory}/relocations.dll ${LOADER_SOURCES}/image_relocations.c
+                    COMMAND ${relocations_compiler} ${relocations_flags} -Wl,--entry,${relocations_entry},--no-insert-timestamp
+                        -o ${relocations_directory}/client.exe ${LOADER_SOURCES}/image_relocations.c -lkernel32
+                    DEPENDS ${LOADER_SOURCES}/image_relocations.c VERBATIM)
+                add_custom_target(image_relocations${width}_fixture ALL DEPENDS ${relocations_directory}/relocations.dll ${relocations_directory}/client.exe)
+                add_test(NAME native_image_relocations${width} COMMAND raven --run-process --execution=native ${relocations_directory}/client.exe)
+                set_tests_properties(native_image_relocations${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+            endif()
+        endforeach()
     endif()
 endif()
 
