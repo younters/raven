@@ -511,7 +511,7 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 			std::memcpy(data.data() + head, sid.data(), sid.size());
 		};
 		switch (call.u32(1)) {
-		case 1: with_sid(user_sid(), 0, true); break;
+		case 1: with_sid(value.anonymous ? anonymous_sid() : user_sid(), 0, true); break;
 		case 3: {
 			data.assign(4 + 12 * value.privileges.size(), 0);
 			const auto count = uint32_t(value.privileges.size());
@@ -522,8 +522,8 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 			}
 			break;
 		}
-		case 4: with_sid(user_sid(), 0, false); break;
-		case 5: with_sid(make_sid(5, {21, 1000, 1000, 1000, 513}), 0, false); break;
+		case 4: with_sid(value.anonymous ? anonymous_sid() : user_sid(), 0, false); break;
+		case 5: with_sid(value.anonymous ? anonymous_sid() : make_sid(5, {21, 1000, 1000, 1000, 513}), 0, false); break;
 		case 6: {
 			data.assign(width, 0);
 			if (!value.default_dacl.empty()) {
@@ -535,11 +535,13 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 		}
 		case 2: case 28: {
 			const bool logon = call.u32(1) == 28;
-			// The logon SID identifies the same session for every process in this runtime.
-			const auto session = make_sid(5, {5, 0, 1});
+			// The logon SID is one of the token's groups (SE_GROUP_LOGON_ID). It names the same session for every process in this
+			// runtime; the anonymous logon has a session of its own and no other group, so it is not in Everyone (Raven always
+			// answers as the default policy does; EveryoneIncludesAnonymous is not read).
+			const auto session = value.anonymous ? anonymous_logon_sid() : make_sid(5, {5, 0, 1});
 			std::vector<std::vector<uint8_t>> sids{session};
 			// The groups of an interactive desktop logon: programs look for INTERACTIVE to tell a user's session from a service.
-			if (!logon) {
+			if (!logon && !value.anonymous) {
 				sids.insert(sids.begin(), {make_sid(5, {32, 545}), make_sid(5, {32, 544}), make_sid(1, {0})});
 				sids.insert(sids.end(), {make_sid(5, {4}), make_sid(2, {1}), make_sid(5, {11}), make_sid(5, {15}), make_sid(2, {0})});
 			}
@@ -554,7 +556,7 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 			for (size_t index = 0; index < sids.size(); ++index) {
 				// Users and Everyone: mandatory, enabled by default and enabled. The account is an administrator under User Account
 				// Control: Administrators is enabled (and an owner) in an elevated process and held for denying access only otherwise.
-				const uint32_t attributes = logon || index == 3 ? 0xc0000007U : index == 1 ? (process_elevated() ? 0xf : 0x10) : 7;
+				const uint32_t attributes = sids[index] == session ? 0xc0000007U : index == 1 ? (process_elevated() ? 0xf : 0x10) : 7;
 				const uint64_t at = call[2] + placed;
 				std::memcpy(data.data() + first + index * record, &at, width);
 				std::memcpy(data.data() + first + index * record + width, &attributes, 4);
@@ -570,8 +572,11 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 			break;
 		case 12: data = {1, 0, 0, 0}; break;
 		// TokenElevationType: full for an elevated process, limited (the filtered token of an administrator) otherwise; TokenElevation.
-		case 18: data = {process_elevated() ? uint8_t(2) : uint8_t(3), 0, 0, 0}; break;
-		case 20: data = {process_elevated() ? uint8_t(1) : uint8_t(0), 0, 0, 0}; break;
+		// The anonymous token has no linked token (Raven's choice), which TokenElevationTypeDefault means (the TOKEN_ELEVATION_TYPE page
+		// on Microsoft Learn). It holds no Administrators and only SeChangeNotifyPrivilege, so it has no elevated privileges and
+		// TokenIsElevated is 0 (the TOKEN_ELEVATION page), even in an elevated process.
+		case 18: data = {value.anonymous ? uint8_t(1) : process_elevated() ? uint8_t(2) : uint8_t(3), 0, 0, 0}; break;
+		case 20: data = {!value.anonymous && process_elevated() ? uint8_t(1) : uint8_t(0), 0, 0, 0}; break;
 		// TokenUIAccess and TokenIsAppContainer: no process here is an accessibility tool or runs in an app container.
 		case 26: case 29: data = {0, 0, 0, 0}; break;
 		case 25: with_sid(make_sid(16, {value.integrity}), 0x60, true); break;
@@ -612,7 +617,8 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 	// The access a descriptor grants to the token's account: the entries of its list in order, allow entries adding rights and deny entries
 	// refusing them, for the account, its group, the users of the machine and everyone.
 	registry.add("AccessCheck", 8, [&objects](ApiCall &call) {
-		if (!objects.object_as<AccessToken>(call[1]) || !call[0] || !call[6] || !call[7]) {
+		const auto token = objects.object_as<AccessToken>(call[1]);
+		if (!token || !call[0] || !call[6] || !call[7]) {
 			call.fail(call[0] && call[6] && call[7] ? 6 : 87);
 			return;
 		}
@@ -647,8 +653,11 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 			uint64_t at = acl + acl_header;
 			std::vector<std::vector<uint8_t>> mine{user_sid(), make_sid(5, {21, 1000, 1000, 1000, 513}), make_sid(5, {32, 545}), make_sid(1, {0}),
 				make_sid(5, {11}), make_sid(5, {4}), make_sid(5, {1})};
+			// The anonymous logon is matched by the SIDs its token reports alone.
+			if (token->data().anonymous)
+				mine = anonymous_sids();
 			// Administrators grants access only to an elevated token; the filtered token holds it for denying.
-			if (process_elevated())
+			else if (process_elevated())
 				mine.push_back(make_sid(5, {32, 544}));
 			for (uint16_t index = 0; index < count; ++index) {
 				const auto entry = call.read(at, 8);
@@ -712,8 +721,10 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 				call.put_narrow(call[6], std::string(spn.begin(), spn.end()), capacity);
 			call.ret(0);
 		});
-	// Every token here belongs to the one user and carries the same groups, so two tokens differ only in their integrity level and in
-	// which privileges they still hold; whether a privilege is enabled does not count.
+	// Tokens are equal when they hold the same SIDs and the same privileges (the NtCompareTokens page on Microsoft Learn). A token here
+	// holds either the program's user and groups or the anonymous logon's SIDs, so the SIDs match when both or neither are anonymous.
+	// Two tokens also differ in their integrity level and in which privileges they still hold; whether a privilege is enabled does not
+	// count. No token here holds restricting SIDs.
 	registry.add("NtCompareTokens", 3, [&objects](ApiCall &call) {
 		const auto first = objects.object_as<AccessToken>(call[0]);
 		const auto second = objects.object_as<AccessToken>(call[1]);
@@ -735,7 +746,8 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 		};
 		const auto one = first->data(), other = second->data();
 		try {
-			call.store<uint8_t>(call[2], one.integrity == other.integrity && held(one) == held(other));
+			call.store<uint8_t>(call[2], one.anonymous == other.anonymous && one.integrity == other.integrity &&
+				held(one) == held(other));
 		} catch (const ApiFault &) {
 			call.ret(0xc0000005U);
 			return;

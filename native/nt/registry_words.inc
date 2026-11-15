@@ -832,6 +832,7 @@
 {"NtDeleteKey", 1},
 {"NtDeleteValueKey", 2},
 {"NtFlushInstructionCache", 3},
+{"NtImpersonateAnonymousToken", 1},
 {"NtMapViewOfSection", 10},
 {"NtOpenKey", 3},
 {"NtOpenKeyEx", 4},

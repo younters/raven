@@ -1835,10 +1835,10 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		if (call[0]) context.allocator.release(call[0]);
 		call.ret(0);
 	});
-	registry.add("CheckTokenMembership", 3, [](ApiCall &call) {
+	registry.add("CheckTokenMembership", 3, [&context](ApiCall &call) {
 		// The groups are those of the interactive desktop logon the token reports: the account, Users, Everyone, INTERACTIVE, CONSOLE
 		// LOGON, Authenticated Users, This Organization, LOCAL and the logon session. Administrators (S-1-5-32-544) counts only in an
-		// elevated process, since without elevation it is held for denying access alone.
+		// elevated process, since without elevation it is held for denying access alone. The anonymous logon holds only the SIDs its token reports.
 		const auto count = call.read(call[1] + 1, 1)[0];
 		if (count > 15) {
 			call.fail(87, 0);
@@ -1847,7 +1847,14 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		const auto wanted = call.read(call[1], 8 + 4 * size_t(count));
 		std::vector<std::vector<uint8_t>> held{user_sid(), make_sid(5, {32, 545}), make_sid(1, {0}), make_sid(5, {4}), make_sid(2, {1}),
 			make_sid(5, {11}), make_sid(5, {15}), make_sid(2, {0}), make_sid(5, {5, 0, 1})};
-		if (process_elevated())
+		// Without a token handle the thread's impersonation token is checked, or the process token when the thread does not impersonate
+		// (CheckTokenMembership, Microsoft Learn).
+		auto token = call[0] ? context.objects.object_as<AccessToken>(call[0]) : context.threads.current().impersonation;
+		if (!call[0] && !token)
+			token = context.process_token;
+		if (token && token->data().anonymous)
+			held = anonymous_sids();
+		else if (process_elevated())
 			held.push_back(make_sid(5, {32, 544}));
 		call.store<uint32_t>(call[2], std::find(held.begin(), held.end(), wanted) != held.end());
 		call.ret(1);
