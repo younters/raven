@@ -254,7 +254,7 @@ int main(int argc, char **argv)
 	bool inherited_stdio=false;
 	// A program started by another one carries the command line and the directory its parent chose.
 	std::optional<std::string> command_line_text, directory_text;
-	int environment_fd=-1,suspended_fd=-1,inherit_fd=-1,handle_channel_fd=-1,guest_error_fd=2;
+	int environment_fd=-1,suspended_fd=-1,inherit_fd=-1,handle_channel_fd=-1,process_token_fd=-1,guest_error_fd=2;
 	bool elevated=false,noninteractive=false;
 	for (bool more=run_process;more && argc>first_file;) {
 		const std::string_view option=argv[first_file];
@@ -280,6 +280,10 @@ int main(int argc, char **argv)
 			::fcntl(suspended_fd,F_SETFD,FD_CLOEXEC);
 		}
 		else if (option.starts_with("--inherit-fd=")) inherit_fd=std::atoi(std::string(option.substr(13)).c_str());
+		else if (option.starts_with("--process-token-fd=")) {
+			process_token_fd=std::atoi(std::string(option.substr(19)).c_str());
+			::fcntl(process_token_fd,F_SETFD,FD_CLOEXEC);
+		}
 		else if (option.starts_with("--handle-channel-fd=")) handle_channel_fd=std::atoi(std::string(option.substr(20)).c_str());
 		else if (option.starts_with("--diagnostics-fd=")) {
 			// The runtime's own messages go where the parent runtime writes its own; the program's standard error moves out of their way
@@ -899,6 +903,7 @@ int main(int argc, char **argv)
 							u"C:\\Windows\\System32\\")+raven::from_utf8(runtime_file.filename().string()) : paths.dos(runtime_file);
 						launch=raven::NativeLaunch{image,raven::launch_command_line(image,arguments)};
 						launch->suspended_fd = suspended_fd;
+						launch->process_token_fd = process_token_fd;
 						if (command_line_text) launch->command_line=raven::from_utf8(*command_line_text);
 						if (directory_text) launch->directory=raven::from_utf8(*directory_text);
 						if (handle_channel_fd>=0) raven::set_parent_channel(handle_channel_fd);

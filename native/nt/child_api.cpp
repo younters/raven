@@ -1,3 +1,4 @@
+#include "access_token.h"
 #include "child_process.h"
 #include "file_objects.h"
 #include "kernel_context.h"
@@ -55,7 +56,7 @@ std::u16string first_word(std::u16string_view line)
 
 std::shared_ptr<ProcessObject> start_program(KernelContext &context, const std::u16string &application, const std::u16string &line,
 	const std::u16string &directory, const int (&standard)[3], const std::u16string &environment, int *gate, uint32_t &error,
-	std::vector<InheritedHandle> inherited)
+	std::vector<InheritedHandle> inherited, int process_token_descriptor)
 {
 	auto &paths = context.paths;
 	// Without an application name, an unquoted command line names its program by its first blank-separated words: Windows tries the
@@ -156,6 +157,7 @@ std::shared_ptr<ProcessObject> start_program(KernelContext &context, const std::
 	launch.suspended = gate != nullptr;
 	launch.gate = gate;
 	launch.inherited = std::move(inherited);
+	launch.process_token_descriptor = process_token_descriptor;
 	return spawn_child(launch, error);
 }
 
@@ -273,7 +275,7 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 		if (call[0])
 			call.store<uint32_t>(call[0] + 4, 0);
 	});
-	registry.add("CreateProcessW", 10, [&, descriptor_of](ApiCall &call) {
+	const auto create_process = [&, descriptor_of](ApiCall &call, const std::shared_ptr<AccessToken> &token) {
 		if (!call[9]) {
 			call.fail(87);
 			return;
@@ -381,8 +383,14 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 		}
 		int gate = -1;
 		uint32_t error = 0;
+		// A process given a token runs with a copy of it (Raven's choice): changes made later through the creator's handle do not reach the child. Without
+		// one the child makes its own token, as every child does.
+		const auto assigned_token = token ? std::make_shared<AccessToken>(*token) : nullptr;
+		InheritedHandle token_record;
+		if (assigned_token)
+			assigned_token->describe(token_record);
 		const auto child = start_program(context, application, line, directory, standard, environment, call.u32(5) & create_suspended ? &gate : nullptr, error,
-			std::move(inherited));
+			std::move(inherited), token_record.descriptor);
 		if (!child) {
 			if (std::getenv("RAVEN_TRACE_API"))
 				std::fprintf(stderr, "raven: child process not started, error %u\n", error);
@@ -413,7 +421,8 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 		call.store<uint32_t>(call[9] + 2 * width, uint32_t(child->pid));
 		call.store<uint32_t>(call[9] + 2 * width + 4, 1);
 		call.ret(1);
-	});
+	};
+	registry.add("CreateProcessW", 10, [create_process](ApiCall &call) { create_process(call, nullptr); });
 	registry.add("GetExitCodeProcess", 2, [&objects](ApiCall &call) {
 		if (!call[1]) {
 			call.fail(87);
@@ -469,19 +478,43 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(uint32_t(child->pid));
 	});
-	// Every process runs as the same host user, so a process created for a token is created as any other.
-	registry.add("CreateProcessAsUserW", 11, [&registry](ApiCall &call) {
-		const auto create = registry.find("CreateProcessW");
+	// The host user stays the same, but the new process runs with the primary token it was given, whose handle must allow TOKEN_QUERY,
+	// TOKEN_DUPLICATE and TOKEN_ASSIGN_PRIMARY. A handle without them fails with ERROR_ACCESS_DENIED and an impersonation token with
+	// ERROR_BAD_TOKEN_TYPE; a null token starts the child as CreateProcessW does. Privileges the caller would need are not checked.
+	const auto token_for = [&objects](ApiCall &call, uint64_t handle, std::shared_ptr<AccessToken> &token) {
+		if (!handle)
+			return true;
+		token = objects.object_as<AccessToken>(handle);
+		if (!token) {
+			call.fail(6);
+			return false;
+		}
+		if ((objects.access_of(handle) & 0xb) != 0xb) {
+			call.fail(5);
+			return false;
+		}
+		if (token->data().type != 1) {
+			call.fail(1349);
+			return false;
+		}
+		return true;
+	};
+	registry.add("CreateProcessAsUserW", 11, [create_process, token_for](ApiCall &call) {
+		std::shared_ptr<AccessToken> token;
+		if (!token_for(call, call[0], token))
+			return;
 		ApiCall inner(call.process, call.environment, {call[1], call[2], call[3], call[4], call[5], call[6], call[7], call[8], call[9], call[10]});
-		create->second(inner);
+		create_process(inner, token);
 		call.ret(inner.result);
 	});
-	// The same for a token given with logon flags, which have nothing to load either: the token, the flags, the program and its command
-	// line, the creation flags, the environment, the folder, the startup information and where the process information goes.
-	registry.add("CreateProcessWithTokenW", 9, [&registry](ApiCall &call) {
-		const auto create = registry.find("CreateProcessW");
+	// LOGON_NETCREDENTIALS_ONLY keeps the caller's local token (CreateProcessWithTokenW, Microsoft Learn). Network credentials,
+	// logon sessions and profile loading are not modeled here.
+	registry.add("CreateProcessWithTokenW", 9, [create_process, token_for, &context](ApiCall &call) {
+		std::shared_ptr<AccessToken> token;
+		if (!token_for(call, call[0], token))
+			return;
 		ApiCall inner(call.process, call.environment, {call[2], call[3], 0, 0, 0, call[4], call[5], call[6], call[7], call[8]});
-		create->second(inner);
+		create_process(inner, call.u32(1) & 2 ? context.process_token : token);
 		call.ret(inner.result);
 	});
 	// A child has no message queue the parent could watch; it counts as idle from the start.

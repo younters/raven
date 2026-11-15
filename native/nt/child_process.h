@@ -116,6 +116,8 @@ struct ChildLaunch {
 	int standard[3] = {0, 1, 2};
 	// The environment block the child starts with (entries "NAME=VALUE" each ended by a zero, then one more zero).
 	std::u16string environment;
+	// The storage of the primary token the new process runs with; -1 lets the child make its own token.
+	int process_token_descriptor = -1;
 	// When set, the child waits for a byte on this descriptor's other end before it runs; `gate` receives the end the parent keeps.
 	bool suspended = false;
 	int *gate = nullptr;
