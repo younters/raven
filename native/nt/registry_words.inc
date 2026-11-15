@@ -837,6 +837,7 @@
 {"NtOpenKeyEx", 4},
 {"NtQueryObject", 5},
 {"NtQuerySection", 5},
+{"NtQuerySemaphore", 5},
 {"NtQueryValueKey", 6},
 {"NtSetValueKey", 6},
 {"NtUnmapViewOfSection", 2},
