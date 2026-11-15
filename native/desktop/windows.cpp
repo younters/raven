@@ -1329,6 +1329,13 @@ void NativeWindows::receive(const DesktopEvent &event)
 		// The mouse's own movement: once the host reports it, raw input uses it rather than the change of the pointer position.
 		raw_mouse.relative=true;
 		if (raw_mouse.registered) raw_mouse_input(event.x,event.y,0,0);
+		// While the pointer is held still for a program that hides the cursor and puts it back each frame (update_warp_lock), the host
+		// reports no movement of its position: the cursor moves by the mouse's own movement, within the screen.
+		if (warp_lock_window) {
+			const auto &screen=objects.nonclient_metrics();
+			cursor_x=int32_t(std::clamp<int64_t>(int64_t(cursor_x)+event.x,0,std::max<int64_t>(screen.screen_x-1,0)));
+			cursor_y=int32_t(std::clamp<int64_t>(int64_t(cursor_y)+event.y,0,std::max<int64_t>(screen.screen_y-1,0)));
+		}
 		return;
 	}
 	if (event.kind==DesktopEventKind::pointer_wheel) {
@@ -1387,7 +1394,9 @@ void NativeWindows::receive(const DesktopEvent &event)
 		if (changed & 16) button_flags|=(buttons & 16) ? 0x10 : 0x20;
 		if (dx || dy || button_flags) raw_mouse_input(dx,dy,button_flags,0);
 	}
-	mouse_buttons=buttons; cursor_x=int32_t(x); cursor_y=int32_t(y);
+	mouse_buttons=buttons;
+	// The held pointer's own position is the point it is held at, not where the cursor has moved to.
+	if (!warp_lock_window) { cursor_x=int32_t(x); cursor_y=int32_t(y); }
 	mouse_keys(vk_async,buttons);
 	if (raw_mouse.registered && raw_mouse.no_legacy) return;
 	if (frame_drag.window) {
