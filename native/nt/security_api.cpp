@@ -575,6 +575,12 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 		// TokenUIAccess and TokenIsAppContainer: no process here is an accessibility tool or runs in an app container.
 		case 26: case 29: data = {0, 0, 0, 0}; break;
 		case 25: with_sid(make_sid(16, {value.integrity}), 0x60, true); break;
+		// TokenSecurityAttributes, which Microsoft Learn lists as reserved. Raven's choice: a CLAIM_SECURITY_ATTRIBUTES_INFORMATION of version 1
+		// that lists no claims, as no token here has any.
+		case 39:
+			data.assign(width == 4 ? 12 : 16, 0);
+			data[0] = 1;
+			break;
 		case 10: data.assign(56, 0); break;
 		default:
 			call.fail(87);
