@@ -1,5 +1,6 @@
 #include <atomic>
 #include "kernel_context.h"
+#include "processors.h"
 #include "actctx.h"
 #include "text.h"
 #include "x86_compat_api.h"
@@ -597,8 +598,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	const auto system_information = [](ApiCall &call) {
 		// A 32-bit program sees the 36-byte layout and its own address range; GetNativeSystemInfo still names the x64 processor.
 		if (call.pointer_width() == 4) {
-			const uint32_t processors = std::max(1U, std::min(32U, std::thread::hardware_concurrency()));
-			const uint32_t mask = processors >= 32 ? ~0U : (1U << processors) - 1;
+			const uint32_t processors = reported_processors(4), mask = uint32_t(reported_processor_mask(4));
 			const uint32_t fields[9] = {9, 4096, 0x10000, 0x7ffeffff, mask, processors, 8664, 65536, 6};
 			std::vector<uint8_t> bytes(36);
 			std::memcpy(bytes.data(), fields, sizeof fields);
@@ -608,8 +608,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		std::vector<uint8_t> bytes(48);
 		const uint16_t architecture = 9;
 		std::memcpy(bytes.data(), &architecture, 2);
-		const uint32_t page = 4096, granularity = 65536, processors = std::max(1U, std::min(64U, std::thread::hardware_concurrency())), type = 8664;
-		const uint64_t minimum = 0x10000, maximum = native_user_limit - 1, mask = processors >= 64 ? ~0ULL : (1ULL << processors) - 1;
+		const uint32_t page = 4096, granularity = 65536, processors = reported_processors(8), type = 8664;
+		const uint64_t minimum = 0x10000, maximum = native_user_limit - 1, mask = reported_processor_mask(8);
 		std::memcpy(bytes.data() + 4, &page, 4);
 		std::memcpy(bytes.data() + 8, &minimum, 8);
 		std::memcpy(bytes.data() + 16, &maximum, 8);

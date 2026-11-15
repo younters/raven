@@ -65,6 +65,8 @@ struct GuestThread {
 	std::chrono::steady_clock::time_point input_until;
 	// Background processing mode, which only the thread itself enters and leaves; meanwhile it reports idle priority.
 	bool background = false;
+	// The processor SetThreadIdealProcessor last named, in group 0. The host still schedules the thread where it likes.
+	std::atomic<uint32_t> ideal_processor{0};
 	std::shared_ptr<AccessToken> impersonation;
 	// Pipes to the processes that hold a handle to this thread: each gets the exit code when the thread ends.
 	std::vector<int> exit_reports;
@@ -124,6 +126,8 @@ public:
 	int signaled(uint32_t) const override { return code().has_value(); }
 	// The exit code once the thread has ended.
 	std::optional<uint32_t> code() const;
+	// The processor SetThreadIdealProcessor last named through this handle's object; the other process's thread does not see it.
+	std::atomic<uint32_t> ideal_processor{0};
 
 private:
 	int descriptor;
