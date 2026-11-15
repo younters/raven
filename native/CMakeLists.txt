@@ -6845,6 +6845,33 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
                 set_tests_properties(native_attach_order${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
             endif()
         endforeach()
+        # Raven's wrapper-library policy: a replaceable winmm and its system provider coexist at both widths.
+        foreach(width "" _x32)
+            if(width STREQUAL "")
+                set(local_compiler ${RAVEN_MINGW64})
+                set(local_entry raven_entry)
+                set(local_dll_entry DllMain)
+            else()
+                set(local_compiler ${RAVEN_MINGW32})
+                set(local_entry _raven_entry)
+                set(local_dll_entry _DllMain@12)
+            endif()
+            if(local_compiler)
+                set(local_directory ${CMAKE_CURRENT_BINARY_DIR}/local-library${width})
+                add_custom_command(OUTPUT ${local_directory}/winmm.dll ${local_directory}/client.exe
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${local_directory}
+                    COMMAND ${local_compiler} -O2 -nostdlib -shared -DRAVEN_LOCAL_LIBRARY -fno-stack-protector
+                        -Wl,--entry,${local_dll_entry},--no-insert-timestamp,--out-implib,${local_directory}/winmm.a
+                        -o ${local_directory}/winmm.dll ${LOADER_SOURCES}/local_library.c
+                    COMMAND ${local_compiler} -O2 -nostdlib -fno-stack-protector -Wl,--entry,${local_entry},--no-insert-timestamp
+                        -o ${local_directory}/client.exe ${LOADER_SOURCES}/local_library.c ${local_directory}/winmm.a -lkernel32
+                    DEPENDS ${LOADER_SOURCES}/local_library.c VERBATIM)
+                add_custom_target(local_library${width}_fixture ALL DEPENDS ${local_directory}/winmm.dll ${local_directory}/client.exe)
+                add_test(NAME native_local_library${width} COMMAND raven --run-process --execution=native ${local_directory}/client.exe)
+                set_tests_properties(native_local_library${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 "
+                    ENVIRONMENT "RAVEN_PREFIX=${local_directory}/prefix;RAVEN_PREFER_LOCAL_DLLS=0")
+            endif()
+        endforeach()
     endif()
 endif()
 
