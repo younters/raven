@@ -880,10 +880,17 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 			call.store_pointer(call[2], 0);
 		call.ret(0xc0000bb8U);
 	});
+	// The calling thread's user: the client it impersonates, if any, otherwise the process's own (the GetUserName and GetUserNameEx
+	// pages on Microsoft Learn). Every token here holds the program's user except an anonymous one, whose user is ANONYMOUS LOGON
+	// (S-1-5-7); a process started with a primary copy of the anonymous token is the anonymous logon too.
+	const auto acting_anonymous = [&context] {
+		const auto token = context.threads.current().impersonation;
+		return token ? token->data().anonymous : context.process_token->data().anonymous;
+	};
 	// The account name: the size counts the terminator, both on the way in and when the buffer is too small.
 	for (const bool wide : {true, false})
-		registry.add(wide ? "GetUserNameW" : "GetUserNameA", 2, [&context, wide](ApiCall &call) {
-			const auto name = context.paths.user_name();
+		registry.add(wide ? "GetUserNameW" : "GetUserNameA", 2, [&context, acting_anonymous, wide](ApiCall &call) {
+			const std::u16string name = acting_anonymous() ? u"ANONYMOUS LOGON" : context.paths.user_name();
 			if (!call[1]) {
 				call.fail(error_invalid_parameter, 0);
 				return;
@@ -901,13 +908,15 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 			call.store<uint32_t>(call[1], uint32_t(name.size() + 1));
 			call.ret(1);
 		});
-	// The account in the formats a machine outside a domain has: SAM-compatible (computer\user) and the display name.
-	registry.add("GetUserNameExW", 3, [&context, computer_name](ApiCall &call) {
+	// The account in the formats a machine outside a domain has: SAM-compatible (computer\user) and the display name. The anonymous
+	// logon is NT AUTHORITY\ANONYMOUS LOGON and has no display name (Raven's choice), so that format is ERROR_NONE_MAPPED.
+	registry.add("GetUserNameExW", 3, [&context, computer_name, acting_anonymous](ApiCall &call) {
+		const bool anonymous = acting_anonymous();
 		const auto user = context.paths.user_name();
 		std::u16string name;
 		if (call.u32(0) == 2)
-			name = computer_name(0).value_or(u"RAVEN") + u"\\" + user;
-		else if (call.u32(0) == 3)
+			name = anonymous ? u"NT AUTHORITY\\ANONYMOUS LOGON" : computer_name(0).value_or(u"RAVEN") + u"\\" + user;
+		else if (call.u32(0) == 3 && !anonymous)
 			name = user;
 		else {
 			call.fail(1332, 0);
@@ -1978,6 +1987,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 			{u"Authenticated Users", u"NT AUTHORITY", make_sid(5, {11}), 5}, {u"LOCAL SERVICE", u"NT AUTHORITY", make_sid(5, {19}), 5},
 			{u"NETWORK SERVICE", u"NT AUTHORITY", make_sid(5, {20}), 5}, {u"INTERACTIVE", u"NT AUTHORITY", make_sid(5, {4}), 5},
 			{u"NETWORK", u"NT AUTHORITY", make_sid(5, {2}), 5}, {u"CREATOR OWNER", u"", make_sid(3, {0}), 5},
+			{u"ANONYMOUS LOGON", u"NT AUTHORITY", anonymous_sid(), 5},
 			{u"TrustedInstaller", u"NT SERVICE", make_sid(5, {80, 956008885, 3418522649U, 1831038044, 1853292631, 2271478464U}), 5},
 			{u"ALL APPLICATION PACKAGES", u"APPLICATION PACKAGE AUTHORITY", make_sid(15, {2, 1}), 5},
 			{context.paths.user_name(), from_utf8(netbios), user_sid(), 1}};

@@ -3479,6 +3479,20 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         raven_kernel_fixture(xstate-context xstate_context_client.c 0x1c0000000 "-lkernel32")
         add_test(NAME native_xstate_context COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/xstate-context.exe)
         set_tests_properties(native_xstate_context PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        # NtImpersonateAnonymousToken and ImpersonateAnonymousToken, from 64-bit and 32-bit callers.
+        raven_kernel_fixture(anonymous-token anonymous_token_client.c 0x1c5000000 "-lkernel32;-ladvapi32")
+        add_test(NAME native_anonymous_token COMMAND raven --run-process --execution=native --timeout-ms=30000 ${CMAKE_CURRENT_BINARY_DIR}/anonymous-token.exe)
+        set_tests_properties(native_anonymous_token PROPERTIES TIMEOUT 40 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        if(RAVEN_MINGW32)
+            add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/anonymous-token32.exe
+                COMMAND ${RAVEN_MINGW32} -O1 -nostdlib -fno-stack-protector -fno-builtin
+                    -Wl,--entry,_raven_entry,--no-insert-timestamp
+                    -o ${CMAKE_CURRENT_BINARY_DIR}/anonymous-token32.exe ${LOADER_SOURCES}/anonymous_token_client.c -lkernel32 -ladvapi32
+                DEPENDS ${LOADER_SOURCES}/anonymous_token_client.c VERBATIM)
+            add_custom_target(anonymous_token32_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/anonymous-token32.exe)
+            add_test(NAME native_anonymous_token_x32 COMMAND raven --run-process --execution=native --timeout-ms=30000 ${CMAKE_CURRENT_BINARY_DIR}/anonymous-token32.exe)
+            set_tests_properties(native_anonymous_token_x32 PROPERTIES TIMEOUT 40 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        endif()
         raven_kernel_fixture(guest-answers guest_answers_client.c 0x1bf000000 "-lkernel32;-luser32;-lole32")
         foreach(mode default parallel)
             add_test(NAME native_guest_answers_${mode} COMMAND raven --run-process --execution=native

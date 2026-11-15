@@ -20,6 +20,8 @@ public:
 		uint32_t type = 1;
 		uint32_t impersonation_level = 2;
 		std::vector<Privilege> privileges;
+		// The ANONYMOUS LOGON identity NtImpersonateAnonymousToken gives a thread, in place of the program's user and groups.
+		bool anonymous = false;
 	};
 	AccessToken();
 	explicit AccessToken(int descriptor);
@@ -34,6 +36,7 @@ public:
 	void set_integrity(uint32_t value);
 	void set_type(uint32_t value);
 	void set_impersonation_level(uint32_t value);
+	void set_anonymous(bool value);
 	void restrict_privileges(bool maximum, std::span<const uint64_t> removed);
 	// Output validation runs before any privilege changes become visible through another handle.
 	uint32_t adjust_privileges(bool disable, std::span<const Privilege> changes,
@@ -60,5 +63,13 @@ inline std::vector<uint8_t> make_sid(uint8_t authority, std::initializer_list<ui
 
 // The account the program runs as: the same identity the registry path of the current user names.
 inline std::vector<uint8_t> user_sid() { return make_sid(5, {21, 1000, 1000, 1000, 1000}); }
+// ANONYMOUS LOGON, the identity NtImpersonateAnonymousToken gives a thread.
+inline std::vector<uint8_t> anonymous_sid() { return make_sid(5, {7}); }
+// The logon SID of the anonymous logon. Raven's choice: a session apart from the program's own (S-1-5-5-0-1), numbered after
+// ANONYMOUS_LOGON_LUID (0x3e6), so a list that allows the program's session does not let the anonymous logon in.
+inline std::vector<uint8_t> anonymous_logon_sid() { return make_sid(5, {5, 0, 0x3e6}); }
+// Every SID the anonymous token holds: its user and its one group, the logon SID. AccessCheck and CheckTokenMembership match against
+// this list; GetTokenInformation builds its answers from the same two helpers.
+inline std::vector<std::vector<uint8_t>> anonymous_sids() { return {anonymous_sid(), anonymous_logon_sid()}; }
 
 }

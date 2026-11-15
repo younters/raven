@@ -2380,6 +2380,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"strlen", "strcmp", "strncmp",
 		// Cancelling one pending operation, which mio uses for its AFD polls.
 		"NtCancelIoFileEx",
+		// Impersonating the anonymous logon.
+		"NtImpersonateAnonymousToken",
 		// Opening files by their native names, which Rust's standard library and mio look up at run time.
 		"NtCreateFile", "NtOpenFile",
 		// What an open file and its volume are, which paint.net's file system layer looks up at run time.

@@ -1023,12 +1023,13 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 	});
 	registry.add("SetThreadPriorityBoost", 2, [](ApiCall &call) { call.ret(1); });
 	registry.add("SetThreadInformation", 4, [](ApiCall &call) { call.ret(1); });
-	const auto set_thread_token = [thread_from, &objects, &threads](uint64_t handle, uint64_t token_handle) -> uint32_t {
+	// The thread handle needs THREAD_SET_THREAD_TOKEN, or THREAD_IMPERSONATE to take on the anonymous logon.
+	const auto set_thread_token = [thread_from, &objects, &threads](uint64_t handle, uint64_t token_handle, uint32_t needed = 0x80) -> uint32_t {
 		const auto thread = thread_from(handle);
 		const auto child = objects.object_as<ChildThreadObject>(handle);
 		if (!thread && !child)
 			return 0xc0000008U;
-		if (handle != current_thread_pseudo && handle != 0xfffffffeULL && !(objects.access_of(handle) & 0x80))
+		if (handle != current_thread_pseudo && handle != 0xfffffffeULL && !(objects.access_of(handle) & needed))
 			return 0xc0000022U;
 		const auto token = token_handle ? objects.object_as<AccessToken>(token_handle) : nullptr;
 		if (token_handle && !token)
@@ -1062,6 +1063,28 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		const auto answer = owner->channel->request_process(objects, threads, std::move(request));
 		return answer ? answer->access : 0xc0000001U;
 	};
+	// The thread impersonates ANONYMOUS LOGON (S-1-5-7); the handle needs THREAD_IMPERSONATE (the ImpersonateAnonymousToken page on
+	// Microsoft Learn). The rest of the token is Raven's choice, not a copy of a Windows anonymous token: impersonation level
+	// SecurityImpersonation, untrusted integrity, the program's default DACL, only SeChangeNotifyPrivilege of the program's
+	// privileges, S-1-5-7 as user, owner and primary group, and its own logon SID as its one group (anonymous_sids).
+	const auto impersonate_anonymous = [set_thread_token, thread_from, &context, &objects](uint64_t thread) -> uint32_t {
+		if (!thread_from(thread) && !objects.object_as<ChildThreadObject>(thread))
+			return 0xc0000008U;
+		auto token = std::make_shared<AccessToken>(*context.process_token);
+		token->set_type(2);
+		token->set_impersonation_level(2);
+		token->set_integrity(0);
+		token->restrict_privileges(true, {});
+		token->set_anonymous(true);
+		const auto made = objects.add_object(token);
+		if (made.status)
+			return made.status;
+		objects.set_access(made.value, 0xf01ff);
+		const auto status = set_thread_token(thread, made.value, 0x100);
+		objects.close(made.value);
+		return status;
+	};
+	registry.add("NtImpersonateAnonymousToken", 1, [impersonate_anonymous](ApiCall &call) { call.ret(impersonate_anonymous(call[0])); });
 	registry.add("NtSetInformationThread", 4, [set_thread_token](ApiCall &call) {
 		if (call.u32(1) != 5) { call.ret(0xc0000003U); return; }
 		if (call.u32(3) != call.pointer_width()) { call.ret(0xc0000004U); return; }
@@ -1088,16 +1111,10 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		threads.current().impersonation = std::move(token);
 		call.ret(1);
 	});
-	// The anonymous logon has no identity of its own here: tokens carry the one user of the prefix, so the thread impersonates a copy of
-	// the process token at the impersonation level, which RevertToSelf drops again.
-	registry.add("ImpersonateAnonymousToken", 1, [&context, thread_from](ApiCall &call) {
-		const auto thread = thread_from(call[0]);
-		if (!thread) { call.fail(6); return; }
-		auto token = std::make_shared<AccessToken>(*context.process_token);
-		token->set_type(2);
-		token->set_impersonation_level(2);
-		thread->impersonation = std::move(token);
-		call.ret(1);
+	registry.add("ImpersonateAnonymousToken", 1, [impersonate_anonymous](ApiCall &call) {
+		const auto status = impersonate_anonymous(call[0]);
+		if (status) call.fail(thread_token_error(status));
+		else call.ret(1);
 	});
 	registry.add("ImpersonateLoggedOnUser", 1, [&objects, &threads](ApiCall &call) {
 		auto token = objects.object_as<AccessToken>(call[0]);
