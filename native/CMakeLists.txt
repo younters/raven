@@ -6363,6 +6363,36 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         set_tests_properties(native_initial_dependency_contract PROPERTIES TIMEOUT 15)
         set_tests_properties(native_initial_dependency_prefer_local PROPERTIES TIMEOUT 15 ENVIRONMENT RAVEN_PREFER_LOCAL_DLLS=1)
         set_tests_properties(native_initial_dependency_cli native_initial_forwarder_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        # A library loaded by its path with LOAD_WITH_ALTERED_SEARCH_PATH finds its dependencies in its own folder, for 64-bit and 32-bit
+        # programs.
+        foreach(width "" _x32)
+            if(width STREQUAL "")
+                set(altered_compiler ${RAVEN_MINGW64})
+                set(altered_entry raven_entry)
+                set(altered_dll_entry DllMain)
+            else()
+                set(altered_compiler ${RAVEN_MINGW32})
+                set(altered_entry _raven_entry)
+                set(altered_dll_entry _DllMain@12)
+            endif()
+            if(altered_compiler)
+                set(altered_directory ${CMAKE_CURRENT_BINARY_DIR}/altered-search${width})
+                set(altered_flags -O2 -nostdlib -fno-stack-protector -fno-builtin)
+                add_custom_command(OUTPUT ${altered_directory}/altered/dependency.dll ${altered_directory}/altered/root.dll ${altered_directory}/client.exe
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${altered_directory}/altered
+                    COMMAND ${altered_compiler} ${altered_flags} -shared -DRAVEN_ALTERED_DEPENDENCY
+                        -Wl,--entry,${altered_dll_entry},--no-insert-timestamp,--out-implib,${altered_directory}/dependency.a
+                        -o ${altered_directory}/altered/dependency.dll ${LOADER_SOURCES}/altered_search.c
+                    COMMAND ${altered_compiler} ${altered_flags} -shared -DRAVEN_ALTERED_ROOT -Wl,--entry,${altered_dll_entry},--no-insert-timestamp
+                        -o ${altered_directory}/altered/root.dll ${LOADER_SOURCES}/altered_search.c ${altered_directory}/dependency.a
+                    COMMAND ${altered_compiler} ${altered_flags} -Wl,--entry,${altered_entry},--no-insert-timestamp
+                        -o ${altered_directory}/client.exe ${LOADER_SOURCES}/altered_search.c -lkernel32
+                    DEPENDS ${LOADER_SOURCES}/altered_search.c VERBATIM)
+                add_custom_target(altered_search${width}_fixture ALL DEPENDS ${altered_directory}/altered/root.dll ${altered_directory}/client.exe)
+                add_test(NAME native_altered_search${width} COMMAND raven --run-process --execution=native ${altered_directory}/client.exe)
+                set_tests_properties(native_altered_search${width} PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+            endif()
+        endforeach()
     endif()
 endif()
 

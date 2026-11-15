@@ -67,6 +67,17 @@ std::optional<std::vector<uint8_t>> NativeX86Loader::read_library(const std::str
 		identity = name;
 		return read_all(component);
 	}
+	// A dependency of a library loaded by its path with LOAD_WITH_ALTERED_SEARCH_PATH or LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR is looked for in
+	// that library's folder first (Steam's steamclient.dll and its tier0_s.dll, loaded from the Steam folder by a game in another one).
+	if (!load_directory.empty() && name.find_first_of("/\\:") == std::string::npos) {
+		std::error_code error;
+		for (const auto &entry : std::filesystem::directory_iterator(load_directory, error))
+			if (lowered(entry.path().filename().string()) == name && entry.is_regular_file(error)) {
+				identity = name;
+				file = entry.path();
+				return read_all(entry.path());
+			}
+	}
 	// A name alone that an assembly of the context in effect declares comes from that assembly's folder, as Windows redirects it.
 	if (name.find_first_of("/\\:") == std::string::npos)
 		if (const auto folder = activation_contexts().library_folder(name)) {
@@ -173,6 +184,8 @@ PEModule *NativeX86Loader::bring(const std::string &requested)
 	auto &added = modules.add(identity, std::move(*bytes), [&](uint64_t base, uint64_t size) { return process.memory_available(base, size); });
 	added.file = file;
 	staged.push_back(&added);
+	if (staged.size() == 1 && (library_flags & 0x108) && name.find_first_of("/\\:") != std::string::npos && !file.empty())
+		load_directory = file.parent_path();
 	if (mapping_only && staged.size() == 1) {
 		added.imports.clear();
 		return &added;
@@ -288,6 +301,8 @@ uint64_t NativeX86Loader::load(std::string name, bool only_map, uint32_t search_
 			return found->second.module->loaded.base();
 		}
 	staged.clear();
+	load_directory.clear();
+	struct ClearDirectory { std::filesystem::path &value; ~ClearDirectory() { value.clear(); } } clear_directory{load_directory};
 	entry_contexts.clear();
 	importer_context = 0;
 	mapping_only = only_map;

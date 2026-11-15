@@ -5,6 +5,7 @@
 #include "x86_tls.h"
 #include "pe/module_set.h"
 
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <optional>
@@ -58,6 +59,9 @@ private:
 	uint64_t importer_context = 0;
 	bool mapping_only = false;
 	uint32_t library_flags = 0;
+	// With LOAD_WITH_ALTERED_SEARCH_PATH or LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, the folder of the library a load names by its path, searched
+	// first for the libraries that load brings in.
+	std::filesystem::path load_directory;
 	struct Held {
 		PEModule *module;
 		size_t references;
