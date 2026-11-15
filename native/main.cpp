@@ -597,8 +597,9 @@ int main(int argc, char **argv)
 						if (entry->image.is_64 && raven::OpenGLBridge::enabled() && name == "opengl32.dll") return std::nullopt;
 #endif
 						// The Windows Installer, the libraries it installs with and remote procedure calls are the runtime's components, whatever copies a program
-						// ships or an installer leaves in the system directory.
-						if (std::find(std::begin(raven::runtime_components), std::end(raven::runtime_components), name) != std::end(raven::runtime_components))
+						// ships or an installer leaves in the system directory; a component a program may replace is the program's when it ships one.
+						if (std::find(std::begin(raven::runtime_components), std::end(raven::runtime_components), name) != std::end(raven::runtime_components) &&
+							!(raven::program_may_replace(name) && find_file(directory, name)))
 							if (const auto component = component_directory / name; std::filesystem::exists(component))
 								return read_module(component.c_str());
 						// A library an assembly of the context in effect declares comes from that assembly's folder before any other place, as

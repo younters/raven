@@ -6363,6 +6363,37 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         set_tests_properties(native_initial_dependency_contract PROPERTIES TIMEOUT 15)
         set_tests_properties(native_initial_dependency_prefer_local PROPERTIES TIMEOUT 15 ENVIRONMENT RAVEN_PREFER_LOCAL_DLLS=1)
         set_tests_properties(native_initial_dependency_cli native_initial_forwarder_cli PROPERTIES TIMEOUT 15 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        # A program's own build of ICU beside it is the one it gets, imported at start or loaded later, for 64-bit and 32-bit programs.
+        foreach(width "" _x32)
+            if(width STREQUAL "")
+                set(icu_compiler ${RAVEN_MINGW64})
+                set(icu_entry raven_entry)
+                set(icu_dll_entry DllMain)
+            else()
+                set(icu_compiler ${RAVEN_MINGW32})
+                set(icu_entry _raven_entry)
+                set(icu_dll_entry _DllMain@12)
+            endif()
+            if(icu_compiler)
+                set(icu_directory ${CMAKE_CURRENT_BINARY_DIR}/local-icu${width})
+                set(icu_flags -O2 -nostdlib -fno-stack-protector)
+                add_custom_command(OUTPUT ${icu_directory}/icuuc.dll ${icu_directory}/imports.exe ${icu_directory}/later.exe
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${icu_directory}
+                    COMMAND ${icu_compiler} ${icu_flags} -shared -DRAVEN_LOCAL_ICU
+                        -Wl,--entry,${icu_dll_entry},--no-insert-timestamp,--out-implib,${icu_directory}/icuuc.a
+                        -o ${icu_directory}/icuuc.dll ${LOADER_SOURCES}/local_icu.c
+                    COMMAND ${icu_compiler} ${icu_flags} -Wl,--entry,${icu_entry},--no-insert-timestamp
+                        -o ${icu_directory}/imports.exe ${LOADER_SOURCES}/local_icu.c ${icu_directory}/icuuc.a -lkernel32
+                    COMMAND ${icu_compiler} ${icu_flags} -DRAVEN_ICU_LATER -Wl,--entry,${icu_entry},--no-insert-timestamp
+                        -o ${icu_directory}/later.exe ${LOADER_SOURCES}/local_icu.c -lkernel32
+                    DEPENDS ${LOADER_SOURCES}/local_icu.c VERBATIM)
+                add_custom_target(local_icu${width}_fixture ALL DEPENDS ${icu_directory}/icuuc.dll ${icu_directory}/imports.exe ${icu_directory}/later.exe)
+                add_test(NAME native_local_icu${width} COMMAND raven --run-process --execution=native ${icu_directory}/imports.exe)
+                add_test(NAME native_local_icu_later${width} COMMAND raven --run-process --execution=native ${icu_directory}/later.exe)
+                set_tests_properties(native_local_icu${width} native_local_icu_later${width} PROPERTIES TIMEOUT 15
+                    PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+            endif()
+        endforeach()
     endif()
 endif()
 

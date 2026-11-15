@@ -51,8 +51,25 @@ NativeX86Loader::NativeX86Loader(NativeProcess &process, NativeEnvironment &envi
 
 std::optional<std::vector<uint8_t>> NativeX86Loader::read_library(const std::string &name, std::string &identity, std::filesystem::path &file) const
 {
+	const bool component = std::find(std::begin(runtime_components), std::end(runtime_components), name) != std::end(runtime_components);
+	// A component a copy in the program's folder may replace is the program's when it ships a 32-bit one, as its own build of ICU.
+	if (component && program_may_replace(name) && !application_directory.empty())
+		if (const auto local = paths.resolve(application_directory + u"\\" + from_utf8(name));
+			local && local->exists && std::filesystem::is_regular_file(local->host)) {
+			auto bytes = read_all(local->host);
+			bool is_32 = false;
+			try {
+				is_32 = !PEImage(bytes).is_64;
+			} catch (const std::runtime_error &) {
+			}
+			if (is_32) {
+				identity = name;
+				file = local->host;
+				return bytes;
+			}
+		}
 	// The runtime's own components come from beside it, in their 32-bit builds.
-	if (std::find(std::begin(runtime_components), std::end(runtime_components), name) != std::end(runtime_components)) {
+	if (component) {
 		const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "x86" / name;
 		if (std::filesystem::exists(component)) {
 			identity = name;

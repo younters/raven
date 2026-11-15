@@ -21,14 +21,16 @@ inline constexpr std::string_view core_system_libraries[]{"ntdll.dll", "kernel32
 	"comctl32.dll", "advapi32.dll", "msvcrt.dll", "ucrtbase.dll", "ole32.dll", "oleaut32.dll", "combase.dll", "rpcrt4.dll",
 	"shell32.dll", "shlwapi.dll", "setupapi.dll", "comdlg32.dll"};
 // The system libraries that graphics wrappers (DXVK, ReShade) and mod loaders ship beside a program, whose copy there loads instead of the
-// runtime's own.
+// runtime's own. ICU too: Windows keeps it in System32, but programs that embed a browser engine or a UI toolkit ship their own build beside
+// themselves, with its own versioned export names (Strata Source's Panorama UI imports icuuc.dll so), and as none of its libraries is a
+// KnownDLL, the copy in the program's folder is the one Windows loads.
 inline constexpr std::string_view program_replaceable_libraries[]{"d3d8.dll", "d3d9.dll", "d3d10core.dll", "d3d11.dll", "dxgi.dll", "ddraw.dll",
-	"dinput.dll", "dinput8.dll", "winmm.dll", "version.dll", "xinput1_3.dll", "xinput1_4.dll"};
+	"dinput.dll", "dinput8.dll", "winmm.dll", "version.dll", "xinput1_3.dll", "xinput1_4.dll", "icu.dll", "icuuc.dll", "icuin.dll"};
 // Whether a copy of the library in the program's folder loads instead of the runtime's: one of program_replaceable_libraries, or, with
 // RAVEN_PREFER_LOCAL_DLLS=1, any other system library outside core_system_libraries.
 bool program_may_replace(std::string_view dll);
 // The system libraries the runtime ships as guest components beside itself (in x86/ for 32-bit programs), which are loaded from there
-// whatever copies a program ships or an installer leaves in the system directory.
+// whatever copies a program ships or an installer leaves in the system directory, except a program's own copy of one it may replace.
 inline constexpr std::string_view runtime_components[]{"msi.dll", "cabinet.dll", "sxs.dll", "rpcrt4.dll", "msxml3.dll", "libxslt.dll", "atl100.dll",
 	"libjpeg.dll", "libtiff.dll", "propsys.dll", "mlang.dll", "windowscodecs.dll", "gdiplus.dll", "urlmon.dll", "riched20.dll", "msftedit.dll", "msvfw32.dll", "advpack.dll", "mspatcha.dll", "vbscript.dll", "scrrun.dll", "wshom.ocx", "jscript.dll",
 	"mscoree.dll", "taskschd.dll", "webservices.dll", "hlink.dll", "icu.dll", "icuuc.dll", "icuin.dll", "raven-accprop.dll", "raven-deployment.dll", "raven-netlist.dll", "raven-bits.dll", "raven-uisettings.dll", "dcomp.dll", "raven-twinapi.dll", "coremessaging.dll", "xmllite.dll", "d3dcompiler_47.dll",
