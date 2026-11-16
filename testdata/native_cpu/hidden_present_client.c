@@ -3,7 +3,7 @@
 #include <vulkan/vulkan.h>
 
 static VkPhysicalDevice physical[16];
-static VkSurfaceFormatKHR formats[32];
+static VkSurfaceFormatKHR formats[256];
 static VkQueueFamilyProperties families[32];
 
 /* A swap chain over a window nobody has shown, as DXGI makes for composition: presenting to it returns at once, as on Windows, where
@@ -40,7 +40,7 @@ unsigned int raven_entry(void)
 	if (vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical[0], surface, &caps) != VK_SUCCESS ||
 		caps.currentExtent.width != (uint32_t)client.right || caps.currentExtent.height != (uint32_t)client.bottom)
 		return 6;
-	count = 32;
+	count = 256;
 	if (vkGetPhysicalDeviceSurfaceFormatsKHR(physical[0], surface, &count, formats) != VK_SUCCESS || !count) return 7;
 	float priority = 1;
 	VkDeviceQueueCreateInfo queue_info = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, 0, 0, family, 1, &priority};
