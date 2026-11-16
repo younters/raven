@@ -24,14 +24,16 @@ def main():
         prefix = work / "prefix"
         env = os.environ | {"RAVEN_PREFIX": str(prefix), "TMPDIR": str(work), "TMP": str(work), "TEMP": str(work)}
         env.pop("RAVEN_PREFIX_SETUP", None)
+        # A failed launch runs regsvr32 once with all five servers, then once for each server on its own.
+        per_launch = 6
         for attempt in range(2):
             result = subprocess.run([str(runtime / "raven"), "--run-process", "--execution=native", str(client)],
                                     env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=25)
             if result.returncode:
                 raise RuntimeError(f"prefix setup client failed: {result.stdout}")
             count = (prefix / "drive_c" / "registration-count.bin").read_bytes()
-            if count != b"x" * (5 * (attempt + 1)):
-                raise RuntimeError(f"registration ran {len(count)} times after {attempt + 1} independent launches; expected {5 * (attempt + 1)}")
+            if count != b"x" * (per_launch * (attempt + 1)):
+                raise RuntimeError(f"registration ran {len(count)} times after {attempt + 1} independent launches; expected {per_launch * (attempt + 1)}")
         print("Failed registrations retry once per independent launch; suspended children accept tokens without repeating setup")
 
 

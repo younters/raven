@@ -498,27 +498,36 @@ int main(int argc, char **argv)
 						if (handle_channel_fd < 0 && !std::getenv("RAVEN_PREFIX_SETUP") && !stamp.empty() && stamp != recorded) {
 							// The prefix counts as registered only when every registration succeeded; a failed one is tried again next time.
 							bool registered = true;
+							// One regsvr32 per width registers every server: each run is a process start. When it fails, which stops it at the
+							// failing server, each server is registered on its own, so one that fails does not keep the others from registering.
+							const auto register_servers = [&](const std::filesystem::path &program, std::vector<const char *> names) {
+								const pid_t child = ::fork();
+								if (child == 0) {
+									::setenv("RAVEN_PREFIX_SETUP", "1", 1);
+									// Setup is quiet: only a failure says anything, on standard error.
+									if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
+										::dup2(quiet, 1);
+									const std::string self = std::filesystem::read_symlink("/proc/self/exe").string(), path = program.string();
+									std::vector<const char *> arguments{self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--",
+										"/s"};
+									arguments.insert(arguments.end(), names.begin(), names.end());
+									arguments.push_back(nullptr);
+									::execv(self.c_str(), const_cast<char *const *>(arguments.data()));
+									::_exit(127);
+								}
+								int status = 0;
+								if (child > 0)
+									while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+								return child > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+							};
 							for (const char *folder : {"system32", "syswow64"}) {
 								const auto program = prefix.root() / "drive_c" / "windows" / folder / "regsvr32.exe";
 								if (!std::filesystem::exists(program))
 									continue;
-								for (const char *server : servers) {
-									const pid_t child = ::fork();
-									if (child == 0) {
-										::setenv("RAVEN_PREFIX_SETUP", "1", 1);
-										// Setup is quiet: only a failure says anything, on standard error.
-										if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
-											::dup2(quiet, 1);
-										const std::string self = std::filesystem::read_symlink("/proc/self/exe").string(), path = program.string();
-										::execl(self.c_str(), self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
-											server, static_cast<char *>(nullptr));
-										::_exit(127);
-									}
-									int status = 0;
-									if (child > 0)
-										while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {}
-									registered = registered && child > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
-								}
+								if (register_servers(program, {std::begin(servers), std::end(servers)}))
+									continue;
+								for (const char *server : servers)
+									registered = register_servers(program, {server}) && registered;
 							}
 							if (registered)
 								std::ofstream(marker) << stamp;
