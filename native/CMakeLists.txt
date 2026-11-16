@@ -3623,6 +3623,20 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
         set_property(TEST native_shared_wait_beside_parallel APPEND PROPERTY ENVIRONMENT RAVEN_PARALLEL=1 RAVEN_PROFILE=1)
         set_property(TEST native_shared_wait_beside_parallel PROPERTY FAIL_REGULAR_EXPRESSION
             "profile: \\(call\\) WaitFor(SingleObject|MultipleObjects) calls=[0-9][0-9][0-9]")
+        # CopyContext into a context of the caller's own size, from 64-bit and 32-bit callers.
+        raven_kernel_fixture(copy-context copy_context_client.c 0x1c6000000 "-lkernel32")
+        add_test(NAME native_copy_context COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/copy-context.exe)
+        set_tests_properties(native_copy_context PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        if(RAVEN_MINGW32)
+            add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/copy-context32.exe
+                COMMAND ${RAVEN_MINGW32} -O1 -nostdlib -fno-stack-protector -fno-builtin
+                    -Wl,--entry,_raven_entry,--no-insert-timestamp
+                    -o ${CMAKE_CURRENT_BINARY_DIR}/copy-context32.exe ${LOADER_SOURCES}/copy_context_client.c -lkernel32
+                DEPENDS ${LOADER_SOURCES}/copy_context_client.c VERBATIM)
+            add_custom_target(copy_context32_fixture ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/copy-context32.exe)
+            add_test(NAME native_copy_context_x32 COMMAND raven --run-process --execution=native ${CMAKE_CURRENT_BINARY_DIR}/copy-context32.exe)
+            set_tests_properties(native_copy_context_x32 PROPERTIES TIMEOUT 30 PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
+        endif()
         # A mutex its owner ends holding is abandoned to the next wait, and a pulse releases the wait there is (abandoned_mutex_client.c).
         raven_kernel_fixture(abandoned-mutex abandoned_mutex_client.c 0x1e5000000 "-lkernel32")
         foreach(mode default parallel table)

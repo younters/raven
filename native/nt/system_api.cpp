@@ -716,19 +716,21 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	// The parts of one context copied into another: the record, with the flags of the parts named, and the extended area when both
-	// have one and it is asked for.
+	// have one and it is asked for. A 32-bit context is 0x2cc bytes with its flags first; its extended area is not kept.
 	registry.add("CopyContext", 3, [](ApiCall &call) {
-		if (!call[0] || !call[2] || call.pointer_width() != 8) {
+		if (!call[0] || !call[2]) {
 			call.fail(87);
 			return;
 		}
+		const bool wide = call.pointer_width() == 8;
+		const size_t size = wide ? x64_context::size : 0x2cc, at = wide ? x64_context::flags : 0;
 		const uint32_t wanted = call.u32(1);
-		const uint32_t kept = call.load<uint32_t>(call[0] + x64_context::flags);
-		auto record = call.read(call[2], x64_context::size);
+		const uint32_t kept = call.load<uint32_t>(call[0] + at);
+		auto record = call.read(call[2], size);
 		const uint32_t flags = kept | (wanted & ~0x40U);
-		std::memcpy(record.data() + x64_context::flags, &flags, 4);
+		std::memcpy(record.data() + at, &flags, 4);
 		call.write(call[0], record);
-		if ((wanted & x64_context::xstate_flags) == x64_context::xstate_flags) {
+		if (wide && (wanted & x64_context::xstate_flags) == x64_context::xstate_flags) {
 			const uint64_t from = context_extended_area(call.process, call[2]), to = context_extended_area(call.process, call[0]);
 			if (from && to)
 				call.write(to, call.read(from, x64_context::extended_header + x64_context::avx_size));
