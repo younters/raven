@@ -41,6 +41,7 @@
 #include <csignal>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <sstream>
 #include <set>
 #include <functional>
@@ -185,8 +186,15 @@ struct NamedWords {
 };
 
 // The names a module exports from the host, with the words each takes: the fixed table, the shared handlers and the system services.
-std::vector<NamedWords> host_exports(std::string_view module)
+// Everything it is made from is fixed for the life of the runtime, and the providers ask once per export they publish, so each module's
+// list is made once.
+const std::vector<NamedWords> &host_exports(std::string_view module)
 {
+	static std::mutex lock;
+	static std::map<std::string, std::vector<NamedWords>, std::less<>> made;
+	const std::lock_guard guard(lock);
+	if (const auto found = made.find(module); found != made.end())
+		return found->second;
 	std::vector<NamedWords> result;
 	for (const auto &item : shared_exports)
 		if (item.module == module)
@@ -201,7 +209,7 @@ std::vector<NamedWords> host_exports(std::string_view module)
 		if (words != UINT32_MAX && !duplicate && std::find(published.begin(), published.end(), name) != published.end())
 			result.push_back({name, words});
 	}
-	return result;
+	return made.emplace(std::string(module), std::move(result)).first->second;
 }
 
 const std::vector<NamedWords> &kernel32_table()
