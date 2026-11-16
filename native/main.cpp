@@ -63,6 +63,63 @@ static std::vector<uint8_t> read_file(const char *path)
 	return bytes;
 }
 // A mapped image may be as large as Windows runs one: its file offsets are 32-bit, and installers carry their payload after the image.
+// The registry a new prefix's COM registration leaves depends only on the hive it started from, the registered components and this
+// runtime, so it is kept in the user's cache under those, and the next new prefix that starts from the same takes it instead of running
+// regsvr32 again. The key is checked whole, so a hash that collides only misses.
+static std::filesystem::path registration_cache(const std::string &key)
+{
+	const char *cache = std::getenv("XDG_CACHE_HOME"), *home = std::getenv("HOME");
+	const auto root = cache && *cache ? std::filesystem::path(cache) : home && *home ? std::filesystem::path(home) / ".cache" : std::filesystem::path();
+	if (root.empty())
+		return {};
+	uint64_t hash = 14695981039346656037ULL;
+	for (const unsigned char c : key)
+		hash = (hash ^ c) * 1099511628211ULL;
+	char name[32];
+	std::snprintf(name, sizeof(name), "%016llx.dat", static_cast<unsigned long long>(hash));
+	return root / "raven" / "registered-prefix" / name;
+}
+
+static std::string file_text(const std::filesystem::path &path)
+{
+	std::string text;
+	if (std::ifstream input(path, std::ios::binary); input)
+		text.assign(std::istreambuf_iterator<char>(input), {});
+	return text;
+}
+
+// Writes `text` to `path` whole or not at all: another process may be reading or writing the same file.
+static bool replace_file(const std::filesystem::path &path, const std::string &text)
+{
+	std::error_code error;
+	std::filesystem::create_directories(path.parent_path(), error);
+	const auto temporary = path.string() + "." + std::to_string(::getpid());
+	{
+		std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+		if (!output || !output.write(text.data(), std::streamsize(text.size())))
+			return false;
+	}
+	std::filesystem::rename(temporary, path, error);
+	if (error)
+		std::filesystem::remove(temporary, error);
+	return !error;
+}
+
+// Keeps a registration result and only the seven newest others: each runtime build has its own.
+static void keep_registration(const std::filesystem::path &path, const std::string &text)
+{
+	if (!replace_file(path, text))
+		return;
+	std::error_code error;
+	std::vector<std::pair<std::filesystem::file_time_type, std::filesystem::path>> kept;
+	for (const auto &entry : std::filesystem::directory_iterator(path.parent_path(), error))
+		if (entry.path().extension() == ".dat")
+			kept.emplace_back(entry.last_write_time(error), entry.path());
+	std::sort(kept.begin(), kept.end(), [](const auto &one, const auto &other) { return one.first > other.first; });
+	for (size_t index = 8; index < kept.size(); ++index)
+		std::filesystem::remove(kept[index].second, error);
+}
+
 static raven::ModuleBytes map_module(const std::filesystem::path &path)
 {
 	auto bytes = raven::ModuleBytes::map(path);
@@ -456,41 +513,63 @@ int main(int argc, char **argv)
 							recorded.assign(std::istreambuf_iterator<char>(input), {});
 						// Children use the prefix preparation already attempted by the process that started them.
 						if (handle_channel_fd < 0 && !std::getenv("RAVEN_PREFIX_SETUP") && !stamp.empty() && stamp != recorded) {
-							// The prefix counts as registered only when every registration succeeded; a failed one is tried again next time.
-							bool registered = true;
-							// One regsvr32 per width registers every server: each run is a process start. When it fails, which stops it at the
-							// failing server, each server is registered on its own, so one that fails does not keep the others from registering.
-							const auto register_servers = [&](const std::filesystem::path &program, std::vector<const char *> names) {
-								const pid_t child = ::fork();
-								if (child == 0) {
-									::setenv("RAVEN_PREFIX_SETUP", "1", 1);
-									// Setup is quiet: only a failure says anything, on standard error.
-									if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
-										::dup2(quiet, 1);
-									const std::string self = std::filesystem::read_symlink("/proc/self/exe").string(), path = program.string();
-									std::vector<const char *> arguments{self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--",
-										"/s"};
-									arguments.insert(arguments.end(), names.begin(), names.end());
-									arguments.push_back(nullptr);
-									::execv(self.c_str(), const_cast<char *const *>(arguments.data()));
-									::_exit(127);
-								}
-								int status = 0;
-								if (child > 0)
-									while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {}
-								return child > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
-							};
-							for (const char *folder : {"system32", "syswow64"}) {
-								const auto program = prefix.root() / "drive_c" / "windows" / folder / "regsvr32.exe";
-								if (!std::filesystem::exists(program))
-									continue;
-								if (register_servers(program, {std::begin(servers), std::end(servers)}))
-									continue;
-								for (const char *server : servers)
-									registered = register_servers(program, {server}) && registered;
+							const auto hive = prefix.registry_file();
+							// Only a new prefix starts from a hive another one may have started from.
+							std::string key;
+							if (recorded.empty()) {
+								std::error_code error;
+								const auto runtime_binary = std::filesystem::read_symlink("/proc/self/exe", error);
+								const auto before = file_text(hive);
+								key = stamp + runtime_binary.string() + " " + std::to_string(std::filesystem::file_size(runtime_binary, error)) + " " +
+									std::to_string(static_cast<long long>(std::filesystem::last_write_time(runtime_binary, error).time_since_epoch().count())) +
+									"\n" + std::to_string(before.size()) + "\n" + before;
 							}
-							if (registered)
+							const auto cached_at = key.empty() ? std::filesystem::path() : registration_cache(key);
+							const auto cached = cached_at.empty() ? std::string() : file_text(cached_at);
+							const std::string header = std::to_string(key.size()) + "\n";
+							if (cached.size() > header.size() + key.size() && cached.compare(0, header.size(), header) == 0 &&
+								cached.compare(header.size(), key.size(), key) == 0 && replace_file(hive, cached.substr(header.size() + key.size()))) {
 								std::ofstream(marker) << stamp;
+							} else {
+								// The prefix counts as registered only when every registration succeeded; a failed one is tried again next time.
+								bool registered = true;
+								// One regsvr32 per width registers every server: each run is a process start. When it fails, which stops it at the
+								// failing server, each server is registered on its own, so one that fails does not keep the others from registering.
+								const auto register_servers = [&](const std::filesystem::path &program, std::vector<const char *> names) {
+									const pid_t child = ::fork();
+									if (child == 0) {
+										::setenv("RAVEN_PREFIX_SETUP", "1", 1);
+										// Setup is quiet: only a failure says anything, on standard error.
+										if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
+											::dup2(quiet, 1);
+										const std::string self = std::filesystem::read_symlink("/proc/self/exe").string(), path = program.string();
+										std::vector<const char *> arguments{self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--",
+											"/s"};
+										arguments.insert(arguments.end(), names.begin(), names.end());
+										arguments.push_back(nullptr);
+										::execv(self.c_str(), const_cast<char *const *>(arguments.data()));
+										::_exit(127);
+									}
+									int status = 0;
+									if (child > 0)
+										while (::waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+									return child > 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+								};
+								for (const char *folder : {"system32", "syswow64"}) {
+									const auto program = prefix.root() / "drive_c" / "windows" / folder / "regsvr32.exe";
+									if (!std::filesystem::exists(program))
+										continue;
+									if (register_servers(program, {std::begin(servers), std::end(servers)}))
+										continue;
+									for (const char *server : servers)
+										registered = register_servers(program, {server}) && registered;
+								}
+								if (registered) {
+									std::ofstream(marker) << stamp;
+									if (!cached_at.empty())
+										keep_registration(cached_at, header + key + file_text(hive));
+								}
+							}
 						}
 					}
 					// Before an installation the prefix is kept as a snapshot, which `raven --restore-prefix` brings back: for a program that looks
