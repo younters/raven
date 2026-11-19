@@ -1,4 +1,7 @@
 #include "memory.h"
+#ifdef RAVEN_FEX_PROCESS
+#include "platform/darwin/fex/fex_process.h"
+#endif
 
 #include <cstdio>
 #include <cstdlib>
@@ -74,6 +77,9 @@ NativeMemory::NativeMemory(NativeProcess &process, NativeEnvironment &environmen
 #endif
 		next=floor=0x20000000ULL;
 	}
+#ifdef RAVEN_FEX_PROCESS
+	else if (fex_execution_selected()) next=floor=fex_guest_floor();
+#endif
 }
 
 std::span<const std::string_view> NativeMemory::nt_exports()

@@ -1,0 +1,200 @@
+diff --git a/Source/Windows/CMakeLists.txt b/Source/Windows/CMakeLists.txt
+--- a/Source/Windows/CMakeLists.txt
++++ b/Source/Windows/CMakeLists.txt
+@@ -1,5 +1,5 @@
+ option(RAVEN_HOST "Experimental Raven native host frontend" OFF)
+-if(RAVEN_HOST AND ARCHITECTURE_arm64ec)
++if(RAVEN_HOST)
+   add_compile_definitions(RAVEN_HOST)
+ endif()
+ function(build_implib name)
+diff --git a/Source/Windows/WOW64/libwow64fex.def b/Source/Windows/WOW64/libwow64fex.def
+--- a/Source/Windows/WOW64/libwow64fex.def
++++ b/Source/Windows/WOW64/libwow64fex.def
+@@ -24,3 +24,6 @@
+   BTCpuThreadTerm
+   BTCpuUpdateProcessorInformation
+   __wine_get_unix_opcode
++  RavenWow64ProcessInit
++  RavenWow64Run
++  RavenHandleFault
+diff --git a/Source/Windows/Common/RavenWow64Host.h b/Source/Windows/Common/RavenWow64Host.h
+new file mode 100644
+--- /dev/null
++++ b/Source/Windows/Common/RavenWow64Host.h
+@@ -0,0 +1,10 @@
++// SPDX-License-Identifier: MIT
++#pragma once
++#include "RavenHost.h"
++// common CPU-area/dispatch/exception pointers designate WOW64_CONTEXT in this
++// separately negotiated interface. Native callbacks; no Wine CPU-area layout.
++struct RavenWow64HostV1 {
++  uint32_t size, version;
++  RavenHostV1 common;
++  uint64_t (*teb32)(void *native_teb);
++};
+diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -1,3 +1,8 @@
++#ifdef RAVEN_HOST
++#include "Windows/Common/RavenWow64Host.h"
++const RavenHostV1 *RavenHost {};
++static const RavenWow64HostV1 *WowHost {};
++#endif
+ // SPDX-License-Identifier: MIT
+ /*
+ $info$
+@@ -166,6 +171,9 @@
+ }
+ 
+ uint64_t GetWowTEB(void* TEB) {
++#ifdef RAVEN_HOST
++  return GuestBase + RavenInvoke(reinterpret_cast<uintptr_t>(WowHost->teb32), reinterpret_cast<uintptr_t>(TEB), 0, 0);
++#endif
+   static constexpr size_t WowTEBOffsetMemberOffset {0x180c};
+   return static_cast<uint64_t>(
+     *reinterpret_cast<LONG*>(reinterpret_cast<uintptr_t>(TEB) + WowTEBOffsetMemberOffset) + reinterpret_cast<uint64_t>(TEB));
+@@ -374,7 +382,11 @@
+   // If the CPU area is dirty, flush it to the JIT context before reentry
+   if (Expected & ControlBits::WOW_CPU_AREA_DIRTY) {
+     WOW64_CONTEXT* WowContext;
++#ifdef RAVEN_HOST
++    WowContext = reinterpret_cast<WOW64_CONTEXT*>(RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->cpu_area), reinterpret_cast<uintptr_t>(NtCurrentTeb()), 0, 0));
++#else
+     RtlWow64GetCurrentCpuArea(nullptr, reinterpret_cast<void**>(&WowContext), nullptr);
++#endif
+     Context::LoadStateFromWowContext(TLS.ThreadState(), GetWowTEB(NtCurrentTeb()), WowContext);
+   }
+ }
+@@ -457,6 +469,17 @@
+   WowSyscallHandler() = default;
+ 
+   static void HandleSyscallImpl(FEXCore::Core::CpuStateFrame* Frame) {
++#ifdef RAVEN_HOST
++    auto TLS = GetTLS();
++    auto *Packet = reinterpret_cast<WOW64_CONTEXT*>(RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->cpu_area), reinterpret_cast<uintptr_t>(NtCurrentTeb()), 0, 0));
++    Frame->State.rip += 2;
++    Context::StoreWowContextFromState(TLS.ThreadState(), Packet);
++    Context::UnlockJITContext(TLS);
++    Packet->Eax = RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->dispatch), Packet->Eax, reinterpret_cast<uintptr_t>(Packet), 0);
++    TLS.ControlWord().fetch_or(ControlBits::WOW_CPU_AREA_DIRTY, std::memory_order::relaxed);
++    Context::LockJITContext(TLS);
++    return;
++#endif
+     const uint64_t ReturnRIP = *static_cast<uint32_t*>(GuestPtr(Frame->State.gregs[FEXCore::X86State::REG_RSP])); // Return address from the stack
+     uint64_t ReturnRSP = Frame->State.gregs[FEXCore::X86State::REG_RSP] + 4;                 // Stack pointer after popping return address
+     uint64_t ReturnRAX = 0;
+@@ -493,6 +516,10 @@
+ 
+   void HandleSyscall(FEXCore::Core::CpuStateFrame* Frame) override {
+     const auto TLS = GetTLS();
++#ifdef RAVEN_HOST
++    HandleSyscallImpl(Frame);
++    return;
++#endif
+     // Stash the the context pointer on the stack, as Simulate can be called from this syscall handler which would overwrite it
+     CONTEXT* EntryContext = TLS.EntryContext();
+     // Call the syscall handler with unwind information pointing to Simulate as its caller
+@@ -527,7 +554,9 @@
+   }
+ 
+   void PreCompile() override {
++#ifndef RAVEN_HOST
+     Wow64ProcessPendingCrossProcessItems();
++#endif
+   }
+ };
+ 
+@@ -543,8 +572,12 @@
+   FEXCore::Config::Set(FEXCore::Config::CONFIG_INTERPRETER_INSTALLED, "0");
+   FEXCore::Config::Set(FEXCore::Config::CONFIG_IS64BIT_MODE, "0");
+ #ifdef FEX_GUEST_WINDOW
++#ifdef RAVEN_HOST
++  GuestBase = RavenHost->guest32_base;
++#else
+   LOGMAN_THROW_A_FMT(NtQueryInformationProcess(NtCurrentProcess(), static_cast<PROCESSINFOCLASS>(1010), &GuestBase, sizeof(GuestBase), nullptr) == 0 &&
+                       GuestBase && !(GuestBase & 0xffffffffULL), "Wine guest window is unavailable or misaligned");
++#endif
+   FEXCore::Config::Set(FEXCore::Config::CONFIG_GUEST32BASE, std::to_string(GuestBase));
+ #endif
+   FEXCore::Config::Set(FEXCore::Config::CONFIG_APP_FILENAME, ExecutablePath);
+@@ -555,7 +588,7 @@
+   SignalDelegator = fextl::make_unique<FEX::DummyHandlers::DummySignalDelegator>();
+   SyscallHandler = fextl::make_unique<WowSyscallHandler>();
+   const auto NtDll = GetModuleHandleW(L"ntdll.dll");
+-  const bool IsWine = !!GetProcAddress(NtDll, "wine_get_version");
++  const bool IsWine = true; // Tier 0 native allocator policy.
+   OvercommitTracker.emplace(IsWine);
+ 
+   FEX::Windows::Allocator::SetupHooks(NtDll);
+@@ -576,13 +609,16 @@
+   InvalidationTracker.emplace(*CTX, Threads, GuestBase);
+   ImageTracker.emplace(*CTX, false, GuestBase);
+ 
++#ifndef RAVEN_HOST
+   auto MainModule = reinterpret_cast<__TEB*>(NtCurrentTeb())->Peb->ImageBaseAddress;
+   HandleImageMap(reinterpret_cast<uint64_t>(MainModule), true);
+ 
+   auto NtDllX86 = reinterpret_cast<SYSTEM_DLL_INIT_BLOCK*>(GetProcAddress(NtDll, "LdrSystemDllInitBlock"))->ntdll_handle;
+   HandleImageMap(NtDllX86);
+ 
++#endif
+   CPUFeatures.emplace(*CTX);
++#ifndef RAVEN_HOST
+ 
+   // Allocate the syscall/unixcall trampolines in the lower 2GB of the address space
+   SIZE_T Size = 4;
+@@ -602,6 +638,7 @@
+ 
+   // wow64.dll will only initialise the cross-process queue if this is set
+   GetTLS().Wow64Info().CpuFlags = WOW64_CPUFLAGS_SOFTWARE;
++#endif
+ 
+   FEX_CONFIG_OPT(ProfileStats, PROFILESTATS);
+   FEX_CONFIG_OPT(StartupSleep, STARTUPSLEEP);
+@@ -963,6 +1000,16 @@
+   BOOL FirstChance = TRUE;
+   EXCEPTION_RECORD GuestException =
+     FEX::Windows::HandleGuestException(Fault, *Exception, WowContext.Eip, WowContext.Eax, WowContext.Ecx, FirstChance);
++#ifdef RAVEN_HOST
++  auto *Packet = reinterpret_cast<WOW64_CONTEXT*>(RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->cpu_area), reinterpret_cast<uintptr_t>(NtCurrentTeb()), 0, 0));
++  if (GuestException.ExceptionCode == EXCEPTION_BREAKPOINT) WowContext.Eip = reinterpret_cast<uintptr_t>(GuestException.ExceptionAddress);
++  if (GuestException.ExceptionCode == EXCEPTION_ACCESS_VIOLATION && GuestException.NumberParameters > 1 &&
++      GuestException.ExceptionInformation[1] >= GuestBase && GuestException.ExceptionInformation[1] < GuestBase + (1ULL << 32))
++    GuestException.ExceptionInformation[1] -= GuestBase;
++  *Packet = WowContext;
++  Context::UnlockJITContext(TLS);
++  return !RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->exception), reinterpret_cast<uintptr_t>(&GuestException), reinterpret_cast<uintptr_t>(Packet), reinterpret_cast<uintptr_t>(Context));
++#endif
+   GuestException.ExceptionAddress = GuestPtr(reinterpret_cast<uint64_t>(GuestException.ExceptionAddress));
+   if (GuestException.ExceptionCode == EXCEPTION_SINGLE_STEP) {
+     WowContext.EFlags &= ~(1 << FEXCore::X86State::RFLAG_TF_RAW_LOC);
+@@ -1075,3 +1122,27 @@
+ void BTCpuUpdateProcessorInformation(SYSTEM_CPU_INFORMATION* Info) {
+   CPUFeatures->UpdateInformation(Info);
+ }
++
++#ifdef RAVEN_HOST
++extern "C" NTSTATUS RavenWow64ProcessInit(const RavenWow64HostV1 *Host) {
++  if (WowHost || !Host || Host->size != sizeof(*Host) || Host->version != 1 || !Host->teb32) return STATUS_INVALID_PARAMETER;
++  const auto &H = Host->common;
++  if (H.size != sizeof(H) || H.version != 1 || H.flags || !H.guest32_base || (H.guest32_base & 0xffffffffULL) ||
++      !H.cpu_area || !H.dispatch || !H.exception || !H.jit_write_protect || !H.allocate_native_jit || !H.log || !H.unix_call) return STATUS_INVALID_PARAMETER;
++  WowHost = Host;
++  RavenHost = &Host->common;
++  BTCpuProcessInit();
++  return STATUS_SUCCESS;
++}
++extern "C" void RavenWow64Run() {
++  const auto TLS = GetTLS();
++  TLS.ControlWord().fetch_or(ControlBits::WOW_CPU_AREA_DIRTY, std::memory_order::relaxed);
++  Context::LockJITContext(TLS);
++  CTX->ExecuteThread(TLS.ThreadState());
++  Context::UnlockJITContext(TLS);
++}
++extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, CONTEXT *Native) {
++  EXCEPTION_POINTERS Pointers {Record, Native};
++  return BTCpuResetToConsistentStateImpl(&Pointers) ? STATUS_SUCCESS : STATUS_NOT_SUPPORTED;
++}
++#endif

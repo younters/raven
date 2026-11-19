@@ -7,7 +7,7 @@ runtime achieved, how long it took and a screenshot of the window go into a tabl
 results.json also records installation, process start, main window and the Notepad++ editing workflow. Each observed successful stage
 counts for 25 percentage points; an untested workflow earns no points. The input directory supplies installers outside the source tree.
 
-usage: benchmark-app-matrix.py RAVEN APPS_DIR EVIDENCE_DIR [CASE...]
+usage: benchmark-app-matrix.py RAVEN APPS_DIR EVIDENCE_DIR [CASE...] [--execution=native|fex]
 """
 
 from pathlib import Path
@@ -92,7 +92,7 @@ class Runtime:
     def command(self, program, arguments, wait):
         if self.name == "wine":
             return [WINE, str(program), *arguments]
-        command = [str(self.raven), "--run-process", "--execution=native", "--timeout-ms=900000", "--desktop=wayland", str(program)]
+        command = [str(self.raven), "--run-process", "--execution=" + EXECUTION, "--timeout-ms=900000", "--desktop=wayland", str(program)]
         return command + (["--", *arguments] if arguments else [])
 
     def fresh(self):
@@ -155,6 +155,14 @@ def seconds(value):
 
 
 def main():
+    global EXECUTION
+    EXECUTION = "native"
+    for argument in list(sys.argv[1:]):
+        if argument.startswith("--execution="):
+            EXECUTION = argument.split("=", 1)[1]
+            sys.argv.remove(argument)
+    if EXECUTION not in ("native", "fex"):
+        raise SystemExit("--execution must be native or fex")
     raven, apps, evidence = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
     wanted = set(sys.argv[4:])
     evidence.mkdir(parents=True, exist_ok=True)
@@ -170,7 +178,7 @@ def main():
             for runtime in (Runtime("raven", raven, evidence / name), Runtime("wine", raven, evidence / name)):
                 (evidence / name).mkdir(parents=True, exist_ok=True)
                 if not (apps / installer).is_file():
-                    measurements.append(dict(case=name, runtime=runtime.name, status="input absent", score=None))
+                    measurements.append(dict(case=name, runtime=runtime.name, execution=EXECUTION if runtime.name == "raven" else None, status="input absent", score=None))
                     results[runtime.name] = (None, None)
                     (evidence / "results.json").write_text(json.dumps(measurements, indent=2) + "\n")
                     continue
@@ -190,7 +198,7 @@ def main():
                                                 str(host_path(runtime.prefix, program).parent), str(evidence / name / "workflow")],
                                                stdout=output, stderr=output, timeout=1200)
                     workflow = probe.returncode == 0
-                measurements.append(dict(case=name, runtime=runtime.name, installer=installer, install=installed, start=launched,
+                measurements.append(dict(case=name, runtime=runtime.name, execution=EXECUTION if runtime.name == "raven" else None, installer=installer, install=installed, start=launched,
                                          window=shown is not None, workflow=workflow, score=25 * (int(installed) + int(launched) + int(shown is not None) + int(workflow is True)),
                                          install_seconds=took if installed else None, window_seconds=shown))
                 (evidence / "results.json").write_text(json.dumps(measurements, indent=2) + "\n")

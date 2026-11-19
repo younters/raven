@@ -1,0 +1,89 @@
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -558,16 +558,8 @@
+   NtRaiseExceptionNative(&GuestRec, &GuestContext, FirstChance);
+ }
+ 
+-class ECSyscallHandler : public FEXCore::HLE::SyscallHandler, public FEXCore::Allocator::FEXAllocOperators {
+-public:
+-  ECSyscallHandler() = default;
+-
+-  void HandleSyscall(FEXCore::Core::CpuStateFrame* Frame) override {
+ #ifdef RAVEN_HOST
+-    uint64_t FPCR, FPSR;
+-    asm volatile("mrs %0, fpcr" : "=r"(FPCR));
+-    asm volatile("mrs %0, fpsr" : "=r"(FPSR));
+-    auto *Thread = GetCPUArea().ThreadState();
++static CONTEXT& StoreRavenContext(FEXCore::Core::InternalThreadState* Thread, uint32_t FPCR, uint32_t FPSR) {
+     auto Packet = StoreStateToPackedECContext(Thread, FPCR, FPSR);
+     auto &Context = GetCPUArea().ContextAmd64().AMD64_Context;
+     Context.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
+@@ -576,11 +568,27 @@
+     Context.Rsi = Packet.X25; Context.Rdi = Packet.X26;
+     Context.R8 = Packet.X2; Context.R9 = Packet.X3; Context.R10 = Packet.X4; Context.R11 = Packet.X5;
+     Context.R12 = Packet.X19; Context.R13 = Packet.X20; Context.R14 = Packet.X21; Context.R15 = Packet.X22;
+-    Context.Rip = Packet.Pc + 2;
++    Context.Rip = Packet.Pc;
+     Context.EFlags = CTX->ReconstructCompactedEFLAGS(Thread, false, nullptr, 0);
+     memcpy(Context.FltSave.XmmRegisters, Packet.V, sizeof(Context.FltSave.XmmRegisters));
+     memcpy(Context.FltSave.FloatRegisters, Thread->CurrentFrame->State.mm, sizeof(Context.FltSave.FloatRegisters));
+     Context.FltSave.ControlWord = Thread->CurrentFrame->State.FCW;
++    return Context;
++}
++#endif
++
++class ECSyscallHandler : public FEXCore::HLE::SyscallHandler, public FEXCore::Allocator::FEXAllocOperators {
++public:
++  ECSyscallHandler() = default;
++
++  void HandleSyscall(FEXCore::Core::CpuStateFrame* Frame) override {
++#ifdef RAVEN_HOST
++    uint64_t FPCR, FPSR;
++    asm volatile("mrs %0, fpcr" : "=r"(FPCR));
++    asm volatile("mrs %0, fpsr" : "=r"(FPSR));
++    auto *Thread = GetCPUArea().ThreadState();
++    auto &Context = StoreRavenContext(Thread, FPCR, FPSR);
++    Context.Rip += 2;
+     Context.Rax = RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->dispatch), Context.Rax,
+                               reinterpret_cast<uintptr_t>(&Context), 0);
+     // BeginSimulation reloads the host-modified AMD64 packet and enters with SRA
+@@ -643,6 +651,30 @@
+   }
+ };
+ } // namespace Exception
++
++#ifdef RAVEN_HOST
++extern "C" NTSTATUS RavenHandleFault(EXCEPTION_RECORD *Record, ARM64_NT_CONTEXT *Native) {
++  if (!RavenHost || !Record || !Native) return STATUS_INVALID_PARAMETER;
++  const auto Area = GetCPUArea();
++  auto *Thread = Area.ThreadState();
++  if (!Thread) return STATUS_NOT_SUPPORTED;
++  if (Record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
++      FEX::Windows::JITGuardPage::HandleJITGuardPage(Thread,
++        reinterpret_cast<void*>(Record->ExceptionInformation[1]), Native->X,
++        reinterpret_cast<__uint128_t*>(Native->V), &Native->Pc)) return STATUS_SUCCESS;
++  if (!CTX->IsAddressInCodeBuffer(Thread, Native->Pc) && !IsDispatcherAddress(Native->Pc)) return STATUS_NOT_SUPPORTED;
++  if (!IsDispatcherAddress(Native->Pc)) Exception::ReconstructThreadState(Thread, *Native);
++  auto &Context = Exception::StoreRavenContext(Thread, Native->Fpcr, Native->Fpsr);
++  Record->ExceptionAddress = reinterpret_cast<void*>(Context.Rip);
++  const auto Status = RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->exception),
++    reinterpret_cast<uintptr_t>(Record), reinterpret_cast<uintptr_t>(&Context), reinterpret_cast<uintptr_t>(Native));
++  if (Status) return Status;
++  Native->Pc = reinterpret_cast<uintptr_t>(&BeginSimulation);
++  Native->Sp = Area.EmulatorStackBase();
++  Native->X18 = reinterpret_cast<uintptr_t>(NtCurrentTeb());
++  return STATUS_SUCCESS;
++}
++#endif
+ 
+ extern "C" void SyncThreadContext(CONTEXT* Context) {
+   ProcessPendingCrossProcessEmulatorWork();
+diff --git a/Source/Windows/ARM64EC/libarm64ecfex.def b/Source/Windows/ARM64EC/libarm64ecfex.def
+--- a/Source/Windows/ARM64EC/libarm64ecfex.def
++++ b/Source/Windows/ARM64EC/libarm64ecfex.def
+@@ -22,3 +22,4 @@
+   ThreadTerm
+   UpdateProcessorInformation
+   RavenProcessInit
++  RavenHandleFault

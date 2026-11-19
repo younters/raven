@@ -1,0 +1,69 @@
+diff --git a/Source/Windows/Common/Allocator.cpp b/Source/Windows/Common/Allocator.cpp
+--- a/Source/Windows/Common/Allocator.cpp
++++ b/Source/Windows/Common/Allocator.cpp
+@@ -20,6 +20,8 @@
+ void SetupHooks(HMODULE ntdll) {
+   FEXCore::Allocator::HookPtrs Ptrs {};
+ #ifdef RAVEN_HOST
++  Ptrs.VirtualName = UnixLib::VirtualName;
++  Ptrs.VirtualTHPControl = UnixLib::VirtualTHPControl;
+   Ptrs.VirtualJitWriteProtect = +[](uint32_t Mode) -> uint32_t {
+     return RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->jit_write_protect), Mode, 0, 0);
+   };
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -79,6 +79,7 @@
+ 
+ extern void* ExitFunctionEC;
+ extern void* CheckCall;
++extern void* BeginSimulation;
+ extern void* ExitFunctionSuspendPoint;
+ extern void* ExitFunctionSuspendResumePoint;
+ 
+@@ -568,12 +569,23 @@
+     asm volatile("mrs %0, fpsr" : "=r"(FPSR));
+     auto *Thread = GetCPUArea().ThreadState();
+     auto Packet = StoreStateToPackedECContext(Thread, FPCR, FPSR);
+-    // The dispatch contract uses AMD64 CONTEXT, with RIP after the syscall.
+     auto &Context = GetCPUArea().ContextAmd64().AMD64_Context;
+-    // The EC dispatcher is a non-returning hand-off, not an ordinary C call.
+-    // Deliberately reject execution until the Raven resume trampoline is qualified.
+-    (void)Packet; (void)Context;
+-    RtlRaiseStatus(STATUS_NOT_SUPPORTED);
++    Context.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
++    Context.Rax = Packet.X8; Context.Rcx = Packet.X0; Context.Rdx = Packet.X1;
++    Context.Rbx = Packet.X27; Context.Rsp = Packet.Sp; Context.Rbp = Packet.Fp;
++    Context.Rsi = Packet.X25; Context.Rdi = Packet.X26;
++    Context.R8 = Packet.X2; Context.R9 = Packet.X3; Context.R10 = Packet.X4; Context.R11 = Packet.X5;
++    Context.R12 = Packet.X19; Context.R13 = Packet.X20; Context.R14 = Packet.X21; Context.R15 = Packet.X22;
++    Context.Rip = Packet.Pc + 2;
++    Context.EFlags = CTX->ReconstructCompactedEFLAGS(Thread, false, nullptr, 0);
++    memcpy(Context.FltSave.XmmRegisters, Packet.V, sizeof(Context.FltSave.XmmRegisters));
++    memcpy(Context.FltSave.FloatRegisters, Thread->CurrentFrame->State.mm, sizeof(Context.FltSave.FloatRegisters));
++    Context.FltSave.ControlWord = Thread->CurrentFrame->State.FCW;
++    Context.Rax = RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->dispatch), Context.Rax,
++                              reinterpret_cast<uintptr_t>(&Context), 0);
++    // BeginSimulation reloads the host-modified AMD64 packet and enters with SRA
++    // filled on the emulator stack. Never return through the EC hand-off frame.
++    JumpSetStack(reinterpret_cast<uintptr_t>(&BeginSimulation), GetCPUArea().EmulatorStackBase());
+ #else
+     ProcessPendingCrossProcessEmulatorWork();
+ 
+@@ -610,10 +622,16 @@
+ 
+   void MarkOvercommitRange(uint64_t Start, uint64_t Length) override {
+     OvercommitTracker->MarkRange(Start, Length);
++#ifdef RAVEN_HOST
++    RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->memory_event), Start, Length, 1);
++#endif
+   }
+ 
+   void UnmarkOvercommitRange(uint64_t Start, uint64_t Length) override {
+     OvercommitTracker->UnmarkRange(Start, Length);
++#ifdef RAVEN_HOST
++    RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->memory_event), Start, Length, 2);
++#endif
+   }
+ 
+   FEXCore::HLE::ExecutableRangeInfo QueryGuestExecutableRange(FEXCore::Core::InternalThreadState* Thread, uint64_t Address) override {

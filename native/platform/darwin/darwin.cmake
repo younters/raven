@@ -1,12 +1,13 @@
 # macOS targets and adjustments to the shared targets defined in native/CMakeLists.txt.
 
-# The engines the engine-parametrized tests run under, Rosetta 2 ("native"), with what their tests need: the host architecture of the
-# engine's unix libraries, the guest widths its unix-call gate serves and its test environment (RAVEN_ENGINE_ENVIRONMENT_<engine>).
+# The engines the engine-parametrized tests run under: Rosetta 2 ("native") always; another backend adds itself to the list, with what
+# its tests need: the host architecture of its unix libraries, the guest widths its unix-call gate serves and its test environment.
 set(RAVEN_DARWIN_ENGINES native)
 set(RAVEN_ENGINE_ARCH_native x86_64)
 set(RAVEN_ENGINE_UNIX_SUB_native unix64)
 # Rosetta's unix-call gate is Win64-only.
 set(RAVEN_ENGINE_UNIX_WIDTHS_native 64)
+include(${RAVEN_DARWIN_DIR}/fex/setup.cmake)
 
 if(RAVEN_KOSMICKRISP_ROOT)
     file(READ ${RAVEN_DARWIN_DIR}/graphics/kosmickrisp.json RAVEN_KOSMICKRISP_PIN)
@@ -1095,6 +1096,10 @@ target_compile_options(darwin_unix_guard_test PRIVATE -UNDEBUG)
 add_test(NAME darwin_unix_guard COMMAND darwin_unix_guard_test)
 set_tests_properties(darwin_unix_guard PROPERTIES TIMEOUT 15 LABELS "unix;darwin")
 
+add_executable(darwin_unix_microbench EXCLUDE_FROM_ALL ${RAVEN_DARWIN_DIR}/tests/unix_microbench.cpp
+    ${RAVEN_DARWIN_DIR}/dxmt/checked_memory.c)
+target_include_directories(darwin_unix_microbench PRIVATE ${RAVEN_DARWIN_DIR})
+
 add_executable(darwin_resize_state_test ${RAVEN_DARWIN_DIR}/resize_state_test.cpp)
 add_test(NAME native_darwin_resize_state COMMAND darwin_resize_state_test)
 
@@ -1128,3 +1133,5 @@ if(RAVEN_MINGW64)
     set_tests_properties(native_darwin_stale_breakpoint_stress PROPERTIES TIMEOUT 120
         ENVIRONMENT "RAVEN_PARALLEL=1;RAVEN_DISABLE_STALE_TRAP_WORKAROUND=1" PASS_REGULAR_EXPRESSION "Native entry returned 0 ")
 endif()
+
+include(${RAVEN_DARWIN_DIR}/fex/tests.cmake)

@@ -10,6 +10,12 @@
 // runtime above sees one behaviour. By default Windows threads share the main agent thread; RAVEN_PARALLEL gives each its own pthread.
 
 #include "cpu/native_cpu.h"
+#ifdef RAVEN_FEX_PROCESS
+#include "fex/fex_process.h"
+#define FEX_RETURN(method, ...) if (fex) return fex->method(__VA_ARGS__)
+#else
+#define FEX_RETURN(method, ...)
+#endif
 #include "cpu/served_queue.h"
 #include "nt/exceptions.h"
 #include "guest/protocol.h"
@@ -759,6 +765,14 @@ int NativeProcess::State::protection_at(uint64_t address) const
 NativeProcess::NativeProcess(std::span<LoadedImage *const> images, const std::string &bootstrap,
 	std::chrono::milliseconds setup_timeout, NativeMode mode, uint64_t stack_reserve) : state(std::make_unique<State>())
 {
+#ifdef RAVEN_FEX_PROCESS
+	if (fex_execution_selected()) {
+		const auto root = discover_fex_module_root();
+		if (setup_timeout.count() <= 0) throw std::runtime_error("native execution requires a positive timeout");
+		fex = std::make_shared<FexProcess>(images, root, stack_reserve, mode);
+		return;
+	}
+#endif
 	if (setup_timeout.count() <= 0)
 		throw std::runtime_error("native execution requires a positive timeout");
 	state->mode = mode;
@@ -832,6 +846,9 @@ NativeProcess::NativeProcess(std::span<LoadedImage *const> images, const std::st
 
 NativeProcess::~NativeProcess()
 {
+#ifdef RAVEN_FEX_PROCESS
+	if (fex) return;
+#endif
 	if (trace_stops)
 		std::cerr << "raven: stop summary stops=" << state->traced_stops << " full_equal=" << state->traced_equal
 			<< " suppressed=" << state->traced_suppressed << '\n';
@@ -864,6 +881,9 @@ static void copy_x87_slots(uint8_t *destination, const uint8_t *source, bool to_
 
 user_regs_struct NativeProcess::registers() const
 {
+#ifdef RAVEN_FEX_PROCESS
+	if (fex) return fex->context(false).registers;
+#endif
 	state->require_stopped();
 	user_regs_struct result{};
 	std::memcpy(&result, &state->registers(), sizeof result);
@@ -878,6 +898,7 @@ user_regs_struct NativeProcess::general_registers() const
 
 NativeContext NativeProcess::context() const
 {
+	FEX_RETURN(context);
 	state->require_stopped();
 	NativeContext result{};
 	std::memcpy(&result.registers, &state->registers(), sizeof result.registers);
@@ -888,6 +909,7 @@ NativeContext NativeProcess::context() const
 
 void NativeProcess::set_context(const NativeContext &context)
 {
+	FEX_RETURN(set_context, context);
 	state->require_stopped();
 	// A context saved for a callback carries the general registers alone.
 	if (!context.xstate.empty()) {
@@ -902,6 +924,7 @@ void NativeProcess::set_context(const NativeContext &context)
 
 std::vector<uint8_t> NativeProcess::read_memory(uint64_t address, size_t size) const
 {
+	FEX_RETURN(read_memory, address, size);
 	state->require_memory();
 	auto &profile = state->child->profile;
 	ControllerProfile::Scope timing(profile, profile.reads, size);
@@ -953,6 +976,7 @@ std::vector<uint8_t> NativeProcess::read_memory(uint64_t address, size_t size) c
 
 void NativeProcess::write_memory(uint64_t address, std::span<const uint8_t> bytes)
 {
+	FEX_RETURN(write_memory, address, bytes);
 	state->trap_page.clear();
 	validate_write_memory(address, bytes.size());
 	auto &profile = state->child->profile;
@@ -1013,6 +1037,7 @@ void NativeProcess::write_memory(uint64_t address, std::span<const uint8_t> byte
 
 void NativeProcess::validate_write_memory(uint64_t address, size_t size) const
 {
+	FEX_RETURN(validate_write_memory, address, size);
 	state->require_memory();
 	if (!state->covers(address, size, PROT_WRITE))
 		throw std::runtime_error("native write exceeds writable guest memory");
@@ -1020,6 +1045,7 @@ void NativeProcess::validate_write_memory(uint64_t address, size_t size) const
 
 uint64_t NativeProcess::compare_exchange(uint64_t address, uint64_t expected, uint64_t desired, size_t size)
 {
+	FEX_RETURN(compare_exchange, address, expected, desired, size);
 	if ((size != 4 && size != 8) || address % size)
 		throw std::runtime_error("invalid native atomic memory operand");
 	validate_write_memory(address, size);
@@ -1048,6 +1074,7 @@ static void memory_range(uint64_t address, size_t size, int protection, uint64_t
 
 uint64_t NativeProcess::map_memory(size_t size, int protection, uint64_t address)
 {
+	FEX_RETURN(map_memory, size, protection, address);
 	state->trap_page.clear();
 	state->require_memory();
 	memory_range(address, size, protection, state->limit());
@@ -1146,6 +1173,7 @@ uint64_t NativeProcess::map_memory(size_t size, int protection, uint64_t address
 
 uint64_t NativeProcess::map_shared(int descriptor, size_t size, uint64_t offset, uint64_t requested)
 {
+	FEX_RETURN(map_shared, descriptor, size, offset, requested);
 	if (const auto surface = darwin::pixel_surface(descriptor); surface && !offset) {
 		if (size > IOSurfaceGetAllocSize(surface)) throw std::runtime_error("invalid IOSurface mapping size");
 		auto view = std::make_unique<State::SharedView>();
@@ -1182,12 +1210,14 @@ uint64_t NativeProcess::map_shared(int descriptor, size_t size, uint64_t offset,
 
 uint64_t NativeProcess::alias_host_memory([[maybe_unused]] void *host, [[maybe_unused]] size_t size)
 {
-	// The guest runs in a process of its own under Rosetta, which would need its own window on the pages: there is no alias.
+	// Only FEX runs the guest in this process; a separate guest process would need its own window on the pages.
+	FEX_RETURN(alias_host_memory, host, size);
 	return 0;
 }
 
 uint64_t NativeProcess::map_descriptor(int descriptor, size_t size, uint64_t offset)
 {
+	FEX_RETURN(map_descriptor, descriptor, size, offset);
 	state->require_memory();
 	memory_range(0, size, PROT_READ | PROT_WRITE, state->limit());
 	const auto flags = fcntl(descriptor, F_GETFL);
@@ -1230,6 +1260,7 @@ uint64_t NativeProcess::map_file(int descriptor, size_t size, uint64_t offset, b
 
 bool NativeProcess::has_protection(uint64_t address, size_t size, int protection) const
 {
+	FEX_RETURN(has_protection, address, size, protection);
 	const uint64_t end = address + size;
 	while (address < end) {
 		const auto after = state->mappings.upper_bound(address);
@@ -1245,16 +1276,19 @@ bool NativeProcess::has_protection(uint64_t address, size_t size, int protection
 
 void NativeProcess::flush_instruction_cache(uint64_t address, size_t size)
 {
+	FEX_RETURN(flush_instruction_cache, address, size);
 }
 
 void NativeProcess::protect_memory(uint64_t address, size_t size, int protection)
 {
+	FEX_RETURN(protect_memory, address, size, protection);
 	state->trap_page.clear();
 	protect_range(address, size, protection, false);
 }
 
 void NativeProcess::protect_image(uint64_t address, size_t size, int protection)
 {
+	FEX_RETURN(protect_image, address, size, protection);
 	protect_range(address, size, protection, true);
 }
 
@@ -1301,6 +1335,7 @@ void NativeProcess::protect_range(uint64_t address, size_t size, int protection,
 
 void NativeProcess::unmap_memory(uint64_t address)
 {
+	FEX_RETURN(unmap_memory, address);
 	state->trap_page.clear();
 	state->require_memory();
 	const auto owned = std::find_if(state->allocations.begin(), state->allocations.end(), [&](const auto &allocation) {
@@ -1321,7 +1356,7 @@ void NativeProcess::unmap_memory(uint64_t address)
 	state->allocations.erase(owned);
 }
 
-// Readers compare this to learn that no protection they saw has changed. This backend does not count its mapping changes,
+// Readers compare this to learn that no protection they saw has changed. This backend and FEX do not count their mapping changes,
 // so the answer differs every time: a reader looks again, which is always correct.
 uint64_t NativeProcess::mapping_changes() const
 {
@@ -1331,6 +1366,7 @@ uint64_t NativeProcess::mapping_changes() const
 
 bool NativeProcess::memory_available(uint64_t address, size_t size) const
 {
+	FEX_RETURN(memory_available, address, size);
 	state->require_memory();
 	memory_range(address, size, PROT_NONE, state->limit());
 	const auto end = address + size;
@@ -1362,6 +1398,7 @@ bool NativeProcess::memory_available(uint64_t address, size_t size) const
 
 void NativeProcess::discard_memory(uint64_t address, size_t size)
 {
+	FEX_RETURN(discard_memory, address, size);
 	state->require_memory();
 	memory_range(address, size, PROT_NONE, state->limit());
 	const auto owned = std::find_if(state->allocations.begin(), state->allocations.end(), [&](const auto &allocation) {
@@ -1402,6 +1439,7 @@ void NativeProcess::discard_memory(uint64_t address, size_t size)
 
 void NativeProcess::map_image(LoadedImage &image)
 {
+	FEX_RETURN(map_image, image);
 	state->require_memory();
 	const auto base = image.base();
 	const auto size = image.data().size();
@@ -1441,6 +1479,7 @@ void NativeProcess::map_image(LoadedImage &image)
 
 void NativeProcess::unmap_image(uint64_t address)
 {
+	FEX_RETURN(unmap_image, address);
 	state->require_memory();
 	const auto owned = std::find_if(state->image_allocations.begin(), state->image_allocations.end(), [&](const auto &image) {
 		return image.first == address;
@@ -1458,18 +1497,21 @@ void NativeProcess::unmap_image(uint64_t address)
 
 std::pair<uint64_t, uint64_t> NativeProcess::stack_bounds() const
 {
+	FEX_RETURN(stack_bounds);
 	state->require_stopped();
 	return {state->initial_stack_top - state->initial_stack_size, state->initial_stack_top};
 }
 
 bool NativeProcess::active() const
 {
+	FEX_RETURN(active);
 	state->require_stopped();
 	return state->active_call;
 }
 
 void NativeProcess::abandon_call()
 {
+	FEX_RETURN(abandon_call);
 	state->require_stopped();
 	if (!state->active_call || !state->awaiting_api)
 		throw std::runtime_error("native abandonment requires a pending API call");
@@ -1482,6 +1524,7 @@ void NativeProcess::abandon_call()
 
 void NativeProcess::end_call()
 {
+	FEX_RETURN(end_call);
 	if (parallel() && !state->stopped) {
 		state->child->pause_thread();
 		state->stopped = true;
@@ -1497,22 +1540,26 @@ void NativeProcess::end_call()
 
 uint64_t NativeProcess::return_gate() const
 {
+	FEX_RETURN(return_gate);
 	return state->mode == NativeMode::x86 ? state->return_gate : state->child->gate;
 }
 
 uint64_t NativeProcess::result_register() const
 {
+	FEX_RETURN(result_register);
 	state->require_stopped();
 	return state->registers().rax;
 }
 
 size_t NativeProcess::callback_depth() const
 {
+	FEX_RETURN(callback_depth);
 	return state->callbacks.size();
 }
 
 NativeContext NativeProcess::callback_origin(size_t index) const
 {
+	FEX_RETURN(callback_origin, index);
 	state->require_stopped();
 	if (index >= state->callbacks.size())
 		throw std::runtime_error("native callback origin beyond the nesting");
@@ -1523,6 +1570,7 @@ NativeContext NativeProcess::callback_origin(size_t index) const
 
 void NativeProcess::trace_instructions(size_t count, std::function<void(uint64_t)> sink)
 {
+	FEX_RETURN(trace_instructions, count, sink);
 	state->require_stopped();
 	state->steps_left = count;
 	state->step_sink = std::move(sink);
@@ -1530,6 +1578,7 @@ void NativeProcess::trace_instructions(size_t count, std::function<void(uint64_t
 
 void NativeProcess::watch_write(uint64_t address)
 {
+	FEX_RETURN(watch_write, address);
 	state->require_stopped();
 	if (address)
 		throw std::runtime_error("hardware watchpoints are not available under Rosetta 2");
@@ -1537,6 +1586,7 @@ void NativeProcess::watch_write(uint64_t address)
 
 NativeThreadState NativeProcess::save_thread(bool snapshot_registers) const
 {
+	FEX_RETURN(save_thread, snapshot_registers);
 	if (!parallel() || state->stopped)
 		state->require_stopped();
 	const bool in_task = parallel() && !snapshot_registers;
@@ -1560,6 +1610,7 @@ NativeThreadState NativeProcess::save_thread(bool snapshot_registers) const
 
 void NativeProcess::load_thread(const NativeThreadState &thread)
 {
+	FEX_RETURN(load_thread, thread);
 	if (parallel()) {
 		state->child->select(thread.task);
 		state->stopped = thread.stopped;
@@ -1594,6 +1645,7 @@ void NativeProcess::load_thread(const NativeThreadState &thread)
 
 NativeThreadState NativeProcess::new_thread(uint64_t stack_top, uint64_t teb)
 {
+	FEX_RETURN(new_thread, stack_top, teb);
 	state->require_memory();
 	NativeThreadState thread{};
 	thread.context = state->stopped ? context() : state->initial_context;
@@ -1616,21 +1668,25 @@ NativeThreadState NativeProcess::new_thread(uint64_t stack_top, uint64_t teb)
 
 bool NativeProcess::parallel() const
 {
+	FEX_RETURN(parallel);
 	return state->child->parallel;
 }
 
 bool NativeProcess::stopped() const
 {
+	FEX_RETURN(stopped);
 	return state->stopped;
 }
 
 int NativeProcess::execution_descriptor() const
 {
+	FEX_RETURN(execution_descriptor);
 	return state->child->execution_descriptor();
 }
 
 void NativeProcess::drain_execution()
 {
+	FEX_RETURN(drain_execution);
 	state->child->drain_execution();
 }
 
@@ -1676,6 +1732,10 @@ bool NativeProcess::call_waiting() const
 
 bool NativeProcess::gone() const
 {
+#ifdef RAVEN_FEX_PROCESS
+	if (fex)
+		return false;
+#endif
 	// Reaping an unexpectedly exited agent clears its PID before its control mapping is removed.
 	return !state->child || !state->child->control || state->child->pid <= 0;
 }
@@ -1717,11 +1777,13 @@ bool NativeProcess::write_alone(uint64_t, const void *, size_t) { return false; 
 
 void NativeProcess::set_execution_wait(std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> wait)
 {
+	FEX_RETURN(set_execution_wait, wait);
 	state->execution_wait = std::move(wait);
 }
 
 void NativeProcess::stop_thread(const NativeThreadState &thread)
 {
+	FEX_RETURN(stop_thread, thread);
 	if (parallel() && thread.task > 0 && thread.task != state->child->selected) {
 		state->child->stop_thread(thread.task);
 		drain_queued_calls(true);
@@ -1730,6 +1792,7 @@ void NativeProcess::stop_thread(const NativeThreadState &thread)
 
 void NativeProcess::pause_thread(NativeThreadState &thread)
 {
+	FEX_RETURN(pause_thread, thread);
 	if (!parallel() || (thread.stopped && !thread.context_in_task))
 		return;
 	auto &child = *state->child;
@@ -1755,11 +1818,13 @@ void NativeProcess::pause_thread(NativeThreadState &thread)
 
 bool NativeProcess::await_stop()
 {
+	FEX_RETURN(await_stop);
 	return false;
 }
 
 void NativeProcess::resume_context_thread(NativeThreadState &thread)
 {
+	FEX_RETURN(resume_context_thread, thread);
 	if (!parallel()) return;
 	auto &child = *state->child;
 	const auto caller = child.selected;
@@ -1799,6 +1864,7 @@ void NativeProcess::set_thread_registers(NativeThreadState &thread, const user_r
 
 void NativeProcess::enter_fault_dispatch()
 {
+	FEX_RETURN(enter_fault_dispatch);
 	state->require_stopped();
 	if (!state->active_call || state->awaiting_api || state->awaiting_syscall || state->mode != NativeMode::x64)
 		throw std::runtime_error("native fault dispatch requires a stopped x64 call");
@@ -1808,6 +1874,7 @@ void NativeProcess::enter_fault_dispatch()
 
 void NativeProcess::redirect(const NativeContext &target, size_t depth)
 {
+	FEX_RETURN(redirect, target, depth);
 	state->require_stopped();
 	if (!state->active_call || !state->awaiting_api || depth > state->callbacks.size())
 		throw std::runtime_error("native redirection requires a pending API call");
@@ -1820,11 +1887,13 @@ void NativeProcess::redirect(const NativeContext &target, size_t depth)
 
 NativeMode NativeProcess::mode() const
 {
+	FEX_RETURN(mode);
 	return state->mode;
 }
 
 void NativeProcess::set_teb(uint64_t base)
 {
+	FEX_RETURN(set_teb, base);
 	state->require_stopped();
 	install_segment(0, base);
 	// The runtime's selector for LDT entry 0; the agent maps its entries to the ones Rosetta allows.
@@ -1841,6 +1910,7 @@ void NativeProcess::install_segment(uint32_t entry, uint64_t base)
 
 void NativeProcess::add_api_trap(uint64_t address, uint32_t callee_cleanup)
 {
+	FEX_RETURN(add_api_trap, address, callee_cleanup);
 	state->require_stopped();
 	const auto byte_at = [&](uint64_t at) {
 		const uint64_t page = at & ~uint64_t(4095);
@@ -1864,6 +1934,13 @@ void NativeProcess::add_api_trap(uint64_t address, uint32_t callee_cleanup)
 // Traps the caller made from the images' own bytes (providers.cpp checks each is an INT3 and whether a RET follows).
 void NativeProcess::add_api_traps(std::map<uint64_t, ApiTrap> traps)
 {
+#ifdef RAVEN_FEX_PROCESS
+	if (fex) {
+		for (const auto &[address, trap] : traps)
+			fex->add_api_trap(address, trap.cleanup);
+		return;
+	}
+#endif
 	state->require_stopped();
 	for (const auto &[address, trap] : traps) {
 		state->api_traps[address] = trap.cleanup;
@@ -1876,6 +1953,7 @@ void NativeProcess::add_api_traps(std::map<uint64_t, ApiTrap> traps)
 
 NativeResult NativeProcess::call(uint64_t address, std::span<const uint64_t> arguments, std::chrono::milliseconds timeout)
 {
+	FEX_RETURN(call, address, arguments, timeout);
 	state->require_stopped();
 	if (state->active_call)
 		throw std::runtime_error("native call is already active");
@@ -1884,6 +1962,7 @@ NativeResult NativeProcess::call(uint64_t address, std::span<const uint64_t> arg
 
 NativeResult NativeProcess::callback(uint64_t address, std::span<const uint64_t> arguments, std::chrono::milliseconds timeout)
 {
+	FEX_RETURN(callback, address, arguments, timeout);
 	state->require_stopped();
 	if (!state->active_call || !state->awaiting_api) {
 		backtrace_if_asked();
@@ -1995,6 +2074,7 @@ NativeResult NativeProcess::begin_x86_call(uint64_t address, std::span<const uin
 
 NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 {
+	FEX_RETURN(resume, timeout);
 	state->require_stopped();
 	if (!state->active_call || state->awaiting_api) {
 		backtrace_if_asked();
@@ -2247,6 +2327,7 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
 
 void NativeProcess::set_api_argument(size_t index, uint32_t value)
 {
+	FEX_RETURN(set_api_argument, index, value);
 	state->require_stopped();
 	if (!state->awaiting_api || state->mode != NativeMode::x86 || index > 127)
 		throw std::runtime_error("native argument rewrite requires a pending x86 API call");
@@ -2256,6 +2337,7 @@ void NativeProcess::set_api_argument(size_t index, uint32_t value)
 
 void NativeProcess::set_time_slicing(std::chrono::milliseconds slice, std::function<bool()> wanted, std::function<void()> yield)
 {
+	FEX_RETURN(set_time_slicing, slice, wanted, yield);
 	state->slice = slice;
 	state->slice_wanted = std::move(wanted);
 	state->slice_yield = std::move(yield);
@@ -2263,6 +2345,7 @@ void NativeProcess::set_time_slicing(std::chrono::milliseconds slice, std::funct
 
 void NativeProcess::set_guest_sampler(std::chrono::milliseconds period, std::function<void(uint64_t)> sampler)
 {
+	FEX_RETURN(set_guest_sampler, period, sampler);
 	state->sample_period = period;
 	state->sampler = std::move(sampler);
 }
@@ -2293,6 +2376,7 @@ void NativeProcess::make_served_block(uint64_t teb, uint64_t &guest, uint64_t *&
 
 uint64_t NativeProcess::serving_teb() const
 {
+	FEX_RETURN(serving_teb);
 	if (!state->serving) return 0;
 	if (!parallel()) return state->thread_teb;
 	const auto found = state->served_owners.find(state->thread_served_block);
@@ -2302,11 +2386,13 @@ uint64_t NativeProcess::serving_teb() const
 
 bool NativeProcess::serving() const
 {
+	FEX_RETURN(serving);
     return state->serving;
 }
 
 void NativeProcess::decline_served()
 {
+	FEX_RETURN(decline_served);
     if (!state->serving || state->serving_queued)
         throw std::runtime_error("only a synchronous served call can be declined");
     state->served_declined = true;
@@ -2314,11 +2400,13 @@ void NativeProcess::decline_served()
 
 bool NativeProcess::serving_queued() const
 {
+	FEX_RETURN(serving_queued);
 	return state->serving && state->serving_queued;
 }
 
 void NativeProcess::set_queued_gl_elements(bool available)
 {
+	FEX_RETURN(set_queued_gl_elements, available);
 	if (parallel() && state->thread_served_block)
 		__atomic_store_n(&state->thread_served_block[ServedQueue::gl_elements], uint64_t(available), __ATOMIC_RELEASE);
 }
@@ -2326,6 +2414,7 @@ void NativeProcess::set_queued_gl_elements(bool available)
 void NativeProcess::set_served_calls(uint64_t *block, std::vector<uint64_t> stubs, size_t stub_size, size_t wait_offset,
 	std::vector<uint64_t> yield_traps, std::function<void(uint64_t)> handler, std::vector<uint64_t> queued_stubs)
 {
+	FEX_RETURN(set_served_calls, block, stubs, stub_size, wait_offset, yield_traps, handler, queued_stubs);
 	std::sort(stubs.begin(), stubs.end());
 	std::sort(yield_traps.begin(), yield_traps.end());
 	std::sort(queued_stubs.begin(), queued_stubs.end());
@@ -2378,11 +2467,13 @@ bool NativeProcess::inside_served_stub() const
 
 uint64_t NativeProcess::unix_call_gate() const
 {
+	FEX_RETURN(unix_call_gate);
 	return state->mode == NativeMode::x64 ? state->child->control->unix_call_gate : 0;
 }
 
 void NativeProcess::drain_unix_events(const std::function<void(uint64_t)> &signal)
 {
+	FEX_RETURN(drain_unix_events, signal);
 	if (!state->child->control)
 		return;
 	for (auto &slot : state->child->control->unix_events)
@@ -2392,11 +2483,15 @@ void NativeProcess::drain_unix_events(const std::function<void(uint64_t)> &signa
 
 raven_control *NativeProcess::darwin_control() const
 {
+#ifdef RAVEN_FEX_PROCESS
+	if (fex) return fex->darwin_control();
+#endif
 	return state->child->control;
 }
 
 uint32_t NativeProcess::copy_unix_port(uint32_t guest_port) const
 {
+	FEX_RETURN(copy_unix_port, guest_port);
 	mach_port_t result = MACH_PORT_NULL;
 	mach_msg_type_name_t type = 0;
 	if (state->child->task == MACH_PORT_NULL || mach_port_extract_right(state->child->task, guest_port, MACH_MSG_TYPE_COPY_SEND,
@@ -2407,11 +2502,13 @@ uint32_t NativeProcess::copy_unix_port(uint32_t guest_port) const
 
 void NativeProcess::set_unix_pump(std::function<void()> pump)
 {
+	FEX_RETURN(set_unix_pump, pump);
 	state->unix_pump = std::move(pump);
 }
 
 uint64_t NativeProcess::load_unix_library(const std::string &path, uint32_t function_count)
 {
+	FEX_RETURN(load_unix_library, path, function_count);
 	state->require_stopped();
 	if (state->mode != NativeMode::x64 || !function_count || function_count > 4096 || path.empty() ||
 		path.find('\0') != path.npos || path.size() >= RAVEN_CONTROL_DATA_SIZE)
@@ -2555,11 +2652,13 @@ bool NativeProcess::serve_pending()
 
 void NativeProcess::set_resume_hook(std::function<void()> hook)
 {
+	FEX_RETURN(set_resume_hook, hook);
 	state->resume_hook = std::move(hook);
 }
 
 void NativeProcess::begin_translated_call(std::vector<uint64_t> words, std::array<uint64_t, 4> floats)
 {
+	FEX_RETURN(begin_translated_call, words, floats);
 	if (state->translated_words)
 		throw std::runtime_error("a translated native call is already running");
 	state->translated_words = std::move(words);
@@ -2570,12 +2669,14 @@ void NativeProcess::begin_translated_call(std::vector<uint64_t> words, std::arra
 
 uint64_t NativeProcess::end_translated_call()
 {
+	FEX_RETURN(end_translated_call);
 	state->translated_words.reset();
 	return state->translated_result;
 }
 
 std::vector<uint64_t> NativeProcess::api_arguments(size_t count) const
 {
+	FEX_RETURN(api_arguments, count);
 	state->require_stopped();
 	if (state->translated_words && state->callbacks.size() == state->translated_depth) {
 		auto words = *state->translated_words;
@@ -2626,6 +2727,7 @@ std::vector<uint64_t> NativeProcess::api_arguments(size_t count) const
 
 std::array<uint64_t, 4> NativeProcess::api_float_arguments() const
 {
+	FEX_RETURN(api_float_arguments);
 	state->require_stopped();
 	if (state->translated_words && state->callbacks.size() == state->translated_depth)
 		return state->translated_floats;
@@ -2640,6 +2742,7 @@ std::array<uint64_t, 4> NativeProcess::api_float_arguments() const
 
 void NativeProcess::enter_nt_service(uint64_t instruction, uint32_t number)
 {
+	FEX_RETURN(enter_nt_service, instruction, number);
 	state->require_stopped();
 	if (state->mode != NativeMode::x64)
 		throw std::runtime_error("native NT services are x64 only");
@@ -2659,6 +2762,7 @@ void NativeProcess::enter_nt_service(uint64_t instruction, uint32_t number)
 
 void NativeProcess::complete_debug_print(uint64_t instruction)
 {
+	FEX_RETURN(complete_debug_print, instruction);
 	state->require_stopped();
 	if (state->mode != NativeMode::x64)
 		throw std::runtime_error("native debug print services are x64 only");
@@ -2674,6 +2778,7 @@ void NativeProcess::complete_debug_print(uint64_t instruction)
 
 void NativeProcess::return_api(uint64_t value)
 {
+	FEX_RETURN(return_api, value);
 	state->require_stopped();
 	if (state->translated_words && state->callbacks.size() == state->translated_depth) {
 		state->translated_result = value;

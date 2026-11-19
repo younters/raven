@@ -1,4 +1,7 @@
 #include "providers.h"
+#ifdef RAVEN_FEX_PROCESS
+#include "platform/darwin/fex/fex_process.h"
+#endif
 #include "child_process.h"
 #include "handle_channel.h"
 #include "warm_host.h"
@@ -2047,10 +2050,12 @@ static std::vector<uint8_t> commit_prelude(int32_t to_pointer, int32_t to_trap)
 
 // Where the served stub behind an export sits: the export itself, or the stub a clock prelude falls back to; for a commit prelude, the
 // breakpoint it falls back to.
-// A plain x64 slot with the breakpoint past the hook space, NOPs before it.
+// A plain x64 slot with the breakpoint past the hook space: NOPs before it, or under FEX mov rax,trap; int 0x2e.
 static bool plain_hookable_slot(std::span<const uint8_t> image, size_t rva)
 {
-	return rva + 15 < image.size() && image[rva + 14] == 0xcc && image[rva] == 0x90;
+	if (rva + 15 >= image.size() || image[rva + 14] != 0xcc)
+		return false;
+	return image[rva] == 0x90 || (image[rva] == 0x48 && image[rva + 1] == 0xb8 && image[rva + 10] == 0xcd && image[rva + 11] == 0x2e);
 }
 
 static uint32_t served_stub_rva(std::span<const uint8_t> image, std::string_view module, std::string_view name, uint32_t rva)
@@ -2180,11 +2185,17 @@ void install_guest_sampler(NativeProcess &process, ModuleSet &modules)
 
 uint64_t x86_api_trap_address(const PEModule &provider, uint32_t address)
 {
-	// A trap is a breakpoint. An export that does not start with one is a fast stub, whose slow path sits at the fixed offset.
+	// A trap is a breakpoint, or mov eax,trap; int 0x2e for FEX, where the trap is the int's last byte. An export that starts with neither is a
+	// fast stub, whose slow path sits at the fixed offset.
 	const auto image = provider.loaded.data();
 	const auto base = provider.loaded.base();
 	const auto trap_at = [&](uint64_t at) -> uint64_t {
-		return at < image.size() && image[at] == 0xcc ? base + at : 0;
+		if (at < image.size() && image[at] == 0xcc)
+			return base + at;
+		if (at + 7 <= image.size() && image[at] == 0xb8 && image[at + 5] == 0xcd && image[at + 6] == 0x2e &&
+			(uint32_t(image[at + 1]) | uint32_t(image[at + 2]) << 8 | uint32_t(image[at + 3]) << 16 | uint32_t(image[at + 4]) << 24) == base + at + 6)
+			return base + at + 6;
+		return 0;
 	};
 	if (const auto trap = trap_at(address))
 		return trap;
@@ -2212,6 +2223,21 @@ std::vector<uint8_t> moved_provider(std::vector<uint8_t> bytes, uint64_t base)
 {
 	if (bytes.size() < 0xb8 || bytes[0x98] != 0x0b || bytes[0x99] != 0x02)
 		throw std::runtime_error("only a 64-bit provider can be moved");
+#ifdef RAVEN_FEX_PROCESS
+	// Under FEX an export's entry is mov rax,trap; int 0x2e (runtime_provider), whose trap is an address: each entry whose immediate is its
+	// own trap at the old base moves with the image. The export slots are 16 bytes from file offset 0x200 (RVA 0x1000), one for each of
+	// at most 4096 exports.
+	uint64_t made_at = 0;
+	std::memcpy(&made_at, bytes.data() + 0xb0, 8);
+	for (size_t code = 0x200; made_at != base && code < 0x200 + 4096 * 16 && code + 16 <= bytes.size(); code += 16) {
+		uint64_t trap = 0;
+		std::memcpy(&trap, bytes.data() + code + 2, 8);
+		if (bytes[code] == 0x48 && bytes[code + 1] == 0xb8 && bytes[code + 10] == 0xcd && bytes[code + 11] == 0x2e && trap == made_at + 0x1000 + code - 0x200 + 14) {
+			trap = base + 0x1000 + code - 0x200 + 14;
+			std::memcpy(bytes.data() + code + 2, &trap, 8);
+		}
+	}
+#endif
 	std::memcpy(bytes.data() + 0xb0, &base, 8);
 	return bytes;
 }
@@ -2377,16 +2403,43 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 	size_t cursor = module_name + name.size() + 1;
 	size_t fast_next = 0, served_next = 0, clock_next = 0, commit_next = 0, strings_next = strings_start, blocks_next = blocks_start;
 	size_t queued_next = queued_start;
+	// A 32-bit program run by FEX enters the runtime through int 0x2e, which FEX hands to the host as a call: a breakpoint costs a signal,
+	// several microseconds on every call. EAX carries the trap's address, the last byte of the int, so that a stop there reads as one at an
+	// int3 placed on it: mov eax,trap; int 0x2e; ret.
+	const auto x86_trap = [&](size_t at) {
+#ifdef RAVEN_FEX_PROCESS
+		if (x86 && fex_execution_selected()) {
+			const uint32_t trap = uint32_t(base + rva(at) + 6);
+			const uint8_t entry[8] = {0xb8, uint8_t(trap), uint8_t(trap >> 8), uint8_t(trap >> 16), uint8_t(trap >> 24), 0xcd, 0x2e, 0xc3};
+			std::copy(std::begin(entry), std::end(entry), bytes.begin() + ptrdiff_t(at));
+			return;
+		}
+#endif
+		bytes[at] = 0xcc;
+		bytes[at + 1] = 0xc3;
+	};
 	for (size_t index = 0; index < exports.size(); ++index) {
 		size_t code = 0x200 + index * 16;
 		const uint32_t service = x86 ? 0 : nt_service_number(name, exports[index]);
-		bytes[code] = 0xcc;
-		bytes[code + 1] = 0xc3;
+		x86_trap(code);
 		// Hooking libraries copy an x64 entry preamble into a trampoline; keep the breakpoint beyond their 14-byte jump space.
 		if (!x86 && (fast_paths || name == "user32.dll")) {
 			std::fill_n(bytes.begin() + ptrdiff_t(code), 14, 0x90);
 			bytes[code + 14] = 0xcc;
 			bytes[code + 15] = 0xc3;
+#ifdef RAVEN_FEX_PROCESS
+			// Under FEX the entry is mov rax,trap; int 0x2e, which FEX hands to the host as a call, where the breakpoint raised a signal: the
+			// trap's own address in RAX makes the stop read as one at the breakpoint. Not syscall, which overwrites RCX, the first argument.
+			// Whole instructions within the 14 bytes, so a hook that copies them still works.
+			if (fex_execution_selected()) {
+				const uint64_t trap = base + rva(code) + 14;
+				bytes[code] = 0x48;
+				bytes[code + 1] = 0xb8;
+				std::memcpy(bytes.data() + code + 2, &trap, 8);
+				bytes[code + 10] = 0xcd;
+				bytes[code + 11] = 0x2e;
+			}
+#endif
 		}
 		if (service) {
 			const std::array<uint8_t, 11> entry{0x4c, 0x8b, 0xd1, 0xb8, 0, 0, 0, 0, 0x0f, 0x05, 0xc3};
@@ -2455,8 +2508,12 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 				if (stub.name == exports[index]) {
 					code = fast_start + fast_next++ * 64;
 					std::copy(stub.code.begin(), stub.code.end(), bytes.begin() + ptrdiff_t(code));
-					bytes[code + 0x30] = 0xcc;
-					bytes[code + 0x31] = 0xc3;
+					if (x86) {
+						x86_trap(code + 0x30);
+					} else {
+						bytes[code + 0x30] = 0xcc;
+						bytes[code + 0x31] = 0xc3;
+					}
 				}
 		if (queued && queued_arguments(name, exports[index])) {
 			const size_t served = code;
@@ -3557,6 +3614,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	// A parallel guest can be suspended between instructions. Only cooperative Rosetta uses the
 	// shared commit log, and its scheduler defers time-slice yields across the commit preludes.
 	bool bypass_commits = process.parallel();
+#ifdef RAVEN_FEX_PROCESS
+	bypass_commits = bypass_commits || fex_execution_selected();
+#endif
 #endif
 	for (const auto &[module_key, module] : modules.all()) {
 		if (!module->runtime_api)
@@ -3957,14 +4017,37 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	}, std::move(queued_stubs));
 	// The guest reads the performance counter itself once the time stamp counter is calibrated against it over 200 ms: the base is taken
 	// when published, so the guest's count goes on from the runtime's, and the multiplier is written last.
+	// The time stamp counter as the guest reads it. Rosetta gives the generic timer in nanoseconds, which __rdtsc reads too. FEX gives the
+	// generic timer's ticks shifted left until their rate reaches 1 GHz (FEXCore's SmallTSCScale, on by default): the same shift here makes
+	// the calibration match what its guest's RDTSC returns, so QueryPerformanceCounter is answered in the guest under FEX as well.
+	static const auto guest_time_stamp = [] {
+#if defined(RAVEN_FEX_PROCESS) && defined(__aarch64__)
+		if (fex_execution_selected()) {
+			static const unsigned shift = [] {
+				uint64_t frequency;
+				__asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
+				unsigned bits = 0;
+				while (frequency && frequency < 1000000000) {
+					frequency <<= 1;
+					++bits;
+				}
+				return bits;
+			}();
+			uint64_t counter;
+			__asm__ volatile("isb\n\tmrs %0, cntvct_el0" : "=r"(counter) : : "memory");
+			return counter << shift;
+		}
+#endif
+		return uint64_t(__rdtsc());
+	};
 	struct ClockCalibration {
-		uint64_t counter = __rdtsc(), ticks = counter_ticks();
+		uint64_t counter = guest_time_stamp(), ticks = counter_ticks();
 		bool published = false;
 	};
 	threads.add_service([served_block, calibration = std::make_shared<ClockCalibration>()] {
 		if (calibration->published || counter_ticks() - calibration->ticks < 2000000)
 			return;
-		const uint64_t counter = __rdtsc(), ticks = counter_ticks();
+		const uint64_t counter = guest_time_stamp(), ticks = counter_ticks();
 		if (counter <= calibration->counter)
 			return;
 		uint64_t *published = served_block + clock_calibration / 8;

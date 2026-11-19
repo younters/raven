@@ -1,0 +1,66 @@
+diff --git a/FEXCore/Source/Interface/Core/JIT/JIT.cpp b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+--- a/FEXCore/Source/Interface/Core/JIT/JIT.cpp
++++ b/FEXCore/Source/Interface/Core/JIT/JIT.cpp
+@@ -782,7 +782,7 @@
+     }
+   }
+ 
+-#ifdef ARCHITECTURE_arm64ec
++#if defined(ARCHITECTURE_arm64ec) || defined(FEX_GUEST_WINDOW)
+   static constexpr uint16_t SuspendMagic {0xCAFE};
+ 
+   ldr(TMP2.W(), STATE_PTR(CpuStateFrame, SuspendDoorbell));
+diff --git a/Source/Windows/WOW64/Module.cpp b/Source/Windows/WOW64/Module.cpp
+--- a/Source/Windows/WOW64/Module.cpp
++++ b/Source/Windows/WOW64/Module.cpp
+@@ -939,8 +939,10 @@
+   FEXCORE_PROFILE_ACCUMULATION(Thread, AccumulatedSignalTime);
+ 
+ #ifdef RAVEN_HOST
+-  if (Thread && Exception->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+-      Exception->ExceptionInformation[1] == reinterpret_cast<uintptr_t>(&Thread->InterruptFaultPage)) {
++  if (Thread && IsAddressInJit(Context->Pc) &&
++      *reinterpret_cast<const uint32_t*>(Context->Pc) == (0xd4200000u | (0xcafeu << 5)) &&
++      Thread->CurrentFrame->SuspendDoorbell) {
++    Thread->CurrentFrame->SuspendDoorbell = 0;
+     auto *Packet = reinterpret_cast<WOW64_CONTEXT*>(RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->cpu_area), reinterpret_cast<uintptr_t>(NtCurrentTeb()), 0, 0));
+     *Packet = Context::ReconstructWowContext(TLS, Context);
+     Exception->ExceptionCode = STATUS_TIMEOUT; Exception->NumberParameters = 0;
+@@ -1145,7 +1147,7 @@
+   BTCpuProcessInit();
+   return STATUS_SUCCESS;
+ }
+-extern "C" void *RavenWow64InterruptPage() { return &GetTLS().ThreadState()->InterruptFaultPage; }
++extern "C" void *RavenWow64Doorbell() { return &GetTLS().ThreadState()->CurrentFrame->SuspendDoorbell; }
+ extern "C" void RavenWow64Run() {
+   const auto TLS = GetTLS();
+   TLS.ControlWord().fetch_or(ControlBits::WOW_CPU_AREA_DIRTY, std::memory_order::relaxed);
+@@ -1160,6 +1162,6 @@
+ #else
+ extern "C" NTSTATUS RavenWow64ProcessInit(const void *) { return STATUS_NOT_SUPPORTED; }
+ extern "C" void RavenWow64Run() {}
+-extern "C" void *RavenWow64InterruptPage() { return nullptr; }
++extern "C" void *RavenWow64Doorbell() { return nullptr; }
+ extern "C" NTSTATUS RavenHandleFault(void *, void *) { return STATUS_NOT_SUPPORTED; }
+ #endif
+diff --git a/Source/Windows/WOW64/libwow64fex.def b/Source/Windows/WOW64/libwow64fex.def
+--- a/Source/Windows/WOW64/libwow64fex.def
++++ b/Source/Windows/WOW64/libwow64fex.def
+@@ -27,4 +27,4 @@
+   RavenWow64ProcessInit
+   RavenWow64Run
+   RavenHandleFault
+-  RavenWow64InterruptPage
++  RavenWow64Doorbell
+diff --git a/FEXCore/include/FEXCore/Core/CoreState.h b/FEXCore/include/FEXCore/Core/CoreState.h
+--- a/FEXCore/include/FEXCore/Core/CoreState.h
++++ b/FEXCore/include/FEXCore/Core/CoreState.h
+@@ -427,7 +427,7 @@
+ 
+   InternalThreadState* Thread;
+ 
+-#ifdef ARCHITECTURE_arm64ec
++#if defined(ARCHITECTURE_arm64ec) || defined(FEX_GUEST_WINDOW)
+   // Set by the kernel on ARM64EC whenever the JIT should cooperatively suspend running guest code.
+   uint32_t SuspendDoorbell {};
+ #endif

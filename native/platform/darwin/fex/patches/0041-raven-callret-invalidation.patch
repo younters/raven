@@ -1,0 +1,65 @@
+diff --git a/FEXCore/Source/Interface/Context/Context.h b/FEXCore/Source/Interface/Context/Context.h
+index 66d543b36..1ecfb7326 100644
+--- a/FEXCore/Source/Interface/Context/Context.h
++++ b/FEXCore/Source/Interface/Context/Context.h
+@@ -402,6 +402,8 @@ public:
+ #endif
+ 
+   FEXCore::Utils::WritePriorityMutex::Mutex CodeInvalidationMutex {};
++  // Set by InvalidateCodeBuffersCodeRange when any shared cache dropped code (CodeInvalidationMutex).
++  bool CodeBuffersInvalidated {};
+ 
+   uint32_t StrictSplitLockMutex {};
+ 
+diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
+index c01fa57c8..8f8886bf6 100644
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -1101,10 +1101,11 @@ void ContextImpl::InvalidateCodeBuffersCodeRange(uint64_t Start, uint64_t Length
+ 
+   LOGMAN_THROW_A_FMT(CodeInvalidationMutex.try_lock() == false, "CodeInvalidationMutex needs to be unique_locked here");
+   std::scoped_lock lk {CodeBufferListLock};
++  CodeBuffersInvalidated = false;
+   auto it = CodeBufferList.begin();
+   while (it != CodeBufferList.end()) {
+     if (auto Strong = it->lock()) {
+-      Strong->LookupCache->InvalidateRange(Start, Length);
++      CodeBuffersInvalidated |= Strong->LookupCache->InvalidateRange(Start, Length);
+       it++;
+     } else {
+       it = CodeBufferList.erase(it);
+@@ -1119,7 +1120,10 @@ void ContextImpl::InvalidateThreadCachedCodeRange(FEXCore::Core::InternalThreadS
+   // Accessing FrontendDecoder is safe as the thread's code invalidation mutex must be locked here.
+   Thread->FrontendDecoder->ResetExecutableRangeCache();
+ 
+-  if (Thread->LookupCache->InvalidateCacheRange(Start, Length)) {
++  // Multiblock call-ret entries point into the caller's block. A thread may run that block
++  // without caching it (entered through a block link), so clear every thread's stack when
++  // the shared cache dropped code, not only threads whose own cache covers the range.
++  if (Thread->LookupCache->InvalidateCacheRange(Start, Length) || CodeBuffersInvalidated) {
+     FEXCORE_PROFILE_SCOPED("InvalidateCallRet");
+ 
+     // This may cause access violations in the thread on Windows as zeroing is not atomic, this is handled by the frontend
+diff --git a/FEXCore/Source/Interface/Core/LookupCache.h b/FEXCore/Source/Interface/Core/LookupCache.h
+index 391d48560..587afb053 100644
+--- a/FEXCore/Source/Interface/Core/LookupCache.h
++++ b/FEXCore/Source/Interface/Core/LookupCache.h
+@@ -125,7 +125,7 @@ struct GuestToHostMap {
+     return BlockList.erase(Address) != 0;
+   }
+ 
+-  void InvalidateRange(uint64_t Start, uint64_t Length) {
++  bool InvalidateRange(uint64_t Start, uint64_t Length) {
+     auto lk = AcquireWriteLock();
+ 
+     auto lower = CodePages.lower_bound(Start >> 12);
+@@ -136,7 +136,9 @@ struct GuestToHostMap {
+         Erase(Entry, lk);
+       }
+     }
++    bool ret = upper != lower;
+     CodePages.erase(lower, upper);
++    return ret;
+   }
+ 
+   void AddBlockLink(uint64_t GuestDestination, FEXCore::Context::ExitFunctionLinkData* HostLink,

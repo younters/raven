@@ -1,0 +1,16 @@
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -573,6 +573,12 @@
+     memcpy(Context.FltSave.XmmRegisters, Packet.V, sizeof(Context.FltSave.XmmRegisters));
+     memcpy(Context.FltSave.FloatRegisters, Thread->CurrentFrame->State.mm, sizeof(Context.FltSave.FloatRegisters));
+     Context.FltSave.ControlWord = Thread->CurrentFrame->State.FCW;
++    const auto &State = Thread->CurrentFrame->State;
++    Context.FltSave.StatusWord = (State.flags[FEXCore::X86State::X87FLAG_TOP_LOC] << 11) |
++      (State.flags[FEXCore::X86State::X87FLAG_C0_LOC] << 8) | (State.flags[FEXCore::X86State::X87FLAG_C1_LOC] << 9) |
++      (State.flags[FEXCore::X86State::X87FLAG_C2_LOC] << 10) | (State.flags[FEXCore::X86State::X87FLAG_C3_LOC] << 14) |
++      State.flags[FEXCore::X86State::X87FLAG_IE_LOC];
++    Context.FltSave.TagWord = State.AbridgedFTW;
+     return Context;
+ }
+ #endif

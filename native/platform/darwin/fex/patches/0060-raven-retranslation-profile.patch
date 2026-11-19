@@ -1,0 +1,116 @@
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -1,3 +1,5 @@
++#include <map>
++#include <tuple>
+ // SPDX-License-Identifier: MIT
+ /*
+ $info$
+@@ -901,13 +903,34 @@
+ 
+ #ifdef FEX_RAVEN_DIVIDE
+ // Opt-in counters for measuring translation separately from guest execution.
++static std::mutex RavenProfileMutex;
++static std::map<uint64_t, uint64_t> RavenCompileAddresses;
++static std::map<std::tuple<uint64_t, uint64_t, uint64_t>, uint64_t> RavenInvalidations;
+ static std::atomic<bool> RavenCompileTimingEnabled {false};
+ static std::atomic<uint64_t> RavenCompileCount {0}, RavenCompileNS {0};
++extern "C" void RavenRecordInvalidation(uint64_t Reason, uint64_t Start, uint64_t Size) {
++  if (!RavenCompileTimingEnabled.load(std::memory_order_relaxed)) return;
++  std::scoped_lock Lock(RavenProfileMutex);
++  ++RavenInvalidations[{Reason, Start, Size}];
++}
+ extern "C" void RavenCompileProfile(uint64_t Enable, uint64_t* Values) {
+   RavenCompileTimingEnabled.store(Enable != 0, std::memory_order_relaxed);
+   if (Values) {
+     Values[0] = RavenCompileCount.load(std::memory_order_relaxed);
+     Values[1] = RavenCompileNS.load(std::memory_order_relaxed);
++    std::scoped_lock Lock(RavenProfileMutex);
++    // Page buckets retain unique RIP counts, repeated attempts and multiply compiled RIPs.
++    std::map<uint64_t, std::array<uint64_t, 3>> Pages;
++    for (auto [RIP, Count] : RavenCompileAddresses) {
++      auto &Page = Pages[RIP & ~uint64_t(4095)];
++      ++Page[0]; Page[1] += Count - 1; Page[2] += Count > 1;
++    }
++    for (auto [Page, Counts] : Pages)
++      LogMan::Msg::IFmt("Raven translations page={:x} unique={} repeated={} recompiled={}", Page, Counts[0], Counts[1], Counts[2]);
++    for (auto [Key, Count] : RavenInvalidations) {
++      auto [Reason, Start, Size] = Key;
++      LogMan::Msg::IFmt("Raven invalidation reason={} start={:x} size={} count={}", Reason, Start, Size, Count);
++    }
+   }
+ }
+ struct RavenCompileTimer {
+@@ -951,6 +974,10 @@
+ 
+ #ifdef FEX_RAVEN_DIVIDE
+   RavenCompileTimer RavenTiming;
++  if (RavenTiming.Enabled) {
++    std::scoped_lock Lock(RavenProfileMutex);
++    ++RavenCompileAddresses[GuestRIP];
++  }
+ #endif
+   Thread->FrontendDecoder->SetupDecodeInstructionsAtEntry(Thread, GuestRIP, MaxInst);
+ 
+--- a/Source/Windows/Common/InvalidationTracker.cpp
++++ b/Source/Windows/Common/InvalidationTracker.cpp
+@@ -10,6 +10,11 @@
+ #include <windef.h>
+ #include <winternl.h>
+ 
++#ifdef FEX_RAVEN_DIVIDE
++extern "C" void RavenRecordInvalidation(uint64_t, uint64_t, uint64_t);
++#else
++static void RavenRecordInvalidation(uint64_t, uint64_t, uint64_t) {}
++#endif
+ namespace FEX::Windows {
+ InvalidationTracker::InvalidationTracker(FEXCore::Context::Context& CTX, const std::unordered_map<DWORD, FEXCore::Core::InternalThreadState*>& Threads, uint64_t GuestBase)
+   : CTX {CTX}
+@@ -81,6 +86,7 @@
+ 
+   if (NeedsInvalidate) {
+     // IntervalsLock cannot be held during invalidation
++    RavenRecordInvalidation(1, AlignedBase, AlignedSize);
+     InvalidateIntervalInternal(AlignedBase, AlignedSize);
+   }
+ }
+@@ -129,6 +135,7 @@
+ 
+   // Invalidate all cached code: previously-compiled blocks may contain NoExec stubs for addresses
+   // that are now executable (or reference regions whose executability just changed).
++  RavenRecordInvalidation(2, 0, std::numeric_limits<uint64_t>::max());
+   InvalidateIntervalInternalLocked(0, std::numeric_limits<uint64_t>::max());
+ }
+ 
+@@ -184,6 +191,7 @@
+     SectionSize += Info.RegionSize;
+   }
+ 
++  RavenRecordInvalidation(3, SectionBase, SectionSize);
+   InvalidateIntervalInternal(SectionBase, SectionSize);
+ 
+   if (Free) {
+@@ -204,6 +212,7 @@
+   const auto AlignedBase = Address & FEXCore::Utils::FEX_PAGE_MASK;
+   const auto AlignedSize = std::max(Size, (Address - AlignedBase + Size + FEXCore::Utils::FEX_PAGE_SIZE - 1) & FEXCore::Utils::FEX_PAGE_MASK);
+ 
++  RavenRecordInvalidation(Free ? 4 : 5, AlignedBase, AlignedSize);
+   InvalidateIntervalInternal(AlignedBase, AlignedSize);
+ 
+   if (Free) {
+@@ -231,6 +240,7 @@
+     {
+       std::scoped_lock Lock(CTX.GetCodeInvalidationMutex());
+ 
++      RavenRecordInvalidation(6, FaultAddress & FEXCore::Utils::FEX_PAGE_MASK, FEXCore::Utils::FEX_PAGE_SIZE);
+       InvalidateIntervalInternalLocked(FaultAddress & FEXCore::Utils::FEX_PAGE_MASK, FEXCore::Utils::FEX_PAGE_SIZE);
+ 
+       // Invalidate, then unprotect the faulting page with the compilation lock held to ensure that any racing invalidations are not dropped.
+@@ -369,6 +379,7 @@
+           // applied and the invalidation mutex must be locked throughout.
+           // Do this lazily only when an RWX region is actually hit.
+           // NOTE: This assumes CodeInvalidationMutex is locked by the caller
++          RavenRecordInvalidation(7, Address, Size);
+           InvalidateIntervalInternalLocked(Address, Size);
+         }
+         HitRWXInterval = true;

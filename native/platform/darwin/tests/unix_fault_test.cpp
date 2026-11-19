@@ -1,4 +1,7 @@
 #include "cpu/native_cpu.h"
+#ifdef RAVEN_FEX_PROCESS
+#include "../fex/fex_process.h"
+#endif
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -15,8 +18,12 @@ static void require(bool value, const char *message) { if (!value) throw std::ru
 int main(int argc, char **argv) {
     if (argc != 7 && argc != 8) return 2;
     try {
-        // The sixth argument names the engine; Rosetta 2 ("native") is the one this build has.
-        if (std::string(argv[6]) != "native") return 77;
+        const bool fex = std::string(argv[6]) == "fex";
+#ifdef RAVEN_FEX_PROCESS
+        raven::select_fex_execution(fex);
+#else
+        if (fex) return 77;
+#endif
         const bool x86 = std::string(argv[4]) == "32";
         const std::string backend = argv[5];
         const bool fake = backend == "fault";
@@ -24,6 +31,11 @@ int main(int argc, char **argv) {
         std::ifstream input(argv[2], std::ios::binary);
         std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
         raven::PEImage image(bytes);
+#ifdef RAVEN_FEX_PROCESS
+        if (!x86 && fex)
+            require(raven::fex_reserve_image_address(image.image_base, image.image_size),
+                "cannot reserve unix-call fixture image before host allocations");
+#endif
         raven::LoadedImage loaded(image, image.image_base);
         raven::LoadedImage *images[] = {&loaded};
         raven::NativeProcess process(images, argv[1], std::chrono::seconds(10), x86 ? raven::NativeMode::x86 : raven::NativeMode::x64);
@@ -39,10 +51,26 @@ int main(int argc, char **argv) {
             require(rejected, "compiled table length did not reject the forged sidecar count");
             setenv("RAVEN_MTLD3D_ARM64_ROOT", root.c_str(), 1);
         }
+        void *event_before = dlsym(RTLD_DEFAULT, "NtSetEvent");
+        void *layer_before = dlsym(RTLD_DEFAULT, "raven_mtld3d_layer_create");
         const auto handle = process.load_unix_library(path, count);
+        if (fex) {
+            require(dlsym(RTLD_DEFAULT, "NtSetEvent") == event_before, "adapter leaked NtSetEvent globally");
+            require(dlsym(RTLD_DEFAULT, "raven_mtld3d_layer_create") == layer_before, "mtld3d adapter leaked globally");
+        }
         const auto memory = process.map_memory(32768, PROT_READ | PROT_WRITE);
         process.protect_memory(memory + 16384, 16384, PROT_NONE);
         const auto data = memory + 256;
+        if (fake && fex) {
+            const auto code=process.map_memory(16384,PROT_READ|PROT_WRITE|PROT_EXEC);
+            const uint8_t ud2[]={0x0f,0x0b,0xc3}; process.write_memory(code,ud2);
+            auto stop=process.call(code,{},std::chrono::seconds(5));
+            require(stop.stop==raven::NativeStop::exception && stop.value==0xc000001d,
+                "guest illegal instruction did not stop through exception dispatch");
+            auto context=process.context(); context.registers.rip+=2; process.set_context(context);
+            require(process.resume(std::chrono::seconds(5)).stop==raven::NativeStop::returned,
+                "guest exception could not resume");
+        }
 
         Request request{process.unix_call_gate(), handle, data, metal ? 8u : fake ? 0u : 10u};
         auto write = [&](uint64_t at, const auto &object) { process.write_memory(at, {reinterpret_cast<const uint8_t *>(&object), sizeof object}); };

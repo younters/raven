@@ -1,0 +1,26 @@
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -674,10 +674,20 @@
+   auto &Fault = Thread->CurrentFrame->SynchronousFaultData;
+   // Only the dispatcher's faultless signal stubs own this metadata. A native
+   // assertion BRK must not consume stale guest metadata or become a breakpoint.
++  const bool Doorbell = *reinterpret_cast<const uint32_t*>(Native->Pc) == (0xd4200000u | (0xcafeu << 5)) &&
++                        Thread->CurrentFrame->SuspendDoorbell;
+   const bool Synthetic = Fault.FaultToTopAndGeneratedException;
+-  if (Record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION && !Synthetic) return STATUS_NOT_SUPPORTED;
++  if (Record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION && !Synthetic && !Doorbell) return STATUS_NOT_SUPPORTED;
+   BOOL FirstChance = TRUE;
+-  *Record = FEX::Windows::HandleGuestException(Fault, *Record, Context.Rip, Context.Rax, Context.Rcx, FirstChance);
++  if (Doorbell) {
++    Thread->CurrentFrame->SuspendDoorbell = 0;
++    Record->ExceptionCode = STATUS_TIMEOUT;
++    Record->ExceptionFlags = 0;
++    Record->ExceptionAddress = reinterpret_cast<void*>(Context.Rip);
++    Record->NumberParameters = 0;
++  } else {
++    *Record = FEX::Windows::HandleGuestException(Fault, *Record, Context.Rip, Context.Rax, Context.Rcx, FirstChance);
++  }
+   // Windows reports the breakpoint address; Raven's API stop advances it again.
+   if (Record->ExceptionCode == EXCEPTION_BREAKPOINT) Context.Rip -= 1;
+ 

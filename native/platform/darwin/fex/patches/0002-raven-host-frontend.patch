@@ -1,0 +1,302 @@
+diff --git a/Source/Windows/ARM64EC/Module.cpp b/Source/Windows/ARM64EC/Module.cpp
+index 5f6d5bb..f85e278 100644
+--- a/Source/Windows/ARM64EC/Module.cpp
++++ b/Source/Windows/ARM64EC/Module.cpp
+@@ -48,6 +48,11 @@ $end_info$
+ #include "Common/PortabilityInfo.h"
+ #include "Common/Handle.h"
+ #include "DummyHandlers.h"
++#include "Windows/Common/RavenHost.h"
++#ifdef RAVEN_HOST
++const RavenHostV1 *RavenHost {};
++extern "C" NTSTATUS RavenProcessInit(const RavenHostV1 *Host);
++#endif
+ #include "BTInterface.h"
+ #include "Windows/Common/SHMStats.h"
+ 
+@@ -106,7 +111,11 @@ struct ThreadCPUArea {
+   CHPE_V2_CPU_AREA_INFO* Area;
+ 
+   explicit ThreadCPUArea(_TEB* TEB)
+-    : Area(*reinterpret_cast<CHPE_V2_CPU_AREA_INFO**>(reinterpret_cast<uintptr_t>(TEB) + TEBCPUAreaOffset)) {}
++    : Area(
++#ifdef RAVEN_HOST
++        RavenHost ? reinterpret_cast<CHPE_V2_CPU_AREA_INFO*>(RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->cpu_area), reinterpret_cast<uintptr_t>(TEB), 0, 0)) :
++#endif
++        *reinterpret_cast<CHPE_V2_CPU_AREA_INFO**>(reinterpret_cast<uintptr_t>(TEB) + TEBCPUAreaOffset)) {}
+ 
+   uint64_t& EmulatorStackLimit() const {
+     return Area->EmulatorStackLimit;
+@@ -553,6 +562,19 @@ public:
+   ECSyscallHandler() = default;
+ 
+   void HandleSyscall(FEXCore::Core::CpuStateFrame* Frame) override {
++#ifdef RAVEN_HOST
++    uint64_t FPCR, FPSR;
++    asm volatile("mrs %0, fpcr" : "=r"(FPCR));
++    asm volatile("mrs %0, fpsr" : "=r"(FPSR));
++    auto *Thread = GetCPUArea().ThreadState();
++    auto Packet = StoreStateToPackedECContext(Thread, FPCR, FPSR);
++    // The dispatch contract uses AMD64 CONTEXT, with RIP after the syscall.
++    auto &Context = GetCPUArea().ContextAmd64().AMD64_Context;
++    // The EC dispatcher is a non-returning hand-off, not an ordinary C call.
++    // Deliberately reject execution until the Raven resume trampoline is qualified.
++    (void)Packet; (void)Context;
++    RtlRaiseStatus(STATUS_NOT_SUPPORTED);
++#else
+     ProcessPendingCrossProcessEmulatorWork();
+ 
+     // Manually raise an exeption with the current JIT state packed into a native context, ntdll handles this and
+@@ -568,6 +590,7 @@ public:
+     // PC is expected to hold the return address after the thunk, so skip over the INT 2E/SYSCALL instruction.
+     DispatchArgs.Context.Pc += 2;
+     JumpSetStack(KiUserExceptionDispatcher, reinterpret_cast<uintptr_t>(&DispatchArgs));
++#endif
+   }
+ 
+   std::optional<FEXCore::ExecutableFileSectionInfo> LookupExecutableFileSection(FEXCore::Core::InternalThreadState*, uint64_t Address) override {
+@@ -618,7 +641,12 @@ extern "C" void SyncThreadContext(CONTEXT* Context) {
+ }
+ 
+ NTSTATUS ProcessInit() {
++#ifdef RAVEN_HOST
++  // Registration is mandatory. Never silently fall through to Wine/SVC hosting.
++  if (!RavenHost) return STATUS_INVALID_PARAMETER;
++#else
+   InitSyscalls();
++#endif
+ 
+   FEX::Windows::InitCRTProcess();
+   FEX::Windows::SetupThreadHandlers();
+@@ -638,6 +666,10 @@ NTSTATUS ProcessInit() {
+   SyscallHandler = fextl::make_unique<Exception::ECSyscallHandler>();
+ 
+   const auto NtDll = GetModuleHandleW(L"ntdll.dll");
++#ifdef RAVEN_HOST
++  const bool IsWine = true; // Darwin allocator / overcommit policy, not Wine detection.
++  UserSharedDataBacking = static_cast<const uint8_t*>(RavenHost->shared_data);
++#else
+   const bool IsWine = !!GetProcAddress(NtDll, "wine_get_version");
+   if (IsWine) {
+     const auto Getter = reinterpret_cast<uintptr_t>(GetProcAddress(NtDll, "__wine_get_user_shared_data"));
+@@ -646,9 +678,12 @@ NTSTATUS ProcessInit() {
+       UserSharedDataBacking = reinterpret_cast<const uint8_t* (*)()>(Getter)();
+     }
+   }
++#endif
+   OvercommitTracker.emplace(IsWine);
+ 
++#ifndef RAVEN_HOST
+   FEX::Windows::SetupEnvironmentVariableValues(NtDll);
++#endif
+ 
+   FEX::Windows::Allocator::SetupHooks(NtDll);
+   FEX::Windows::UnixLib::Init(NtDll);
+@@ -668,10 +703,12 @@ NTSTATUS ProcessInit() {
+   InvalidationTracker.emplace(*CTX, Threads);
+   ImageTracker.emplace(*CTX, false);
+ 
++#ifndef RAVEN_HOST
+   auto MainModule = reinterpret_cast<__TEB*>(NtCurrentTeb())->Peb->ImageBaseAddress;
+   HandleImageMap(reinterpret_cast<uint64_t>(MainModule), true);
+ 
+   HandleImageMap(NtDllBase);
++#endif
+ 
+   CPUFeatures.emplace(*CTX);
+ 
+@@ -680,8 +717,10 @@ NTSTATUS ProcessInit() {
+                                                           PAGE_EXECUTE_READ);
+   *reinterpret_cast<uint8_t*>(X64ReturnInstr) = 0xc3;
+ 
++#ifndef RAVEN_HOST
+   const uintptr_t KiUserExceptionDispatcherFFS = reinterpret_cast<uintptr_t>(GetProcAddress(NtDll, "KiUserExceptionDispatcher"));
+   Exception::KiUserExceptionDispatcher = NtDllRedirectionLUT[KiUserExceptionDispatcherFFS - NtDllBase] + NtDllBase;
++#endif
+ 
+   FEX_CONFIG_OPT(ProfileStats, PROFILESTATS);
+   FEX_CONFIG_OPT(StartupSleep, STARTUPSLEEP);
+@@ -699,6 +738,19 @@ NTSTATUS ProcessInit() {
+   return STATUS_SUCCESS;
+ }
+ 
++#ifdef RAVEN_HOST
++extern "C" NTSTATUS RavenProcessInit(const RavenHostV1 *Host) {
++  if (RavenHost || !Host || Host->size != sizeof(RavenHostV1) || Host->version != 1 || Host->flags ||
++      (Host->guest32_base & 0xffffffffULL) || !Host->shared_data || !Host->dispatch || !Host->unix_call ||
++      !Host->exception || !Host->cpu_area || !Host->log || !Host->jit_write_protect ||
++      !Host->allocate_native_jit || !Host->memory_event) return STATUS_INVALID_PARAMETER;
++  RavenHost = Host;
++  return ProcessInit();
++}
++#else
++extern "C" NTSTATUS RavenProcessInit(const RavenHostV1 *) { return STATUS_NOT_SUPPORTED; }
++#endif
++
+ void ProcessTerm(HANDLE Handle, BOOL After, NTSTATUS Status) {}
+ 
+ // Returns true if exception dispatch should be halted and the execution context restored to NativeContext
+diff --git a/Source/Windows/ARM64EC/libarm64ecfex.def b/Source/Windows/ARM64EC/libarm64ecfex.def
+index bb51ca8..073476a 100644
+--- a/Source/Windows/ARM64EC/libarm64ecfex.def
++++ b/Source/Windows/ARM64EC/libarm64ecfex.def
+@@ -21,3 +21,4 @@ EXPORTS
+   ThreadInit
+   ThreadTerm
+   UpdateProcessorInformation
++  RavenProcessInit
+diff --git a/Source/Windows/CMakeLists.txt b/Source/Windows/CMakeLists.txt
+index fa7ed60..055cea4 100644
+--- a/Source/Windows/CMakeLists.txt
++++ b/Source/Windows/CMakeLists.txt
+@@ -1,3 +1,7 @@
++option(RAVEN_HOST "Experimental Raven native host frontend" OFF)
++if(RAVEN_HOST AND ARCHITECTURE_arm64ec)
++  add_compile_definitions(RAVEN_HOST)
++endif()
+ function(build_implib name)
+   set(name_ex ${name}_ex)
+   add_custom_target(${name_ex}lib ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/lib${name_ex}.a)
+diff --git a/Source/Windows/Common/Allocator.cpp b/Source/Windows/Common/Allocator.cpp
+index 00b6dbb..ec030a8 100644
+--- a/Source/Windows/Common/Allocator.cpp
++++ b/Source/Windows/Common/Allocator.cpp
+@@ -3,6 +3,9 @@
+ #include <FEXCore/Utils/TypeDefines.h>
+ #include "Windows/Common/FEXUnixLib.h"
+ 
++#ifdef RAVEN_HOST
++#include "RavenHost.h"
++#endif
+ #include <array>
+ #include <chrono>
+ #include <libloaderapi.h>
+@@ -16,6 +19,19 @@
+ namespace FEX::Windows::Allocator {
+ void SetupHooks(HMODULE ntdll) {
+   FEXCore::Allocator::HookPtrs Ptrs {};
++#ifdef RAVEN_HOST
++  Ptrs.VirtualJitWriteProtect = +[](uint32_t Mode) -> uint32_t {
++    return RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->jit_write_protect), Mode, 0, 0);
++  };
++  Ptrs.VirtualNativeJit = +[](void **Base, size_t *Size) -> long {
++    *Base = reinterpret_cast<void*>(RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->allocate_native_jit), *Size, 0, 0));
++    return *Base ? 0 : STATUS_NO_MEMORY;
++  };
++  SYSTEM_INFO Info {};
++  GetSystemInfo(&Info);
++  FEXCore::Allocator::SetupHooks(Info.dwPageSize, Ptrs);
++  return;
++#else
+ 
+   const auto JitWriteProtect = reinterpret_cast<FEXCore::Allocator::VirtualJitWriteProtectPtr>(
+     GetProcAddress(ntdll, "__wine_jit_write_protect"));
+@@ -30,5 +46,6 @@ void SetupHooks(HMODULE ntdll) {
+   SYSTEM_INFO system_info {};
+   GetSystemInfo(&system_info);
+   FEXCore::Allocator::SetupHooks(system_info.dwPageSize, Ptrs);
++#endif
+ }
+ } // namespace FEX::Windows::Allocator
+diff --git a/Source/Windows/Common/FEXUnixLib.cpp b/Source/Windows/Common/FEXUnixLib.cpp
+index 3188034..21e736f 100644
+--- a/Source/Windows/Common/FEXUnixLib.cpp
++++ b/Source/Windows/Common/FEXUnixLib.cpp
+@@ -10,6 +10,9 @@
+ #include <libloaderapi.h>
+ #include "FEXUnixLib.h"
+ #include "Priv.h"
++#ifdef RAVEN_HOST
++#include "RavenHost.h"
++#endif
+ 
+ #define PR_SET_VMA 0x53564d41
+ #define PR_SET_VMA_ANON_NAME 0
+@@ -44,6 +47,13 @@ static NTSTATUS __attribute__((naked)) TrampolineCall(unixlib_handle_t, unsigned
+ }
+ #endif
+ bool Init(HMODULE NtDll) {
++#ifdef RAVEN_HOST
++  UnixLibHandle = 1;
++  UnixCallDispatcher = +[](unixlib_handle_t Handle, unsigned int Ordinal, void *Args) -> NTSTATUS {
++    return RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->unix_call), Handle, Ordinal, reinterpret_cast<uintptr_t>(Args));
++  };
++  return true;
++#else
+   const auto Sym = GetProcAddress(NtDll, "__wine_unix_call_dispatcher");
+   WineServerHandleToFd = reinterpret_cast<wine_server_handle_to_fd_t>(GetProcAddress(NtDll, "wine_server_handle_to_fd"));
+ 
+@@ -90,6 +100,7 @@ bool Init(HMODULE NtDll) {
+   // Give a log saying that the unix lib was loaded.
+   LogMan::Msg::IFmt("FEX: Loaded FEXUnixLib");
+   return true;
++#endif
+ }
+ 
+ bool Available() {
+diff --git a/Source/Windows/Common/Logging.cpp b/Source/Windows/Common/Logging.cpp
+index 8980bda..770c3bf 100644
+--- a/Source/Windows/Common/Logging.cpp
++++ b/Source/Windows/Common/Logging.cpp
+@@ -3,6 +3,9 @@
+ #include <FEXCore/Config/Config.h>
+ #include <FEXCore/Utils/LogManager.h>
+ 
++#ifdef RAVEN_HOST
++#include "RavenHost.h"
++#endif
+ #include <cstdio>
+ #include <ntstatus.h>
+ #include <windef.h>
+@@ -39,11 +42,17 @@ void Init() {
+     return;
+   }
+ 
++#ifdef RAVEN_HOST
++  WineDbgOut = +[](const char *Message) {
++    RavenInvoke(reinterpret_cast<uintptr_t>(RavenHost->log), reinterpret_cast<uintptr_t>(Message), 0, 0);
++  };
++#else
+   WineDbgOut = reinterpret_cast<decltype(WineDbgOut)>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "__wine_dbg_output"));
+   if (!WineDbgOut) {
+     const auto Path = fextl::fmt::format("{}\\fex-{}.log", getenv("LOCALAPPDATA"), GetCurrentProcessId());
+     LogFile = fopen(Path.c_str(), "a");
+   }
++#endif
+   LogMan::Throw::InstallHandler(AssertHandler);
+   LogMan::Msg::InstallHandler(MsgHandler);
+ }
+diff --git a/Source/Windows/Common/RavenHost.h b/Source/Windows/Common/RavenHost.h
+new file mode 100644
+--- /dev/null
++++ b/Source/Windows/Common/RavenHost.h
+@@ -0,0 +1,29 @@
++// SPDX-License-Identifier: MIT
++#pragma once
++#include <stdint.h>
++// Experimental v1: all callbacks are native arm64, non-variadic, <= 3 arguments.
++// Context packets are the pinned FEX Windows ARM64/AMD64 contexts, NOT Darwin ucontext.
++// No callback may throw across this boundary. Host retains table and backing storage.
++struct RavenHostV1 {
++  uint32_t size, version;
++  uint64_t flags; // must be zero (Tier 0, software TSO)
++  uint64_t guest32_base;
++  const void *shared_data;
++  uint64_t (*dispatch)(uint64_t syscall, void *amd64_context);
++  int32_t (*unix_call)(uint64_t handle, uint32_t ordinal, void *args);
++  int32_t (*exception)(void *record, void *amd64_context, void *arm64_context);
++  void *(*cpu_area)(void *teb);
++  void (*log)(const char *message);
++  uint32_t (*jit_write_protect)(uint32_t mode);
++  void *(*allocate_native_jit)(uint64_t size);
++  void (*memory_event)(uint64_t address, uint64_t size, uint64_t kind);
++};
++
++#ifdef RAVEN_HOST
++extern const RavenHostV1 *RavenHost;
++// Bypass ARM64EC indirect-call checking for Darwin callbacks, as UnixLib does.
++// The caller uses ARM64EC; the destination uses the native arm64 register ABI.
++static uint64_t __attribute__((naked)) RavenInvoke(uintptr_t, uint64_t, uint64_t, uint64_t) {
++  asm("mov x16, x0\nmov x0, x1\nmov x1, x2\nmov x2, x3\nbr x16");
++}
++#endif

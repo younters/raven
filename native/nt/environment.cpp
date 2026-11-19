@@ -1,6 +1,9 @@
 #include "environment.h"
 #include "nls.h"
 #include "kernel_context.h"
+#ifdef RAVEN_FEX_PROCESS
+#include "platform/darwin/fex/fex_process.h"
+#endif
 #ifdef __APPLE__
 #include "platform/darwin/processor_count.h"
 #endif
@@ -38,6 +41,13 @@ static uint32_t value(NativeProcess &process, uint64_t address)
 
 uint64_t NativeEnvironment::x86_user_limit() const
 {
+#ifdef RAVEN_FEX_PROCESS
+	if (fex_execution_selected()) {
+		const auto image = value(process, process_block + 8);
+		const auto pe = value(process, image + 0x3c);
+		return wow64_program_limit(uint16_t(value(process, image + pe + 20) >> 16));
+	}
+#endif
 	return 0x7fff0000ULL;
 }
 

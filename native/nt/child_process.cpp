@@ -3,6 +3,7 @@
 #include "raven_darwin_launch.h"
 #endif
 #include "child_process.h"
+#include "runtime_executable.h"
 #include "confine.h"
 #include "console.h"
 
@@ -229,8 +230,13 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 		return nullptr;
 	}
 	self[length] = 0;
+	const auto runtime = child_runtime_executable(self).string();
 	// What the parent was started with, such as the window system and the time budget, applies to its children.
-	std::vector<std::string> arguments{self, "--run-process", "--execution=native"};
+#ifdef __APPLE__
+	std::vector<std::string> arguments{runtime, "--run-process", raven_darwin::child_execution_argument()};
+#else
+	std::vector<std::string> arguments{runtime, "--run-process", "--execution=native"};
+#endif
 	if (const char *options = std::getenv("RAVEN_CHILD_OPTIONS")) {
 		std::istringstream words(options);
 		for (std::string word; words >> word;)
@@ -419,9 +425,9 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 	std::vector<char *> env;
 	for (auto &variable:environment) env.push_back(variable.data());
 	env.push_back(nullptr);
-	status = ::posix_spawn(&child, self, &actions, &attributes, argv.data(), env.data());
+	status = ::posix_spawn(&child, runtime.c_str(), &actions, &attributes, argv.data(), env.data());
 #else
-	status = ::posix_spawn(&child, self, &actions, &attributes, argv.data(), environ);
+	status = ::posix_spawn(&child, runtime.c_str(), &actions, &attributes, argv.data(), environ);
 #endif
 	posix_spawnattr_destroy(&attributes);
 	posix_spawn_file_actions_destroy(&actions);

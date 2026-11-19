@@ -1,0 +1,49 @@
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -899,6 +899,29 @@
+   };
+ }
+ 
++#ifdef FEX_RAVEN_DIVIDE
++// Opt-in counters for measuring translation separately from guest execution.
++static std::atomic<bool> RavenCompileTimingEnabled {false};
++static std::atomic<uint64_t> RavenCompileCount {0}, RavenCompileNS {0};
++extern "C" void RavenCompileProfile(uint64_t Enable, uint64_t* Values) {
++  RavenCompileTimingEnabled.store(Enable != 0, std::memory_order_relaxed);
++  if (Values) {
++    Values[0] = RavenCompileCount.load(std::memory_order_relaxed);
++    Values[1] = RavenCompileNS.load(std::memory_order_relaxed);
++  }
++}
++struct RavenCompileTimer {
++  bool Enabled = RavenCompileTimingEnabled.load(std::memory_order_relaxed);
++  std::chrono::steady_clock::time_point Start = Enabled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point {};
++  ~RavenCompileTimer() {
++    if (Enabled) {
++      RavenCompileCount.fetch_add(1, std::memory_order_relaxed);
++      RavenCompileNS.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - Start).count(), std::memory_order_relaxed);
++    }
++  }
++};
++#endif
++
+ uintptr_t ContextImpl::CompileBlock(FEXCore::Core::CpuStateFrame* Frame, uint64_t GuestRIP, uint64_t MaxInst) {
+   if constexpr (BLOCK_DEBUGGING) {
+     // Block debugging logic is hand-written and needs to be handled with care.
+@@ -926,6 +949,9 @@
+     return HostCode;
+   }
+ 
++#ifdef FEX_RAVEN_DIVIDE
++  RavenCompileTimer RavenTiming;
++#endif
+   Thread->FrontendDecoder->SetupDecodeInstructionsAtEntry(Thread, GuestRIP, MaxInst);
+ 
+   std::optional<ExecutableFileSectionInfo> Region = SyscallHandler->LookupExecutableFileSection(Thread, GuestRIP);
+--- a/Source/Windows/ARM64EC/libarm64ecfex.def
++++ b/Source/Windows/ARM64EC/libarm64ecfex.def
+@@ -28,3 +28,4 @@
+   RavenTestFree
+   RavenGetYmmHigh
+   RavenSetYmmHigh
++  RavenCompileProfile

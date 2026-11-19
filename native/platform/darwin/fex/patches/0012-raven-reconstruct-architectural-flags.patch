@@ -1,0 +1,16 @@
+diff --git a/FEXCore/Source/Interface/Core/Core.cpp b/FEXCore/Source/Interface/Core/Core.cpp
+--- a/FEXCore/Source/Interface/Core/Core.cpp
++++ b/FEXCore/Source/Interface/Core/Core.cpp
+@@ -199,6 +199,12 @@
+     case X86State::RFLAG_SF_RAW_LOC:
+     case X86State::RFLAG_OF_RAW_LOC:
+     case X86State::RFLAG_DF_RAW_LOC:
++    // The packed 32-bit NZCV occupies reserved EFLAGS bytes 24-27. It is
++    // decoded below, not a set of individual architectural flag bits.
++    case X86State::RFLAG_NZCV_LOC:
++    case X86State::RFLAG_NZCV_LOC + 1:
++    case X86State::RFLAG_NZCV_LOC + 2:
++    case X86State::RFLAG_NZCV_LOC + 3:
+       // Intentionally do nothing.
+       // These contain multiple bits which can corrupt other members when compacted.
+       break;

@@ -1,0 +1,133 @@
+// SPDX-License-Identifier: MIT
+#pragma once
+#include "cpu/native_cpu.h"
+#include <cstdlib>
+
+struct raven_control;
+
+namespace raven {
+
+// Exclusive user limit: reserve the last 64 KiB of the selected address range.
+constexpr uint64_t wow64_user_limit(uint16_t characteristics)
+{
+	return characteristics & 0x20 ? 0xffff0000ULL : 0x7fff0000ULL;
+}
+
+// Set for a program that carries the mtld3d Direct3D 9 backend: it keeps its textures in the program's address space, where a Windows driver
+// would not, so a program that fits in 2 GiB on Windows may not here.
+inline bool wow64_backend_needs_address_space = false;
+
+// A program's limit: as its image asks, raised for the backend above. RAVEN_LARGE_ADDRESS_AWARE=1 raises it for any program and =0 for none.
+inline uint64_t wow64_program_limit(uint16_t characteristics)
+{
+	const char *choice = std::getenv("RAVEN_LARGE_ADDRESS_AWARE");
+	const bool raise = choice ? *choice != '0' : wow64_backend_needs_address_space;
+	return wow64_user_limit(raise ? uint16_t(characteristics | 0x20) : characteristics);
+}
+
+// Opt-in in-process x64/WoW64 engine behind the Darwin NativeProcess seam.
+// One module instance per host process. RAVEN_PARALLEL uses resident FEX workers;
+// the constructing thread retains controller and NT/API ownership.
+class FexProcess {
+public:
+	FexProcess(std::span<LoadedImage *const> images, const std::string &module_root, uint64_t stack_reserve = 1024 * 1024, NativeMode mode = NativeMode::x64);
+	~FexProcess();
+	FexProcess(const FexProcess &) = delete;
+	FexProcess &operator=(const FexProcess &) = delete;
+	NativeResult call(uint64_t address, std::span<const uint64_t> arguments);
+	NativeResult resume();
+	NativeContext context(bool full = true) const;
+	void set_context(const NativeContext &context);
+	// NativeProcess forwarding surface. Unsupported capabilities fail explicitly.
+	NativeResult call(uint64_t address, std::span<const uint64_t> arguments, std::chrono::milliseconds timeout);
+	NativeResult callback(uint64_t address, std::span<const uint64_t> arguments, std::chrono::milliseconds timeout);
+	NativeResult resume(std::chrono::milliseconds timeout);
+	std::vector<uint8_t> read_memory(uint64_t address, size_t size) const;
+	void write_memory(uint64_t address, std::span<const uint8_t> bytes);
+	void validate_write_memory(uint64_t address, size_t size) const;
+	uint64_t compare_exchange(uint64_t address, uint64_t expected, uint64_t desired, size_t size);
+	uint64_t map_memory(size_t size, int protection, uint64_t address);
+	void protect_memory(uint64_t address, size_t size, int protection);
+	void flush_instruction_cache(uint64_t address, size_t size);
+	bool has_protection(uint64_t address, size_t size, int protection) const;
+	void protect_image(uint64_t address, size_t size, int protection);
+	void unmap_memory(uint64_t address);
+	uint64_t map_shared(int descriptor, size_t size, uint64_t offset, uint64_t requested = 0);
+	uint64_t map_descriptor(int descriptor, size_t size, uint64_t offset);
+	uint64_t alias_host_memory(void *host, size_t size);
+	bool memory_available(uint64_t address, size_t size) const;
+	void discard_memory(uint64_t address, size_t size);
+	void map_image(LoadedImage &image);
+	void unmap_image(uint64_t address);
+	std::pair<uint64_t, uint64_t> stack_bounds() const;
+	bool active() const;
+	void abandon_call();
+	void end_call();
+	void add_api_trap(uint64_t address, uint32_t callee_cleanup);
+	NativeMode mode() const;
+	void set_teb(uint64_t base);
+	void enter_nt_service(uint64_t instruction, uint32_t number);
+	void complete_debug_print(uint64_t instruction);
+	uint64_t return_gate() const;
+	uint64_t unix_call_gate() const;
+	raven_control *darwin_control() const;
+	uint64_t load_unix_library(const std::string &path, uint32_t function_count);
+	void drain_unix_events(const std::function<void(uint64_t)> &signal);
+	uint32_t copy_unix_port(uint32_t guest_port) const;
+	void set_unix_pump(std::function<void()> pump);
+	size_t callback_depth() const;
+	NativeContext callback_origin(size_t index) const;
+	uint64_t result_register() const;
+	void watch_write(uint64_t address);
+	void trace_instructions(size_t count, std::function<void(uint64_t)> sink);
+	NativeThreadState save_thread(bool snapshot_registers) const;
+	void load_thread(const NativeThreadState &thread);
+	NativeThreadState new_thread(uint64_t stack_top, uint64_t teb);
+	bool parallel() const;
+	bool stopped() const;
+	int execution_descriptor() const;
+	void drain_execution();
+	void set_execution_wait(std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> wait);
+	void stop_thread(const NativeThreadState &thread);
+	void pause_thread(NativeThreadState &thread);
+	void resume_context_thread(NativeThreadState &thread);
+	bool await_stop();
+	void enter_fault_dispatch();
+	void redirect(const NativeContext &context, size_t depth);
+	std::vector<uint64_t> api_arguments(size_t count) const;
+	void set_api_argument(size_t index, uint32_t value);
+	void set_time_slicing(std::chrono::milliseconds slice, std::function<bool()> wanted, std::function<void()> yield);
+	void begin_translated_call(std::vector<uint64_t> words, std::array<uint64_t, 4> floats);
+	uint64_t end_translated_call();
+	std::array<uint64_t, 4> api_float_arguments() const;
+	void return_api(uint64_t value);
+	void set_served_calls(uint64_t *block, std::vector<uint64_t> stubs, size_t stub_size, size_t wait_offset, std::vector<uint64_t> yield_traps, std::function<void(uint64_t stub)> handler, std::vector<uint64_t> queued_stubs);
+	uint64_t serving_teb() const;
+	bool serving() const;
+	void decline_served();
+	bool serving_queued() const;
+	void set_queued_gl_elements(bool available);
+	void set_resume_hook(std::function<void()> hook);
+	void set_guest_sampler(std::chrono::milliseconds period, std::function<void(uint64_t rip)> sampler);
+private:
+	// Tells FEX that host code changed guest memory, now or (cooperative guest) before it runs again.
+	void notify_dirty(uint64_t host, size_t size);
+	// Tells FEX that the runtime changed guest bytes, where translated code may depend on them.
+	void note_written(uint64_t address, size_t size);
+	void flush_dirty();
+	struct State;
+	std::unique_ptr<State> state;
+};
+void launch_fex_host(int argc, char **argv);
+std::string discover_fex_module_root();
+void select_fex_execution(bool enabled);
+bool fex_execution_selected();
+bool fex_address_available(uint64_t address, uint64_t size);
+// Where the x64 guest's own allocations start: 2 TiB, or above the dyld shared cache when its slide put it there.
+uint64_t fex_guest_floor();
+// Register the already-owned Mach-O pool before host startup.
+void fex_register_image_reservation(uint64_t address, uint64_t size);
+bool fex_image_pool_claimed(uint64_t address);
+bool fex_reserve_image_address(uint64_t address, uint64_t size);
+NativeResult run_fex_entry(const PEImage &image, LoadedImage &loaded, const std::string &root);
+}

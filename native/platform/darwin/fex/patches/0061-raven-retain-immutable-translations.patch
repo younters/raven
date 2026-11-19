@@ -1,0 +1,35 @@
+--- a/Source/Windows/Common/InvalidationTracker.cpp
++++ b/Source/Windows/Common/InvalidationTracker.cpp
+@@ -63,10 +63,24 @@
+     const bool EffectiveRWX = EffectiveExec && ProtIsWritable(Prot);
+ 
+     if (EffectiveExec) {
++#ifdef FEX_RAVEN_DIVIDE
++      // A notification does not imply a write. An entirely RX interval stays
++      // immutable across RX -> RX: byte changes made by the host are reported
++      // separately through NotifyMemoryDirty. Keep invalidating transitions
++      // involving writable memory and all changes in executability, since they
++      // may require SMC checks or replacement of cached NoExec stubs.
++      const auto Previous = XIntervals.Query(AlignedBase);
++      if (!EffectiveRWX && Previous.Enclosed && Previous.Interval.End >= ProtInterval.End &&
++          !RWXIntervals.Intersect(ProtInterval)) {
++        return false;
++      }
++#endif
+       XIntervals.Insert(ProtInterval);
+       if (EffectiveRWX) {
+         LogMan::Msg::DFmt("Add SMC interval: {:X} - {:X}", AlignedBase, AlignedBase + AlignedSize);
+         RWXIntervals.Insert(ProtInterval);
++      } else {
++        RWXIntervals.Remove(ProtInterval);
+       }
+       if (DEPDisabled && !HasExec) {
+         DEPPromotedIntervals.Insert(ProtInterval);
+@@ -204,6 +218,7 @@
+ }
+ 
+ void InvalidationTracker::InvalidateAlignedInterval(uint64_t Address, uint64_t Size, bool Free) {
++  if (Address && !Size) return;
+   if (!Address) {
+     // Match the Windows behaviour when passed a NULL base address.
+     Size = std::numeric_limits<uint64_t>::max();

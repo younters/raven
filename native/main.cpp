@@ -2,6 +2,9 @@
 #include "raven_darwin_launch.h"
 #include "platform/darwin/fd_budget.h"
 #endif
+#ifdef RAVEN_FEX_PROCESS
+#include "platform/darwin/fex/fex_process.h"
+#endif
 #include "pe/pe.h"
 #include "pe/resources.h"
 #include "pe/loaded_image.h"
@@ -11,6 +14,7 @@
 #include "nt/providers.h"
 #include "nt/paths.h"
 #include "nt/launch.h"
+#include "nt/runtime_executable.h"
 #include "nt/actctx.h"
 #include "nt/elevation.h"
 #include "nt/restart.h"
@@ -264,6 +268,9 @@ static void show_fault(int signal)
 
 int main(int argc, char **argv)
 {
+#ifdef RAVEN_FEX_PROCESS
+	raven::launch_fex_host(argc, argv);
+#endif
 #ifdef __APPLE__
 	if (const int error = raven_darwin::prepare_fd_budget())
 		std::fprintf(stderr, "raven: descriptor budget unchanged (errno=%d)\n", error);
@@ -442,7 +449,16 @@ int main(int argc, char **argv)
 			if (std::string_view(argv[i])=="--") { last_file=i;break; }
 	const bool inspect = mode == "--inspect" || mode == "--inspect-imports" || mode == "--inspect-exports" ||
 		mode == "--inspect-delay-imports" || mode == "--inspect-resources";
-	const bool valid = (inspect && argc == 3) || (map_image && (argc == 3 || argc == 4)) ||
+#ifdef RAVEN_FEX_PROCESS
+	const bool use_fex = argc > 2 && std::string_view(argv[2]) == "--execution=fex";
+	const bool fex_entry = run_entry && argc == 4 && use_fex;
+	const bool fex_process = (run_modules || run_process) && last_file > first_file && use_fex;
+#endif
+	const bool valid =
+#ifdef RAVEN_FEX_PROCESS
+		fex_entry || fex_process ||
+#endif
+		(inspect && argc == 3) || (map_image && (argc == 3 || argc == 4)) ||
 		(run_entry && argc == 4 && std::string(argv[2]) == "--execution=native") || (bind_imports && argc >= 3) ||
 		((run_modules || run_process) && last_file > first_file && std::string(argv[2]) == "--execution=native");
 	if (!valid) {
@@ -463,6 +479,9 @@ int main(int argc, char **argv)
 		return 2;
 	}
 	try {
+#ifdef RAVEN_FEX_PROCESS
+		raven::select_fex_execution(use_fex);
+#endif
 		if (bind_imports || run_modules || run_process) {
 			// The modules live until the process ends: freeing their tens of thousands of export names one by one only delays the exit,
 			// and the system takes the memory back at once. Held by a static pointer, they stay reachable for leak checks.
@@ -471,6 +490,22 @@ int main(int argc, char **argv)
 			raven::PEModule *entry = nullptr;
 			for (int i = (run_modules || run_process) ? first_file : 2; i < last_file; ++i) {
 				auto bytes = read_program(argv[i], !entry && run_process);
+#ifdef RAVEN_FEX_PROCESS
+				if (use_fex && !entry) {
+					// mtld3d is opted into by placing it beside the program.
+					std::error_code no_backend;
+					raven::wow64_backend_needs_address_space = std::filesystem::exists(std::filesystem::path(argv[i]).parent_path() / "mtld3d.dll", no_backend);
+					const raven::PEImage image(bytes);
+					if (image.is_64) {
+						modules.set_address_space(raven::fex_reserve_image_address, 0x10000000000ULL);
+					} else {
+						const auto limit = raven::wow64_program_limit(image.characteristics);
+						modules.set_address_space([limit](uint64_t address, uint64_t size) {
+							return address >= 65536 && size && address < limit && size <= limit - address;
+						}, 0x10000000ULL);
+					}
+				}
+#endif
 				auto &module = modules.add(std::filesystem::path(argv[i]).filename().string(), std::move(bytes));
 				if (!entry) {
 					entry = &module;
@@ -648,8 +683,14 @@ int main(int argc, char **argv)
 										// Setup is quiet: only a failure says anything, on standard error.
 										if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
 											::dup2(quiet, 1);
-										const std::string self = std::filesystem::read_symlink("/proc/self/exe").string(), path = program.string();
-										std::vector<const char *> arguments{self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--",
+										const std::string self = raven::child_runtime_executable(std::filesystem::read_symlink("/proc/self/exe")).string(), path = program.string();
+										std::vector<const char *> arguments{self.c_str(), "--run-process",
+#ifdef RAVEN_FEX_PROCESS
+										use_fex ? "--execution=fex" : "--execution=native",
+#else
+										"--execution=native",
+#endif
+										 "--timeout-ms=60000", path.c_str(), "--",
 											"/s"};
 										arguments.insert(arguments.end(), names.begin(), names.end());
 										arguments.push_back(nullptr);
@@ -1197,7 +1238,15 @@ int main(int argc, char **argv)
 		const auto imports = image.imports();
 		if (run_entry) {
 #ifdef RAVEN_NATIVE_CPU
+#ifdef RAVEN_FEX_PROCESS
+			raven::LoadedImage loaded(image, fex_entry && image.is_64 && image.directories[5].size ? 0x10000000000ULL : image.image_base);
+			if (fex_entry) {
+				const auto root = raven::discover_fex_module_root();
+				return native_result(raven::run_fex_entry(image, loaded, root));
+			}
+#else
 			raven::LoadedImage loaded(image, image.image_base);
+#endif
 			const auto bootstrap = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "raven-bootstrap";
 			return native_result(raven::run_native_entry(image, loaded, bootstrap.string(), std::chrono::seconds(5)));
 #else
