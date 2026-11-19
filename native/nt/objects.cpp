@@ -191,6 +191,12 @@ std::optional<std::chrono::steady_clock::time_point> WaitedObjects::wakes_at(siz
 	return object ? object->wakes_at() : std::nullopt;
 }
 
+int WaitedObjects::wake_descriptor(size_t index) const
+{
+	const auto object = held[index] ? held[index] : objects.object(handles[index]);
+	return object ? object->wake_descriptor() : -1;
+}
+
 void NativeObjects::consume(uint64_t handle, uint32_t thread)
 {
 	if (const auto held = object(handle)) held->consume(thread);

@@ -1,6 +1,9 @@
 #include "api.h"
 
 #include <algorithm>
+#ifdef __APPLE__
+#include <cmath>
+#endif
 #include <new>
 #include <stdexcept>
 
@@ -20,18 +23,51 @@ uint64_t le(std::span<const uint8_t> bytes, size_t at, size_t width)
 
 uint32_t device_caps(const DesktopObjects &objects, const DesktopDC &dc, int32_t index)
 {
+#ifdef __APPLE__
+	const auto *bitmap = objects.bitmap(dc.bitmap);
+	if (!bitmap)
+		throw uint32_t(6);
+	if (dc.printer) {
+		const auto &p = dc.printer->settings;
+		auto pixels = [](double points) { return uint32_t(std::lround(points * 300 / 72)); };
+		switch (index) {
+		case 2: return 2; // DT_RASPRINTER
+		case 4: return uint32_t((p.right - p.left) * 25.4 / 72);
+		case 6: return uint32_t((p.bottom - p.top) * 25.4 / 72);
+		case 8: return bitmap->width;
+		case 10: return bitmap->height;
+		case 12: return 32;
+		case 14: return 1;
+		case 24: return uint32_t(-1);
+		case 28: return 0x7f; // curves
+		case 30: return 0xfe; // lines
+		case 32: return 0xff; // polygons
+		case 34: return 0x1fff; // text
+		case 38: return 0x2809;
+		case 40: case 42: case 88: case 90: return 300;
+		case 44: return 424;
+		case 108: return 24;
+		case 110: return pixels(p.width);
+		case 111: return pixels(p.height);
+		case 112: return pixels(p.left);
+		case 113: return pixels(p.top);
+		default: return 0;
+		}
+	}
+#else
 	if (!objects.bitmap(dc.bitmap))
 		throw uint32_t(6);
+#endif
 	const auto &screen = objects.nonclient_metrics();
 	// Every context answers for the device it is compatible with, the display: a memory DC reports the screen, not the bitmap
 	// selected into it, as Windows memory DCs do.
 	switch (index) {
-	case 2: return 1;                                             // TECHNOLOGY: DT_RASDISPLAY
-	case 4: return uint32_t(int64_t(screen.screen_x) * 254 / 960);  // HORZSIZE in mm at 96 dpi
-	case 6: return uint32_t(int64_t(screen.screen_y) * 254 / 960);  // VERTSIZE
-	case 8: return uint32_t(screen.screen_x);                     // HORZRES
-	case 10: return uint32_t(screen.screen_y);                    // VERTRES
-	case 12: return 32;                                           // BITSPIXEL
+	case 2: return 1;                          // TECHNOLOGY: DT_RASDISPLAY
+	case 4: return uint32_t(int64_t(screen.screen_x) * 254 / (screen.dpi * 10)); // HORZSIZE in mm
+	case 6: return uint32_t(int64_t(screen.screen_y) * 254 / (screen.dpi * 10)); // VERTSIZE
+	case 8: return uint32_t(screen.screen_x);
+	case 10: return uint32_t(screen.screen_y);
+	case 12: return 32;                // BITSPIXEL
 	case 14: return 1;                                            // PLANES
 	case 24: return uint32_t(-1);                                 // NUMCOLORS: more than 8 bits per pixel
 	case 28: return 0xff;                                         // CURVECAPS: every curve
@@ -44,7 +80,7 @@ uint32_t device_caps(const DesktopObjects &objects, const DesktopDC &dc, int32_t
 	case 38: return 0x7e99;
 	case 40: case 42: return 36;                                   // ASPECTX / ASPECTY
 	case 44: return 51;                                           // ASPECTXY
-	case 88: case 90: return 96;                                  // LOGPIXELSX / LOGPIXELSY
+	case 88: case 90: return screen.dpi;                          // LOGPIXELSX / LOGPIXELSY
 	case 104: return 0;                                           // SIZEPALETTE: no palette device
 	case 106: return 0;                                           // NUMRESERVED
 	case 108: return 24;                                          // COLORRES

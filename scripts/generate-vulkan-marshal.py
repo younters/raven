@@ -43,6 +43,9 @@ SKIP_PHRASES = ("ResourceHeap", "SamplerHeap", "PushData", "DescriptorSize",
                 "DeviceMask", "DeviceGroup", "ShaderObject", "ShadersEXT", "ShaderBinary",
                 "PipelineBinar", "PipelineExecutable", "PipelineProperties", "PipelineStatistics", "FrameBoundary", "Memory(Win32|Fd|Zircon|Host|Remote)",
                 "SemaphoreFd", "FenceFd", "ExecutionSet", "IndirectExecutionSet", "ExecutionGraph", "PrivateData")
+# The Vulkan 1.1 device group commands every driver has and every Windows loader exports. They only copy plain values, so unlike the rest of
+# their family they cross the boundary as they are; with a single device they are all but no-ops.
+DEVICE_GROUP_CORE = {"vkCmdSetDeviceMask", "vkGetDeviceGroupPeerMemoryFeatures"}
 # Commands the bridge implements by hand around its own bookkeeping.
 SKIP_NAMES = {"vkEnumerateInstanceExtensionProperties", "vkEnumerateInstanceLayerProperties", "vkEnumerateDeviceExtensionProperties",
               "vkEnumerateDeviceLayerProperties", "vkGetInstanceProcAddr", "vkGetDeviceProcAddr", "vkCreateInstance", "vkDestroyInstance",
@@ -61,6 +64,8 @@ SKIP_NAMES = {"vkEnumerateInstanceExtensionProperties", "vkEnumerateInstanceLaye
 
 
 def skipped_command(name):
+    if name in DEVICE_GROUP_CORE:
+        return False
     if name in SKIP_NAMES:
         return True
     words = re.findall(r"[A-Z][a-z0-9]*|[A-Z]+(?![a-z])", name[2:])

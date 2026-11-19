@@ -41,7 +41,7 @@ public:
 		// Whether the window's top-level window is on the screen.
 		std::function<bool(uint64_t window)> shown;
 		// The window system whose surface extension serves the Windows one.
-		HostPlatform platform = HostPlatform::wayland;
+		HostPlatform platform = default_host_platform;
 	};
 	void set_surface_source(SurfaceSource value) { surface_source = std::move(value); }
 

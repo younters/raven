@@ -2,6 +2,7 @@
 #include "gdi.h"
 #include "nt/api.h"
 #include "nt/text.h"
+#include "graphics/stretch.h"
 #include <sys/mman.h>
 
 #include <algorithm>
@@ -1670,18 +1671,20 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 				call.ret(1);
 				return;
 			}
-			if (!call[4]) {
-				call.ret(1);
-				return;
-			}
 			// An indexed request of the bitmap's own depth is answered with its own indices and colours.
 			const bool same_indexed = bit_count <= 8 && bit_count == bitmap->depth && !bitmap->palette.empty();
 			if (bit_count != 32 && bit_count != 24 && bit_count != 16 && bit_count != 8 && bit_count != 1 && !same_indexed)
 				throw uint32_t(120);
+			const size_t stride = ((size_t(bitmap->width) * bit_count + 31) / 32) * 4;
+			// A format query must report the required storage even when the caller has already selected its bit count.
+			call.store<uint32_t>(call[5] + 20, uint32_t(stride * bitmap->height));
+			if (!call[4]) {
+				call.ret(1);
+				return;
+			}
 			const uint32_t start = call.u32(2), lines = call.u32(3);
 			const int32_t height_field = call.load<int32_t>(call[5] + 8);
 			const bool top_down = height_field < 0;
-			const size_t stride = ((size_t(bitmap->width) * bit_count + 31) / 32) * 4;
 			if (start > bitmap->height)
 				throw uint32_t(87);
 			const uint32_t take = std::min<uint32_t>(lines, bitmap->height - start);
@@ -1763,6 +1766,7 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 		call.fail(120, 0);
 	});
 
+#ifndef __APPLE__
 	// ---- printing is not provided ----
 	// With no printers there is no default one.
 	for (const auto *name : {"GetDefaultPrinterA", "GetDefaultPrinterW"})
@@ -1790,6 +1794,7 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
 	registry.add("ClosePrinter", 1, [](ApiCall &call) { call.fail(6, 0); });
 	for (const auto *name : {"StartDocW", "StartDocA", "EndDoc", "StartPage", "EndPage", "AbortDoc"})
 		registry.add(name, 2, [](ApiCall &call) { call.fail(120, 0); });
+#endif
 	registry.add("GdiGetCodePage", 1, [](ApiCall &call) { call.ret(1252); });
 }
 
@@ -1896,6 +1901,19 @@ void NativeDesktop::register_image_api(ApiRegistry &registry)
 			throw uint32_t(environment.last_error());
 		return handle;
 	};
+	const auto sized_bitmap = [this](uint64_t handle, uint32_t cx, uint32_t cy) -> uint64_t {
+		auto *bitmap=objects.bitmap(handle);
+		if ((cx && cx!=bitmap->width) || (cy && cy!=bitmap->height)) {
+			const auto width=cx ? cx : bitmap->width,height=cy ? cy : bitmap->height;
+			if (width>8192 || height>8192 || uint64_t(width)*height>16*1024*1024) { objects.erase(handle); throw uint32_t(87); }
+			auto pixels=stretch_blackonwhite(bitmap->pixels(),bitmap->width,bitmap->height,4,width,height);
+			const auto resized=allocate_bitmap(width,height,32,false,true);
+			if (!resized) { objects.erase(handle); throw uint32_t(8); }
+			std::copy(pixels.begin(),pixels.end(),objects.bitmap(resized)->pixels().begin());
+			objects.erase(handle);
+			return resized;
+		} else return handle;
+	};
 	const auto load_image = [=, this](ApiCall &call, bool ansi) {
 		guarded(call, 0, [&] {
 			const uint32_t type = call.u32(2), flags = call.u32(5);
@@ -1917,7 +1935,7 @@ void NativeDesktop::register_image_api(ApiRegistry &registry)
 						throw;
 					}
 					process.unmap_memory(buffer);
-					call.ret(handle);
+					call.ret(sized_bitmap(handle,cx,cy));
 				} else if (type == 1) {
 					call.ret(icon_file(bytes, cx, cy));
 				} else {
@@ -1926,15 +1944,16 @@ void NativeDesktop::register_image_api(ApiRegistry &registry)
 				return;
 			}
 			const auto name = wide_name(call, call[1], ansi);
-			if (type == 0)
-				call.ret(bitmap_resource(call, call[0], name, (flags & 0x2000) != 0));
+			if (type == 0) {
+				const auto handle=bitmap_resource(call,call[0],name,(flags & 0x2000)!=0);
+				call.ret(sized_bitmap(handle,cx,cy));
+			}
 			else if (type == 1)
 				call.ret(icon_resource(call, call[0], name, cx, cy));
 			else if (call[0] == 0 && name >= 32512 && name < 32512 + desktop_stock_cursor_count)
 				call.ret(desktop_stock_cursor + (name - 32512));
 			else
-				// Module cursors are not rendered by the host; callers receive the arrow.
-				call.ret(desktop_stock_cursor);
+				call.ret(load_cursor(call[0],name,cx,cy,(flags & 0x8000)!=0));
 		});
 	};
 	registry.add("LoadImageW", 6, [=](ApiCall &call) { load_image(call, false); });
@@ -1953,10 +1972,7 @@ void NativeDesktop::register_image_api(ApiRegistry &registry)
 		});
 	});
 	registry.add("LoadCursorA", 2, [=, this](ApiCall &call) {
-		if (!call[0] && call[1] >= 32512 && call[1] < 32512 + desktop_stock_cursor_count)
-			call.ret(desktop_stock_cursor + (call[1] - 32512));
-		else
-			call.ret(desktop_stock_cursor);
+		guarded(call,0,[&] { call.ret(load_cursor(call[0],wide_name(call,call[1],true))); });
 	});
 	registry.add("LoadStringA", 4, [=, this](ApiCall &call) {
 		guarded(call, 0, [&] {
@@ -2040,6 +2056,8 @@ void NativeDesktop::register_image_api(ApiRegistry &registry)
 		image.color.height = height;
 		image.color.rgba.assign(size_t(width) * height * 4, 0);
 		image.and_mask.assign(size_t(width) * height, 0);
+		if (depth == 1)
+			image.xor_mask.assign(size_t(width) * height, 0);
 		bool any_alpha = false;
 		for (uint32_t y = 0; y < height; ++y)
 			for (uint32_t x = 0; x < width; ++x) {
@@ -2055,6 +2073,7 @@ void NativeDesktop::register_image_api(ApiRegistry &registry)
 				} else {
 					const uint8_t level = ((xor_bits[y * mask_stride + x / 8] >> (7 - x % 8)) & 1) ? 255 : 0;
 					image.color.rgba[at] = image.color.rgba[at + 1] = image.color.rgba[at + 2] = level;
+					image.xor_mask[size_t(y) * width + x] = level != 0;
 				}
 				image.and_mask[size_t(y) * width + x] = transparent;
 			}

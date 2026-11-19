@@ -44,7 +44,13 @@ int raven_entry(void)
 	if (!PeekMessageW(&message,window,WM_APP+1,WM_APP+1,PM_NOREMOVE) || message.message!=WM_QUIT || message.hwnd || message.wParam!=23) return 14;
 	if (GetMessageW(&message,window,WM_APP+1,WM_APP+1) || message.message!=WM_QUIT || message.wParam!=23) return 15;
 	if (PeekMessageW(&message,NULL,0,0,PM_REMOVE)) return 16;
+	if (!GetWindow(window,GW_HWNDFIRST) || !GetWindow(window,GW_HWNDLAST) ||
+		GetWindow(window,GW_CHILD) || GetWindow(window,GW_OWNER)) return 20;
+	SetLastError(0);
+	if (GetWindow(window,99) || GetLastError()!=ERROR_INVALID_PARAMETER) return 21;
 	if (!DestroyWindow(window) || !UnregisterClassW(MAKEINTATOM(atom),instance)) return 17;
+	SetLastError(0);
+	if (GetWindow(window,GW_CHILD) || GetLastError()!=ERROR_INVALID_WINDOW_HANDLE) return 22;
 	SetLastError(0);
 	if (PostMessageW(window,WM_APP,0,0) || GetLastError()!=ERROR_INVALID_WINDOW_HANDLE) return 18;
 	SetLastError(0);

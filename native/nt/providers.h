@@ -21,9 +21,23 @@ std::vector<uint8_t> moved_provider(std::vector<uint8_t> bytes, uint64_t base);
 // Where the breakpoint of a 64-bit provider export sits inside its stub: past the guest-side path of a fast or served stub, at its start
 // otherwise.
 size_t fast_stub_trap_offset(std::string_view module, std::string_view name);
+class ModuleSet;
+class NativeProcess;
+// RAVEN_SAMPLE_GUEST=1: where the guest spends its running time, by module and block, every five seconds.
+void install_guest_sampler(NativeProcess &process, ModuleSet &modules);
+// Whether providers carry guest-side paths; RAVEN_NO_GUEST_PATHS serves every call in the runtime, to compare behaviour.
+bool guest_paths();
+// Where the breakpoint of a 32-bit provider export sits: past the guest-side path of a fast stub, at its start otherwise.
+uint64_t x86_api_trap_address(const PEModule &provider, uint32_t address);
+// The name the runtime serves a 32-bit fast stub's own trap under, where the stub calls it for a slow path rather than handing over the call.
+std::string_view x86_fast_stub_slow_name(std::string_view name);
 // The breakpoint a 64-bit provider export ends in when the runtime serves it: behind a guest-side prelude when the export has one.
 uint64_t api_trap_address(const PEModule &provider, std::string_view module, std::string_view name, uint32_t address);
-// Runs a PE32 process in host compatibility mode; only the API providers listed in x86_process.cpp exist so far.
+// Device information sets belong to the runtime; the installer component handles INF files and queues.
+bool host_device_export(std::string_view library, std::string_view name);
+// RAVEN_API_INVENTORY names a TSV file recording the actual host registries, guest exports and provider forwarders of this graph.
+void write_native_api_inventory(const ModuleSet &modules, std::initializer_list<const class ApiRegistry *> registries);
+// Runs a PE32 process in host compatibility mode with the shared services and 32-bit guest components.
 // A source of libraries shipped beside the program lets a program import them statically: they are loaded with it, and their entry points run
 // before the program's.
 NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,

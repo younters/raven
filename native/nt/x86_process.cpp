@@ -1,5 +1,6 @@
 #include "providers.h"
 #include "handle_channel.h"
+#include "section.h"
 #include "object_api.h"
 #include "module_api.h"
 #include "resources.h"
@@ -31,6 +32,14 @@
 #include "x86_system_api.h"
 #include "x86_d3d9.h"
 #include "x86_dsound.h"
+#ifdef __APPLE__
+#include "platform/darwin/audio/api.h"
+#include "platform/darwin/nt_file_api.h"
+#include "platform/darwin/dxmt/kernel_thunks.h"
+#include "platform/darwin/dxmt/presentation.h"
+#include "platform/darwin/unix_calls.h"
+#endif
+#include "runtime_profile.h"
 #include "x86_thread_api.h"
 #include "exceptions.h"
 
@@ -60,14 +69,15 @@ constexpr ComMethod malloc_methods[] = {{"IMalloc", "QueryInterface", 0, 3}, {"I
 	{"IMalloc", "HeapMinimize", 8, 1}};
 
 // stdcall argument counts for every API the x86 process runner can dispatch.
-constexpr std::array<std::pair<std::string_view, uint32_t>, 115> kernel32_exports{{
-	{"CloseHandle", 1}, {"CreateEventA", 4}, {"CreateEventW", 4}, {"CreateThread", 6}, {"DeleteCriticalSection", 1}, {"EnterCriticalSection", 1}, {"ExitProcess", 1}, {"ExitThread", 1}, {"FindResourceA", 3},
+constexpr std::array<std::pair<std::string_view, uint32_t>, 120> kernel32_exports{{
+	{"OpenProcessToken", 3}, {"OpenThreadToken", 4}, {"CloseHandle", 1}, {"CreateEventA", 4}, {"CreateEventW", 4}, {"CreateThread", 6}, {"DeleteCriticalSection", 1}, {"EnterCriticalSection", 1}, {"ExitProcess", 1}, {"ExitThread", 1}, {"FindResourceA", 3},
 	{"FindResourceExA", 4}, {"FindResourceExW", 4}, {"FindResourceW", 3}, {"FreeLibrary", 1}, {"GetACP", 0},
 	{"GetCommandLineA", 0}, {"GetCommandLineW", 0}, {"GetCurrentProcessId", 0}, {"GetCurrentThreadId", 0}, {"GetExitCodeThread", 2},
 	{"GetFileType", 1}, {"GetLastError", 0}, {"GetModuleFileNameA", 3}, {"GetModuleHandleA", 1},
 	{"GetModuleHandleW", 1}, {"GetPrivateProfileIntW", 4}, {"GetPrivateProfileStringW", 6}, {"WritePrivateProfileStringW", 4}, {"LoadLibraryExA", 3}, {"LoadLibraryExW", 3}, {"GetProcAddress", 2}, {"GetProcessHeap", 0}, {"GetStartupInfoA", 1}, {"GetStartupInfoW", 1}, {"GetStdHandle", 1},
 	{"GetTickCount", 0}, {"ProcessIdToSessionId", 2}, {"HeapAlloc", 3}, {"HeapFree", 3}, {"HeapReAlloc", 4}, {"HeapSize", 3}, {"InitializeCriticalSection", 1}, {"LeaveCriticalSection", 1}, {"LoadLibraryA", 1}, {"LoadLibraryW", 1}, {"LoadResource", 2}, {"LockResource", 1},
 	{"OutputDebugStringA", 1}, {"ResetEvent", 1}, {"ResumeThread", 1}, {"SetEvent", 1}, {"SetLastError", 1}, {"SetThreadPriority", 2}, {"SizeofResource", 2}, {"Sleep", 1}, {"SwitchToThread", 0}, {"TryEnterCriticalSection", 1}, {"VirtualAlloc", 4},
+	{"PathCchCanonicalize", 3}, {"PathCchCombineEx", 5}, {"PathCchSkipRoot", 2},
 	// Services of the 32-bit CRT era: legacy file calls, global memory, code pages, environment and version queries.
 	{"_lopen", 2}, {"_lcreat", 2}, {"_lread", 3}, {"_lwrite", 3}, {"_llseek", 3}, {"lstrcpyA", 2}, {"lstrlenA", 1}, {"GetWindowsDirectoryA", 2}, {"GlobalHandle", 1}, {"GetVersionExA", 1}, {"WinExec", 2}, {"GlobalUnlock", 1}, {"GlobalFree", 1}, {"GlobalAlloc", 2}, {"SetErrorMode", 1}, {"GlobalLock", 1}, {"GetCurrentProcess", 0}, {"SetHandleCount", 1}, {"GetOEMCP", 0}, {"GetCPInfo", 2}, {"WideCharToMultiByte", 8}, {"DeleteFileA", 1}, {"GetEnvironmentStrings", 0}, {"FreeEnvironmentStringsW", 1}, {"FreeEnvironmentStringsA", 1}, {"UnhandledExceptionFilter", 1}, {"RtlUnwind", 4}, {"HeapCreate", 3}, {"HeapDestroy", 1}, {"TerminateProcess", 2}, {"GetEnvironmentStringsW", 0}, {"GetVersion", 0}, {"GetFileAttributesA", 1},
 	// File and clock services of the C runtime component: the shared handlers read 32-bit words; a 64-bit offset takes two.
@@ -80,6 +90,12 @@ constexpr std::array<std::pair<std::string_view, uint32_t>, 115> kernel32_export
 
 // Shared-registry handlers that serve 32-bit programs as they are: every argument is one 32-bit word and no structure holds a pointer.
 constexpr std::array shared_exports{
+#ifdef __APPLE__
+	// The device-set family a display identity keeps on the host (host_device_export); SP_DEVINFO_DATA is sized by the caller's width.
+	NativeX86System::Export{"setupapi.dll", "SetupDiEnumDeviceInterfaces", 5}, NativeX86System::Export{"setupapi.dll", "SetupDiGetClassDevsW", 4},
+	NativeX86System::Export{"setupapi.dll", "SetupDiEnumDeviceInfo", 3}, NativeX86System::Export{"setupapi.dll", "SetupDiDestroyDeviceInfoList", 1},
+	NativeX86System::Export{"setupapi.dll", "SetupDiGetDeviceRegistryPropertyW", 7},
+#endif
 	// A trace identifier occupies two stack words; its controller adapter combines them before shared dispatch.
 	NativeX86System::Export{"advapi32.dll", "StopTraceA", 4}, NativeX86System::Export{"advapi32.dll", "StopTraceW", 4},
 	NativeX86System::Export{"advapi32.dll", "ControlTraceA", 5}, NativeX86System::Export{"advapi32.dll", "ControlTraceW", 5},
@@ -132,7 +148,8 @@ constexpr std::string_view shared_allowed[] = {
 	"InternetSetOptionA", "InternetQueryOptionW", "InternetQueryOptionA", "InternetSetStatusCallbackW", "InternetSetStatusCallbackA",
 	"InternetSetStatusCallback", "InternetGetConnectedState", "InternetGetLastResponseInfoW", "InternetGetLastResponseInfoA",
 	"InternetCrackUrlW", "InternetCrackUrlA", "InternetGetCookieExW", "InternetGetCookieExA", "InternetGetCookieW", "InternetGetCookieA",
-	"WaitForSingleObjectEx",
+	"WaitForSingleObjectEx", "OpenThreadToken", "RtlCompareMemory", "RtlSetLastWin32Error", "RtlRunOnceExecuteOnce",
+	"RtlAcquireSRWLockExclusive", "RtlReleaseSRWLockExclusive", "RtlAcquireSRWLockShared", "RtlReleaseSRWLockShared",
 	// ICONINFO is read at the program's pointer width.
 	"CreateIconIndirect",
 	"EnumProcesses", "K32EnumProcesses", "NtQuerySystemInformation",
@@ -141,7 +158,7 @@ constexpr std::string_view shared_allowed[] = {
 	"QueryFullProcessImageNameW", "QueryFullProcessImageNameA",
 	"NtQueryInformationProcess", "NtReadVirtualMemory", "NtWriteVirtualMemory", "ReadProcessMemory", "WriteProcessMemory", "OpenProcess",
 	"NtSetInformationThread", "NtOpenThreadToken", "NtOpenThreadTokenEx", "NtOpenThread", "NtOpenProcess", "NtOpenProcessToken", "NtOpenProcessTokenEx", "NtQueryInformationThread", "OpenThread", "GetThreadId",
-	"VirtualAllocEx", "VirtualAllocExNuma", "VirtualFreeEx", "VirtualProtectEx", "VirtualQueryEx",
+	"VirtualAlloc2FromApp", "VirtualAllocEx", "VirtualAllocExNuma", "VirtualFreeEx", "VirtualProtectEx", "VirtualQueryEx",
 	"SetDllDirectoryW", "SetDllDirectoryA", "SetConsoleTitleW", "SetConsoleTitleA", "OpenSCManagerW", "OpenSCManagerA", "OpenServiceW", "OpenServiceA", "CreateServiceW", "CreateServiceA",
 	"CloseServiceHandle", "DeleteService", "ChangeServiceConfigW", "ChangeServiceConfig2W", "ChangeServiceConfig2A", "QueryServiceConfigW", "QueryServiceConfigA", "GetServiceDisplayNameW", "GetServiceDisplayNameA",
 	"QueryServiceObjectSecurity", "SetServiceObjectSecurity", "RegQueryInfoKeyA", "RegQueryInfoKeyW", "LookupPrivilegeValueA", "QueryServiceStatus", "QueryServiceStatusEx", "StartServiceW", "ControlService",
@@ -169,15 +186,27 @@ constexpr std::string_view shared_allowed[] = {
 	"GetAdaptersInfo", "GetNetworkParams", "RtlConvertDeviceFamilyInfoToString", "RtlGetDeviceFamilyInfoEnum", "CryptFindOIDInfo", "GetPackagesByPackageFamily", "GetUserDefaultGeoName", "SLGetWindowsInformation", "SLGetWindowsInformationDWORD",
 	"GetWindowLongW", "SetWindowLongW", "GetFileVersionInfoA", "GetFileVersionInfoExW", "GetFileVersionInfoSizeA", "GetFileVersionInfoSizeExW",
 	"GetFileVersionInfoSizeW", "GetFileVersionInfoW", "VerQueryValueA", "VerQueryValueW", "GetSystemDirectoryW", "GetSystemDirectoryA", "GetWindowsDirectoryW", "LocalAlloc", "LocalReAlloc", "GlobalReAlloc", "GlobalSize", "GetComputerNameA",
-	"GetComputerNameW", "FileTimeToSystemTime", "SystemTimeToFileTime", "GetTimeZoneInformation", "GetCurrentProcessId", "SetFileAttributesA",
+	"GetComputerNameW", "FileTimeToSystemTime", "SystemTimeToFileTime", "GetTimeZoneInformation", "SetFileAttributesA",
 	"SetFileAttributesW", "GetLongPathNameA", "GetLongPathNameW", "GetShortPathNameA", "GetShortPathNameW", "SearchPathA", "SearchPathW",
 	"GetModuleFileNameA", "IsDBCSLeadByte", "IsDBCSLeadByteEx", "GetCPInfoExA", "GetThreadLocale", "SetThreadLocale", "VerifyVersionInfoW",
-	"GetUserNameA", "GetUserNameW", "FlsAlloc", "FlsFree", "FlsGetValue", "FlsSetValue", "SetDefaultDllDirectories", "AddDllDirectory", "RemoveDllDirectory", "SetSearchPathMode", "GetLargePageMinimum", "ConvertDefaultLocale", "GetMachineTypeAttributes", "GetShellWindow", "PowerCreateRequest", "PowerSetRequest", "PowerClearRequest", "CreateTransaction", "CommitTransaction", "CommitTransactionAsync",
+	"GetGlyphOutlineA", "AddFontResourceA", "AddFontResourceW", "AddFontResourceExA", "AddFontResourceExW", "RemoveFontResourceA", "RemoveFontResourceW", "RemoveFontResourceExA", "RemoveFontResourceExW", "AddFontMemResourceEx", "RemoveFontMemResourceEx", "SetThreadIdealProcessor", "SetThreadIdealProcessorEx", "GetThreadIdealProcessorEx", "GetFileAttributesExA", "LoadKeyboardLayoutA", "LoadKeyboardLayoutW", "LoadKeyboardLayoutEx", "ActivateKeyboardLayout", "UnloadKeyboardLayout", "GetUserNameA", "GetUserNameW", "FlsAlloc", "FlsFree", "FlsGetValue", "FlsSetValue", "SetDefaultDllDirectories", "AddDllDirectory", "RemoveDllDirectory", "SetSearchPathMode", "GetLargePageMinimum", "ConvertDefaultLocale", "GetMachineTypeAttributes", "GetShellWindow", "PowerCreateRequest", "PowerSetRequest", "PowerClearRequest", "CreateTransaction", "CommitTransaction", "CommitTransactionAsync",
 	"RollbackTransaction", "RollbackTransactionAsync", "CreateFileTransactedW", "DeleteFileTransactedW", "MoveFileTransactedW", "MoveFileWithProgressW", "MoveFileWithProgressA", "MoveFileExA", "CopyFileTransactedW",
 	"CreateDirectoryTransactedW", "RemoveDirectoryTransactedW", "GetFileAttributesTransactedW", "SetFileAttributesTransactedW", "SHGetFolderPathW", "SHGetFolderPathA", "SHChangeNotify", "SHPathPrepareForWriteW", "ShowOwnedPopups",
 	"UnrealizeObject", "EnableNonClientDpiScaling", "EnumFontsW", "DisableProcessWindowsGhosting", "ShutdownBlockReasonCreate", "ShutdownBlockReasonDestroy", "WNetOpenEnumW", "WNetOpenEnumA", "WNetEnumResourceW", "WNetEnumResourceA", "WNetCloseEnum", "WNetGetConnectionW",
 	"WNetGetConnectionA", "WNetGetUniversalNameW", "WNetGetUniversalNameA", "SetSearchPathMode",
 	"CreateMutexW", "CreateMutexA", "CreateMutexExW", "OpenMutexW", "OpenMutexA", "ReleaseMutex", "CreateSemaphoreW", "CreateSemaphoreA", "CreateSemaphoreExW", "ReleaseSemaphore",
+};
+
+// One by-value POINT or 64-bit integer occupies two x86 stack words, but one shared-handler argument.
+struct WideArgument {
+	std::string_view name;
+	uint32_t index, words;
+};
+constexpr WideArgument wide_arguments[] = {
+	{"ChildWindowFromPoint", 1, 3}, {"ChildWindowFromPointEx", 1, 4}, {"WindowFromPoint", 0, 2},
+	{"HitTestThemeBackground", 7, 10}, {"StrFormatByteSizeW", 0, 4},
+	{"EventEnabled", 0, 3}, {"EventSetInformation", 0, 5}, {"EventUnregister", 0, 2}, {"EventWriteTransfer", 0, 7},
+	{"TraceEvent", 0, 3}, {"UnregisterTraceGuids", 0, 2},
 };
 
 struct NamedWords {
@@ -293,7 +322,7 @@ bool unsupported_library(NativeProcess &process, NativeEnvironment &environment,
 		process.return_api(0xC00000BBU);
 		return true;
 	}
-	const bool known = name == "PlaySoundW" || name == "ShellAboutW" || name == "InitCommonControlsEx";
+	const bool known = name == "PlaySoundW" || name == "PlaySoundA" || name == "sndPlaySoundW" || name == "sndPlaySoundA" || name == "ShellAboutW" || name == "InitCommonControlsEx";
 	if (!known)
 		return false;
 	process.api_arguments(0);
@@ -432,7 +461,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		// The system's libraries are the runtime's whatever copies the program ships or an installer left in the system directory, except those a
 		// copy in the program's folder may replace.
 		std::vector<std::string_view> provided;
-		for (const std::string_view library : {"kernel32.dll", "user32.dll", "gdi32.dll", "advapi32.dll", "setupapi.dll", "msvcrt.dll", "winmm.dll",
+		for (const std::string_view library : {"kernel32.dll", "kernelbase.dll", "user32.dll", "gdi32.dll", "advapi32.dll", "setupapi.dll", "msvcrt.dll", "winmm.dll",
 			"dsound.dll", "vulkan-1.dll", "shell32.dll", "comctl32.dll", "ntdll.dll", "version.dll", "ole32.dll"})
 			if (!program_may_replace(library))
 				provided.push_back(library);
@@ -492,6 +521,12 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// A library's own list of names together with the ones the graph imports from it.
 	const auto with_imports = [&](const std::string &library, std::span<const std::string_view> own) {
 		std::vector<std::string_view> merged(own.begin(), own.end());
+		if (library == "ntdll.dll")
+			for (const auto name : {"memcpy", "memmove", "memset", "memcmp", "strlen", "wcslen", "strncpy", "_vsnprintf"})
+				merged.push_back(name);
+#ifdef __APPLE__
+		if (library == "ntdll.dll") merged.push_back("__wine_unix_call_dispatcher");
+#endif
 		// A library loaded later, such as an installer plug-in, imports names the initial graph never named: every public name binds.
 		const auto published = system_export_names(library);
 		merged.insert(merged.end(), published.begin(), published.end());
@@ -504,6 +539,32 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	};
 	// The stdcall argument words of a function: the library's own decorated symbol first, then what Raven's tables say.
 	const auto words_of = [](const std::string &library, std::string_view name, uint32_t fallback) {
+		// ntdll's undecorated CRT exports use caller cleanup, even when the
+		// shared handler registry knows their argument count.
+		static constexpr std::string_view cdecl_exports[] = {
+			"DbgPrint", "DbgPrintEx", "EtwTraceMessage", "_CIcos", "_CIlog", "_CIpow", "_CIsin", "_CIsqrt", "__isascii",
+			"__iscsym", "__iscsymf", "__toascii", "_atoi64", "_errno", "_i64toa", "_i64toa_s", "_i64tow", "_i64tow_s",
+			"_itoa", "_itoa_s", "_itow", "_itow_s", "_lfind", "_ltoa", "_ltoa_s", "_ltow", "_ltow_s", "_makepath_s",
+			"_memccpy", "_memicmp", "_snprintf", "_snprintf_s", "_snwprintf", "_snwprintf_s", "_splitpath",
+			"_splitpath_s", "_strcmpi", "_stricmp", "_strlwr", "_strlwr_s", "_strnicmp", "_strupr", "_strupr_s",
+			"_swprintf", "_tolower", "_toupper", "_ui64toa", "_ui64toa_s", "_ui64tow", "_ui64tow_s", "_ultoa", "_ultoa_s",
+			"_ultow", "_ultow_s", "_vscprintf", "_vscwprintf", "_vsnprintf", "_vsnprintf_s", "_vsnwprintf",
+			"_vsnwprintf_s", "_vswprintf", "_wcsicmp", "_wcslwr", "_wcslwr_s", "_wcsnicmp", "_wcstoi64", "_wcstoui64",
+			"_wcsupr", "_wcsupr_s", "_wmakepath_s", "_wsplitpath_s", "_wtoi", "_wtoi64", "_wtol", "abs", "atan", "atan2",
+			"atoi", "atol", "bsearch", "bsearch_s", "ceil", "cos", "fabs", "floor", "isalnum", "isalpha", "iscntrl",
+			"isdigit", "isgraph", "islower", "isprint", "ispunct", "isspace", "isupper", "iswalnum", "iswalpha",
+			"iswascii", "iswctype", "iswdigit", "iswgraph", "iswlower", "iswprint", "iswspace", "iswxdigit", "isxdigit",
+			"labs", "log", "mbstowcs", "memchr", "memcmp", "memcpy", "memcpy_s", "memmove", "memmove_s", "memset", "pow",
+			"qsort", "qsort_s", "sin", "sprintf", "sprintf_s", "sqrt", "sscanf", "strcat", "strcat_s", "strchr", "strcmp",
+			"strcpy", "strcpy_s", "strcspn", "strlen", "strncat", "strncat_s", "strncmp", "strncpy", "strncpy_s",
+			"strnlen", "strpbrk", "strrchr", "strspn", "strstr", "strtok_s", "strtol", "strtoul", "swprintf",
+			"swprintf_s", "tan", "tolower", "toupper", "towlower", "towupper", "vDbgPrintEx", "vDbgPrintExWithPrefix",
+			"vsprintf", "vsprintf_s", "vswprintf_s", "wcscat", "wcscat_s", "wcschr", "wcscmp", "wcscpy", "wcscpy_s",
+			"wcscspn", "wcslen", "wcsncat", "wcsncat_s", "wcsncmp", "wcsncpy", "wcsncpy_s", "wcsnlen", "wcspbrk",
+			"wcsrchr", "wcsspn", "wcsstr", "wcstok", "wcstok_s", "wcstol", "wcstombs", "wcstoul"
+		};
+		if (library == "ntdll.dll" && std::find(std::begin(cdecl_exports), std::end(cdecl_exports), name) != std::end(cdecl_exports))
+			return uint32_t(0);
 		const auto authoritative = system_export_words(library, name);
 		if (authoritative != UINT32_MAX)
 			return authoritative;
@@ -512,10 +573,11 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// A guest component that implements part of a system library receives those calls directly, as for 64-bit programs.
 	const auto overlay = [&](PEModule &provider, std::string_view library) {
 		struct Rule { const char *library, *component, *prefix; };
-		static constexpr Rule rules[] = {{"user32.dll", "raven-user32.dll", "raven-user32."}, {"comdlg32.dll", "raven-shell.dll", "raven-shell."},
+		static constexpr Rule rules[] = {{"ntdll.dll", "ucrtbase.dll", "ucrtbase."},
+			{"user32.dll", "raven-user32.dll", "raven-user32."}, {"comdlg32.dll", "raven-shell.dll", "raven-shell."},
 			{"ole32.dll", "raven-shell.dll", "raven-shell."}, {"shell32.dll", "raven-shell.dll", "raven-shell."}, {"msvcrt.dll", "ucrtbase.dll", "ucrtbase."}, {"shlwapi.dll", "raven-shell.dll", "raven-shell."}, {"setupapi.dll", "raven-setupapi.dll", "raven-setupapi."},
 			{"ole32.dll", "raven-storage.dll", "raven-storage."}, {"combase.dll", "raven-shell.dll", "raven-shell."}, {"runtimeobject.dll", "raven-shell.dll", "raven-shell."},
-			{"api-ms-win-core-winrt-l1-1-0.dll", "raven-shell.dll", "raven-shell."}, {"winmm.dll", "raven-winmm.dll", "raven-winmm."},
+			{"uiautomationcore.dll", "raven-shell.dll", "raven-shell."}, {"api-ms-win-core-winrt-l1-1-0.dll", "raven-shell.dll", "raven-shell."}, {"winmm.dll", "raven-winmm.dll", "raven-winmm."},
 			{"msacm32.dll", "raven-msacm32.dll", "raven-msacm32."}};
 		for (const auto &rule : rules) {
 			if (library != rule.library)
@@ -526,7 +588,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			// The startup and exception entry points of msvcrt.dll stay with the runtime, which knows the process.
 			const auto host_crt = std::string_view(rule.library) == "msvcrt.dll" ? NativeCRT::exports() : std::span<const std::string_view>{};
 			for (auto &symbol : provider.exports)
-				if (!symbol.names.empty() && std::find(host_crt.begin(), host_crt.end(), symbol.names.front()) == host_crt.end() &&
+				if (!symbol.names.empty() && !host_device_export(library, symbol.names.front()) && std::find(host_crt.begin(), host_crt.end(), symbol.names.front()) == host_crt.end() &&
 					std::any_of(component->second->exports.begin(), component->second->exports.end(), [&](const auto &candidate) {
 						return candidate.forwarder.empty() && std::find(candidate.names.begin(), candidate.names.end(), symbol.names.front()) != candidate.names.end();
 					}))
@@ -534,22 +596,29 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		}
 		forward_opengl_formats(modules, provider);
 	};
+#ifdef __APPLE__
+	const bool fast_paths = guest_paths();
+#else
+	constexpr bool fast_paths = false;
+#endif
 	std::map<uint64_t, std::pair<std::string_view, uint32_t>> traps;
 	if (!modules.all().contains("kernel32.dll")) {
 		std::vector<std::string_view> own_names;
 		for (const auto &item : kernel32_table())
 			own_names.push_back(item.name);
 		const auto names = with_imports("kernel32.dll", own_names);
-		const auto size = PEImage(runtime_provider("kernel32.dll", 0x70000000ULL, names, true)).image_size;
+		const auto size = PEImage(runtime_provider("kernel32.dll", 0x70000000ULL, names, true, {}, {}, fast_paths)).image_size;
 		const auto base = provider_base(modules, size);
-		auto &provider = modules.add("kernel32.dll", runtime_provider("kernel32.dll", base, names, true), base);
+		auto &provider = modules.add("kernel32.dll", runtime_provider("kernel32.dll", base, names, true, {}, {}, fast_paths), base);
 		provider.runtime_api = true;
 		for (const auto &symbol : provider.exports) {
 			const auto &exported = symbol.names.at(0);
 			const auto found = std::find_if(kernel32_table().begin(), kernel32_table().end(), [&](const auto &item) { return item.name == exported; });
 			const auto view = std::find(names.begin(), names.end(), exported);
 			const uint32_t fixed = found != kernel32_table().end() ? found->words : registry_words(exported) != UINT32_MAX ? registry_words(exported) : 0;
-			traps.emplace(provider.loaded.base() + symbol.address, std::pair{*view, words_of("kernel32.dll", exported, fixed) * 4});
+			const auto trap = x86_api_trap_address(provider, symbol.address);
+			traps.emplace(trap, std::pair{trap - provider.loaded.base() - symbol.address >= 0x30 ? x86_fast_stub_slow_name(*view) : *view,
+				words_of("kernel32.dll", exported, fixed) * 4});
 		}
 	}
 	const auto add_desktop = [&](const char *dll, std::span<const std::string_view> implemented, std::span<const std::string_view> pending) {
@@ -570,7 +639,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			const auto view = std::find(exports.begin(), exports.end(), exported);
 			const auto found = desktop_arguments().find(exported);
 			const uint32_t fixed = found != desktop_arguments().end() ? found->second : registry_words(exported) != UINT32_MAX ? registry_words(exported) : 0;
-			traps.emplace(provider.loaded.base() + symbol.address, std::pair{*view, words_of(dll, exported, fixed) * 4});
+			traps.emplace(x86_api_trap_address(provider, symbol.address), std::pair{*view, words_of(dll, exported, fixed) * 4});
 		}
 	};
 	std::vector<std::string_view> user_pending{"CheckMenuItem", "DialogBoxParamW", "EndDialog", "GetDesktopWindow",
@@ -578,7 +647,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		"MessageBoxW", "MoveWindow", "PtInRect", "ReleaseCapture", "SetCapture", "SetDlgItemInt", "SetDlgItemTextW", "SetMenu",
 		"SetRect", "SetTimer", "TranslateAcceleratorW", "WinHelpW", "wsprintfW", "wsprintfA", "CreateWindowExA", "DispatchMessageA",
 		"GetMessageA", "PeekMessageA", "RegisterClassA", "RegisterClassExA", "UnregisterClassA", "LoadCursorA", "LoadIconA", "GetAsyncKeyState",
-		"SetCursor", "GetCursorPos", "SetCursorPos", "DefWindowProcA", "SendMessageA", "PostMessageA", "SetWindowTextA",
+		"SetCursor", "GetCursorInfo", "GetCursorPos", "SetCursorPos", "DefWindowProcA", "SendMessageA", "PostMessageA", "SetWindowTextA",
 		"ExitWindowsEx", "MessageBoxA", "SetWindowPos", "CheckDlgButton", "MessageBoxIndirectW", "TrackPopupMenu", "DrawTextW",
 		"CreateDialogParamW", "SendMessageTimeoutW"};
 	std::vector<std::string_view> gdi_pending{"CreateBrushIndirect", "GetDeviceCaps", "SetDIBitsToDevice", "SetLayout", "SetPixel", "SetROP2",
@@ -635,9 +704,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		std::vector<std::pair<std::string_view, uint16_t>> numbered(published_numbers.begin(), published_numbers.end());
 		if (const auto extra = unknown_ordinals.find(dll); extra != unknown_ordinals.end())
 			numbered.insert(numbered.end(), extra->second.begin(), extra->second.end());
-		const auto size = PEImage(runtime_provider(dll, 0x70000000ULL, merged, true, data, numbered)).image_size;
+		const auto size = PEImage(runtime_provider(dll, 0x70000000ULL, merged, true, data, numbered, fast_paths)).image_size;
 		const auto base = provider_base(modules, size);
-		auto &provider = modules.add(provider_key, runtime_provider(dll, base, merged, true, data, numbered), base);
+		auto &provider = modules.add(provider_key, runtime_provider(dll, base, merged, true, data, numbered, fast_paths), base);
 		provider.runtime_api = true;
 		overlay(provider, dll);
 		for (const auto &symbol : provider.exports) {
@@ -669,9 +738,25 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				if (native != names.end())
 					name = *native;
 			}
-			traps.emplace(provider.loaded.base() + symbol.address, std::pair{name, words_of(dll, exported, count(exported)) * 4});
+			const auto trap = x86_api_trap_address(provider, symbol.address);
+			traps.emplace(trap, std::pair{trap - provider.loaded.base() - symbol.address >= 0x30 ? x86_fast_stub_slow_name(name) : name,
+				words_of(dll, exported, count(exported)) * 4});
 		}
 	};
+	// KernelBase serves the same kernel entry points, including the PathCch functions missing from the public import-library lists.
+	std::vector<std::string_view> kernelbase_names;
+	for (const auto &symbol : modules.all().at("kernel32.dll")->exports)
+		for (const auto &name : symbol.names)
+			kernelbase_names.push_back(name);
+	add_library("kernelbase.dll", kernelbase_names, {}, [](std::string_view name) {
+		const auto words = system_export_words("kernel32.dll", name);
+		if (words != UINT32_MAX)
+			return words;
+		for (const auto &item : kernel32_table())
+			if (item.name == name)
+				return item.words;
+		return registry_words(name) != UINT32_MAX ? registry_words(name) : uint32_t(0);
+	});
 	std::vector<std::string_view> advapi_names;
 	for (const auto &item : host_exports("advapi32.dll"))
 		advapi_names.push_back(item.name);
@@ -701,7 +786,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	std::sort(crt_names.begin(), crt_names.end());
 	crt_names.erase(std::unique(crt_names.begin(), crt_names.end()), crt_names.end());
 	add_library("msvcrt.dll", crt_names, NativeCRT::data_exports(), [](std::string_view name) { return uint32_t(0); });
-	static constexpr std::array<std::string_view, 4> winmm_exports{"PlaySoundW", "timeBeginPeriod", "timeEndPeriod", "timeGetTime"};
+	static constexpr std::array<std::string_view, 7> winmm_exports{"PlaySoundA", "PlaySoundW", "sndPlaySoundA", "sndPlaySoundW", "timeBeginPeriod", "timeEndPeriod", "timeGetTime"};
 	static constexpr std::array<std::string_view, 1> shell_exports{"ShellAboutW"};
 	// File version resources are read by the shared handlers; the names are in byte order.
 	static constexpr std::array<std::string_view, 8> version_exports{"GetFileVersionInfoA", "GetFileVersionInfoExW", "GetFileVersionInfoSizeA",
@@ -709,7 +794,14 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	static constexpr std::array<std::string_view, 1> controls_exports{"InitCommonControlsEx"};
 	const auto malloc_names = com_names(malloc_methods);
 	add_library("raven-com.dll", malloc_names, {}, [](std::string_view name) { return com_words(malloc_methods, name); });
-	add_library("winmm.dll", winmm_exports, {}, [](std::string_view name) { return uint32_t(name == "PlaySoundW" ? 3 : name == "timeGetTime" ? 0 : 1); });
+	add_library("winmm.dll", winmm_exports, {}, [](std::string_view name) { return uint32_t(name.starts_with("PlaySound") ? 3 : name.starts_with("sndPlaySound") ? 2 : name == "timeGetTime" ? 0 : 1); });
+	#ifdef __APPLE__
+	static constexpr std::array<std::string_view,2> xaudio_exports{"XAudio2Create","XAudio2CreateWithVersionInfo"};
+	add_library("xaudio2_9.dll",xaudio_exports,{},[](std::string_view name) { return uint32_t(name=="XAudio2Create"?3:4); });
+	#endif
+	#ifdef __APPLE__
+	add_library("raven-audio.dll", raven_darwin::audio_method_names(), {}, [](std::string_view name) { return raven_darwin::audio_method_words(name); });
+#endif
 	const auto dsound_methods = NativeX86DirectSound::method_names();
 	add_library("dsound.dll", NativeX86DirectSound::entry_names(), {}, [](std::string_view name) { return NativeX86DirectSound::entry_words(name); });
 	add_library("raven-dsound.dll", dsound_methods, {}, [](std::string_view name) { return NativeX86DirectSound::method_words(name); });
@@ -748,7 +840,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				return item.words;
 		return uint32_t(4);
 	});
-	// The common controls come from the common controls component once it is built for 32 bits; until then these names resolve and fail when called.
+	// The provisioned common controls component is loaded by the launcher; these are fallback names when it is absent.
 	static constexpr std::array<std::string_view, 5> controls_names{"ImageList_AddMasked", "ImageList_Create", "ImageList_Destroy", "InitCommonControls", "InitCommonControlsEx"};
 	static constexpr std::array<std::pair<std::string_view, uint16_t>, 1> controls_ordinals{{{"InitCommonControls", 17}}};
 	add_library("comctl32.dll", controls_names, {}, [](std::string_view name) {
@@ -773,7 +865,12 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	for (const auto library : system_library_names())
 		served.insert(std::string(library));
 	for (const auto &library : served) {
-		add_library(library.c_str(), {}, {}, [](std::string_view name) { return registry_words(name) != UINT32_MAX ? registry_words(name) : uint32_t(0); },
+		std::span<const std::string_view> data;
+#ifdef __APPLE__
+		static constexpr std::string_view unix_data[] = {"__wine_unix_call_dispatcher"};
+		if (library == "ntdll.dll") data = unix_data;
+#endif
+		add_library(library.c_str(), {}, data, [](std::string_view name) { return registry_words(name) != UINT32_MAX ? registry_words(name) : uint32_t(0); },
 			system_export_ordinals(library));
 	}
 	alias_api_sets(modules);
@@ -783,8 +880,12 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		images.push_back(&module->loaded);
 	const auto deadline = std::chrono::steady_clock::now() + timeout;
 	NativeProcess process(images, bootstrap, timeout, NativeMode::x86, entry.image.stack_reserve);
+#ifdef __APPLE__
+	DarwinUnixCalls darwin_unix_calls(process, modules);
+#endif
 	for (const auto &[address, api] : traps)
 		process.add_api_trap(address, api.second);
+	install_guest_sampler(process, modules);
 	NativeEnvironment environment(process, entry.loaded.base(), uint32_t(::getpid()), 1);
 	NativeX86D3D9 direct3d9(process);
 	NativeX86DirectSound directsound(process);
@@ -847,8 +948,13 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		paths.set_current(launch->directory);
 	std::function<NativeResult(uint64_t, std::span<const uint64_t>)> call_guest;
 	NativeResources resources(process, environment, modules, entry);
+#ifdef __APPLE__
+	// Per-process private commit quota; the modeled system limit is enforced separately.
+	const size_t commit_limit=process_commit_limit();
+#else
 	// What a program may commit: 512 MiB by default, as set by RAVEN_COMMIT_LIMIT_MB (large programs, a browser engine for one, need more).
 	const size_t commit_limit=(std::getenv("RAVEN_COMMIT_LIMIT_MB") ? size_t(std::strtoull(std::getenv("RAVEN_COMMIT_LIMIT_MB"),nullptr,10)) : size_t(512))*1024*1024;
+#endif
 	NativeMemory memory(process,environment,commit_limit);
 	register_images(memory, modules);
 	// Declared first so that it outlives the threads, which release their blocks through it when they are torn down.
@@ -902,6 +1008,13 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	});
 	DesktopObjects desktop_objects;
 	NativeDesktop desktop(process, environment, desktop_objects, resources);
+	desktop.set_source(source);
+	desktop.set_section_source([&](uint64_t handle) -> std::optional<std::pair<int, uint64_t>> {
+		const auto section = kernel_objects.object_as<SectionObject>(handle);
+		if (!section || section->descriptor < 0)
+			return std::nullopt;
+		return std::make_pair(section->descriptor, section->size);
+	});
 	// LoadImage with LR_LOADFROMFILE reads an icon, cursor or bitmap file the program names, as a 64-bit program's does.
 	desktop.set_host_files([&paths](std::u16string_view path) -> std::optional<std::vector<uint8_t>> {
 		const auto resolved = paths.resolve(path);
@@ -917,8 +1030,12 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	if (const auto component = modules.all().find("raven-user32.dll"); component != modules.all().end() && !component->second->runtime_api)
 		desktop.set_oem_module(component->second->loaded.base());
 	NativeWindows windows(process, environment, desktop_objects);
+	windows.set_menu_loader([&desktop](uint64_t instance,uint64_t identifier) { return desktop.menu_resource(instance,identifier); });
 	// Registry handlers whose arguments carry no pointer-width structures also serve 32-bit programs.
 	ApiRegistry shared_api;
+#ifdef __APPLE__
+	register_darwin_d3dkmt(shared_api, kernel_objects, guest_threads, true);
+#endif
 	windows.register_api(shared_api);
 	desktop.register_gdi_api(shared_api);
 	desktop.register_text_api(shared_api);
@@ -926,7 +1043,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	NativeX86Compat compat(process, environment, windows);
 	compat.set_traps(&traps);
 	// Shared handlers whose arguments are 32-bit words and whose structures carry no pointers.
-	std::set<std::string_view> shared_names{"MoveWindow", "LoadCursorA", "LoadIconA", "GetAsyncKeyState", "SetCursor", "GetCursorPos", "SetCursorPos",
+	std::set<std::string_view> shared_names{"MoveWindow", "LoadCursorA", "LoadIconA", "GetAsyncKeyState", "SetCursor", "GetCursorInfo", "GetCursorPos", "SetCursorPos",
 		"DefWindowProcA", "SendMessageA", "PostMessageA", "SetWindowTextA", "CreateFontA", "ExtTextOutA", "GetDIBits", "GetTextExtentPoint32A",
 		"GetTextMetricsA", "SetDIBits", "MessageBoxA", "SetWindowPos", "SelectPalette", "PatBlt", "_lopen", "_lcreat", "_lread", "_lwrite", "_llseek", "lstrcpyA", "lstrlenA", "GetWindowsDirectoryA",
 		"GlobalUnlock", "GlobalFree", "GlobalAlloc", "SetErrorMode", "GlobalLock", "GetOEMCP", "GetCPInfo", "WideCharToMultiByte", "DeleteFileA",
@@ -948,6 +1065,15 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	VulkanThunk32 vulkan32(process, vulkan);
 #endif
 	windows.set_presentation(std::move(presentation));
+#ifdef __APPLE__
+	DarwinDXMTPresentation dxmt_presentation(process, windows);
+	const auto unix_events = [&] {
+		process.drain_unix_events([&](uint64_t event) { kernel_objects.set_event(event, true); });
+		dxmt_presentation.poll();
+	};
+	guest_threads.add_service(unix_events);
+	guest_threads.add_pump(unix_events);
+#endif
 	desktop.set_updated([&](uint64_t window,const DesktopRect *area) { windows.drawing(window,area); });
 	struct ProcessExit { uint32_t code; uint64_t instruction; };
 	// CoGetMalloc hands out one allocator object, whose methods are the task allocator's handlers.
@@ -1090,7 +1216,19 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			if (found == traps.end())
 				return result;
 			const auto api = found->second.first;
-			if (getenv("RAVEN_TRACE_X86")) {
+			// Every way back from this call to the guest passes here, so the call's time and the guest's run to its next call are told apart.
+			const auto call_started = RuntimeProfile::instance().enabled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+			const auto return_to_guest = [&](auto limit) {
+				if (!RuntimeProfile::instance().enabled())
+					return process.resume(limit);
+				const auto served = std::chrono::steady_clock::now();
+				RuntimeProfile::instance().api(std::string(api), served - call_started);
+				auto next = process.resume(limit);
+				RuntimeProfile::instance().guest(std::chrono::steady_clock::now() - served);
+				return next;
+			};
+			static const bool trace_x86 = getenv("RAVEN_TRACE_X86") != nullptr;
+			if (trace_x86 || api_trace_selected(entry.name, api)) {
 				std::ostringstream line;
 				if (getenv("RAVEN_TRACE_X86_THREADS"))
 					line << '[' << environment.thread_id() << "] ";
@@ -1157,7 +1295,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				}
 				// The caller, as the module and offset the return address falls in.
 				try {
-					const auto stack = process.read_memory(process.context().registers.rsp, 4);
+					const auto stack = process.read_memory(process.registers().rsp, 4);
 					const uint64_t caller = uint64_t(stack[0]) | uint64_t(stack[1]) << 8 | uint64_t(stack[2]) << 16 | uint64_t(stack[3]) << 24;
 					for (const auto &[module_name, module] : modules.all())
 						if (caller >= module->loaded.base() && caller < module->loaded.base() + module->image.image_size)
@@ -1183,7 +1321,28 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				// One write per line, so the traces of a program and of the programs it starts stay readable side by side.
 				std::cerr << line.str() << std::flush;
 			}
-			if (api == "VerSetConditionMask" || api == "VerifyVersionInfoW") {
+			if (const auto wide = std::find_if(std::begin(wide_arguments), std::end(wide_arguments),
+				[&](const auto &item) { return item.name == api; }); wide != std::end(wide_arguments)) {
+				auto words = process.api_arguments(wide->words);
+				const auto handler = shared_api.find(api);
+				if (!handler)
+					throw std::runtime_error("missing shared x86 API handler: " + std::string(api));
+				words[wide->index] = uint32_t(words[wide->index]) | words[wide->index + 1] << 32;
+				words.erase(words.begin() + wide->index + 1);
+				ApiCall inner(process, environment, std::move(words));
+				try {
+					handler->second(inner);
+				} catch (const ApiFault &) {
+					inner.fail(998);
+				} catch (const uint32_t &error) {
+					inner.fail(error);
+				}
+				process.return_api(inner.result);
+				budget = remaining();
+				result = return_to_guest(budget);
+				continue;
+			}
+			if (api == "VerSetConditionMask" || api == "VerifyVersionInfoW" || api == "RtlVerifyVersionInfo") {
 				// The 64-bit condition mask is two words on the stack of a 32-bit program, and the handler takes it whole.
 				const bool set = api == "VerSetConditionMask";
 				const auto words = process.api_arguments(4);
@@ -1197,7 +1356,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				entry->second(inner);
 				process.return_api(inner.result);
 				budget = remaining();
-				result = process.resume(budget);
+				result = return_to_guest(budget);
 				continue;
 			}
 			if (api == "StopTraceA" || api == "StopTraceW" || api == "ControlTraceA" || api == "ControlTraceW") {
@@ -1214,7 +1373,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				entry->second(inner);
 				process.return_api(inner.result);
 				budget = remaining();
-				result = process.resume(budget);
+				result = return_to_guest(budget);
 				continue;
 			}
 			if (api == "SetFilePointerEx") {
@@ -1229,7 +1388,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				entry->second(inner);
 				process.return_api(inner.result);
 				budget = remaining();
-				result = process.resume(budget);
+				result = return_to_guest(budget);
 				continue;
 			}
 			// Exceptions are dispatched in the program, by its vectored handlers and along the frames its threads register, by the C runtime
@@ -1272,7 +1431,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 						native.registers.orig_rax = uint64_t(-1);
 						process.redirect(native, process.callback_depth());
 						budget = remaining();
-						result = process.resume(budget);
+						result = return_to_guest(budget);
 						continue;
 					}
 				}
@@ -1295,7 +1454,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				entry->second(inner);
 				process.return_api(inner.result);
 				budget = remaining();
-				result = process.resume(budget);
+				result = return_to_guest(budget);
 				continue;
 			}
 			// A POINT passed by value is two words here and one packed word in the shared handler: the words of each call and where its
@@ -1316,7 +1475,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				entry->second(inner);
 				process.return_api(inner.result);
 				budget = remaining();
-				result = process.resume(budget);
+				result = return_to_guest(budget);
 				continue;
 			}
 			if (api == "DuplicateHandle") {
@@ -1330,7 +1489,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				entry->second(inner);
 				process.return_api(inner.result);
 				budget = remaining();
-				result = process.resume(budget);
+				result = return_to_guest(budget);
 				continue;
 			}
 			if (api == "TerminateProcess") {
@@ -1341,7 +1500,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 					entry->second(inner);
 					process.return_api(inner.result);
 					budget = remaining();
-					result = process.resume(budget);
+					result = return_to_guest(budget);
 					continue;
 				}
 				process.abandon_call();
@@ -1352,7 +1511,14 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 				process.abandon_call();
 				throw ProcessExit{code, result.instruction};
 			}
-			if (!environment.dispatch(api) && !thread_api.dispatch(api) && !system_api.dispatch(api) && !compat.dispatch(api) && !direct3d9.dispatch(api) && !directsound.dispatch(api) &&
+			if (
+#ifdef __APPLE__
+				!darwin_unix_calls.dispatch(api) &&
+#endif
+				!environment.dispatch(api) && !thread_api.dispatch(api) && !system_api.dispatch(api) && !compat.dispatch(api) && !direct3d9.dispatch(api) &&
+#ifndef __APPLE__
+                !directsound.dispatch(api) &&
+#endif
 				!malloc_dispatch(api) &&
 #ifdef RAVEN_VULKAN_THUNK32
 				!vulkan32.dispatch(api) &&
@@ -1374,9 +1540,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			budget = remaining();
 			if (budget.count() <= 0)
 				return NativeResult{NativeStop::timeout, 0, result.instruction, 0};
-			result = process.resume(budget);
+			result = return_to_guest(budget);
 		}
-		if (result.stop == NativeStop::fault && getenv("RAVEN_TRACE_X86")) {
+		if (result.stop == NativeStop::fault && (getenv("RAVEN_TRACE_X86") || getenv("RAVEN_TRACE_FAULT"))) {
 			// What a crash needs: the registers, the bytes at the instruction and the top of the stack.
 			const auto context = process.context();
 			const auto &r = context.registers;
@@ -1386,10 +1552,37 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 			try {
 				for (const auto byte : process.read_memory(r.rip - 64, 96))
 					std::cerr << ' ' << unsigned(byte);
-				std::cerr << "\nstack:";
-				for (const auto byte : process.read_memory(r.rsp, 256))
+			} catch (...) {}
+			// A thread that faults at once sits near the top of its stack: read only up to the end of the page.
+			const uint64_t stack_bytes = std::min<uint64_t>(256, 4096 - (r.rsp & 4095));
+			std::cerr << "\nstack:";
+			try {
+				for (const auto byte : process.read_memory(r.rsp, stack_bytes))
 					std::cerr << ' ' << unsigned(byte);
 			} catch (...) {}
+			// Name the module of the instruction and of every stack word that points into one (likely return addresses).
+			const auto describe = [&](uint64_t at) -> std::string {
+				for (const auto &[name, module] : modules.all())
+					if (at >= module->loaded.base() && at < module->loaded.base() + module->image.image_size) {
+						std::ostringstream text;
+						text << name << '+' << std::hex << at - module->loaded.base();
+						return text.str();
+					}
+				return {};
+			};
+			std::cerr << "\nat: " << describe(r.rip) << "\nframes:";
+			try {
+				const auto words = process.read_memory(r.rsp, std::min<uint64_t>(512, 4096 - (r.rsp & 4095)));
+				for (size_t at = 0; at + 4 <= words.size(); at += 4) {
+					uint32_t value = 0;
+					std::memcpy(&value, words.data() + at, 4);
+					if (const auto name = describe(value); !name.empty())
+						std::cerr << ' ' << std::hex << at << ':' << name;
+				}
+			} catch (...) {}
+			std::cerr << "\nmodules:";
+			for (const auto &[name, module] : modules.all())
+				std::cerr << ' ' << name << '@' << std::hex << module->loaded.base();
 			std::cerr << std::dec << '\n';
 		}
 		return result;
@@ -1434,16 +1627,20 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// File, memory, text and system handlers of the shared registry take 32-bit words as well; they get the same process services.
 	NativeHeap guest_heap(process, environment, modules, entry.image);
 	GuestAllocator allocator(memory, guest_heap);
+	windows.set_global_allocator([&allocator](uint64_t size) { return allocator.allocate(size,true); });
 	compat.set_global_blocks([&allocator](uint64_t address) { return allocator.size(address); }, [&allocator](uint64_t address) { return allocator.release(address); });
 	KernelContext kernel{process, environment, memory, allocator, kernel_objects, guest_threads, paths, modules, entry, *launch, invoke};
 	if (launch->process_token_fd >= 0)
 		kernel.process_token = std::make_shared<AccessToken>(launch->process_token_fd);
+#ifdef __APPLE__
+	desktop.register_print_api(shared_api, kernel);
+#endif
 	guest_threads.set_watched([reactor = kernel.reactor](std::vector<pollfd> &descriptors) { reactor->watch(descriptors); });
 	// Waits that also wake for messages ask the window system, and the window system sleeps as the scheduler does.
 	kernel.queue_status = [&windows](uint32_t thread,uint32_t mask,bool clear) { return windows.queue_status(thread,mask,clear); };
 	kernel.module_named = [&module_api](uint64_t address, bool wide) { return module_api.module_handle(address, wide); };
 	windows.set_idle_sources([&guest_threads](std::chrono::steady_clock::time_point limit) { return guest_threads.idle_until(limit); },
-		[&guest_threads](std::vector<pollfd> &descriptors) { guest_threads.idle_descriptors(descriptors); }, [&guest_threads] { guest_threads.drain_wake(); });
+		[&guest_threads](std::vector<pollfd> &descriptors) { return guest_threads.idle_descriptors(descriptors); }, [&guest_threads] { guest_threads.drain_wake(); });
 	register_file_api(shared_api, kernel);
 	register_memory_api(shared_api, kernel);
 	register_text_api(shared_api, kernel);
@@ -1458,6 +1655,9 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_actctx_api(shared_api, kernel);
 	register_mmio_api(shared_api, kernel);
 	register_pulse_event(shared_api, kernel);
+#ifdef __APPLE__
+	raven_darwin::register_audio_api(shared_api, kernel);
+#endif
 	register_process_api(shared_api, kernel);
 	register_thread_api(shared_api, kernel);
 	register_sync_api(shared_api, kernel);
@@ -1474,6 +1674,7 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_bcrypt_api(shared_api, kernel);
 	register_process_info_api(shared_api, kernel);
 	register_font_service(shared_api, kernel);
+	register_canvas_service(shared_api, kernel);
 	register_sandbox_api(shared_api, kernel);
 	register_shader_service(shared_api, kernel);
 	register_audio_service(shared_api, kernel);
@@ -1499,6 +1700,11 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	register_profile_api(shared_api, profile);
 	register_ansi_adapters(shared_api);
 	register_legacy_file_api(shared_api);
+#ifdef __APPLE__
+	// The NT file calls, which macOS answers in its own layer, for 32-bit programs as for 64-bit ones.
+	raven_darwin::register_nt_file_api(shared_api, kernel);
+#endif
+	write_native_api_inventory(modules, {&shared_api});
 	windows.set_message_wait([&guest_threads](std::function<bool()> ready,std::chrono::steady_clock::time_point until) {
 		HostWait waiting;
 		guest_threads.block(std::move(ready),until);

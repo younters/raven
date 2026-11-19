@@ -1,4 +1,5 @@
 #include "xcb.h"
+#include "objects.h"
 
 #include <xcb/xcb.h>
 #include <xcb/xcbext.h>

@@ -8,6 +8,9 @@
 #include <stdexcept>
 #include <sys/mman.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <libproc.h>
+#endif
 
 static void check(bool condition, const char *message)
 {
@@ -23,7 +26,16 @@ template<typename F> static void rejected(F operation)
 
 static size_t descriptors()
 {
+#ifdef __APPLE__
+	const int bytes = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, nullptr, 0);
+	check(bytes > 0, "cannot inspect host descriptors");
+	std::vector<proc_fdinfo> entries(size_t(bytes) / sizeof(proc_fdinfo) + 16);
+	const int copied = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, entries.data(), int(entries.size() * sizeof(proc_fdinfo)));
+	check(copied > 0, "cannot list host descriptors");
+	return size_t(copied) / sizeof(proc_fdinfo);
+#else
 	return size_t(std::distance(std::filesystem::directory_iterator("/proc/self/fd"), std::filesystem::directory_iterator{}));
+#endif
 }
 
 static void mappings(const std::string &bootstrap, raven::NativeMode mode)
@@ -39,7 +51,13 @@ static void mappings(const std::string &bootstrap, raven::NativeMode mode)
 		process.write_memory(code, mode == raven::NativeMode::x64 ? x64 : x86);
 		process.protect_memory(code, 4096, PROT_READ | PROT_EXEC);
 		for (uint32_t iteration = 0; iteration < 8; ++iteration) {
+#ifdef __APPLE__
+			// /dev/fd only duplicates an open description on Darwin; it cannot reopen an unlinked memfd read-only.
+			char path[] = "/tmp/raven-shared-mapping-XXXXXX";
+			const int file = mkstemp(path);
+#else
 			const int file = memfd_create("native-shared-mapping", MFD_CLOEXEC);
+#endif
 			check(file >= 0 && ftruncate(file, 8192) == 0, "cannot create mapping fixture");
 			auto *host = static_cast<uint32_t *>(mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_SHARED, file, 0));
 			check(host != MAP_FAILED, "cannot map fixture in host");
@@ -49,8 +67,15 @@ static void mappings(const std::string &bootstrap, raven::NativeMode mode)
 			rejected([&] { process.map_descriptor(file, 4095); });
 			rejected([&] { process.map_descriptor(file, 4096, 1); });
 			rejected([&] { process.map_descriptor(file, 4096, UINT64_MAX); });
+#ifndef __APPLE__
 			const auto path = "/proc/self/fd/" + std::to_string(file);
+#endif
+#ifdef __APPLE__
+			const int readonly = open(path, O_RDONLY | O_CLOEXEC);
+			unlink(path);
+#else
 			const int readonly = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+#endif
 			check(readonly >= 0, "cannot open readonly fixture descriptor");
 			rejected([&] { process.map_descriptor(readonly, 4096); });
 			close(readonly);

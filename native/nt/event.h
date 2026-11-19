@@ -6,12 +6,16 @@
 
 namespace raven {
 
+class SharedFile;
+
 std::optional<uint32_t> event_access(uint32_t requested);
 
 class EventObject : public KernelObject {
 public:
 	EventObject(uint32_t type, bool signaled);
-	explicit EventObject(int descriptor);
+	enum class Layout { type, manual };
+	explicit EventObject(int descriptor, Layout layout = Layout::type);
+	explicit EventObject(std::shared_ptr<SharedFile> storage);
 	~EventObject() override;
 	int signaled(uint32_t thread) const override;
 	void consume(uint32_t thread) override;
@@ -48,6 +52,8 @@ private:
 	mutable int descriptor = -1;
 	mutable Shared *shared = nullptr;
 	mutable uint32_t waits_object = 0;
+	bool named_layout = false;
+	std::shared_ptr<SharedFile> storage;
 	bool is_set() const;
 	bool take(uint32_t thread);
 };

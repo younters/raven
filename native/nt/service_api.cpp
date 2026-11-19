@@ -62,7 +62,11 @@ bool alive(uint32_t pid)
 {
 	if (!pid)
 		return false;
+#ifdef __APPLE__
+	auto stat = raven_darwin::proc_stream("/proc/" + std::to_string(pid) + "/stat");
+#else
 	std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+#endif
 	std::string line;
 	if (!std::getline(stat, line))
 		return false;

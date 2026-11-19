@@ -310,6 +310,9 @@ bool pipe_exists(KernelContext &context, const std::u16string &name)
 	const auto address = pipe_address(name);
 	if (const auto found = context.pipes->listeners.find(address); found != context.pipes->listeners.end() && !found->second.expired())
 		return true;
+#ifdef __APPLE__
+	return raven_darwin_unix_name_bound(address.data(), address.size());
+#endif
 	sockaddr_un storage;
 	local_socket_address(address, storage);
 	return local_socket_bound(storage.sun_path);
@@ -519,6 +522,10 @@ void register_pipe_api(ApiRegistry &registry, KernelContext &context)
 {
 	auto &objects = context.objects;
 	const auto pipe_of = [&objects](uint64_t handle) { return objects.object_as<PipeObject>(handle); };
+	// Further instances of an inherited listening pipe use the listener the creator passed, too.
+	for (const auto handle : objects.values())
+		if (const auto pipe = pipe_of(handle); pipe && pipe->listener)
+			context.pipes->listeners[pipe->listener->address] = pipe->listener;
 
 	registry.add("CreateNamedPipeW", 8, [&context, &objects](ApiCall &call) {
 		const auto name = pipe_name_of(call.wide(call[0], 260));

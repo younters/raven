@@ -65,9 +65,27 @@ CRT double cbrt(double x)
 }
 
 CRT float cbrtf(float x) { return (float)cbrt(x); }
-CRT double asinh(double x) { return copysign(log(fabs(x) + sqrt(x * x + 1)), x); }
-CRT double acosh(double x) { return x < 1 ? 0.0 / 0.0 : log(x + sqrt(x * x - 1)); }
-CRT double atanh(double x) { return fabs(x) > 1 ? 0.0 / 0.0 : 0.5 * log1p(2 * x / (1 - x)); }
+CRT double acosh(double x)
+{
+	if (x > 1e154) return log(x) + 0.69314718055994530942;
+	return log1p(x - 1 + sqrt(x - 1) * sqrt(x + 1));
+}
+
+CRT double asinh(double x)
+{
+	const double magnitude = fabs(x);
+	if (magnitude < 1e-154) return x;
+	const double result = magnitude > 1e154 ? log(magnitude) + 0.69314718055994530942 :
+		log1p(magnitude + magnitude * magnitude / (1 + sqrt(1 + magnitude * magnitude)));
+	return copysign(result, x);
+}
+
+CRT double atanh(double x)
+{
+	const double magnitude = fabs(x);
+	if (magnitude < 1e-154) return x;
+	return copysign(0.5 * log1p(2 * magnitude / (1 - magnitude)), x);
+}
 
 /* The power of two of a value as frexp finds it, one less since frexp scales into [0.5, 1). */
 CRT int ilogb(double x)
@@ -108,6 +126,7 @@ CRT float remainderf(float x, float y)
 /* The logarithm of the gamma function: the Lanczos series for positive arguments and the reflection formula below one half. */
 CRT double lgamma(double x)
 {
+	if (x == 1 || x == 2) return 0;
 	static const double coefficients[] = {0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313,
 		-176.61502916214059, 12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7};
 	const double pi = 3.14159265358979323846;
@@ -119,14 +138,16 @@ CRT double lgamma(double x)
 		const double sine = sin(pi * x);
 		if (sine == 0)
 			return 1.0 / 0.0;
-		return log(pi / fabs(sine)) - lgamma(1 - x);
+		volatile double result = log(pi / fabs(sine)) - lgamma(1 - x);
+		return result;
 	}
 	x -= 1;
 	double sum = coefficients[0];
 	for (int at = 1; at < 9; ++at)
 		sum += coefficients[at] / (x + at);
 	const double t = x + 7.5;
-	return 0.91893853320467274178 + (x + 0.5) * log(t) - t + log(sum);
+	volatile double result = 0.91893853320467274178 + (x + 0.5) * log(t) - t + log(sum);
+	return result;
 }
 
 /* The rounding mode lives in both units: bits 13-14 of MXCSR and bits 10-11 of the x87 control word share one encoding, which the C
@@ -218,7 +239,6 @@ CRT int _itoa_s(int value, char *buffer, size_t size, int radix)
 	return integer_to_narrow(negative ? 0ULL - (unsigned long long)(long long)value : (unsigned)value, negative, buffer, size, radix);
 }
 
-CRT int _ltoa_s(long value, char *buffer, size_t size, int radix) { return _itoa_s(value, buffer, size, radix); }
 CRT int _ultoa_s(unsigned long value, char *buffer, size_t size, int radix) { return integer_to_narrow(value, 0, buffer, size, radix); }
 CRT char *_ltoa(long value, char *to, int radix) { return _itoa(value, to, radix); }
 
@@ -239,6 +259,242 @@ CRT wchar_t *_ltow(long value, wchar_t *to, int radix)
 CRT double _atof_l(const char *text, _locale_t locale) { return text ? raven_strtod(text, NULL) : 0.0; }
 CRT double _wtof_l(const wchar_t *text, _locale_t locale) { return text ? raven_wcstod(text, NULL) : 0.0; }
 CRT double _strtod_l(const char *text, char **end, _locale_t locale) { return raven_strtod(text, end); }
+
+/* The other locale forms of the number parsers and the character-width query, which libc++ builds (Strata Source's libcpp.dll) import.
+   The runtime has one locale, so each answers as its plain form does. */
+CRT long long _strtoi64_l(const char *text, char **end, int base, _locale_t locale) { (void)locale; return strtoll(text, end, base); }
+CRT unsigned long long _strtoui64_l(const char *text, char **end, int base, _locale_t locale) { (void)locale; return strtoull(text, end, base); }
+/* A long double is a double in the Windows ABI, as for strtold above. */
+__asm__(".section .drectve\n\t.ascii \" -export:_strtold_l=raven_strtold_l\"\n\t.text");
+double raven_strtold_l(const char *text, char **end, _locale_t locale) { (void)locale; return raven_strtod(text, end); }
+
+/* The handler set_terminate installed, or none. */
+CRT terminate_handler _get_terminate(void) { return current_terminate_handler; }
+
+/* wctob: the single byte of the ANSI code page a wide character is, or EOF when it takes more or none. */
+CRT int wctob(wint_t character)
+{
+	if (character < 0x80)
+		return (int)character;
+	const wchar_t wide = (wchar_t)character;
+	char byte = 0;
+	BOOL substituted = FALSE;
+	if (WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, &wide, 1, &byte, 1, NULL, &substituted) != 1 || substituted)
+		return -1;
+	return (unsigned char)byte;
+}
+
+/* ---- what GLib's Windows port imports (Strata Source's Panorama text renderer links it) ---- */
+
+/* A handler for invalid parameters on this thread alone, which _invalid_parameter_noinfo prefers to the process's. */
+CRT RavenInvalidParameterHandler _get_thread_local_invalid_parameter_handler(void)
+{
+	return invalid_parameter_slot == TLS_OUT_OF_INDEXES ? NULL : (RavenInvalidParameterHandler)TlsGetValue(invalid_parameter_slot);
+}
+
+/* _wcreat: a file created, or emptied, and opened for reading and writing, as _creat is. */
+CRT int _wcreat(const wchar_t *path, int mode) { (void)mode; return _wopen(path, 0x2 | 0x100 | 0x200); }
+
+/* struct _wfinddata64i32_t: the times are 64-bit, the size 32-bit. */
+typedef struct {
+	unsigned attributes;
+	long long created, accessed, written;
+	unsigned long size;
+	wchar_t name[260];
+} RavenFindWide64i32;
+
+static void fill_found64i32(RavenFindWide64i32 *out, const WIN32_FIND_DATAW *data)
+{
+	out->attributes = data->dwFileAttributes;
+	out->created = file_time_to_unix(data->ftCreationTime);
+	out->accessed = file_time_to_unix(data->ftLastAccessTime);
+	out->written = file_time_to_unix(data->ftLastWriteTime);
+	out->size = data->nFileSizeLow;
+	memcpy(out->name, data->cFileName, sizeof out->name);
+}
+
+CRT intptr_t _wfindfirst64i32(const wchar_t *pattern, RavenFindWide64i32 *out)
+{
+	WIN32_FIND_DATAW data;
+	HANDLE search = FindFirstFileW(pattern, &data);
+	if (search == INVALID_HANDLE_VALUE) {
+		windows_failure();
+		return -1;
+	}
+	fill_found64i32(out, &data);
+	return (intptr_t)search;
+}
+
+CRT int _wfindnext64i32(intptr_t search, RavenFindWide64i32 *out)
+{
+	WIN32_FIND_DATAW data;
+	if (!FindNextFileW((HANDLE)search, &data)) {
+		set_errno(2);
+		return -1;
+	}
+	fill_found64i32(out, &data);
+	return 0;
+}
+
+/* _wspawnv and its forms: a program started with an argument vector, quoted into one command line as the C runtime parses it back.
+   _P_WAIT (0) returns its exit code, _P_NOWAIT and _P_NOWAITO (1, 3) its process handle, _P_OVERLAY (2) ends this process with it, and
+   _P_DETACH (4) starts it on its own. The p forms search for the program as CreateProcess does; e forms give it an environment. */
+static void quote_argument(wchar_t **at, wchar_t *end, const wchar_t *argument)
+{
+	const int plain = *argument && !wcspbrk(argument, L" \t\n\v\"");
+	if (plain) {
+		while (*argument && *at < end)
+			*(*at)++ = *argument++;
+		return;
+	}
+	if (*at < end)
+		*(*at)++ = L'"';
+	for (;; ++argument) {
+		size_t slashes = 0;
+		while (*argument == L'\\')
+			++argument, ++slashes;
+		/* Backslashes double before a quote or the closing quote, and stay as they are elsewhere. */
+		const size_t count = !*argument ? slashes * 2 : *argument == L'"' ? slashes * 2 + 1 : slashes;
+		for (size_t index = 0; index < count && *at < end; ++index)
+			*(*at)++ = L'\\';
+		if (!*argument)
+			break;
+		if (*at < end)
+			*(*at)++ = *argument;
+	}
+	if (*at < end)
+		*(*at)++ = L'"';
+}
+
+static intptr_t spawn_wide(int mode, const wchar_t *program, const wchar_t *const *arguments, const wchar_t *const *environment,
+	int search)
+{
+	if (!program || !arguments || mode < 0 || mode > 4) {
+		set_errno(22);
+		return -1;
+	}
+	wchar_t *line = (wchar_t *)HeapAlloc(GetProcessHeap(), 0, 32768 * sizeof(wchar_t)), *at = line, *const end = line + 32767;
+	if (!line) {
+		set_errno(12);
+		return -1;
+	}
+	for (const wchar_t *const *argument = arguments; *argument; ++argument) {
+		if (argument != arguments && at < end)
+			*at++ = L' ';
+		quote_argument(&at, end, *argument);
+	}
+	*at = 0;
+	/* An environment is a block of NAME=value strings, each ended by a zero, the block by one more. */
+	wchar_t *block = NULL;
+	if (environment) {
+		size_t length = 1;
+		for (const wchar_t *const *entry = environment; *entry; ++entry)
+			length += wcslen(*entry) + 1;
+		block = (wchar_t *)HeapAlloc(GetProcessHeap(), 0, length * sizeof(wchar_t));
+		if (block) {
+			wchar_t *put = block;
+			for (const wchar_t *const *entry = environment; *entry; ++entry) {
+				const size_t size = wcslen(*entry) + 1;
+				memcpy(put, *entry, size * sizeof(wchar_t));
+				put += size;
+			}
+			*put = 0;
+		}
+	}
+	STARTUPINFOW startup = {sizeof startup};
+	PROCESS_INFORMATION process = {0};
+	const BOOL started = CreateProcessW(search ? NULL : program, line, NULL, NULL, TRUE,
+		CREATE_UNICODE_ENVIRONMENT | (mode == 4 ? DETACHED_PROCESS : 0), block, NULL, &startup, &process);
+	HeapFree(GetProcessHeap(), 0, line);
+	if (block)
+		HeapFree(GetProcessHeap(), 0, block);
+	if (!started) {
+		windows_failure();
+		return -1;
+	}
+	CloseHandle(process.hThread);
+	if (mode == 1 || mode == 3)
+		return (intptr_t)process.hProcess;
+	if (mode == 4) {
+		CloseHandle(process.hProcess);
+		return 0;
+	}
+	DWORD code = 0;
+	WaitForSingleObject(process.hProcess, INFINITE);
+	GetExitCodeProcess(process.hProcess, &code);
+	CloseHandle(process.hProcess);
+	if (mode == 2)
+		ExitProcess(code);
+	return (intptr_t)code;
+}
+
+CRT intptr_t _wspawnv(int mode, const wchar_t *program, const wchar_t *const *arguments)
+{
+	return spawn_wide(mode, program, arguments, NULL, 0);
+}
+CRT intptr_t _wspawnve(int mode, const wchar_t *program, const wchar_t *const *arguments, const wchar_t *const *environment)
+{
+	return spawn_wide(mode, program, arguments, environment, 0);
+}
+CRT intptr_t _wspawnvp(int mode, const wchar_t *program, const wchar_t *const *arguments)
+{
+	return spawn_wide(mode, program, arguments, NULL, 1);
+}
+CRT intptr_t _wspawnvpe(int mode, const wchar_t *program, const wchar_t *const *arguments, const wchar_t *const *environment)
+{
+	return spawn_wide(mode, program, arguments, environment, 1);
+}
+
+/* _wpopen: the wide form of _popen, which runs the command through the command interpreter with one end of a pipe as its standard
+ * input or output; _pclose closes either. */
+CRT void *_popen(const char *command, const char *mode);
+
+CRT void *_wpopen(const wchar_t *command, const wchar_t *mode)
+{
+	if (!command || !mode) {
+		set_errno(22);
+		return NULL;
+	}
+	char narrow_mode[8];
+	const int length = WideCharToMultiByte(CP_ACP, 0, command, -1, NULL, 0, NULL, NULL);
+	if (!length || !WideCharToMultiByte(CP_ACP, 0, mode, -1, narrow_mode, sizeof narrow_mode, NULL, NULL)) {
+		set_errno(22);
+		return NULL;
+	}
+	char *narrow = HeapAlloc(GetProcessHeap(), 0, length);
+	if (!narrow) {
+		set_errno(12);
+		return NULL;
+	}
+	WideCharToMultiByte(CP_ACP, 0, command, -1, narrow, length, NULL, NULL);
+	void *stream = _popen(narrow, narrow_mode);
+	HeapFree(GetProcessHeap(), 0, narrow);
+	return stream;
+}
+
+/* Bit rotations, whose count is taken modulo the width. */
+#undef _rotl
+#undef _rotr
+#undef _lrotl
+#undef _lrotr
+#undef _rotl64
+#undef _rotr64
+CRT unsigned _rotl(unsigned value, int shift) { shift &= 31; return shift ? value << shift | value >> (32 - shift) : value; }
+CRT unsigned _rotr(unsigned value, int shift) { shift &= 31; return shift ? value >> shift | value << (32 - shift) : value; }
+CRT unsigned long _lrotl(unsigned long value, int shift) { return _rotl(value, shift); }
+CRT unsigned long _lrotr(unsigned long value, int shift) { return _rotr(value, shift); }
+CRT unsigned long long _rotl64(unsigned long long value, int shift) { shift &= 63; return shift ? value << shift | value >> (64 - shift) : value; }
+CRT unsigned long long _rotr64(unsigned long long value, int shift) { shift &= 63; return shift ? value >> shift | value << (64 - shift) : value; }
+
+/* The daylight saving bias in seconds, as the Universal CRT publishes it beside the time zone: its address, read after _tzset. */
+static long daylight_bias = -3600;
+CRT long *__dstbias(void)
+{
+	TIME_ZONE_INFORMATION zone;
+	if (GetTimeZoneInformation(&zone) != TIME_ZONE_ID_INVALID)
+		daylight_bias = zone.DaylightBias * 60;
+	return &daylight_bias;
+}
 
 /* The significant decimal digits of a positive finite value, rounded to nearest at `count` and padded with zeros, and the power of ten of
    the first. */
@@ -471,7 +727,7 @@ CRT wchar_t *_wcsrev(wchar_t *text)
 }
 
 CRT int _wcsicoll(const wchar_t *a, const wchar_t *b) { return _wcsicmp(a, b); }
-CRT int _isctype_l(int c, int mask, _locale_t locale) { return c >= -1 && c < 256 ? __pctype_func()[c + 1] & mask : 0; }
+CRT int _isctype_l(int c, int mask, _locale_t locale) { return c >= -1 && c < 256 ? __pctype_func()[c] & mask : 0; }
 #undef _iswdigit_l
 #undef _iswlower_l
 #undef _iswupper_l
@@ -896,11 +1152,6 @@ CRT size_t fread_s(void *buffer, size_t size, size_t element, size_t count, void
 	return fread(buffer, element, count, stream);
 }
 
-CRT int __stdio_common_vfprintf_s(unsigned long long options, void *stream, const char *text, void *locale, va_list arguments)
-{
-	return __stdio_common_vfprintf(options, stream, text, locale, arguments);
-}
-
 /* ---- time ---- */
 CRT long _time32(long *out)
 {
@@ -971,7 +1222,7 @@ CRT void *_aligned_realloc(void *block, size_t size, size_t alignment)
 		_aligned_free(block);
 		return NULL;
 	}
-	char *raw = ((char **)block)[-1];
+	char *raw = ((char **)((uintptr_t)block & ~(uintptr_t)(sizeof(void *) - 1)))[-1];
 	const size_t old = HeapSize(GetProcessHeap(), 0, raw) - (size_t)((char *)block - raw);
 	void *moved = _aligned_malloc(size, alignment);
 	if (!moved)
@@ -1037,17 +1288,7 @@ CRT void _wassert(const wchar_t *expression, const wchar_t *file, unsigned line)
 	ExitProcess(3);
 }
 
-typedef void (__cdecl *invalid_parameter_handler)(const wchar_t *, const wchar_t *, const wchar_t *, unsigned, uintptr_t);
-static invalid_parameter_handler current_invalid_parameter_handler;
-
-CRT invalid_parameter_handler _set_invalid_parameter_handler(invalid_parameter_handler handler)
-{
-	const invalid_parameter_handler previous = current_invalid_parameter_handler;
-	current_invalid_parameter_handler = handler;
-	return previous;
-}
-
-CRT invalid_parameter_handler _get_invalid_parameter_handler(void) { return current_invalid_parameter_handler; }
+CRT RavenInvalidParameterHandler _get_invalid_parameter_handler(void) { return process_parameter_handler; }
 
 CRT int _get_pgmptr(char **out)
 {
@@ -1365,6 +1606,16 @@ __asm__(".section .drectve\n\t.ascii \""
 	SAME(iswprint) SAME(iswspace) SAME(iswxdigit) SAME(localeconv) SAME(malloc) SAME(qsort) SAME(realloc) SAME(setlocale) SAME(strcat_s)
 	SAME(strcpy_s) SAME(strncat_s) SAME(strncpy_s) SAME(terminate) SAME(tolower) SAME(towlower) SAME(wcscat_s) SAME(wcscpy_s)
 	SAME(wcsncat_s) SAME(wcsncpy_s) SAME(wcstoul) SAME(wmemcpy_s)
-	SAME(__stdio_common_vsprintf) SAME(_fpclass) SAME(_get_osfhandle) SAME(isalnum) SAME(isalpha) SAME(isdigit) SAME(isprint) SAME(toupper)
+	SAME(__stdio_common_vsprintf) SAME(__stdio_common_vswprintf) SAME(_atoi64) SAME(_chsize_s) SAME(_fpclass)
+	SAME(_get_osfhandle) SAME(_mbstrlen) SAME(_strdup) SAME(_strtoui64) SAME(_write) SAME(_wsopen_s)
+	SAME(acos) SAME(asin) SAME(atan) SAME(atan2) SAME(atof) SAME(ceil)
+	SAME(cos) SAME(cosh) SAME(exp) SAME(floor) SAME(fmod) SAME(getenv)
+	SAME(isalnum) SAME(isalpha) SAME(isdigit) SAME(isxdigit) SAME(log) SAME(modf)
+	SAME(pow) SAME(sin) SAME(sinh) SAME(sqrt) " -export:_o_strtod=raven_strtod -export:_o___std_type_info_destroy_list=raven_std_type_info_destroy_list" SAME(strtoul)
+	SAME(tan) SAME(tanh) SAME(toupper) SAME(isprint)
 	"\"\n\t.text");
 #undef SAME
+
+CRT int __isascii(int character) { return (unsigned)character < 0x80; }
+
+/* The fixed English form of a broken-down time, "Wed Jan 02 02:03:55 1980\n", in one buffer for each call to overwrite. */

@@ -7,6 +7,8 @@
 #include "system_exports.h"
 
 #include <algorithm>
+#include <functional>
+#include <set>
 #include <utility>
 #include <filesystem>
 #include <fstream>
@@ -52,9 +54,27 @@ NativeX86Loader::NativeX86Loader(NativeProcess &process, NativeEnvironment &envi
 
 std::optional<std::vector<uint8_t>> NativeX86Loader::read_library(const std::string &name, std::string &identity, std::filesystem::path &file) const
 {
+	// A replaceable runtime component may also be supplied by the application (for example d3dcompiler_47.dll).
+	if (program_may_replace(name) && std::find(std::begin(runtime_components), std::end(runtime_components), name) != std::end(runtime_components)) {
+		const auto local = paths.find_library(application_directory + u"\\program.exe", from_utf8(name), false, library_flags);
+		if (local && std::filesystem::is_regular_file(local->host)) {
+			identity = lowered(local->host.filename().string());
+			file = local->host;
+			return read_all(file);
+		}
+	}
 	// The runtime's own components come from beside it, in their 32-bit builds.
 	if (std::find(std::begin(runtime_components), std::end(runtime_components), name) != std::end(runtime_components)) {
 		const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "x86" / name;
+		if (std::filesystem::exists(component)) {
+			identity = name;
+			return read_all(component);
+		}
+	}
+	// The graphics and animation components have Windows library names, just as their 64-bit builds do.
+	if (name == "dwrite.dll" || name == "d2d1.dll" || name == "uianimation.dll") {
+		const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "x86" /
+			(name == "dwrite.dll" ? "raven-dwrite.dll" : name == "d2d1.dll" ? "raven-d2d1.dll" : "raven-uianimation.dll");
 		if (std::filesystem::exists(component)) {
 			identity = name;
 			return read_all(component);
@@ -67,6 +87,17 @@ std::optional<std::vector<uint8_t>> NativeX86Loader::read_library(const std::str
 			return std::nullopt;
 		identity = name;
 		return read_all(component);
+	}
+	// A dependency of a library loaded by its path with LOAD_WITH_ALTERED_SEARCH_PATH is looked for in that library's folder first
+	// (Steam's steamclient.dll and its tier0_s.dll, loaded from the Steam folder by a game in another one).
+	if (!load_directory.empty() && name.find_first_of("/\\:") == std::string::npos) {
+		std::error_code error;
+		for (const auto &entry : std::filesystem::directory_iterator(load_directory, error))
+			if (lowered(entry.path().filename().string()) == name && entry.is_regular_file(error)) {
+				identity = name;
+				file = entry.path();
+				return read_all(entry.path());
+			}
 	}
 	// A name alone that an assembly of the context in effect declares comes from that assembly's folder, as Windows redirects it.
 	if (name.find_first_of("/\\:") == std::string::npos)
@@ -185,6 +216,8 @@ PEModule *NativeX86Loader::bring(const std::string &requested)
 	auto &added = modules.add(identity, std::move(*bytes), [&](uint64_t base, uint64_t size) { return process.memory_available(base, size); });
 	added.file = file;
 	staged.push_back(&added);
+	if (staged.size() == 1 && (library_flags & 0x108) && name.find_first_of("/\\:") != std::string::npos && !file.empty())
+		load_directory = file.parent_path();
 	if (mapping_only && staged.size() == 1) {
 		added.imports.clear();
 		return &added;
@@ -300,6 +333,8 @@ uint64_t NativeX86Loader::load(std::string name, bool only_map, uint32_t search_
 			return found->second.module->loaded.base();
 		}
 	staged.clear();
+	load_directory.clear();
+	struct ClearDirectory { std::filesystem::path &value; ~ClearDirectory() { value.clear(); } } clear_directory{load_directory};
 	entry_contexts.clear();
 	importer_context = 0;
 	mapping_only = only_map;
@@ -335,6 +370,9 @@ uint64_t NativeX86Loader::load(std::string name, bool only_map, uint32_t search_
 		for (const auto *image : initialization_order(modules, *root))
 			if (const auto found = std::find(loading.begin(), loading.end(), image); found != loading.end())
 				order.push_back(*found);
+		attaching.insert(order.begin(), order.end());
+		struct ClearAttaching { std::set<const PEModule *> &set; const std::vector<PEModule *> &images; ~ClearAttaching() { for (auto *image : images) set.erase(image); } }
+			clear_attaching{attaching, order};
 		std::vector<PEModule *> attached;
 		for (auto item = order.begin(); item != order.end(); ++item) {
 			if (tls && !(only_map && *item == root))
@@ -359,6 +397,7 @@ uint64_t NativeX86Loader::load(std::string name, bool only_map, uint32_t search_
 			const auto result = call((*item)->loaded.base() + (*item)->image.entry, arguments);
 			if (cookie)
 				contexts.deactivate(thread, cookie);
+
 			if (result.stop != NativeStop::returned)
 				throw result;
 			if (!uint32_t(result.value)) {
@@ -384,6 +423,7 @@ uint64_t NativeX86Loader::load(std::string name, bool only_map, uint32_t search_
 				return 0;
 			}
 			attached.push_back(*item);
+			attaching.erase(*item);
 			if (started_hook)
 				started_hook(**item, true);
 		}

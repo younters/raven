@@ -10,6 +10,9 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <raven_darwin_system.h>
+#endif
 
 namespace raven {
 
@@ -28,7 +31,11 @@ std::vector<HostInterface> host_interfaces()
 		interface.index = ::if_nametoindex(entry->ifa_name);
 		interface.status = (entry->ifa_flags & IFF_UP) && (entry->ifa_flags & IFF_RUNNING) ? 1 : 2;
 		interface.type = (entry->ifa_flags & IFF_LOOPBACK) ? if_type_loopback :
+#ifdef __APPLE__
+			raven_darwin::wireless_interface(entry->ifa_name) ? if_type_wireless : if_type_ethernet;
+#else
 			::access(("/sys/class/net/" + interface.name + "/wireless").c_str(), F_OK) == 0 ? if_type_wireless : if_type_ethernet;
+#endif
 		if (const int probe = ::socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0); probe >= 0) {
 			ifreq request{};
 			std::strncpy(request.ifr_name, entry->ifa_name, IFNAMSIZ - 1);

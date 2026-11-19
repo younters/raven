@@ -1,4 +1,7 @@
 #include "system_exports.h"
+#ifdef __APPLE__
+#include "platform/darwin/app_libraries.h"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -54,6 +57,33 @@ constexpr std::array<std::pair<std::string_view, uint16_t>, 9> uxtheme_ordinals{
 	{"IsDarkModeAllowedForWindow", 137}, {"RefreshImmersiveColorPolicyState", 104}, {"SetPreferredAppMode", 135}, {"ShouldAppsUseDarkMode", 132},
 	{"ShouldSystemUseDarkMode", 138},
 }};
+// XInput, the game controller library. No import library describes it, so its names and Windows numbers are listed here; programs import
+// xinput1_3 and xinput1_4 by number (2 XInputGetState, 3 XInputSetState, 4 XInputGetCapabilities) as often as by name.
+constexpr std::string_view xinput_exports[]{"XInputCancelGuideButtonWait", "XInputEnable", "XInputGetAudioDeviceIds", "XInputGetBaseBusInformation",
+	"XInputGetBatteryInformation", "XInputGetCapabilities", "XInputGetCapabilitiesEx", "XInputGetDSoundAudioDeviceGuids", "XInputGetKeystroke",
+	"XInputGetState", "XInputGetStateEx", "XInputPowerOffController", "XInputSetState", "XInputWaitForGuideButton"};
+constexpr std::array<std::pair<std::string_view, uint16_t>, 13> xinput1_4_ordinals{{
+	{"XInputCancelGuideButtonWait", 102}, {"XInputEnable", 5}, {"XInputGetAudioDeviceIds", 10}, {"XInputGetBaseBusInformation", 104},
+	{"XInputGetBatteryInformation", 7}, {"XInputGetCapabilities", 4}, {"XInputGetCapabilitiesEx", 108}, {"XInputGetKeystroke", 8},
+	{"XInputGetState", 2}, {"XInputGetStateEx", 100}, {"XInputPowerOffController", 103}, {"XInputSetState", 3}, {"XInputWaitForGuideButton", 101},
+}};
+constexpr std::array<std::pair<std::string_view, uint16_t>, 11> xinput1_3_ordinals{{
+	{"XInputCancelGuideButtonWait", 102}, {"XInputEnable", 5}, {"XInputGetBatteryInformation", 7}, {"XInputGetCapabilities", 4},
+	{"XInputGetDSoundAudioDeviceGuids", 6}, {"XInputGetKeystroke", 8}, {"XInputGetState", 2}, {"XInputGetStateEx", 100},
+	{"XInputPowerOffController", 103}, {"XInputSetState", 3}, {"XInputWaitForGuideButton", 101},
+}};
+constexpr std::string_view xinput_libraries[]{"xinput1_3.dll", "xinput1_4.dll", "xinput9_1_0.dll"};
+// The stdcall argument words of the XInput functions, for 32-bit programs.
+constexpr std::array<std::pair<std::string_view, uint32_t>, 14> xinput_words{{
+	{"XInputCancelGuideButtonWait", 1}, {"XInputEnable", 1}, {"XInputGetAudioDeviceIds", 5}, {"XInputGetBaseBusInformation", 2},
+	{"XInputGetBatteryInformation", 3}, {"XInputGetCapabilities", 3}, {"XInputGetCapabilitiesEx", 4}, {"XInputGetDSoundAudioDeviceGuids", 3},
+	{"XInputGetKeystroke", 3}, {"XInputGetState", 2}, {"XInputGetStateEx", 2}, {"XInputPowerOffController", 1}, {"XInputSetState", 2},
+	{"XInputWaitForGuideButton", 3},
+}};
+bool is_xinput(std::string_view dll)
+{
+	return std::find(std::begin(xinput_libraries), std::end(xinput_libraries), dll) != std::end(xinput_libraries);
+}
 
 }
 
@@ -62,6 +92,8 @@ std::span<const std::string_view> system_export_names(std::string_view dll)
 	for (const auto &[name, exports] : libraries)
 		if (name == dll)
 			return exports;
+	if (is_xinput(dll))
+		return xinput_exports;
 	return {};
 }
 
@@ -102,6 +134,10 @@ std::span<const std::pair<std::string_view, uint16_t>> system_export_ordinals(st
 		return uxtheme_ordinals;
 	if (dll == "wldap32.dll")
 		return wldap32_spec_ordinals;
+	if (dll == "xinput1_4.dll")
+		return xinput1_4_ordinals;
+	if (dll == "xinput1_3.dll")
+		return xinput1_3_ordinals;
 	if (dll == "activeds.dll")
 		return activeds_spec_ordinals;
 	if (dll == "winspool.drv")
@@ -111,6 +147,12 @@ std::span<const std::pair<std::string_view, uint16_t>> system_export_ordinals(st
 
 uint32_t system_export_words(std::string_view dll, std::string_view name)
 {
+	if (is_xinput(dll)) {
+		for (const auto &[exported, words] : xinput_words)
+			if (exported == name)
+				return words;
+		return std::numeric_limits<uint32_t>::max();
+	}
 	for (const auto &[library, table] : argument_tables) {
 		if (library != dll)
 			continue;
@@ -125,8 +167,12 @@ uint32_t system_export_words(std::string_view dll, std::string_view name)
 std::span<const std::string_view> system_library_names()
 {
 	static const auto names = [] {
-		std::array<std::string_view, std::size(libraries)> list{};
-		std::transform(std::begin(libraries), std::end(libraries), list.begin(), [](const auto &item) { return item.first; });
+		std::vector<std::string_view> list;
+		for (const auto &item : libraries) list.push_back(item.first);
+		for (const auto library : xinput_libraries) list.push_back(library);
+#ifdef __APPLE__
+		list.push_back("xaudio2_9.dll");
+#endif
 		return list;
 	}();
 	return names;
@@ -134,6 +180,10 @@ std::span<const std::string_view> system_library_names()
 
 bool program_may_replace(std::string_view dll)
 {
+#ifdef __APPLE__
+	if (darwin::program_may_replace(dll))
+		return true;
+#endif
 	static const bool prefer_local = [] {
 		const char *value = std::getenv("RAVEN_PREFER_LOCAL_DLLS");
 		return value && std::string_view(value) == "1";

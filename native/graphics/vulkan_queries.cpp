@@ -131,6 +131,11 @@ bool VulkanBridge::dispatch_queries(std::string_view name)
 		properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2;
 		properties.pNext = link_chain(chain);
 		vkGetPhysicalDeviceProperties2(handle, &properties);
+#ifdef __APPLE__
+		// MoltenVK reports 2^30, which overflows 32 bits once a program multiplies it by a work group size. See vkGetPhysicalDeviceProperties.
+		for (auto &count : properties.properties.limits.maxComputeWorkGroupCount)
+			count = std::min(count, 65535U);
+#endif
 		process.write_memory(a[1] + offsetof(VkPhysicalDeviceProperties2, properties),
 			std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&properties.properties), sizeof(properties.properties)));
 		copy_back_chain(chain);

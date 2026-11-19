@@ -1,5 +1,8 @@
 #include "windows.h"
 #include "nt/text.h"
+#ifdef __APPLE__
+#include <AudioToolbox/AudioServices.h>
+#endif
 
 #include <algorithm>
 #include <cstdio>
@@ -57,6 +60,9 @@ void NativeWindows::register_api(ApiRegistry &registry)
 	register_long_api(registry);
 	register_ansi_api(registry);
 	register_theme_api(registry);
+#ifdef __APPLE__
+	register_dpi_api(registry);
+#endif
 
 	// Rectangle helpers are pure arithmetic on guest RECTs.
 	registry.add("InflateRect", 3, [](ApiCall &call) {
@@ -150,13 +156,25 @@ void NativeWindows::register_api(ApiRegistry &registry)
 	registry.add("IsCharAlphaNumericW", 1, [](ApiCall &call) { call.ret(std::iswalnum(wint_t(call.u32(0) & 0xffff)) != 0); });
 	registry.add("IsCharLowerW", 1, [](ApiCall &call) { call.ret(std::iswlower(wint_t(call.u32(0) & 0xffff)) != 0); });
 	registry.add("IsCharUpperW", 1, [](ApiCall &call) { call.ret(std::iswupper(wint_t(call.u32(0) & 0xffff)) != 0); });
-	registry.add("MessageBeep", 1, [](ApiCall &call) { call.ret(1); });
+	registry.add("MessageBeep", 1, [](ApiCall &call) {
+#ifdef __APPLE__
+		AudioServicesPlayAlertSound(kSystemSoundID_UserPreferredAlert);
+#endif
+		call.ret(1);
+	});
 	registry.add("LockWindowUpdate", 1, [](ApiCall &call) { call.ret(1); });
 	registry.add("NotifyWinEvent", 4, [](ApiCall &) {});
 	registry.add("FlashWindowEx", 1, [](ApiCall &call) { call.ret(0); });
 	registry.add("GetDoubleClickTime", 0, [](ApiCall &call) { call.ret(500); });
 	registry.add("GetCaretBlinkTime", 0, [](ApiCall &call) { call.ret(530); });
 	registry.add("GetKeyboardLayout", 1, [](ApiCall &call) { call.ret(0x04090409); });
+	// The one layout is always loaded and active: loading any KLID hands out its HKL, activating returns the previous (same) one, and
+	// unloading it is accepted. Source games load the US layout at startup to map keys.
+	registry.add("LoadKeyboardLayoutA", 2, [](ApiCall &call) { call.ret(0x04090409); });
+	registry.add("LoadKeyboardLayoutW", 2, [](ApiCall &call) { call.ret(0x04090409); });
+	registry.add("LoadKeyboardLayoutEx", 3, [](ApiCall &call) { call.ret(0x04090409); });
+	registry.add("ActivateKeyboardLayout", 2, [](ApiCall &call) { call.ret(0x04090409); });
+	registry.add("UnloadKeyboardLayout", 1, [](ApiCall &call) { call.ret(1); });
 	// The extra information of a thread's last message: what the thread itself set, since no input source attaches any.
 	registry.add("GetMessageExtraInfo", 0, [](ApiCall &call) { call.ret(message_extra_info()); });
 	registry.add("SetMessageExtraInfo", 1, [](ApiCall &call) {
@@ -203,15 +221,13 @@ void NativeWindows::register_api(ApiRegistry &registry)
 		}
 		call.ret(std::max<size_t>(1, objects.count()));
 	});
-	// CURSORINFO: always showing, and the shape is not told apart here.
 	registry.add("GetCursorInfo", 1, [this](ApiCall &call) {
-		const size_t width = call.pointer_width();
-		if (!call[0] || call.load<uint32_t>(call[0]) != (width == 4 ? 20 : 24)) {
-			call.fail(87, 0);
-			return;
-		}
-		call.store<uint32_t>(call[0] + 4, 1);
-		call.store_pointer(call[0] + 8, 0);
+		const size_t width = call.pointer_width(), size = width == 4 ? 20 : 24;
+		if (!call[0]) { call.fail(87); return; }
+		call.process.validate_write_memory(call[0], size);
+		if (call.load<uint32_t>(call[0]) != size) { call.fail(87); return; }
+		call.store<uint32_t>(call[0] + 4, cursor_count >= 0 && current_cursor ? 1 : 0);
+		call.store_pointer(call[0] + 8, current_cursor);
 		call.store<int32_t>(call[0] + 8 + width, cursor_x);
 		call.store<int32_t>(call[0] + 12 + width, cursor_y);
 		call.ret(1);
@@ -353,7 +369,10 @@ void NativeWindows::register_api(ApiRegistry &registry)
 				for (const auto &event : presentation.poll(std::chrono::milliseconds(0))) pending_events.push_back(event);
 			for (auto remaining=pending_events.size();remaining;--remaining) {
 				const auto event=pending_events.front(); pending_events.pop_front();
-				if (event.window && (!std::as_const(objects).window(event.window) || !std::as_const(objects).window(event.window)->visible)) continue;
+				if (event.window && (!std::as_const(objects).window(event.window) || !std::as_const(objects).window(event.window)->visible)) {
+					complete_resize(event);
+					continue;
+				}
 				const auto thread=owner(event.window ? event.window : focus);
 				if (thread && thread!=me) pending_events.push_back(event);
 				else receive(event);
@@ -399,14 +418,18 @@ void NativeWindows::register_api(ApiRegistry &registry)
 		show_cursor();
 		call.ret(uint32_t(cursor_count));
 	});
+	registry.add("GetCursor", 0, [this](ApiCall &call) { call.ret(current_cursor); });
 	registry.add("SetCursor", 1, [this](ApiCall &call) {
 		const auto previous = current_cursor;
-		current_cursor = call[0];
-		update_warp_lock(false);
-		show_cursor();
+		set_cursor(call[0]);
 		call.ret(previous);
 	});
-	registry.add("DestroyCursor", 1, [](ApiCall &call) { call.ret(1); });
+	registry.add("DestroyCursor", 1, [this](ApiCall &call) {
+		if (call[0]>=desktop_stock_cursor && call[0]<desktop_stock_cursor+desktop_stock_cursor_count) { call.ret(1); return; }
+		const auto *image=std::as_const(objects).icon(call[0]);
+		if (!image || !image->cursor) { call.fail(1402); return; }
+		call.ret(image->shared || objects.erase(call[0]));
+	});
 	// Message boxes need the dialog manager; until it exists the text is reported and the first button is chosen.
 	const auto message_box = [](ApiCall &call, bool wide) {
 		const auto text = wide ? call.wide(call[1], 8192) : from_utf8(call.narrow(call[1], 8192));

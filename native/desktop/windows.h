@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef __APPLE__
+#include "platform/darwin/dcomp/commit.h"
+#endif
+
 #include "objects.h"
 #include "foreign_surface.h"
 #include "presentation.h"
@@ -32,6 +36,10 @@ public:
 	// surface nothing shows would block the program's buffer swaps.
 	std::optional<HostSurface> host_surface(uint64_t window,bool hidden=false);
 	void release_host_surface(uint64_t window);
+#ifdef __APPLE__
+	std::optional<darwin::CompositionBinding> composition_binding(uint64_t window) const;
+	bool commit_composition(ApiCall &call);
+#endif
 	void *host_display() const { return presentation.host_display ? presentation.host_display() : nullptr; }
 	HostPlatform host_platform() const { return presentation.platform; }
 	void set_surface_cleanup(std::function<void(uint64_t)> cleanup) { surface_cleanup = std::move(cleanup); }
@@ -40,6 +48,10 @@ public:
 	// Whether the window's top-level window is visible, so the host shows what is drawn in it.
 	bool shown(uint64_t window);
 	void set_deadline(std::chrono::steady_clock::time_point deadline);
+#ifdef __APPLE__
+	bool needs_idle_poll() const { return presentation.poll && (!presentation.descriptor || presentation.descriptor() < 0); }
+	void poll_idle(std::chrono::milliseconds budget);
+#endif
 	// Parks a message waiter while other guest threads run, until input arrives or the next timer is due.
 	void set_message_wait(std::function<void(std::function<bool()>,std::chrono::steady_clock::time_point)> wait) { message_wait = std::move(wait); }
 	// Told when a thread takes a message of the mouse or the keyboard from its queue, for the scheduler to favor that thread.
@@ -47,7 +59,7 @@ public:
 	// How a thread waiting for messages sleeps when every other thread waits too: until the time `until` allows for the other threads,
 	// on their descriptors besides the display's, then `drain` takes back what woke it (see NativeThreads::idle_until).
 	void set_idle_sources(std::function<std::chrono::steady_clock::time_point(std::chrono::steady_clock::time_point)> until,
-		std::function<void(std::vector<pollfd> &)> descriptors, std::function<void()> drain)
+		std::function<std::shared_ptr<void>(std::vector<pollfd> &)> descriptors, std::function<void()> drain)
 	{
 		idle_until = std::move(until);
 		idle_descriptors = std::move(descriptors);
@@ -154,6 +166,13 @@ public:
 	void shutdown();
 
 private:
+	void sync_window_updates();
+	// Reads the mailboxes again when the prefix's placement word moved, noting which threads have a placement waiting.
+	void probe_window_updates();
+	bool syncing_window_updates=false;
+	std::chrono::steady_clock::time_point window_updates_checked{};
+	std::optional<uint32_t> window_updates_seen;
+	std::set<uint32_t> window_update_threads;
 	void refresh_screen();
 	NativeProcess &process;
 	NativeEnvironment &environment;
@@ -266,6 +285,7 @@ private:
 	// Host input collected while threads waited, delivered by the next input_ready.
 	std::deque<DesktopEvent> pending_events;
 	void deliver_pending();
+	void complete_resize(const DesktopEvent &event);
 	// The thread a host event is for, whether any waits for a thread, and the taking in of what the host has.
 	uint32_t input_thread(const DesktopEvent &event) const;
 	bool pending_for(uint32_t thread) const;
@@ -289,7 +309,7 @@ private:
 	std::function<void(std::function<bool()>,std::chrono::steady_clock::time_point)> message_wait;
 	std::function<void()> input_taken;
 	std::function<std::chrono::steady_clock::time_point(std::chrono::steady_clock::time_point)> idle_until;
-	std::function<void(std::vector<pollfd> &)> idle_descriptors;
+	std::function<std::shared_ptr<void>(std::vector<pollfd> &)> idle_descriptors;
 	std::function<void()> idle_drain;
 	// Sleeps until the display, another thread or the next timer, caret blink or scroll repeat needs this thread.
 	void wait_idle(std::chrono::steady_clock::time_point deadline);
@@ -320,7 +340,7 @@ private:
 	std::map<uint64_t,uint64_t> hosted_windows;
 	// Whether a window of the root carries a driver's surface: its host window must survive a resize.
 	bool hosts_surface(uint64_t root) const;
-	std::optional<HostSurface> place_hosted(uint64_t window);
+	std::optional<HostSurface> place_hosted(uint64_t window, bool paint = true);
 	void place_host_surface(uint64_t root);
 	// Child windows shown over the driver's surfaces of their root (see DesktopPresentation::overlay), with that root.
 	std::map<uint64_t,uint64_t> overlay_windows;
@@ -335,8 +355,8 @@ private:
 	// The key each held key went down as, so its release matches its press after a keymap change.
 	std::array<KeyboardKey,256> key_pressed{};
 	std::optional<Message> key_translation;
-	void activate(uint64_t window);
-	uint64_t set_focus(uint64_t window);
+	void activate(uint64_t window,bool notify_host=true);
+	uint64_t set_focus(uint64_t window,bool notify_host=true);
 	void receive(const DesktopEvent &event);
 	// Input that arrives while a pointer event is being placed in the queue (the program runs during its hit test, cursor request and
 	// parent notifications and may pump): it is taken in after the event, so the program sees the input in the order it happened.
@@ -378,6 +398,9 @@ private:
 	uint64_t pressed_frame_hit=0,pressed_frame_window=0;
 	// The caption button under the pointer, which the Windows 11 frame lights up.
 	uint64_t hovered_frame_hit=0,hovered_frame_window=0;
+	// The last press on a frame, for the double click on the caption that maximizes: window, hit, place and message time.
+	uint64_t traced_frame_hit=0;
+	uint64_t last_frame_press_window=0,last_frame_press_hit=0; int32_t last_frame_press_x=0,last_frame_press_y=0; uint32_t last_frame_press_time=0;
 	void hover_frame(uint64_t window,uint64_t hit);
 	struct MenuPopup {
 		uint64_t handle,menu,parent;
@@ -496,6 +519,7 @@ private:
 	bool show_window(uint64_t window,uint32_t command);
 	// Moves and resizes a window (screen coordinates for the outer rectangle) with the WM_WINDOWPOSCHANGING/CHANGED protocol.
 	void place_window(uint64_t window,DesktopRect outer,uint64_t insert_after,uint32_t flags);
+	DesktopRect fit_placement(DesktopRect rect) const;
 	void shift_window(uint64_t window,int32_t dx,int32_t dy);
 	std::vector<uint64_t> top_level_windows() const;
 	uint64_t window_at(int32_t x,int32_t y);
@@ -526,6 +550,36 @@ private:
 	uint64_t next_raw_report=0x1000;
 	void raw_mouse_input(int64_t dx,int64_t dy,uint32_t button_flags,int16_t wheel);
 	uint64_t current_cursor=desktop_stock_cursor;
+	void set_cursor(uint64_t handle);
+#ifdef __APPLE__
+	int64_t dpi_context=-2;
+	bool dpi_declared=false;
+	double display_scale=1;
+	uint32_t inherited_dpi=0;
+	std::map<uint32_t,int64_t> thread_dpi_contexts;
+	void initialize_dpi();
+	void apply_dpi();
+	void register_dpi_api(ApiRegistry &registry);
+	std::set<uint64_t> initialized_dpi_windows;
+	void initialize_window_dpi(uint64_t handle);
+	DesktopRect placement_rect(DesktopRect rect,bool to_device) const;
+#endif
+	uint32_t effective_dpi() const
+	{
+#ifdef __APPLE__
+		if (const auto found=thread_dpi_contexts.find(environment.thread_id()); found!=thread_dpi_contexts.end() &&
+			(found->second==-1 || found->second==-5)) return 96;
+#endif
+		return objects.nonclient_metrics().dpi;
+	}
+#ifdef __APPLE__
+#ifdef RAVEN_SKIA
+	std::array<uint8_t,92> interface_font() const;
+	int32_t text_width(TextRenderer &renderer,std::u16string_view text) const;
+	int32_t draw_text(TextRenderer &renderer,paint::Canvas &canvas,std::u16string_view text,int32_t x,int32_t y,uint32_t color,
+		std::optional<size_t> underline=std::nullopt,int32_t limit=INT32_MAX) const;
+#endif
+#endif
 	// Mouse capture and timers belong to the initial guest thread's input state.
 	uint64_t capture=0;
 	struct Timer { uint64_t window,id,procedure; uint32_t interval; std::chrono::steady_clock::time_point due; bool system=false; uint32_t thread=0; };

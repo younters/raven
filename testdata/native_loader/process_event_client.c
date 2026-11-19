@@ -49,6 +49,8 @@ static int extended_events(void)
 	DWORD flags;
 	if (!first || GetLastError() == ERROR_ALREADY_EXISTS || !GetHandleInformation(first, &flags) || !(flags & HANDLE_FLAG_INHERIT))
 		return 104;
+	if (!query || query(first, 0, state, sizeof(state), NULL) || state[0] || state[1] != 1)
+		return 110;
 	HANDLE second = CreateEventExA(NULL, name, 0, SYNCHRONIZE);
 	if (!second || GetLastError() != ERROR_ALREADY_EXISTS || !GetHandleInformation(second, &flags) || (flags & HANDLE_FLAG_INHERIT) ||
 		WaitForSingleObject(second, 0) != WAIT_OBJECT_0 || WaitForSingleObject(second, 0) != WAIT_OBJECT_0 ||
@@ -56,6 +58,8 @@ static int extended_events(void)
 		return 105;
 	if (!ResetEvent(first) || WaitForSingleObject(second, 0) != WAIT_TIMEOUT || !SetEvent(first))
 		return 106;
+	if (query(first, 0, state, sizeof(state), NULL) || !state[1] || !ResetEvent(first) ||
+		query(first, 0, state, sizeof(state), NULL) || state[1] || !SetEvent(first)) return 111;
 	HANDLE legacy = CreateEventW(NULL, FALSE, FALSE, wide);
 	if (!legacy || GetLastError() != ERROR_ALREADY_EXISTS || WaitForSingleObject(legacy, 0) != WAIT_OBJECT_0 ||
 		WaitForSingleObject(legacy, 0) != WAIT_OBJECT_0 || !CloseHandle(first) ||
@@ -232,20 +236,8 @@ static int closed_process_handles(void)
 	return 0;
 }
 
-int raven_entry(void)
+static int transfer_events(const WCHAR *manual_name)
 {
-	const WCHAR *line = GetCommandLineW();
-	for (unsigned index = 0; line[index]; ++index)
-		if (line[index] == '-' && line[index + 1] == '-' && line[index + 2] == 's')
-			return sibling_child();
-	for (unsigned index = 0; line[index]; ++index)
-		if (line[index] == '-' && line[index + 1] == '-' && line[index + 2] == 'd')
-			return detached_child();
-	for (unsigned index = 0; line[index]; ++index)
-		if (line[index] == '-' && line[index + 1] == '-' && line[index + 2] == 'c')
-			return child_entry();
-	const int extended = extended_events();
-	if (extended) return extended;
 	query_process query = (query_process)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationProcess");
 	STARTUPINFOW startup = {0};
 	PROCESS_INFORMATION child;
@@ -253,7 +245,7 @@ int raven_entry(void)
 	WCHAR command[512];
 	HANDLE ping = CreateEventExW(NULL, NULL, 0, SYNCHRONIZE | EVENT_MODIFY_STATE);
 	HANDLE pong = CreateEventExA(NULL, NULL, 0, SYNCHRONIZE | EVENT_MODIFY_STATE);
-	HANDLE manual = CreateEventExW(NULL, NULL, 3, EVENT_ALL_ACCESS), orphan = CreateEventExA(NULL, NULL, 2, EVENT_ALL_ACCESS);
+	HANDLE manual = CreateEventExW(NULL, manual_name, 3, EVENT_ALL_ACCESS), orphan = CreateEventExA(NULL, NULL, 2, EVENT_ALL_ACCESS);
 	HANDLE mutex = CreateMutexW(NULL, TRUE, NULL);
 	HANDLE sent[8], fetched = NULL, empty = NULL;
 	HANDLE sources[8] = {ping, pong, manual, manual, manual, orphan, mutex, mutex};
@@ -317,7 +309,33 @@ done:
 	CloseHandle(mutex);
 	CloseHandle(child.hThread);
 	CloseHandle(child.hProcess);
-	if (result) return result;
+	return result;
+}
+
+int raven_entry(void)
+{
+	const WCHAR *line = GetCommandLineW();
+	for (unsigned index = 0; line[index]; ++index)
+		if (line[index] == '-' && line[index + 1] == '-' && line[index + 2] == 's')
+			return sibling_child();
+	for (unsigned index = 0; line[index]; ++index)
+		if (line[index] == '-' && line[index + 1] == '-' && line[index + 2] == 'd')
+			return detached_child();
+	for (unsigned index = 0; line[index]; ++index)
+		if (line[index] == '-' && line[index + 1] == '-' && line[index + 2] == 'c')
+			return child_entry();
+	const int extended = extended_events();
+	if (extended) return extended;
+	const int unnamed = transfer_events(NULL);
+	if (unnamed) return unnamed;
+	WCHAR manual_name[] = L"RavenNamedTransfer00000000";
+	DWORD event_pid = GetCurrentProcessId();
+	for (unsigned index = 0; index < 8; ++index) {
+		manual_name[(sizeof(manual_name) / sizeof(*manual_name) - 2) - index] = L"0123456789abcdef"[event_pid & 15];
+		event_pid >>= 4;
+	}
+	const int named = transfer_events(manual_name);
+	if (named) return named;
 	const int closed = closed_process_handles();
 	return closed ? closed : sibling_transfers();
 }

@@ -80,26 +80,18 @@ CRT size_t _strftime_l(char *to, size_t capacity, const char *format, const void
 	return strftime(to, capacity, format, time);
 }
 
-CRT int wcrtomb_s(size_t *length, char *to, size_t size, wchar_t c, void *state)
+CRT int wcrtomb_s(size_t *written, char *out, size_t capacity, wchar_t c, void *state)
 {
-	char bytes[8];
-	const size_t written = wcrtomb(bytes, c, state);
-	if (written == (size_t)-1) {
-		if (length)
-			*length = (size_t)-1;
-		return 42;
-	}
-	if (to) {
-		if (size < written) {
-			if (size)
-				to[0] = 0;
-			return 34;
-		}
-		memcpy(to, bytes, written);
-	}
-	if (length)
-		*length = written;
-	return 0;
+    if (written) *written = (size_t)-1;
+    if (!out) { if (written) *written = 1; return 0; }
+    if (!capacity) { set_errno(34); return 34; }
+    char converted[16];
+    size_t result = wcrtomb(converted, c, state);
+    if (result == (size_t)-1) { *out = 0; set_errno(42); return 42; }
+    if (result > capacity) { *out = 0; set_errno(34); return 34; }
+    memcpy(out, converted, result);
+    if (written) *written = result;
+    return 0;
 }
 
 /* ---- time ---- */

@@ -9,6 +9,9 @@ namespace raven {
 class SharedPixels {
 public:
 	explicit SharedPixels(size_t size);
+#ifdef __APPLE__
+	SharedPixels(size_t size, uint32_t width, uint32_t height);
+#endif
 	// A view of a section a program created: `offset` must be a multiple of the page size.
 	SharedPixels(int section, uint64_t offset, size_t size);
 	SharedPixels(const SharedPixels &) = delete;
@@ -21,6 +24,9 @@ public:
 	uint64_t offset() const { return view_offset; }
 
 private:
+	#ifdef __APPLE__
+	void *surface = nullptr;
+#endif
 	int file = -1;
 	uint8_t *mapping = nullptr;
 	size_t length = 0;

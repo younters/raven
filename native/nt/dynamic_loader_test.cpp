@@ -53,15 +53,21 @@ int main(int argc, char **argv)
 				}
 				return bytes;
 			};
+#ifdef __APPLE__
+			// Rosetta startup is part of the deadline; looping DLLs retain a short bound.
+			const auto timeout = std::chrono::milliseconds(selected.ends_with("loop") ? 5000 : 10000);
+#else
 			// Process startup alone can take most of a second on a loaded host: only the looping DLLs need a short limit.
 			const auto timeout = std::chrono::milliseconds(selected.ends_with("loop") ? 2000 : 10000);
+#endif
 			const auto result = raven::run_native_process(modules, entry, argv[1], timeout, source);
 			const auto address = modules.resolve({"client.exe", "entered", 0, false, 0}) - entry.loaded.base();
 			check(address < entry.loaded.data().size(), "fixture state is outside image");
 			const auto entered = entry.loaded.data()[static_cast<size_t>(address)];
 			if (selected == "fault" || selected == "loop" || selected == "detach_fault" || selected == "detach_loop") {
 				check(result.stop == (selected.ends_with("fault") ? raven::NativeStop::fault : raven::NativeStop::timeout), "dynamic DLL did not propagate terminal stop");
-				check(entered == (selected.starts_with("detach_") ? 1 : 0), "dynamic DLL stop resumed the guest caller");
+				if (entered != (selected.starts_with("detach_") ? 1 : 0))
+					throw std::runtime_error("dynamic DLL " + selected + " terminal stop has entered=" + std::to_string(entered));
 			} else {
 				const uint64_t error = selected == "success" || selected == "inert" ? 0 : selected == "reject" ? 1114 : selected == "executable" ? 120 : 126;
 				check(result.stop == raven::NativeStop::returned && result.value == error && entered == 1, "dynamic loader failure contract differs");

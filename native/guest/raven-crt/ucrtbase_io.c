@@ -527,13 +527,21 @@ CRT void *_aligned_malloc(size_t size, size_t alignment)
 {
 	char *raw;
 	uintptr_t aligned;
-	if (!alignment || (alignment & (alignment - 1)))
+	if (!alignment || (alignment & (alignment - 1))) {
+		set_errno(22);
 		return NULL;
+	}
 	if (alignment < sizeof(void *))
 		alignment = sizeof(void *);
-	raw = HeapAlloc(GetProcessHeap(), 0, size + alignment + sizeof(void *));
-	if (!raw)
+	if (alignment > ((size_t)-1) - sizeof(void *) || size > ((size_t)-1) - alignment - sizeof(void *)) {
+		set_errno(12);
 		return NULL;
+	}
+	raw = HeapAlloc(GetProcessHeap(), 0, size + alignment + sizeof(void *));
+	if (!raw) {
+		set_errno(12);
+		return NULL;
+	}
 	aligned = ((uintptr_t)raw + sizeof(void *) + alignment - 1) & ~(uintptr_t)(alignment - 1);
 	((void **)aligned)[-1] = raw;
 	return (void *)aligned;
@@ -556,6 +564,11 @@ CRT void *_aligned_offset_malloc(size_t size, size_t alignment, size_t offset)
 	}
 	if (alignment < sizeof(void *))
 		alignment = sizeof(void *);
+	if (alignment > ((size_t)-1) - 2 * sizeof(void *) || size > ((size_t)-1) - alignment - 2 * sizeof(void *)) {
+		set_errno(12);
+		return NULL;
+	}
+	offset &= alignment - 1;
 	raw = HeapAlloc(GetProcessHeap(), 0, size + alignment + 2 * sizeof(void *));
 	if (!raw) {
 		set_errno(12);
@@ -1451,3 +1464,16 @@ CRT uintptr_t _beginthreadex(void *security, unsigned stack, unsigned (__stdcall
 }
 
 CRT void _endthreadex(unsigned code) { ExitThread(code); }
+
+/* Locale-specific entry points used by statically linked libc++. Raven's
+ * locale implementation currently accepts only C/POSIX, as setlocale above. */
+CRT int _iswalpha_l(wint_t c, _locale_t locale) { return iswalpha(c); }
+CRT int _iswcntrl_l(wint_t c, _locale_t locale) { return iswcntrl(c); }
+CRT int _iswspace_l(wint_t c, _locale_t locale) { return iswspace(c); }
+CRT int _iswxdigit_l(wint_t c, _locale_t locale) { return iswxdigit(c); }
+CRT int _tolower_l(int c, _locale_t locale) { return tolower(c); }
+CRT int _toupper_l(int c, _locale_t locale) { return toupper(c); }
+CRT int _strcoll_l(const char *a, const char *b, _locale_t locale) { return strcoll(a, b); }
+CRT int _wcscoll_l(const wchar_t *a, const wchar_t *b, _locale_t locale) { return wcscoll(a, b); }
+CRT size_t _strxfrm_l(char *out, const char *in, size_t count, _locale_t locale) { return strxfrm(out, in, count); }
+CRT size_t _wcsxfrm_l(wchar_t *out, const wchar_t *in, size_t count, _locale_t locale) { return wcsxfrm(out, in, count); }

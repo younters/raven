@@ -1,0 +1,13 @@
+#pragma once
+#include_next <time.h>
+
+// macOS's CLOCK_MONOTONIC counts the time asleep, as Linux's CLOCK_BOOTTIME does.
+#ifndef CLOCK_BOOTTIME
+#define CLOCK_BOOTTIME CLOCK_MONOTONIC
+#endif
+#ifndef CLOCK_MONOTONIC_COARSE
+#define CLOCK_MONOTONIC_COARSE CLOCK_MONOTONIC_RAW_APPROX
+#endif
+#ifndef CLOCK_REALTIME_COARSE
+#define CLOCK_REALTIME_COARSE CLOCK_REALTIME
+#endif

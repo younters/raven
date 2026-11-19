@@ -475,7 +475,13 @@ public:
 			} catch (const std::exception &) {
 			}
 		}
+#ifdef __APPLE__
+		auto stopped = unhandled();
+		stopped.exception_code = code;
+		throw stopped;
+#else
 		throw unhandled();
+#endif
 	}
 
 	// Execution resumes at the callback nesting where the exception was raised; handler calls above it are abandoned.
@@ -866,7 +872,7 @@ void register_exception_api(ApiRegistry &registry, KernelContext &context, Nativ
 		}
 		const auto raised = processor_exception(context.process, fault, rip);
 		set_context_rip(origin, raised.address);
-		auto record = exceptions->new_record(raised.status, 0, raised.address, raised.parameters);
+		auto record = exceptions->new_record(raised.status, raised.flags, raised.address, raised.parameters);
 		// As KiUserExceptionDispatcher finds them: the CONTEXT on a 16-byte boundary below the faulting stack pointer and the record above
 		// it, and the handlers' calls below both. The .NET runtime turns a fault in managed code into an exception from these.
 		const uint64_t frame = (context_rsp(origin) - 0x40 - x64_context::size - ((record_size + 15) & ~size_t(15))) & ~uint64_t(15);
@@ -1084,7 +1090,7 @@ void register_exception_api(ApiRegistry &registry, KernelContext &context, Nativ
 	}
 	registry.add("RcConsolidateFrames", 0, [exceptions, &context](ApiCall &call) {
 		(void)call;
-		exceptions->finish_consolidation(context.process.context().registers.rax);
+		exceptions->finish_consolidation(context.process.registers().rax);
 	});
 	registry.add("RtlRestoreContext", 2, restore);
 	registry.add("NtContinue", 2, restore);

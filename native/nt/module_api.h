@@ -21,6 +21,10 @@ public:
 	uint64_t module_handle(uint64_t address, bool wide);
 
 private:
+#ifdef __APPLE__
+	bool dispatch_darwin(std::string_view name);
+#endif
+	uint64_t module_handle_name(std::optional<std::string> decoded);
 	NativeProcess &process;
 	NativeEnvironment &environment;
 	const ModuleSet &modules;

@@ -120,7 +120,8 @@ bool has(const std::vector<VkExtensionProperties> &list, const char *name)
 
 const char *surface_extension(HostPlatform platform)
 {
-	return platform == HostPlatform::xcb ? "VK_KHR_xcb_surface" : "VK_KHR_wayland_surface";
+	return platform == HostPlatform::xcb ? "VK_KHR_xcb_surface" : platform == HostPlatform::metal ? "VK_EXT_metal_surface" :
+		"VK_KHR_wayland_surface";
 }
 
 // The host extension behind an offer; the Windows surface one depends on the window system.

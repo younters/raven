@@ -136,7 +136,8 @@ static void parallel_served_result(const std::string &bootstrap)
 	const auto timeout = std::chrono::seconds(2);
 	const uint64_t base = 0x180000000ULL;
 	const std::array<std::string_view, 1> names{"vkCmdDrawIndexed"};
-	const raven::PEImage image(raven::runtime_provider("vulkan-1.dll", base, names));
+	const auto bytes = raven::runtime_provider("vulkan-1.dll", base, names);
+	const raven::PEImage image(bytes);
 	raven::LoadedImage loaded(image, base);
 	raven::LoadedImage *images[] = {&loaded};
 	raven::NativeProcess process(images, bootstrap, timeout);
@@ -517,7 +518,7 @@ int main(int argc, char **argv)
 		const uint64_t base = 0x180000000ULL;
 		auto bytes = raven::environment_provider("kernel32.dll", base);
 		const raven::PEImage image(bytes);
-		check(image.is_64 && image.entry == 0 && image.imports().empty() && image.exports().size() == 51,
+		check(image.is_64 && image.entry == 0 && image.imports().empty() && image.exports().size() == 53,
 			"provider PE metadata differs");
 		for (const auto &symbol : image.exports())
 			check(symbol.ordinal >= 0x10000 - image.exports().size() && symbol.ordinal <= UINT16_MAX && symbol.names.size() == 1 && symbol.forwarder.empty(),

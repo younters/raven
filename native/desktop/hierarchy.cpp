@@ -17,7 +17,7 @@ uint64_t DesktopObjects::window_root(uint64_t handle) const
 	for (unsigned depth=0;depth<64;++depth) {
 		const auto *record=window(handle);
 		if (!record) return 0;
-		if (!record->parent) return handle;
+		if (!record->parent || (!window(record->parent) && foreign_window_info(record->parent))) return handle;
 		handle=record->parent;
 	}
 	throw std::runtime_error("window ancestry exceeds its owner limit");
@@ -61,7 +61,8 @@ bool DesktopObjects::window_visible(uint64_t handle) const
 {
 	for (unsigned depth=0;depth<64;++depth) {
 		const auto *record=window(handle);
-		if (!record || !record->visible) return false;
+		if (!record) return foreign_window_info(handle).has_value();
+		if (!record->visible) return false;
 		if (!record->parent) return true;
 		handle=record->parent;
 	}
@@ -82,7 +83,7 @@ void DesktopObjects::configure_window_dc(uint64_t handle,DesktopDC &device,bool 
 	int64_t left=0,top=0,right=frame ? int64_t(record->outer.right)-x : record->width;
 	int64_t bottom=frame ? int64_t(record->outer.bottom)-y : record->height;
 	for (auto parent=record->parent;parent;) {
-		const auto *ancestor=window(parent);if (!ancestor) throw uint32_t(1400);
+		const auto *ancestor=window(parent);if (!ancestor) { if (foreign_window_info(parent)) break; throw uint32_t(1400); }
 		left=std::max(left,int64_t(ancestor->x)-x);top=std::max(top,int64_t(ancestor->y)-y);
 		right=std::min(right,int64_t(ancestor->x)+ancestor->width-x);bottom=std::min(bottom,int64_t(ancestor->y)+ancestor->height-y);
 		parent=ancestor->parent;
@@ -98,7 +99,8 @@ void DesktopObjects::configure_window_dc(uint64_t handle,DesktopDC &device,bool 
 		region.add({0,0,int32_t(std::min<int64_t>(frame ? int64_t(record->outer.right)-x : record->width,INT32_MAX)),
 			int32_t(std::min<int64_t>(frame ? int64_t(record->outer.bottom)-y : record->height,INT32_MAX))});
 		const auto cut=[&](const DesktopWindow &other) {
-			if (!other.visible) return;
+			// Transparent windows let the windows behind them paint first, including under their client area.
+			if (!other.visible || (other.ex_style & 0x20U)) return;
 			region.subtract({int32_t(int64_t(other.outer.left)-x),int32_t(int64_t(other.outer.top)-y),
 				int32_t(int64_t(other.outer.right)-x),int32_t(int64_t(other.outer.bottom)-y)});
 		};

@@ -146,6 +146,18 @@ std::vector<uint32_t> shell_icon(bool folder, int32_t size)
 
 void register_shell_api(ApiRegistry &registry, KernelContext &context, NativeRegistry &hive)
 {
+	registry.add("ILFree", 1, [&context](ApiCall &call) {
+		if (call[0])
+			context.allocator.release(call[0]);
+	});
+#ifndef __APPLE__
+	// There are no printers yet: the print and page setup dialogs answer as when the user cancels them (FALSE, with CommDlgExtendedError
+	// still zero), which programs handle as an ordinary choice instead of an error.
+	for (const auto *name : {"PrintDlgW", "PrintDlgA", "PageSetupDlgW", "PageSetupDlgA"})
+		registry.add(name, 1, [](ApiCall &call) { call.ret(0); });
+	for (const auto *name : {"PrintDlgExW", "PrintDlgExA"})
+		registry.add(name, 1, [](ApiCall &call) { call.ret(0x80004001U); });
+#endif
 	auto &paths = context.paths;
 	registry.add("SHGetFolderPathW", 5, [&paths](ApiCall &call) {
 		const int csidl = call.i32(1);
@@ -294,7 +306,7 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context, NativeReg
 	registry.add("SHCloneSpecialIDList", 3, [folder_list](ApiCall &call) {
 		call.ret(folder_list(call, call.i32(1) & 0xff, call.i32(2) || (call.i32(1) & 0x8000)).first);
 	});
-	const auto path_from_list = [](ApiCall &call, size_t capacity) {
+	const auto path_from_list = [](ApiCall &call, size_t capacity, bool ansi) {
 		if (!call[0] || !call[1]) {
 			call.ret(0);
 			return;
@@ -322,13 +334,17 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context, NativeReg
 			call.ret(0);
 			return;
 		}
-		call.put_wide(call[1], text, capacity);
+		if (ansi)
+			call.put_narrow(call[1], to_ansi(text, 0), capacity);
+		else
+			call.put_wide(call[1], text, capacity);
 		call.ret(1);
 	};
 	// The recent list only feeds the shell's own menus, which nothing here shows.
 	registry.add("SHAddToRecentDocs", 2, [](ApiCall &call) { call.ret(0); });
-	registry.add("SHGetPathFromIDListW", 2, [path_from_list](ApiCall &call) { path_from_list(call, 260); });
-	registry.add("SHGetPathFromIDListEx", 4, [path_from_list](ApiCall &call) { path_from_list(call, call.u32(2)); });
+	registry.add("SHGetPathFromIDListW", 2, [path_from_list](ApiCall &call) { path_from_list(call, 260, false); });
+	registry.add("SHGetPathFromIDListA", 2, [path_from_list](ApiCall &call) { path_from_list(call, 260, true); });
+	registry.add("SHGetPathFromIDListEx", 4, [path_from_list](ApiCall &call) { path_from_list(call, call.u32(2), false); });
 	for (const bool ansi : {false, true})
 		registry.add(ansi ? "SHGetSpecialFolderPathA" : "SHGetSpecialFolderPathW", 4, [&paths, ansi](ApiCall &call) {
 			const int csidl = call.i32(2);
@@ -557,9 +573,23 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context, NativeReg
 		if (call[3]) call.store_pointer(call[3], 0);
 		call.ret(0x80070002U);
 	});
-	// The program runs as the host account, which holds administrator rights only when it is root.
-	// The application identity only groups taskbar buttons; there is no taskbar to group them on.
-	registry.add("SetCurrentProcessExplicitAppUserModelID", 1, [](ApiCall &call) { call.ret(0); });
+	// Keep the explicit identity even without a taskbar; callers retrieve an owned copy through the paired getter.
+	auto app_id = std::make_shared<std::u16string>();
+	registry.add("SetCurrentProcessExplicitAppUserModelID", 1, [app_id](ApiCall &call) {
+		if (!call[0]) { call.ret(0x80070057U); return; }
+		*app_id = call.wide(call[0]);
+		call.ret(0);
+	});
+	registry.add("GetCurrentProcessExplicitAppUserModelID", 1, [app_id, &context](ApiCall &call) {
+		if (!call[0]) { call.ret(0x80070057U); return; }
+		call.store_pointer(call[0], 0);
+		if (app_id->empty()) { call.ret(0x80004005U); return; }
+		const auto buffer = context.allocator.allocate((app_id->size() + 1) * 2, true);
+		if (!buffer) { call.ret(0x8007000eU); return; }
+		call.put_wide(buffer, *app_id, app_id->size() + 1);
+		call.store_pointer(call[0], buffer);
+		call.ret(0);
+	});
 	// The account of a prefix is an administrator under User Account Control: the check answers yes only in an elevated process.
 	// Raven does not stand for the privileges of the host account.
 	// There are no default-program associations to ask about: the registration object is not available.

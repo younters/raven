@@ -1,0 +1,190 @@
+#include "nt/memory.h"
+#include "decommit_transaction.h"
+#include <algorithm>
+#include <sys/mman.h>
+
+namespace raven {
+
+static constexpr uint32_t invalid = 0xc000000dU, unsupported = 0xc00000bbU;
+static constexpr uint32_t no_memory = 0xc0000017U, conflict = 0xc0000018U, commitment_limit = 0xc000012dU;
+
+static int protection(uint32_t value)
+{
+	switch (value) {
+	case 1: return PROT_NONE;
+	case 2: return PROT_READ;
+	case 8: case 4: return PROT_READ | PROT_WRITE;
+	case 0x20: return PROT_READ | PROT_EXEC;
+	case 0x80: case 0x40: return PROT_READ | PROT_WRITE | PROT_EXEC;
+	default: return -1;
+	}
+}
+
+static bool range(uint64_t address, uint64_t size, uint64_t user_limit)
+{
+	return size && address<user_limit && size<=user_limit-address;
+}
+
+void NativeMemory::discard_committed(const Region &region, uint64_t region_base, uint64_t base, uint64_t length)
+{
+	// A backend that discards through guest writes needs temporary write access even to PAGE_NOACCESS.
+	// Reserved pages contain nothing to discard.
+	const auto first = (base - region_base) / 4096, last = first + length / 4096;
+	std::vector<DecommitRun> runs;
+	for (auto page = first; page < last;) {
+		const auto end = std::min<uint64_t>(last, region.pages.run_end(page));
+		const auto access = region.pages.at(page);
+		if (access)
+			runs.push_back({region_base + page * 4096, (end - page) * 4096, protection(access)});
+		page = end;
+	}
+	decommit_transaction(runs, base, length,
+		[&](uint64_t at, uint64_t bytes, int access) { process.protect_memory(at, bytes, access); },
+		[&](uint64_t at, uint64_t bytes) { process.discard_memory(at, bytes); });
+}
+
+NativeMemoryRange NativeMemory::allocate(uint64_t address, uint64_t size, uint32_t type, uint32_t access)
+{
+	std::lock_guard guard_lock(guard);
+	auto lock=lock_commits();
+	settle();
+	refresh_commit_sample();
+	access &= ~control_flow_targets;
+	if (!range(address,size,user_limit))
+		return {0,0,invalid};
+	// MEM_RESET and MEM_RESET_UNDO preserve commitment and protection; eagerly discarding is optional on Windows.
+	if (type == 0x80000 || type == 0x1000000) {
+		const auto base=address & ~uint64_t(4095), length=(size+address-base+4095)&~uint64_t(4095);
+		const auto found=region(base,length);
+		if (found==regions.end()) return {0,0,conflict};
+		const auto first=(base-found->first)/4096;
+		if (found->second.pages.nonzero(first,length/4096)!=length/4096) return {0,0,conflict};
+		return {base,length};
+	}
+	// MEM_TOP_DOWN only asks for the highest free address; any free address serves the program as well.
+	type&=~0x100000U;
+	if (!(type & 0x3000) || (type & ~0x3000U))
+		return {0,0,unsupported};
+	const auto permissions=protection(access);
+	if (permissions<0)
+		return {0,0,0xc0000045U};
+	const bool reserve=!address || (type & 0x2000);
+	const uint64_t base=address & ~(reserve ? uint64_t(65535) : uint64_t(4095));
+	const uint64_t length=(size+address-base+4095) & ~uint64_t(4095);
+	if (!reserve) {
+		const auto found=region(base,length);
+		if (found==regions.end())
+			return {0,0,conflict};
+		const auto first=(base-found->first)/4096;
+		const uint64_t fresh=found->second.charged ? (length/4096-found->second.pages.nonzero(first,length/4096))*4096 : 0;
+		if (fresh>commit_headroom()) return {0,0,commitment_limit};
+		auto updated=found->second.pages;
+		updated.fill(first,length/4096,access);
+		// Programs such as a browser's allocators commit a few pages at a time, one block after the next, and each change of the guest's
+		// protection stops it. Read-write commits of part of a 64 KiB granule therefore also open the neighbouring pages that are only
+		// reserved, up to the 1 MiB around them; they stay reserved here, and committing them later changes nothing in the guest.
+		// Commits of whole granules, as a WebAssembly memory grows with guard pages after it, open nothing more, and pages committed
+		// otherwise are never touched.
+		const uint64_t granule=((base | length) & 65535) ? uint64_t(1) << 20 : 4096;
+		if (!process.has_protection(base,length,permissions)) {
+			uint64_t from=base, to=base+length;
+			if (permissions==(PROT_READ|PROT_WRITE)) {
+				const uint64_t region_end=found->first+found->second.size;
+				const uint64_t window_start=std::max(found->first,base & ~(granule-1));
+				const uint64_t window_end=std::min(region_end,(base+length+granule-1) & ~(granule-1));
+				while (from>window_start && !found->second.pages.at((from-4096-found->first)/4096))
+					from-=4096;
+				while (to<window_end && !found->second.pages.at((to-found->first)/4096))
+					to+=4096;
+			}
+			close_windows(from,to);
+			process.protect_memory(from,to-from,permissions);
+			if (permissions==(PROT_READ|PROT_WRITE))
+				open_window(from,to);
+		} else if (permissions==(PROT_READ|PROT_WRITE)) {
+			// Already open: its granule's open pages are published again, as the range that held them may have been dropped.
+			const uint64_t region_end=found->first+found->second.size;
+			const uint64_t window_start=std::max(found->first,base & ~(granule-1));
+			const uint64_t window_end=std::min(region_end,(base+length+granule-1) & ~(granule-1));
+			uint64_t from=base, to=base+length;
+			while (from>window_start && process.has_protection(from-4096,4096,permissions))
+				from-=4096;
+			while (to<window_end && process.has_protection(to,4096,permissions))
+				to+=4096;
+			open_window(from,to);
+		}
+		// Only pages that were reserved until now count as new commitment.
+		found->second.pages=std::move(updated);
+		used+=fresh;
+		commit_changed();
+		return {base,length};
+	}
+	const bool commit_now=type & 0x1000;
+	if (commit_now && length>commit_headroom()) return {0,0,commitment_limit};
+	if (regions.size()>=10000)
+		return {0,0,no_memory};
+	uint64_t selected=base;
+	if (!address) {
+		// The search starts after the last range handed out; at the top of the address space it goes on once from the bottom, over
+		// the ranges freed since, as a 32-bit program that starts and ends many threads frees their stacks there.
+		selected=next;
+		bool wrapped=false;
+		for (size_t tries=0; tries<20000; ++tries) {
+			if (!range(selected,length,user_limit)) {
+				if (wrapped)
+					return {0,0,no_memory};
+				wrapped=true;
+				selected=floor;
+				continue;
+			}
+			if (process.memory_available(selected,length))
+				break;
+			selected+=((length+65535)&~uint64_t(65535));
+			if (tries==19999)
+				return {0,0,no_memory};
+		}
+	}
+	if (!selected || !process.memory_available(selected,length))
+		return {0,0,conflict};
+	const bool commit=commit_now;
+	auto [found,inserted]=regions.emplace(selected,Region{length,access,PageMap(length/4096,commit ? access : 0),true});
+	if (!inserted)
+		return {0,0,conflict};
+	try { process.map_memory(length,commit ? permissions : PROT_NONE,selected); }
+	catch (...) { regions.erase(found); throw; }
+	if (commit)
+		used+=length;
+	commit_changed();
+	reserved_total+=length;
+	if (!address)
+		next=selected+((length+65535)&~uint64_t(65535));
+	return {selected,length};
+}
+
+NativeMemoryRange NativeMemory::map_view(int descriptor, uint64_t offset, uint64_t size, uint32_t access, uint64_t requested, bool charged)
+{
+	std::lock_guard guard_lock(guard);
+	auto lock=lock_commits();
+	settle();
+	refresh_commit_sample();
+	const auto permissions=protection(access);
+	if (permissions<0 || !size || (offset & 4095) || (requested & 65535))
+		return {0,0,invalid};
+	const uint64_t length=(size+4095)&~uint64_t(4095);
+	if (charged && length>commit_headroom()) return {0,0,commitment_limit};
+	if (regions.size()>=10000)
+		return {0,0,no_memory};
+	if (requested && (!range(requested,length,user_limit) || !process.memory_available(requested,length)))
+		return {0,0,conflict};
+	const auto address=process.map_shared(descriptor,length,offset,requested);
+	try {
+		if (permissions!=(PROT_READ|PROT_WRITE)) process.protect_memory(address,length,permissions);
+		regions.emplace(address,Region{length,access,PageMap(length/4096,access),charged});
+	} catch (...) { process.unmap_memory(address); throw; }
+	if (charged) used+=length;
+	commit_changed();
+	reserved_total+=length;
+	return {address,length};
+}
+
+}

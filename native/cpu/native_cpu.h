@@ -12,6 +12,9 @@
 #include <string>
 #include <sys/user.h>
 #include <utility>
+#ifdef __APPLE__
+struct raven_control;
+#endif
 
 namespace raven {
 
@@ -29,6 +32,7 @@ struct NativeResult {
 	int signal_code = 0;
 	uint32_t exception_flags = 0;
 	std::vector<uint64_t> exception_information{};
+	uint32_t exception_code = 0;
 };
 
 struct NativeContext {
@@ -61,6 +65,8 @@ struct NativeThreadState {
 	uint64_t served_stack = 0;
 	bool context_in_task = false;
 	bool serving_queued = false;
+	// Result of the most recent context pause; other stops belong to the scheduler.
+	bool context_pause_interrupt = false;
 };
 
 // Images must outlive this stopped/resumable x86-64 Linux process.
@@ -75,6 +81,7 @@ public:
 	NativeResult callback(uint64_t address, std::span<const uint64_t> arguments, std::chrono::milliseconds timeout);
 	NativeResult resume(std::chrono::milliseconds timeout);
 	NativeContext context() const;
+	user_regs_struct registers() const;
 	void set_context(const NativeContext &context);
 	std::vector<uint8_t> read_memory(uint64_t address, size_t size) const;
 	// Reads guest memory from a host thread that does not hold the turn: straight from the child, without the tables of regions the
@@ -88,6 +95,7 @@ public:
 	// Host primitives; Windows reservation/commit and PAGE_* semantics belong above this boundary.
 	uint64_t map_memory(size_t size, int protection, uint64_t address = 0);
 	void protect_memory(uint64_t address, size_t size, int protection);
+	void flush_instruction_cache(uint64_t address, size_t size);
 	// Whether the guest's own mappings give exactly this protection to every page of the range.
 	bool has_protection(uint64_t address, size_t size, int protection) const;
 	// How many times the guest's mappings changed: equal counts mean every protection stayed as it was.
@@ -133,6 +141,18 @@ public:
 	// stack pointers and its arguments (callback_in_stub): the others are those its frames give back.
 	bool callback_boundary(uint64_t address) const;
 	bool callback_in_stub(size_t index) const;
+#ifdef __APPLE__
+	// Wine's x64 unix-call ABI: an agent-owned Win64 entry and a table of SysV functions loaded in the x86 process.
+	uint64_t unix_call_gate() const;
+	// The guest's own window on memory of this host process, such as a mapped GPU buffer: both sides see the same bytes without copying.
+	// Returns 0 when the engine cannot do it, and the window is released with unmap_memory.
+	uint64_t alias_host_memory(void *host, size_t size);
+	uint64_t load_unix_library(const std::string &path, uint32_t function_count);
+	void drain_unix_events(const std::function<void(uint64_t)> &signal);
+	raven_control *darwin_control() const;
+	uint32_t copy_unix_port(uint32_t guest_port) const;
+	void set_unix_pump(std::function<void()> pump);
+#endif
 	size_t callback_depth() const;
 	// The guest's registers at the API call that started the callback at this nesting index (0 is the outermost), with the current
 	// extended state: where a stack walk continues past the callback's return gate.
@@ -202,6 +222,11 @@ public:
 	static void arm_host_thread();
 	void stop_thread(const NativeThreadState &thread);
 	void pause_thread(NativeThreadState &thread);
+#ifdef __APPLE__
+	void resume_context_thread(NativeThreadState &thread);
+	// Before the scheduler sleeps with nothing ready: whether a running thread stopped with a call while it watched for a moment.
+	bool await_stop();
+#endif
 	// The general registers a thread that is not running continues with: a thread paused in its own task gets them there, a saved
 	// thread in its snapshot (SetThreadContext on a suspended thread).
 	void set_thread_registers(NativeThreadState &thread, const user_regs_struct &registers);

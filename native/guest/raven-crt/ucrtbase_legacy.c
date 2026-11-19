@@ -586,6 +586,8 @@ CRT RavenTime *_gmtime64(const long long *time)
 
 CRT int _isnan(double x) { return x != x; }
 CRT int _finite(double x) { return x == x && x - x == 0; }
+CRT float nanf(const char *tag) { return __builtin_nanf(""); }
+CRT long double nanl(const char *tag) { return __builtin_nanl(""); }
 /* The single precision forms exist in the 64-bit runtime only, as programs for 32-bit x86 widen to double. */
 #ifdef _WIN64
 CRT int _isnanf(float x) { return x != x; }
@@ -662,6 +664,37 @@ CRT char *_itoa(int value, char *to, int radix)
 }
 
 CRT char *_ultoa(unsigned long value, char *to, int radix) { return digits_of(value, 0, to, radix); }
+CRT int _wcsupr_s(wchar_t *text, size_t capacity)
+{
+	if (!text || !capacity || wcsnlen(text, capacity) == capacity) {
+		if (text && capacity) *text = 0;
+		*_errno() = 22;
+		_invalid_parameter_noinfo();
+		return 22;
+	}
+	_wcsupr(text);
+	return 0;
+}
+CRT int _ltoa_s(long value, char *to, size_t capacity, int radix)
+{
+	char text[72];
+	if (!to || !capacity || radix < 2 || radix > 36) {
+		if (to && capacity) *to = 0;
+		*_errno() = 22;
+		_invalid_parameter_noinfo();
+		return 22;
+	}
+	_itoa((int)value, text, radix);
+	const size_t length = strlen(text) + 1;
+	if (length > capacity) {
+		*to = 0;
+		*_errno() = 34;
+		_invalid_parameter_noinfo();
+		return 34;
+	}
+	memcpy(to, text, length);
+	return 0;
+}
 CRT unsigned long long _strtoui64(const char *text, char **end, int base) { return strtoull(text, end, base); }
 
 CRT int isleadbyte(int character) { return IsDBCSLeadByte((BYTE)character); }

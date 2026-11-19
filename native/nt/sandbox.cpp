@@ -1,6 +1,9 @@
 #include "sandbox.h"
 #include "confine.h"
 #include "text.h"
+#ifdef __APPLE__
+#include "raven_darwin_fonts.h"
+#endif
 
 #include <arpa/inet.h>
 #include <cctype>
@@ -231,10 +234,16 @@ void Sandbox::allow_system_reading()
 {
 	std::error_code error;
 	allow_reading(std::filesystem::read_symlink("/proc/self/exe", error).parent_path());
+#ifdef __APPLE__
+	// The host's fonts stand for the ones Windows ships: macOS keeps them in its own folders.
+	for (const auto &fonts : raven_darwin::font_roots())
+		allow_reading(fonts);
+#else
 	for (const char *fonts : {"/usr/share/fonts", "/usr/local/share/fonts"})
 		allow_reading(fonts);
 #ifdef RAVEN_FONT_DIRECTORY
 	allow_reading(RAVEN_FONT_DIRECTORY);
+#endif
 #endif
 }
 
@@ -351,6 +360,22 @@ bool Sandbox::open_address(std::string_view address) const
 		refuse(std::string(address), "open-address");
 		return false;
 	}
+#ifdef __APPLE__
+	// macOS opens an address with the handler the person chose through open(1). The child that starts it exits at once and is reaped
+	// here, so open(1) is nobody's child and leaves no zombie behind. The scheme check above means the address never starts with '-'.
+	const std::string opened(address);
+	const pid_t opener = ::fork();
+	if (opener == 0) {
+		::setsid();
+		if (::fork() == 0) {
+			::execl("/usr/bin/open", "open", opened.c_str(), static_cast<char *>(nullptr));
+			::_exit(127);
+		}
+		::_exit(0);
+	}
+	int status = 0;
+	return opener > 0 && ::waitpid(opener, &status, 0) == opener && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+#endif
 	// The portal takes the address as a GVariant string: quoted, its quotes and backslashes escaped.
 	std::string quoted = "'";
 	for (const char character : address) {

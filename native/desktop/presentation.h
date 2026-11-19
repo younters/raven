@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <poll.h>
 #include <utility>
 #include <span>
 #include <string_view>
@@ -12,6 +13,8 @@
 #include <string>
 
 namespace raven {
+
+struct DesktopIcon;
 
 // pointer_wheel: message carries the signed wheel delta in 1/120 notches (wparam 1 for the horizontal wheel), x and y the pointer position.
 // popup_done: the compositor dismissed a popup (for example by a click outside it).
@@ -30,16 +33,24 @@ struct DesktopEvent {
 };
 
 // The window system the presentation talks to, which decides the surface type a graphics driver is given.
-enum class HostPlatform { wayland, xcb };
+enum class HostPlatform { wayland, xcb, metal };
+
+#ifdef __APPLE__
+inline constexpr HostPlatform default_host_platform = HostPlatform::metal;
+#else
+inline constexpr HostPlatform default_host_platform = HostPlatform::wayland;
+#endif
 
 // A host surface a graphics driver can present into, over a window's client area: on Wayland the display connection and a surface, on X11
-// the XCB connection and a child window with its visual.
+// the XCB connection and a child window with its visual, on macOS a CAMetalLayer as the surface.
 struct HostSurface {
 	void *display = nullptr;
 	void *surface = nullptr;
-	HostPlatform platform = HostPlatform::wayland;
+	HostPlatform platform = default_host_platform;
 	uint32_t window = 0, visual = 0;
 };
+
+class DesktopObjects;
 
 struct DesktopPresentation {
 	std::function<void(uint64_t,std::string_view,uint32_t,uint32_t,std::span<const uint8_t>)> present;
@@ -83,9 +94,29 @@ struct DesktopPresentation {
 	// removes the window's surface. Input keeps going to the host window.
 	std::function<void(uint64_t handle,uint64_t window,int32_t x,int32_t y,uint32_t width,uint32_t height,std::span<const uint8_t> pixels,
 		size_t stride)> overlay;
-	HostPlatform platform = HostPlatform::wayland;
+	HostPlatform platform = default_host_platform;
 	// Minimizes a top-level window to the host's taskbar, keeping its surface; absent, a minimized window is removed from the screen.
 	std::function<void(uint64_t)> minimize;
+	// For a host that draws window titles itself: before each frame, where the program's caption and borders lie in it (left, top, right
+	// and bottom insets; the menu bar is not part of them) and the window's style. The host shows the rest and reports pointer positions
+	// on the whole frame as before.
+	std::function<void(uint64_t handle,std::array<int32_t,4> insets,uint32_t style)> frame;
+	// Whether the surface carries premultiplied pixel alpha, rather than GDI's unused high byte.
+	std::function<void(uint64_t handle,bool enabled)> alpha;
+	// For a host that shows any cursor: the effective Windows cursor and visibility count; a custom image is borrowed for this call only.
+	// Null handle hides the pointer.
+	std::function<void(uint64_t handle,int show_count,const DesktopIcon *image)> cursor_image;
+	// Device pixels per host point, and the scale selected by the runtime (one for DPI-unaware programs).
+	std::function<double()> backing_scale;
+	std::function<void(double)> render_scale;
+	// Descriptors that must also end a descriptorless backend's blocking event poll. An empty span removes the watches.
+	std::function<void(std::span<const pollfd>)> wait_descriptors;
+	std::function<void(uint64_t,const DesktopObjects &)> window_state;
+	std::function<void(uint64_t,bool)> visibility;
+	std::function<void(uint64_t)> foreground;
+	// Acknowledges a host resize after guest placement, including adjusted/vetoed sizes.
+	// Resize events carry their optional generation in wparam.
+	std::function<void(uint64_t,uint64_t,uint32_t,uint32_t)> resize_complete;
 	// Keeps a top-level window above the top-level window that owns it, as Windows keeps an owned dialog; 0 for no owner. Given before the
 	// window's first frame.
 	std::function<void(uint64_t handle,uint64_t owner)> transient_for;

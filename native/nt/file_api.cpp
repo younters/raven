@@ -14,6 +14,9 @@
 #include "confine.h"
 #include "sandbox.h"
 #include "text.h"
+#ifdef __APPLE__
+#include "platform/darwin/path_search.h"
+#endif
 
 #include <algorithm>
 #include <cerrno>
@@ -64,9 +67,27 @@ constexpr uint64_t invalid_handle = UINT64_MAX;
 constexpr uint32_t attribute_readonly = 0x1, attribute_hidden = 0x2, attribute_directory = 0x10, attribute_archive = 0x20,
 	attribute_normal = 0x80, attribute_reparse = 0x400;
 
+// A FILETIME runs from 1601 to the year 30828 (the largest value FileTimeToSystemTime accepts is 0x7fffffffffffffff). Host file systems
+// can report times outside it: OpenZFS on macOS with atime=off answers st_atime in the year 60056.
+bool representable(const timespec &time)
+{
+	constexpr int64_t earliest = -int64_t(filetime_epoch_offset / 10000000ULL);
+	constexpr int64_t latest = int64_t(0x7fffffffffffffffULL / 10000000ULL) - int64_t(filetime_epoch_offset / 10000000ULL) - 1;
+	return int64_t(time.tv_sec) >= earliest && int64_t(time.tv_sec) <= latest;
+}
+
 uint64_t filetime(const timespec &time)
 {
+	if (!representable(time))
+		return 0;
 	return (uint64_t(time.tv_sec) * 10000000ULL) + uint64_t(time.tv_nsec) / 100 + filetime_epoch_offset;
+}
+
+// The last access time, or the last write time when the host's access time is no time a FILETIME can hold: a program converting it
+// (the C runtime's stat does) would otherwise fail on a file that is fine.
+uint64_t access_filetime(const struct stat &metadata)
+{
+	return representable(metadata.st_atim) ? filetime(metadata.st_atim) : filetime(metadata.st_mtim);
 }
 
 timespec timespec_from(uint64_t ticks)
@@ -167,7 +188,7 @@ FindObject::Entry entry_of(const std::filesystem::path &path, const std::u16stri
 	// A link reports what it points at, marked as the reparse point it is.
 	entry.attributes = attributes_of(metadata, path) | (link ? attribute_reparse : 0);
 	entry.creation = filetime(metadata.st_ctim);
-	entry.access = filetime(metadata.st_atim);
+	entry.access = access_filetime(metadata);
 	entry.write = filetime(metadata.st_mtim);
 	entry.size = S_ISDIR(metadata.st_mode) ? 0 : uint64_t(metadata.st_size);
 	return entry;
@@ -834,7 +855,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 					const auto shown = paths.preferred(file->path / item->d_name);
 					if (shown != file->path / item->d_name ? ::stat(shown.c_str(), &metadata) : ::fstatat(file->descriptor, item->d_name, &metadata, 0)) continue;
 					scan->entries.push_back({name, attributes_of(metadata, item->d_name), filetime(metadata.st_ctim),
-						filetime(metadata.st_atim), filetime(metadata.st_mtim), S_ISDIR(metadata.st_mode) ? 0 : uint64_t(metadata.st_size),
+						access_filetime(metadata), filetime(metadata.st_mtim), S_ISDIR(metadata.st_mode) ? 0 : uint64_t(metadata.st_size),
 						uint64_t(metadata.st_blocks) * 512, uint64_t(metadata.st_ino)});
 				}
 				// What the folder holds only in the program's layer, or only in the prefix for a layer's folder.
@@ -892,15 +913,10 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("NtQueryDirectoryFile", 11, query_directory);
 	registry.add("ZwQueryDirectoryFile", 11, query_directory);
-	// Device control reaches the AFD endpoint's readiness poll (which libuv and mio use to poll sockets); no other device takes
-	// requests, and STATUS_INVALID_DEVICE_REQUEST tells a caller to do without.
-	registry.add("NtDeviceIoControlFile", 10, [&context](ApiCall &call) {
-		if (!afd_device_control(context, call))
-			call.ret(0xc0000010U);
-	});
 	// NtCreateFile and NtOpenFile: the object name (relative to a directory handle when one is given) becomes a Win32 path, and the
 	// disposition and options become CreateFileW's, as the NtCreateFile documentation pairs them; a directory is made first when one
-	// is asked to be created. \Device\Afd names open an AFD endpoint. The IO_STATUS_BLOCK says what happened to the file.
+	// is asked to be created. The IO_STATUS_BLOCK says what happened to the file.
+#ifndef __APPLE__
 	const auto native_create = [&registry, &context, file_of](ApiCall &call, uint32_t access, uint64_t attributes_block, uint64_t status_block,
 		uint32_t file_attributes, uint32_t share, uint32_t disposition, uint32_t options) -> uint32_t {
 		const size_t width = call.pointer_width();
@@ -1028,6 +1044,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("NtOpenFile", 6, [native_create](ApiCall &call) {
 		call.ret(native_create(call, call.u32(1), call[2], call[3], 0, call.u32(4), 1, call.u32(5)));
 	});
+#endif
 	// No file is encrypted: decrypting one that exists has nothing to do, and encryption is not offered.
 	const auto decrypt = [&, resolve](ApiCall &call, bool wide) {
 		const auto name = wide ? call.wide(call[0]) : from_utf8(call.narrow(call[0]));
@@ -1122,7 +1139,11 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		int target = file->descriptor;
 		if (const int mode = ::fcntl(target, F_GETFL); mode >= 0 && (mode & O_ACCMODE) == O_RDONLY) {
 			if (file->lock_descriptor < 0)
+#ifdef __APPLE__
+				file->lock_descriptor = raven_darwin_reopen(file->descriptor, O_RDWR | O_CLOEXEC);
+#else
 				file->lock_descriptor = ::open(("/proc/self/fd/" + std::to_string(file->descriptor)).c_str(), O_RDWR | O_CLOEXEC);
+#endif
 			if (file->lock_descriptor >= 0)
 				target = file->lock_descriptor;
 			else if (kind == F_WRLCK)
@@ -1229,6 +1250,36 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		}
 		::fsync(file->descriptor);
 		call.ret(1);
+	});
+	// Files of a prefix lie on a host file system that answers no device or file system control codes: the caller hears that the
+	// function is not supported, as from a volume whose driver lacks it, and nothing comes back.
+	registry.add("NtDeviceIoControlFile", 10, [&context](ApiCall &call) {
+		if (afd_device_control(context, call)) return;
+		const uint32_t status = 0xc0000010U; // STATUS_INVALID_DEVICE_REQUEST
+		if (call[4]) {
+			call.store_pointer(call[4], status);
+			call.store_pointer(call[4] + call.pointer_width(), 0);
+		}
+		call.ret(status);
+	});
+	// DOS paths become owned native strings. RtlFreeUnicodeString releases the buffer through the same allocator.
+	registry.add("RtlDosPathNameToNtPathName_U_WithStatus", 4, [&context](ApiCall &call) {
+		if (!call[0] || !call[1]) { call.ret(0xc000000dU); return; }
+		auto path = context.paths.full(call.wide(call[0]));
+		if (path.empty()) { call.ret(0xc0000033U); return; }
+		if (path.starts_with(u"\\\\")) path = u"UNC\\" + path.substr(2);
+		path = u"\\??\\" + path;
+		if (path.size() >= 32767) { call.ret(0xc0000106U); return; }
+		const auto buffer = context.allocator.allocate(path.size() * 2 + 2, true);
+		if (!buffer) { call.ret(0xc0000017U); return; }
+		call.put_wide(buffer, path, path.size() + 1);
+		call.store<uint16_t>(call[1], uint16_t(path.size() * 2));
+		call.store<uint16_t>(call[1] + 2, uint16_t(path.size() * 2 + 2));
+		call.store_pointer(call[1] + (call.pointer_width() == 4 ? 4 : 8), buffer);
+		const auto slash = path.find_last_of(u'\\');
+		if (call[2]) call.store_pointer(call[2], slash == path.npos || slash + 1 == path.size() ? 0 : buffer + (slash + 1) * 2);
+		if (call[3]) call.write(call[3], std::vector<uint8_t>(call.pointer_width() == 4 ? 16 : 32));
+		call.ret(0);
 	});
 	// Reparse points are the host's symbolic links. FSCTL_SET_REPARSE_POINT makes an empty directory a mount point (a junction) or
 	// a file or directory a symbolic link to the target its REPARSE_DATA_BUFFER names; FSCTL_GET_REPARSE_POINT describes a link,
@@ -1394,7 +1445,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		if (call[1]) call.store<uint64_t>(call[1], filetime(metadata.st_ctim));
-		if (call[2]) call.store<uint64_t>(call[2], filetime(metadata.st_atim));
+		if (call[2]) call.store<uint64_t>(call[2], access_filetime(metadata));
 		if (call[3]) call.store<uint64_t>(call[3], filetime(metadata.st_mtim));
 		call.ret(1);
 	});
@@ -1425,7 +1476,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		std::vector<uint8_t> bytes(52);
 		put32(bytes, 0, attributes_of(metadata, file->path));
 		put64(bytes, 4, filetime(metadata.st_ctim));
-		put64(bytes, 12, filetime(metadata.st_atim));
+		put64(bytes, 12, access_filetime(metadata));
 		put64(bytes, 20, filetime(metadata.st_mtim));
 		put32(bytes, 28, uint32_t(metadata.st_dev));
 		put32(bytes, 32, uint32_t(uint64_t(metadata.st_size) >> 32));
@@ -1618,8 +1669,10 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const auto file = file_of(call[0]);
+		const auto pipe = std::dynamic_pointer_cast<PipeObject>(file);
+		const int descriptor = pipe && pipe->descriptor < 0 && pipe->listener ? pipe->listener->descriptor : file ? file->descriptor : -1;
 		struct stat metadata{};
-		if (!file || ::fstat(file->descriptor, &metadata)) {
+		if (!file || ::fstat(descriptor, &metadata)) {
 			call.fail(6);
 			return;
 		}
@@ -1628,7 +1681,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		case 0:
 			bytes.assign(40, 0);
 			put64(bytes, 0, filetime(metadata.st_ctim));
-			put64(bytes, 8, filetime(metadata.st_atim));
+			put64(bytes, 8, access_filetime(metadata));
 			put64(bytes, 16, filetime(metadata.st_mtim));
 			put64(bytes, 24, filetime(metadata.st_ctim));
 			put32(bytes, 32, attributes_of(metadata, file->path));
@@ -1643,7 +1696,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			break;
 		case 2: {
 			// The name without its drive, as the volume knows it.
-			const auto name = file->dos_path.size() >= 2 && file->dos_path[1] == u':' ? file->dos_path.substr(2) : file->dos_path;
+			const auto name = pipe ? u"\\" + pipe->name : file->dos_path.size() >= 2 && file->dos_path[1] == u':' ? file->dos_path.substr(2) : file->dos_path;
 			bytes.assign(4 + name.size() * 2, 0);
 			put32(bytes, 0, uint32_t(name.size() * 2));
 			std::memcpy(bytes.data() + 4, name.data(), name.size() * 2);
@@ -2439,7 +2492,11 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(87);
 			return;
 		}
+#ifdef __APPLE__
+		if (call[2] && !raven_darwin::search_path_has_extension(file))
+#else
 		if (call[2] && file.find(u'.') == std::u16string::npos)
+#endif
 			file += call.wide(call[2]);
 		std::vector<std::u16string> directories;
 		if (call[0]) {
@@ -2458,6 +2515,9 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			if (candidate.empty() || candidate.back() != u'\\')
 				candidate.push_back(u'\\');
 			candidate += file;
+#ifdef __APPLE__
+			raven_darwin::use_qualified_search_path(candidate, file);
+#endif
 			const auto resolved = paths.resolve(candidate);
 			if (!resolved || !resolved->exists || !std::filesystem::is_regular_file(resolved->host))
 				continue;
@@ -2516,7 +2576,13 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		auto found = std::make_shared<FindObject>();
 		const bool wild = pattern.find_first_of(u"*?<>") != pattern.npos;
 		std::vector<std::u16string> names;
-		if (wild) {
+#ifdef __APPLE__
+		// Case-insensitive host lookups keep the caller's spelling; enumeration supplies the file's stored name.
+		const bool enumerate = true;
+#else
+		const bool enumerate = wild;
+#endif
+		if (enumerate) {
 			const int listed = open_host(resolved->host, O_RDONLY | O_DIRECTORY);
 			DIR *handle = listed < 0 ? nullptr : ::fdopendir(listed);
 			if (!handle && listed >= 0)
@@ -2849,8 +2915,12 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			// A copy cannot carry rights the original lacks; asking for them is refused.
 			const uint32_t held = objects.access_of(call[1]);
 			uint32_t wanted = call.u32(4);
-			if (wanted & (0x10000000U | 0x02000000U))
-				wanted = held;
+			// Generic access bits describe object-specific rights, rather than extra rights to compare literally.
+			if (wanted & 0x80000000U) wanted = (wanted & ~0x80000000U) | 0x20005;
+			if (wanted & 0x40000000U) wanted = (wanted & ~0x40000000U) | 0x20002;
+			if (wanted & 0x20000000U) wanted = (wanted & ~0x20000000U) | 0x20008;
+			if (wanted & 0x10000000U) wanted = (wanted & ~0x10000000U) | 0xf001f;
+			if (wanted & 0x02000000U) wanted = held;
 			if (wanted & ~held) {
 				if (std::getenv("RAVEN_TRACE_FAIL"))
 					std::fprintf(stderr, "raven: section handle %llx holds %x, a copy asked for %x\n", (unsigned long long)call[1], held, wanted);

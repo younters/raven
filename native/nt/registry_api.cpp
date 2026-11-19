@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
+#ifdef __APPLE__
+#include <raven_darwin_system.h>
+#endif
 #include <functional>
 #include <tuple>
 
@@ -82,6 +85,9 @@ void apply_registry_settings(NativeRegistry &hive)
 
 void register_registry_api(ApiRegistry &registry, KernelContext &context, NativeRegistry &hive)
 {
+#ifdef __APPLE__
+	raven_darwin::seed_hardware_registry(hive);
+#endif
 	const uint32_t ansi_page = context.launch.ansi_code_page;
 	// Key handles come from the same space as every other handle, so CloseHandle and NtClose close them too.
 	hive.set_allocator([&objects = context.objects, &hive] { return objects.reserve([&hive](uint64_t key) { hive.close(key); }); },
@@ -858,6 +864,7 @@ void register_registry_api(ApiRegistry &registry, KernelContext &context, Native
 		case 0xc0000022U: call.ret(5); break;
 		case 0xc000000dU: call.ret(87); break;
 		case 0xc0000017U: call.ret(8); break;
+		case 0xc000012dU: call.ret(1455); break;
 		case 0xc0000023U: call.ret(122); break;
 		case 0x80000005U: call.ret(234); break;
 		case 0xc0000008U: call.ret(6); break;

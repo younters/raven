@@ -1,5 +1,10 @@
 #include "threads.h"
 #include "kernel_waits.h"
+#ifdef __APPLE__
+#include "handle_channel.h"
+#include "platform/darwin/idle_descriptors.h"
+#include "platform/darwin/thread_teardown.h"
+#endif
 
 #include <cstdlib>
 #include <fcntl.h>
@@ -17,6 +22,7 @@
 #include <sys/eventfd.h>
 #include <sys/mman.h>
 #include <thread>
+#include <utility>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <climits>
@@ -314,6 +320,10 @@ void NativeThreads::thread_main(GuestThread &thread)
 				throw;
 			} catch (const std::exception &error) {
 				std::cerr << "raven: guest thread " << thread.id << " failed in " << api_in_progress << ": " << error.what() << "\n";
+			} catch (const NativeResult &stop) {
+				std::cerr << "raven: guest thread " << thread.id << " ended with stop " << int(stop.stop) << " signal " << stop.signal
+					<< " code " << stop.signal_code << " at 0x" << std::hex << stop.instruction << " value 0x" << stop.value
+					<< " address 0x" << stop.fault_address << std::dec << " in " << api_in_progress << "\n";
 			} catch (...) {
 				std::cerr << "raven: guest thread " << thread.id << " ended with a stop\n";
 			}
@@ -376,6 +386,7 @@ void NativeThreads::finish(GuestThread &thread, uint32_t code)
 	moved();
 	thread.impersonation.reset();
 	thread.ready = nullptr;
+	thread.descriptors = {};
 	for (const int report : thread.exit_reports) {
 		[[maybe_unused]] const auto written = ::write(report, &code, sizeof code);
 		::close(report);
@@ -478,7 +489,7 @@ std::shared_ptr<GuestThread> NativeThreads::pick(bool include_current, bool only
 	// been kept waiting for a few slices.
 	std::shared_ptr<GuestThread> computing;
 	for (size_t step = 1; step <= count; ++step) {
-		const auto &thread = threads[(start + step) % count];
+		const auto thread = threads[(start + step) % count];
 		if (thread.get() == running && !include_current)
 			continue;
 		if (thread->state == GuestThread::State::done || thread->suspend_count > 0)
@@ -491,7 +502,9 @@ std::shared_ptr<GuestThread> NativeThreads::pick(bool include_current, bool only
 			continue;
 		}
 		if (thread->state == GuestThread::State::waiting) {
-			if ((thread->ready && thread->ready()) || (thread->wake && now >= *thread->wake))
+			// Polling can reenter the scheduler; retain the predicate independently of its waiting frame.
+			const auto ready = thread->ready;
+			if ((ready && ready()) || (thread->wake && now >= *thread->wake))
 				return thread;
 		}
 	}
@@ -572,6 +585,11 @@ void NativeThreads::schedule()
 		// than after the next sleep.
 		if (pick(true))
 			continue;
+#ifdef __APPLE__
+		// A thread whose call is a moment away is answered without the controller and its worker both going to sleep and waking again.
+		if (process.await_stop())
+			continue;
+#endif
 		auto wake = std::chrono::steady_clock::time_point::max();
 		bool any = false;
 		for (const auto &thread : threads)
@@ -591,11 +609,8 @@ void NativeThreads::schedule()
 		if (poll) {
 			poll(std::chrono::ceil<std::chrono::milliseconds>(slice));
 		} else if (slice.count() > 0) {
-			std::vector<pollfd> descriptors{{this->wake, POLLIN, 0}};
-			if (process.execution_descriptor() >= 0)
-				descriptors.push_back({process.execution_descriptor(), POLLIN, 0});
-			if (watched)
-				watched(descriptors);
+			std::vector<pollfd> descriptors;
+			const auto handles = idle_descriptors(descriptors);
 			const timespec timeout{slice.count() / 1000000000, slice.count() % 1000000000};
 			::ppoll(descriptors.data(), descriptors.size(), &timeout, nullptr);
 			uint64_t drained = 0;
@@ -620,13 +635,23 @@ std::chrono::steady_clock::time_point NativeThreads::idle_until(std::chrono::ste
 	return unannounced ? std::min(limit, std::chrono::steady_clock::now() + std::chrono::milliseconds(20)) : limit;
 }
 
-void NativeThreads::idle_descriptors(std::vector<pollfd> &descriptors) const
+std::shared_ptr<void> NativeThreads::idle_descriptors(std::vector<pollfd> &descriptors) const
 {
+	for (const auto &thread : threads)
+		if (thread->state == GuestThread::State::waiting && !thread->suspend_count)
+			descriptors.insert(descriptors.end(), thread->descriptors.begin(), thread->descriptors.end());
 	descriptors.push_back({wake, POLLIN, 0});
 	if (process.execution_descriptor() >= 0)
 		descriptors.push_back({process.execution_descriptor(), POLLIN, 0});
 	if (watched)
 		watched(descriptors);
+#ifdef __APPLE__
+	const auto handles = watch_handles(descriptors);
+	darwin_merge_idle_descriptors(descriptors);
+	return handles;
+#else
+	return {};
+#endif
 }
 
 void NativeThreads::drain_wake()
@@ -665,7 +690,7 @@ std::function<void()> NativeThreads::remote_nudge() const
 }
 
 bool NativeThreads::block(std::function<bool()> ready, std::optional<std::chrono::steady_clock::time_point> wake, bool turn, bool polled,
-	bool told)
+	bool told, std::span<const pollfd> descriptors)
 {
 	// A thread that gives its turn waits even when it could go on: the others that can run go first.
 	if (!turn && ready())
@@ -697,6 +722,7 @@ bool NativeThreads::block(std::function<bool()> ready, std::optional<std::chrono
 	const auto outer_state = me.state;
 	me.ready = std::move(ready);
 	me.wake = wake;
+	const auto previous_descriptors = std::exchange(me.descriptors, descriptors);
 	me.state = GuestThread::State::waiting;
 	me.spent_slice = false;
 	// The condition reads the waiting frame: it goes with the wait, also when an error or the end of the process leaves the frame. A thread
@@ -706,17 +732,19 @@ bool NativeThreads::block(std::function<bool()> ready, std::optional<std::chrono
 		std::function<bool()> &outer_ready;
 		std::optional<std::chrono::steady_clock::time_point> outer_wake;
 		GuestThread::State outer_state;
+		std::span<const pollfd> previous_descriptors;
 		~Leave()
 		{
 			const bool nested = outer_state == GuestThread::State::waiting && outer_ready;
 			thread.ready = nested ? std::move(outer_ready) : nullptr;
 			thread.wake = nested ? outer_wake : std::nullopt;
+			thread.descriptors = previous_descriptors;
 			if (thread.state == GuestThread::State::waiting && !nested)
 				thread.state = GuestThread::State::running;
 			else if (nested && thread.state != GuestThread::State::done)
 				thread.state = GuestThread::State::waiting;
 		}
-	} leave{me, outer_ready, outer_wake, outer_state};
+	} leave{me, outer_ready, outer_wake, outer_state, previous_descriptors};
 	// A wait only another thread ends: whoever tells it changes what it waits for and then looks at its state under the gate, so the
 	// condition looked at once more after the gate sees a tell that came before the thread was marked as waiting.
 	const bool outer_told = me.told_only;
@@ -768,6 +796,8 @@ bool NativeThreads::block(std::function<bool()> ready, std::optional<std::chrono
 
 void NativeThreads::serve()
 {
+	if (tearing_down)
+		return;
 	for (const auto &service : services)
 		service();
 	// RAVEN_DUMP_THREADS_ON names a file: whenever it is touched every process lists its threads with their state and the wait each
@@ -941,6 +971,9 @@ void NativeThreads::unwind_all()
 	if (threaded)
 		return threaded_unwind();
 	tearing_down = true;
+#ifdef __APPLE__
+	raven_darwin::prepare_teardown_caller(*running);
+#endif
 	std::vector<std::shared_ptr<GuestThread>> remaining;
 	for (const auto &thread : threads)
 		if (!thread->main && thread->state != GuestThread::State::done) {
@@ -968,7 +1001,7 @@ void NativeThreads::resume(GuestThread &thread)
 
 uint32_t NativeThreads::suspend(GuestThread &thread)
 {
-	if (thread.state == GuestThread::State::done)
+	if (thread.state == GuestThread::State::done || thread.suspend_count >= 127)
 		return UINT32_MAX;
 	if (&thread != running && threaded)
 		pause_task_of(thread);

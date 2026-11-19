@@ -1,3 +1,7 @@
+#ifdef __APPLE__
+#include "platform/darwin/processor_count.h"
+#include "platform/darwin/mullion/backend.h"
+#endif
 #include <atomic>
 #include "kernel_context.h"
 #include "processors.h"
@@ -21,8 +25,12 @@
 #include <span>
 #include <thread>
 #include <sched.h>
+#include <tuple>
 #include <sys/mman.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include "../platform/darwin/dxmt/identity.h"
+#endif
 
 extern char **environ;
 
@@ -110,7 +118,23 @@ ZoneInfo zone_at(time_t instant)
 	return {int(local.tm_gmtoff / 60), local.tm_isdst > 0, local.tm_zone ? local.tm_zone : "UTC"};
 }
 
-std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_environment(const NativePaths &paths)
+} // namespace
+
+unsigned guest_processor_count(size_t width, bool topology)
+{
+#ifdef __APPLE__
+	(void)topology;
+	return darwin::processor_count(width == 4);
+#else
+	if (topology)
+		return unsigned(std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1));
+	return std::max(1U, std::min(unsigned(width * 8), std::thread::hardware_concurrency()));
+#endif
+}
+
+namespace {
+
+std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_environment(const NativePaths &paths, bool wow64)
 {
 	const auto user = paths.user_name();
 	const auto profile = paths.user_profile();
@@ -128,7 +152,7 @@ std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_envi
 		character = upper_case(character);
 	add(u"ALLUSERSPROFILE", u"C:\\ProgramData");
 	add(u"APPDATA", profile + u"\\AppData\\Roaming");
-	add(u"CommonProgramFiles", u"C:\\Program Files\\Common Files");
+	add(u"CommonProgramFiles", wow64 ? u"C:\\Program Files (x86)\\Common Files" : u"C:\\Program Files\\Common Files");
 	add(u"CommonProgramFiles(x86)", u"C:\\Program Files (x86)\\Common Files");
 	add(u"CommonProgramW6432", u"C:\\Program Files\\Common Files");
 	add(u"COMPUTERNAME", computer.empty() ? u"RAVEN" : computer);
@@ -136,14 +160,20 @@ std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_envi
 	add(u"HOMEDRIVE", u"C:");
 	add(u"HOMEPATH", u"\\Users\\" + user);
 	add(u"LOCALAPPDATA", profile + u"\\AppData\\Local");
-	add(u"NUMBER_OF_PROCESSORS", widen_ascii(std::to_string(std::max(1U, std::min(64U, std::thread::hardware_concurrency())))));
+#ifdef __APPLE__
+	add(u"NUMBER_OF_PROCESSORS", widen_ascii(std::to_string(guest_processor_count(wow64 ? 4 : 8))));
+#else
+	add(u"NUMBER_OF_PROCESSORS", widen_ascii(std::to_string(guest_processor_count(8))));
+#endif
 	add(u"OS", u"Windows_NT");
 	add(u"Path", u"C:\\Windows\\system32;C:\\Windows;C:\\Windows\\System32\\Wbem");
 	add(u"PATHEXT", u".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC");
-	add(u"PROCESSOR_ARCHITECTURE", u"AMD64");
+	add(u"PROCESSOR_ARCHITECTURE", wow64 ? u"x86" : u"AMD64");
+	if (wow64)
+		add(u"PROCESSOR_ARCHITEW6432", u"AMD64");
 	add(u"PROCESSOR_LEVEL", u"6");
 	add(u"ProgramData", u"C:\\ProgramData");
-	add(u"ProgramFiles", u"C:\\Program Files");
+	add(u"ProgramFiles", wow64 ? u"C:\\Program Files (x86)" : u"C:\\Program Files");
 	add(u"ProgramFiles(x86)", u"C:\\Program Files (x86)");
 	add(u"ProgramW6432", u"C:\\Program Files");
 	add(u"PUBLIC", u"C:\\Users\\Public");
@@ -163,6 +193,18 @@ std::map<std::u16string, std::pair<std::u16string, std::u16string>> default_envi
 		if (text.starts_with(prefix) && equals != text.npos && equals > prefix.size())
 			add(from_utf8(std::string(text.substr(prefix.size(), equals - prefix.size()))), from_utf8(std::string(text.substr(equals + 1))));
 	}
+#ifdef __APPLE__
+	// The IOSurface adapter supports the Metal 3 presentation path.
+	if (mullion_selected() && !std::getenv("RAVEN_GUEST_MULLION_D3D12_METAL4"))
+		add(u"MULLION_D3D12_METAL4", u"0");
+	if (const auto gpu = darwin_dxgi::identity()) {
+		std::string config;
+		if (const char *existing = std::getenv("RAVEN_GUEST_DXMT_CONFIG")) config = existing;
+		else if (const char *existing = std::getenv("DXMT_CONFIG")) config = existing;
+		if (!config.empty()) config += ';';
+		add(u"DXMT_CONFIG", from_utf8(config + darwin_dxgi::dxmt_config(*gpu)));
+	}
+#endif
 	// Swap chains made for composition are drawn by the runtime's compositor from their buffers, so the Direct3D libraries are told to
 	// make them without a window of their own, along with whatever else the host configures for them.
 	constexpr std::u16string_view composition = u"dxgi.enableDummyCompositionSwapchain = True";
@@ -357,6 +399,35 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("GetTickCount", 0, [](ApiCall &call) { call.ret(uint32_t(counter_ticks() / 10000)); });
 	// winmm timers: the host clock already has millisecond resolution, so periods are accepted and change nothing.
 	registry.add("timeGetTime", 0, [](ApiCall &call) { call.ret(uint32_t(counter_ticks() / 10000)); });
+	// XInput: no game controller is connected. Each query answers ERROR_DEVICE_NOT_CONNECTED for the four controller slots and
+	// ERROR_BAD_ARGUMENTS for any other index, as Windows does with no controller plugged in; games then fall back to mouse and keyboard.
+	// XInputGetKeystroke also takes XUSER_INDEX_ANY (0xff).
+	const auto no_controller = [](ApiCall &call) {
+		const uint32_t index = call.u32(0);
+		call.ret(index < 4 || index == 0xff ? 1167 : 160);
+	};
+	for (const auto name : {"XInputGetState", "XInputGetStateEx", "XInputSetState", "XInputGetBaseBusInformation", "XInputCancelGuideButtonWait",
+		"XInputPowerOffController"})
+		registry.add(name, std::string_view(name) == "XInputCancelGuideButtonWait" || std::string_view(name) == "XInputPowerOffController" ? 1 : 2,
+			no_controller);
+	for (const auto name : {"XInputGetCapabilities", "XInputGetBatteryInformation", "XInputGetKeystroke", "XInputGetDSoundAudioDeviceGuids",
+		"XInputWaitForGuideButton"})
+		registry.add(name, 3, no_controller);
+	registry.add("XInputGetCapabilitiesEx", 4, [](ApiCall &call) { call.ret(call.u32(1) < 4 ? 1167 : 160); });
+	registry.add("XInputGetAudioDeviceIds", 5, no_controller);
+	registry.add("XInputEnable", 1, [](ApiCall &call) { call.ret(0); });
+	// The winmm joystick functions: the driver has its sixteen slots and nothing is plugged into them, as on a Windows machine with no
+	// joystick, so games enumerating controllers this way find none and go on (Strata Source's input system asks at startup).
+	static constexpr uint32_t joystick_slots = 16, joystick_bad_parameter = 165, joystick_unplugged = 167;
+	registry.add("joyGetNumDevs", 0, [](ApiCall &call) { call.ret(joystick_slots); });
+	for (const auto name : {"joyGetPos", "joyGetPosEx"})
+		registry.add(name, 2, [](ApiCall &call) { call.ret(call.u32(0) < joystick_slots ? joystick_unplugged : joystick_bad_parameter); });
+	for (const auto name : {"joyGetDevCapsA", "joyGetDevCapsW"})
+		registry.add(name, 3, [](ApiCall &call) { call.ret(call.u32(0) < joystick_slots ? joystick_unplugged : joystick_bad_parameter); });
+	registry.add("joyGetThreshold", 2, [](ApiCall &call) { call.ret(joystick_bad_parameter); });
+	registry.add("joySetThreshold", 2, [](ApiCall &call) { call.ret(joystick_bad_parameter); });
+	registry.add("joySetCapture", 4, [](ApiCall &call) { call.ret(call.u32(1) < joystick_slots ? joystick_unplugged : joystick_bad_parameter); });
+	registry.add("joyReleaseCapture", 1, [](ApiCall &call) { call.ret(call.u32(0) < joystick_slots ? 0 : joystick_bad_parameter); });
 	registry.add("timeBeginPeriod", 1, [](ApiCall &call) { call.ret(call.u32(0) ? 0 : 97); });
 	registry.add("timeEndPeriod", 1, [](ApiCall &call) { call.ret(call.u32(0) ? 0 : 97); });
 	registry.add("timeGetDevCaps", 2, [](ApiCall &call) {
@@ -511,9 +582,17 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(87);
 			return;
 		}
+		// An unnamed dynamic zone carries the caller's recurring rules rather than a host zone key.
+		if (call[1] && !call.load<uint16_t>(call[1] + 172)) {
+			auto bytes = call.read(call[1], 172);
+			call.write(call[2], bytes);
+			call.ret(1);
+			return;
+		}
 		const int year = uint16_t(call[0]) ? int(uint16_t(call[0])) : current_year();
 		std::vector<uint8_t> bytes;
-		zone_for_year(year, true, bytes);
+		// Disabling dynamic DST selects the zone's fixed rules, rather than clearing its transitions.
+		zone_for_year(call[1] && call.load<uint8_t>(call[1] + 428) ? current_year() : year, true, bytes);
 		if (call[1] && call.read(call[1] + 172, 256) != std::vector<uint8_t>(bytes.begin() + 172, bytes.begin() + 428)) {
 			call.fail(2);
 			return;
@@ -624,8 +703,13 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	// The processor state the system saves for threads: the x87 and SSE registers, and for 64-bit programs on a processor that has
 	// them the YMM registers of AVX. A program asks this before it uses AVX: the .NET runtime runs the code compiled ahead for AVX2,
 	// as paint.net's is, only when the answer has AVX, and compiles every method again otherwise.
+	// On a host of another architecture the guest's processor is the translator's, and the state it keeps for the guest says.
 	const auto avx_enabled = [](ApiCall &call) {
-		return call.pointer_width() == 8 && __builtin_cpu_supports("avx") && native_has_avx(call.process.context());
+#if defined(__x86_64__) || defined(__i386__)
+		if (!__builtin_cpu_supports("avx"))
+			return false;
+#endif
+		return call.pointer_width() == 8 && native_has_avx(call.process.context());
 	};
 	registry.add("GetEnabledXStateFeatures", 0, [avx_enabled](ApiCall &call) { call.ret(avx_enabled(call) ? 7 : 3); });
 	// Where a CONTEXT keeps an extended state feature: the legacy floating-point state is the FXSAVE area (FltSave on x64,
@@ -652,14 +736,14 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// A CONTEXT laid out in a caller's buffer: the record itself, aligned as the processor's context must be (16 bytes on x64, 4 on x86),
 	// followed by the CONTEXT_EX that describes its parts. A buffer that is missing or too small learns the length it needs. A request
-	// for extended state adds, where AVX is enabled, the area for it after the CONTEXT_EX, on a 64-byte boundary as the processor
-	// wants: its header, whose mask starts empty, and the upper halves of the YMM registers. Elsewhere the extended chunk stays empty.
+	// for extended state adds the area for it after the CONTEXT_EX, on a 64-byte boundary as the processor wants: its header, whose
+	// mask starts empty, and, where AVX is enabled, the upper halves of the YMM registers. Without AVX the area is the header alone.
 	const auto initialize_context = [avx_enabled](ApiCall &call) {
 		const bool wide = call.pointer_width() == 8;
 		const uint32_t record = wide ? 0x4d0 : 0x2cc, alignment = wide ? 16 : 4, extension = 24;
-		const bool extended = (call.u32(1) & 0x40) && avx_enabled(call);
-		const uint32_t area = uint32_t(x64_context::extended_header + x64_context::avx_size);
-		const uint32_t required = record + extension + alignment - 1 + (extended ? area + 63 : 0);
+		const bool requested = call.u32(1) & 0x40U, extended = requested && avx_enabled(call);
+		const uint32_t area = requested ? uint32_t(x64_context::extended_header + (extended ? x64_context::avx_size : 0)) : 0;
+		const uint32_t required = record + extension + alignment - 1 + (requested ? area + 63 : 0);
 		if (!call[3]) {
 			call.fail(87);
 			return;
@@ -671,12 +755,12 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		}
 		const uint64_t context = (call[0] + alignment - 1) & ~uint64_t(alignment - 1);
 		const uint64_t described = context + record;
-		const uint64_t kept = extended ? (described + extension + 63) & ~uint64_t(63) : described + extension;
-		std::vector<uint8_t> bytes(size_t(kept - context) + (extended ? area : 0));
-		const uint32_t flags = extended ? call.u32(1) : call.u32(1) & ~0x40U;
+		const uint64_t kept = requested ? (described + extension + 63) & ~uint64_t(63) : described + extension;
+		std::vector<uint8_t> bytes(size_t(kept - context) + area);
+		const uint32_t flags = requested ? call.u32(1) : call.u32(1) & ~0x40U;
 		std::memcpy(bytes.data() + (wide ? 0x30 : 0), &flags, 4);
 		const int32_t back = -int32_t(record);
-		const uint32_t whole = uint32_t(bytes.size()), kept_offset = uint32_t(kept - described), kept_length = extended ? area : 0;
+		const uint32_t whole = uint32_t(bytes.size()), kept_offset = uint32_t(kept - described), kept_length = area;
 		std::memcpy(bytes.data() + record, &back, 4);
 		std::memcpy(bytes.data() + record + 4, &whole, 4);
 		std::memcpy(bytes.data() + record + 8, &back, 4);
@@ -767,6 +851,12 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// The version as ntdll reports it, Windows 10 unless a compatibility layer says otherwise; the extended block is filled when the
 	// caller sized for it.
+	registry.add("RtlGetNtVersionNumbers", 3, [](ApiCall &call) {
+		const auto version=activation_contexts().system_version();
+		if (call[0]) call.store<uint32_t>(call[0],version.major);
+		if (call[1]) call.store<uint32_t>(call[1],version.minor);
+		if (call[2]) call.store<uint32_t>(call[2],version.build | 0xf0000000U);
+	});
 	registry.add("RtlGetVersion", 1, [](ApiCall &call) {
 		const auto size = call.load<uint32_t>(call[0]);
 		if (size < 276) {
@@ -1123,8 +1213,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("SLRegisterPlugin", 4, [](ApiCall &call) { call.ret(0xc004f016U); });
 	registry.add("SLPersistRTSPayloadOverride", 4, [](ApiCall &call) { call.ret(0xc004f016U); });
 	// All logical processors form one group of at most 64: the masks of the process and the system are the same.
-	const auto processor_mask = [] {
-		const long count = std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1);
+	const auto processor_mask = [](size_t width) {
+		const long count = guest_processor_count(width, true);
 		return count >= 64 ? ~uint64_t(0) : (uint64_t(1) << count) - 1;
 	};
 	// The processor the calling thread runs on at this moment: the host processor it runs on, in group 0, within the processors the process may use.
@@ -1145,8 +1235,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(87);
 			return;
 		}
-		call.store_pointer(call[1], processor_mask());
-		call.store_pointer(call[2], processor_mask());
+		call.store_pointer(call[1], processor_mask(call.pointer_width()));
+		call.store_pointer(call[2], processor_mask(call.pointer_width()));
 		call.ret(1);
 	});
 	// The process runs in group 0 alone: the count goes back even when the array is too small for it.
@@ -1171,7 +1261,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		std::vector<uint8_t> affinity(call.pointer_width() + 8, 0);
-		const uint64_t mask = processor_mask();
+		const uint64_t mask = processor_mask(call.pointer_width());
 		for (size_t index = 0; index < call.pointer_width(); ++index)
 			affinity[index] = uint8_t(mask >> (index * 8));
 		call.write(call[1], affinity);
@@ -1213,8 +1303,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		const size_t width = call.pointer_width();
 		// Each record: relationship, size, then flags, efficiency class, 20 reserved bytes, the group count and one group affinity.
 		const size_t record = (32 + width + 8 + width - 1) / width * width;
-		const long count = std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1);
-		const auto mask = processor_mask();
+		const long count = guest_processor_count(width, true);
+		const auto mask = processor_mask(call.pointer_width());
 		std::vector<uint8_t> bytes;
 		const auto add = [&](uint32_t kind, uint64_t group_mask) {
 			std::vector<uint8_t> entry(record);
@@ -1261,7 +1351,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const size_t width = call.pointer_width(), record = width == 4 ? 24 : 32;
-		const long count = std::max<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1);
+		const long count = guest_processor_count(width, true);
 		std::vector<uint8_t> bytes;
 		const auto add = [&](uint32_t kind, uint64_t mask) {
 			std::vector<uint8_t> entry(record);
@@ -1271,8 +1361,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		};
 		for (long index = 0; index < std::min<long>(count, long(width * 8)); ++index)
 			add(0, uint64_t(1) << index);
-		add(1, processor_mask());
-		add(3, processor_mask());
+		add(1, processor_mask(call.pointer_width()));
+		add(3, processor_mask(call.pointer_width()));
 		const uint32_t capacity = call.load<uint32_t>(call[1]);
 		call.store<uint32_t>(call[1], uint32_t(bytes.size()));
 		if (!call[0] || capacity < bytes.size()) {
@@ -1345,6 +1435,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("DiscardVirtualMemory", 2, [](ApiCall &call) { call.ret(0); });
 	// The display is 96 dpi and every process counts as aware of it (IsProcessDPIAware): the awareness a process asks for is kept and
 	// read back, PROCESS_SYSTEM_DPI_AWARE until it asks.
+#ifndef __APPLE__
 	auto dpi_awareness = std::make_shared<uint32_t>(1);
 	registry.add("SetProcessDpiAwareness", 1, [dpi_awareness](ApiCall &call) {
 		if (call.u32(0) > 2) {
@@ -1362,6 +1453,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.store<uint32_t>(call[1], *dpi_awareness);
 		call.ret(0);
 	});
+#endif
 	registry.add("GetVersionExA", 1, [](ApiCall &call) {
 		const auto size = call.load<uint32_t>(call[0]);
 		if (size != 148 && size != 156) {
@@ -1412,6 +1504,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	// One display scale: every monitor reports the standard 96 dots per inch.
+#ifndef __APPLE__
 	registry.add("GetDpiForMonitor", 4, [](ApiCall &call) {
 		if (!call[2] || !call[3]) {
 			call.ret(0x80070057U);
@@ -1421,6 +1514,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.store<uint32_t>(call[3], 96);
 		call.ret(0);
 	});
+#endif
 	registry.add("VerSetConditionMask", 3, [](ApiCall &call) {
 		uint64_t mask = call[0];
 		const uint32_t types = call.u32(1);
@@ -1473,6 +1567,13 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	// The native form answers STATUS_REVISION_MISMATCH where the Win32 one fails with ERROR_OLD_WIN_VERSION.
 	registry.add("RtlVerifyVersionInfo", 3, [verify_version](ApiCall &call) { call.ret(verify_version(call, true) ? 0 : 0xc0000059U); });
 	// kernel32's memory exports: moving, filling and clearing a block of the program's memory.
+	registry.add("RtlSetLastWin32Error", 1, [](ApiCall &call) { call.set_last_error(call.u32(0)); });
+	registry.add("RtlCompareMemory", 3, [](ApiCall &call) {
+		const auto first = call.read(call[0], size_t(call[2])), second = call.read(call[1], size_t(call[2]));
+		size_t matched = 0;
+		while (matched < first.size() && first[matched] == second[matched]) ++matched;
+		call.ret(matched);
+	});
 	registry.add("RtlMoveMemory", 3, [](ApiCall &call) {
 		if (call[2])
 			call.write(call[0], call.read(call[1], size_t(call[2])));
@@ -1493,6 +1594,26 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("memcpy", 3, copy);
 	registry.add("memmove", 3, copy);
+	// The source is read only up to its terminator, a page at a time, so a short string that ends just before an unreadable page is
+	// copied; the rest of the destination is zero-filled.
+	registry.add("strncpy", 3, [](ApiCall &call) {
+		const auto count = size_t(call[2]);
+		std::vector<uint8_t> bytes;
+		bytes.reserve(count);
+		while (bytes.size() < count) {
+			const uint64_t at = call[1] + bytes.size();
+			const size_t chunk = std::min<size_t>(count - bytes.size(), 4096 - size_t(at & 4095));
+			const auto part = call.read(at, chunk);
+			const auto end = std::find(part.begin(), part.end(), uint8_t(0));
+			bytes.insert(bytes.end(), part.begin(), end);
+			if (end != part.end())
+				break;
+		}
+		bytes.resize(count, 0);
+		if (count)
+			call.write(call[0], bytes);
+		call.ret(call[0]);
+	});
 	registry.add("memset", 3, [](ApiCall &call) {
 		if (call[2])
 			call.write(call[0], std::vector<uint8_t>(size_t(call[2]), uint8_t(call[1])));
@@ -1780,7 +1901,7 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		std::map<std::u16string, std::pair<std::u16string, std::u16string>> values;
 	};
 	auto variables = std::make_shared<Variables>();
-	variables->values = default_environment(paths);
+	variables->values = default_environment(paths, context.process.mode() == NativeMode::x86);
 	// A program started by another one begins with the environment its parent chose.
 	if (context.launch.environment) {
 		variables->values.clear();
@@ -1899,23 +2020,38 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(1);
 	});
-	registry.add("GetEnvironmentStringsW", 0, [&, variables](ApiCall &call) {
-		std::u16string block;
-		for (const auto &[key, entry] : variables->values) {
-			block += entry.first + u"=" + entry.second;
+	for (const auto *name : {"GetEnvironmentStringsW", "GetEnvironmentStringsA", "GetEnvironmentStrings"}) {
+		const bool wide = std::string_view(name) == "GetEnvironmentStringsW";
+		registry.add(name, 0, [&, variables, wide](ApiCall &call) {
+			std::u16string block;
+			for (const auto &[key, entry] : variables->values) {
+				block += entry.first + u"=" + entry.second;
+				block.push_back(0);
+			}
 			block.push_back(0);
-		}
-		block.push_back(0);
-		const auto address = context.allocator.allocate(block.size() * 2);
-		if (!address) {
-			call.fail(8);
-			return;
-		}
-		std::vector<uint8_t> bytes(block.size() * 2);
-		std::memcpy(bytes.data(), block.data(), bytes.size());
-		call.write(address, bytes);
-		call.ret(address);
-	});
+			if (variables->values.empty())
+				block.push_back(0);
+			std::vector<uint8_t> bytes;
+			if (wide) {
+				bytes.resize(block.size() * 2);
+				std::memcpy(bytes.data(), block.data(), bytes.size());
+			} else {
+				const auto ansi = to_ansi(block, 0);
+				bytes.assign(ansi.begin(), ansi.end());
+			}
+			const auto address = context.allocator.allocate(bytes.size());
+			if (!address) {
+				call.fail(8);
+				return;
+			}
+			call.write(address, bytes);
+			call.ret(address);
+		});
+	}
+	for (const auto *name : {"FreeEnvironmentStringsW", "FreeEnvironmentStringsA"})
+		registry.add(name, 1, [&](ApiCall &call) {
+			call.ret(context.allocator.release(call[0]));
+		});
 	// The one user here has no environment apart from the process's own, so a user's block is a copy of it.
 	registry.add("CreateEnvironmentBlock", 3, [&, variables](ApiCall &call) {
 		std::u16string block;
@@ -1938,9 +2074,6 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("DestroyEnvironmentBlock", 1, [&](ApiCall &call) {
 		call.ret(context.allocator.release(call[0]));
 	});
-	registry.add("FreeEnvironmentStringsW", 1, [&](ApiCall &call) {
-		call.ret(context.allocator.release(call[0]));
-	});
 
 	// TLS and FLS indexes are process-wide; values belong to the thread that asks, by its id: a new thread may get the thread block of one
 	// that ended, and must not find that thread's values.
@@ -1959,7 +2092,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	// TLS slot 0 is taken before the program runs, as the system libraries of a Windows process take it: programs (older Rust runtimes
 	// among them) take an index of 0 for "not allocated" and stop when TlsAlloc gives it.
 	tls->used[0] = true;
-	// The thread block mirrors values for the guest-side fast paths of Tls/FlsGetValue (and TlsSetValue).
+	// The thread block mirrors values for the guest-side fast paths of Tls/FlsGetValue (and TlsSetValue): TLS slots below 64 in
+	// TlsSlots, the expansion slots up to 1088 in the TlsExpansionSlots array, and FLS slots in the array at 0x17c8.
 	const auto bind = [&](const char *prefix, std::shared_ptr<Slots> slots, bool callback) {
 		const std::string base = prefix;
 		const bool is_tls = base == "Tls";
@@ -1968,6 +2102,10 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			for (const auto block : context.threads.thread_blocks()) {
 				if (is_tls && index < 64) {
 					call.process.write_memory(block + 0x1480 + index * 8, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&zero), 8));
+				} else if (is_tls && index < 1088) {
+					const auto array = call.load<uint64_t>(block + 0x1780);
+					if (array)
+						call.process.write_memory(array + (index - 64) * 8, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&zero), 8));
 				} else if (!is_tls && index < 4080) {
 					const auto array = call.load<uint64_t>(block + 0x17c8);
 					if (array)
@@ -1977,8 +2115,18 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		};
 		const auto mirror_set = [is_tls](ApiCall &call, uint64_t block, size_t index, uint64_t value) {
 			if (is_tls) {
-				if (index < 64)
+				if (index < 64) {
 					call.store<uint64_t>(block + 0x1480 + index * 8, value);
+				} else if (index < 1088) {
+					// Slots 64 to 1087 live where Windows keeps them, in the thread's TlsExpansionSlots array, which TlsGetValue's
+					// guest path reads; it is made when the thread first sets one.
+					auto array = call.load<uint64_t>(block + 0x1780);
+					if (!array) {
+						array = call.process.map_memory(1024 * 8, PROT_READ | PROT_WRITE);
+						call.store<uint64_t>(block + 0x1780, array);
+					}
+					call.store<uint64_t>(array + (index - 64) * 8, value);
+				}
 				return;
 			}
 			if (index >= 4080)
@@ -2030,7 +2178,11 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		registry.add(base + "GetValue", 1, get_value);
 		// Newer Windows builds publish the fiber-local read under a second name that the C runtime calls.
 		if (!is_tls)
-			registry.add("FlsGetValue2", 1, get_value);
+			registry.add("FlsGetValue2", 1, [get_value](ApiCall &call) {
+				const auto error = call.environment.last_error();
+				get_value(call);
+				call.set_last_error(error);
+			});
 		registry.add(base + "SetValue", 2, [&environment, slots, mirror_set](ApiCall &call) {
 			const auto index = size_t(call.u32(0));
 			if (index >= slots->used.size() || !slots->used[index]) {

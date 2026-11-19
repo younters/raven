@@ -2,6 +2,7 @@
 #include "api.h"
 #include "nt/providers.h"
 
+#include <algorithm>
 #include <fstream>
 #include <cerrno>
 #include <iostream>
@@ -29,7 +30,7 @@ struct ForeignWindow {
 		if (!owner) {
 			::close(sockets[0]);
 			const auto window=raven::window_handle_base()+1;
-			raven::publish_window(window,801,603);
+			raven::publish_window(window,801,603,73);
 			raven::publish_window(window+1,0,0);
 			if (::write(sockets[1],&window,sizeof window)!=sizeof window) ::_exit(1);
 			char release=0;
@@ -59,6 +60,9 @@ int main(int argc,char **argv)
 	try {
 		check(argc==3,"bootstrap and coordinate fixture required");
 		ForeignWindow foreign;
+		const auto foreign_info = raven::foreign_window_info(foreign.handle);
+		check(foreign_info && foreign_info->process == uint32_t(foreign.owner) && foreign_info->thread == 73 &&
+			foreign_info->width == 801 && foreign_info->height == 603, "foreign window owner metadata differs");
 		std::ifstream file(argv[2],std::ios::binary | std::ios::ate);
 		check(bool(file) && file.tellg()>0 && file.tellg()<1024*1024*1024,"invalid coordinate fixture");
 		std::vector<uint8_t> bytes(static_cast<size_t>(file.tellg()));
@@ -66,7 +70,11 @@ int main(int argc,char **argv)
 		check(bool(file.read(reinterpret_cast<char *>(bytes.data()),static_cast<std::streamsize>(bytes.size()))),"cannot read coordinate fixture");
 		raven::ModuleSet modules;
 		auto &entry=modules.add("client.exe",std::move(bytes));
-		auto &user=modules.add("user32.dll",raven::runtime_provider("user32.dll",0x180000000ULL,raven::NativeDesktop::user_exports()));
+		const auto native_exports = raven::NativeDesktop::user_exports();
+		auto exports=std::vector<std::string_view>(native_exports.begin(),native_exports.end());
+		exports.push_back("SetWindowPos");
+		std::sort(exports.begin(),exports.end());
+		auto &user=modules.add("user32.dll",raven::runtime_provider("user32.dll",0x180000000ULL,exports));
 		raven::LoadedImage *images[]={&entry.loaded,&user.loaded};
 		raven::NativeProcess process(images,argv[1],std::chrono::seconds(2));
 		for (const auto &symbol:user.exports)
@@ -79,10 +87,12 @@ int main(int argc,char **argv)
 		check(window,"window allocation failed");
 		auto *record=objects.window(window);
 		record->x=27; record->y=41; record->width=300; record->height=212;
+		raven::ApiRegistry registry;
+		windows.register_api(registry);
 		const auto call=[&](const char *name,std::initializer_list<uint64_t> args) {
 			const auto function=modules.resolve({"user32.dll",name,0,false,0});
 			check(process.call(function,std::span(args.begin(),args.size()),std::chrono::seconds(1)).stop==raven::NativeStop::api,"coordinate API did not trap");
-			check(windows.dispatch(name),"coordinate API not dispatched");
+			check(windows.dispatch(name) || registry.dispatch(process,environment,name),"coordinate API not dispatched");
 			const auto result=process.resume(std::chrono::seconds(1));
 			check(result.stop==raven::NativeStop::returned,"coordinate API did not return");
 			return result.value;
@@ -144,6 +154,21 @@ int main(int argc,char **argv)
 		injected=false;
 		check(call("PeekMessageW",{page+128,0,0x200,0x200,1})==1 &&
 			words(page+128,2)==std::vector<int32_t>{int32_t(window),int32_t(window>>32)},"surviving window lost pointer input");
+		// SetWindowPos must keep an owned menu from stealing its owner's focus.
+		windows.set_call([](uint64_t,std::span<const uint64_t>) { return raven::NativeResult{raven::NativeStop::returned,0}; });
+		presentation.present=[](uint64_t,std::string_view,uint32_t,uint32_t,std::span<const uint8_t>) {};
+		windows.set_presentation(presentation);
+		call("SetFocus",{window});
+		const auto popup=objects.add(raven::DesktopWindow{0,0,u"popup",20,30,80,60});
+		objects.window(popup)->owner=window;
+		objects.window(popup)->style=0x80000000U;
+		objects.window(popup)->visible=false;
+		check(call("SetWindowPos",{popup,0,20,30,80,60,0x50})==1,"nonactivating popup show failed");
+		check(objects.window_visible(popup) && call("GetFocus",{})==window && call("GetActiveWindow",{})==window,
+			"SWP_NOACTIVATE transferred popup focus");
+		call("ShowWindow",{popup,0});
+		check(call("SetWindowPos",{popup,0,20,30,80,60,0x40})==1 && call("GetFocus",{})==popup,
+			"activating popup did not take focus");
 		// A move whose cursor request lets the program read its queue is still queued before the press that came after it.
 		raven::DesktopWindow asked{0,1,u"",40,60,40,30}; asked.parent=window; asked.visible=true;
 		check(objects.add(asked),"a child window could not be added");

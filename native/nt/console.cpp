@@ -835,7 +835,13 @@ std::optional<std::pair<int16_t, int16_t>> TerminalConsole::query_cursor(int des
 	if (!cursor_answers)
 		return std::nullopt;
 	// The answer comes back on the terminal's input: the controlling terminal, else the output descriptor when it reads as well.
+#ifdef __APPLE__
+	// Darwin cannot poll the /dev/tty alias; open the concrete terminal device when the output names one.
+	char terminal[1024];
+	int input = ::ttyname_r(descriptor, terminal, sizeof terminal) ? open_console_terminal() : ::open(terminal, O_RDWR | O_NOCTTY | O_CLOEXEC);
+#else
 	int input = open_console_terminal();
+#endif
 	const bool opened = input >= 0;
 	if (!opened)
 		input = descriptor;

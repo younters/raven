@@ -1155,6 +1155,16 @@ BOOL WINAPI IsDialogMessageW(HWND dialog, LPMSG message)
 
 BOOL WINAPI IsDialogMessageA(HWND dialog, LPMSG message)
 {
-	return IsDialogMessageW(dialog, message);
+	MSG wide = *message;
+	if (message->message == WM_CHAR || message->message == WM_SYSCHAR) {
+		char text[2];
+		WCHAR character;
+		int count = message->wParam > 0xff ? 2 : 1;
+		text[0] = count == 2 ? HIBYTE(message->wParam) : LOBYTE(message->wParam);
+		text[1] = LOBYTE(message->wParam);
+		if (!MultiByteToWideChar(CP_ACP, 0, text, count, &character, 1))
+			return FALSE;
+		wide.wParam = character;
+	}
+	return IsDialogMessageW(dialog, &wide);
 }
-

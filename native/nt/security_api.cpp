@@ -580,6 +580,11 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 		// TokenUIAccess and TokenIsAppContainer: no process here is an accessibility tool or runs in an app container.
 		case 26: case 29: data = {0, 0, 0, 0}; break;
 		case 25: with_sid(make_sid(16, {value.integrity}), 0x60, true); break;
+		// TOKEN_SECURITY_ATTRIBUTES_INFORMATION: version 1, with no claims attached to this token.
+		case 39:
+			data.assign(width == 4 ? 12 : 16, 0);
+			data[0] = 1;
+			break;
 		case 10: data.assign(56, 0); break;
 		default:
 			call.fail(87);
@@ -1567,7 +1572,9 @@ void register_security_api(ApiRegistry &registry, KernelContext &context)
 		call.store_pointer(out, block);
 		call.ret(0);
 	};
+#ifndef __APPLE__
 	registry.add("DeriveAppContainerSidFromAppContainerName", 2, [container_sid](ApiCall &call) { container_sid(call, call[0], call[1]); });
+#endif
 	// Containers keep no profile of their own here: creating one only names its SID, and deleting one has nothing to remove.
 	registry.add("CreateAppContainerProfile", 6, [container_sid](ApiCall &call) { container_sid(call, call[0], call[5]); });
 	registry.add("DeleteAppContainerProfile", 1, [](ApiCall &call) { call.ret(0); });

@@ -27,6 +27,7 @@ public:
 		// The assembly's folder in the side-by-side store, named like its manifest there, or the absolute host folder of a private
 		// assembly; empty for a program's own manifest.
 		std::string folder;
+		std::optional<int64_t> dpi_context;
 		// The classes the assembly serves without the registry, by lower-case braced class id: a comClass of one of its files, or a
 		// clrClass or clrSurrogate of managed code, which the runtime serves through mscoree.dll.
 		struct ComClass {
@@ -58,6 +59,7 @@ public:
 	// Private assemblies, which carry no public key token, are looked for in the program's folder when it is given.
 	void prepare(const std::filesystem::path &manifests, bool wide, std::string_view program_manifest,
 		const std::filesystem::path &application_folder = {});
+	std::optional<int64_t> process_dpi_context() const { return program ? program->dpi_context : std::nullopt; }
 	// The side-by-side folder that serves a library named alone: an assembly the context in effect depends on, directly or through
 	// another, declares the file. The loader looks there before any other place, as Windows redirects it.
 	std::optional<std::filesystem::path> library_folder(std::string_view name) const;

@@ -15,10 +15,10 @@ static char tag(HWND window)
 static LRESULT CALLBACK procedure(HWND window,UINT message,WPARAM wparam,LPARAM lparam)
 {
 	char event=message==WM_SETFOCUS ? 'A' : message==WM_KILLFOCUS ? 'B' :
-		message==WM_ACTIVATE ? 'C' : message==WM_NCACTIVATE ? 'D' : message==WM_DESTROY ? 'E' : 0;
+		message==WM_ACTIVATE ? 'C' : message==WM_NCACTIVATE ? 'D' : message==WM_DESTROY ? 'E' : message==WM_ACTIVATEAPP ? 'F' : 0;
 	if (event && count+4<=sizeof(events)) {
 		events[count++]=event; events[count++]=tag(GetFocus()); events[count++]=tag(GetActiveWindow());
-		events[count++]=tag(event=='A' || event=='B' ? (HWND)wparam : event=='E' ? window : (HWND)lparam);
+		events[count++]=event=='F' ? (wparam ? '1' : '0') : tag(event=='A' || event=='B' ? (HWND)wparam : event=='E' ? window : (HWND)lparam);
 	}
 	return DefWindowProcW(window,message,wparam,lparam);
 }
@@ -43,7 +43,7 @@ int raven_entry(void)
 	if (SetFocus(NULL)!=second || GetFocus() || GetActiveWindow()!=second) return 8;
 	if (SetFocus(first)!=first || !DestroyWindow(first) || GetFocus() || GetActiveWindow()) return 9;
 	if (!DestroyWindow(second)) return 10;
-	static const char expected[]="D010C010A110D112C112D121C121B222A221B020D021C021D012C012A110D110C110B000E001E002";
+	static const char expected[]="F011D010C010A110D112C112D121C121B222A221B020D021C021D012C012A110F110D110C110B000E001E002";
 	if (count!=sizeof(expected)-1) return 11;
 	for (unsigned index=0;index<count;++index) if (events[index]!=expected[index]) return 12;
 	SetLastError(0);

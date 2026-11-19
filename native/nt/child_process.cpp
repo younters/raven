@@ -1,3 +1,7 @@
+#ifdef __APPLE__
+#include "raven_darwin_dpi.h"
+#include "raven_darwin_launch.h"
+#endif
 #include "child_process.h"
 #include "confine.h"
 #include "console.h"
@@ -24,7 +28,11 @@
 #include <spawn.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#ifdef __APPLE__
+#include <sys/event.h>
+#endif
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 extern char **environ;
@@ -53,24 +61,57 @@ ProcessObject::~ProcessObject()
 		::close(exit_file);
 	if (process_descriptor >= 0)
 		::close(process_descriptor);
+	if (exit_watch >= 0)
+		::close(exit_watch);
+}
+
+int ProcessObject::wake_descriptor() const
+{
+#ifdef __APPLE__
+	// A process's end was found by the scheduler's look every 20 ms (waitpid has nothing to wait on alongside other descriptors), so every
+	// wait for a child took that long after it ended. A kqueue watching for its exit turns readable at once.
+	if (exit_watch == -2) {
+		exit_watch = -1;
+		if (!done && pid > 0) {
+			const int queue = ::kqueue();
+			if (queue >= 0) {
+				::fcntl(queue, F_SETFD, FD_CLOEXEC);
+				struct kevent change;
+				EV_SET(&change, pid, EVFILT_PROC, EV_ADD | EV_ONESHOT, NOTE_EXIT, 0, nullptr);
+				if (::kevent(queue, &change, 1, nullptr, 0, nullptr) == 0) exit_watch = queue;
+				else ::close(queue);
+			}
+		}
+	}
+	return exit_watch;
+#else
+	return -1;
+#endif
 }
 
 bool describe_process(pid_t pid, int &descriptor, InheritedHandle &record)
 {
+#ifdef __APPLE__
+	(void)descriptor;
+#else
 	if (descriptor < 0)
 		descriptor = int(::syscall(SYS_pidfd_open, pid, 0));
 	if (descriptor < 0)
 		return false;
 	::fcntl(descriptor, F_SETFD, FD_CLOEXEC);
-	record.kind = "process";
 	record.descriptor = descriptor;
+#endif
+	record.kind = "process";
 	record.size = uint64_t(pid);
 	return true;
 }
 
 bool ProcessObject::describe(InheritedHandle &record) const
 {
-	return describe_process(pid, process_descriptor, record);
+	if (!describe_process(pid, process_descriptor, record))
+		return false;
+	record.text = name;
+	return true;
 }
 
 SelfProcessObject::~SelfProcessObject()
@@ -100,7 +141,11 @@ bool runtime_process_alive(pid_t pid)
 {
 	if (pid <= 0)
 		return false;
+#ifdef __APPLE__
+	auto stat = raven_darwin::proc_stream("/proc/" + std::to_string(pid) + "/stat");
+#else
 	std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+#endif
 	std::string text;
 	std::getline(stat, text);
 	const auto close = text.rfind(')');
@@ -255,9 +300,23 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 	}
 	std::vector<InheritedHandle> records;
 	for (auto record : launch.inherited) {
-		if (record.descriptor < 0)
-			continue;
-		record.descriptor = pass(record.descriptor);
+		const int source = record.descriptor;
+		if (source >= 0)
+			record.descriptor = pass(source);
+#ifdef __APPLE__
+		// A server end that waits for its client hands over its listening socket (bit 8); the child takes the name it is bound to too.
+		if (record.kind == "pipe" && (record.bits & 8)) {
+			const int lock = raven_darwin_unix_binding_lock(source);
+			if (lock >= 0) {
+				owned.push_back(lock);
+				InheritedHandle binding;
+				binding.kind = "darwin-binding";
+				binding.descriptor = pass(lock);
+				binding.size = uint64_t(record.descriptor);
+				records.push_back(std::move(binding));
+			}
+		}
+#endif
 		records.push_back(std::move(record));
 	}
 	if (!records.empty()) {
@@ -349,7 +408,21 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
 	posix_spawnattr_setsigmask(&attributes, &none);
 	posix_spawnattr_setsigdefault(&attributes, &all);
 	posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
+#ifdef __APPLE__
+	// Runtime metadata travels in the host environment, separately from the guest's explicit Windows environment block.
+	std::vector<std::string> environment;
+	for (auto variable=environ; *variable; ++variable)
+		if (!std::string_view(*variable).starts_with("RAVEN_DESKTOP_DPI=")) environment.emplace_back(*variable);
+	raven_darwin::child_launch_metadata(environment, launch.image.string(), &actions);
+	if (raven_darwin::child_desktop_dpi)
+		environment.push_back("RAVEN_DESKTOP_DPI="+std::to_string(raven_darwin::child_desktop_dpi));
+	std::vector<char *> env;
+	for (auto &variable:environment) env.push_back(variable.data());
+	env.push_back(nullptr);
+	status = ::posix_spawn(&child, self, &actions, &attributes, argv.data(), env.data());
+#else
 	status = ::posix_spawn(&child, self, &actions, &attributes, argv.data(), environ);
+#endif
 	posix_spawnattr_destroy(&attributes);
 	posix_spawn_file_actions_destroy(&actions);
 	for (const int descriptor : moved)

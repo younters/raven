@@ -19,6 +19,7 @@ typedef struct {
 
 #define IOCTL_AFD_POLL 0x00012024
 #define AFD_POLL_RECEIVE 0x1
+#define AFD_POLL_DISCONNECT 0x8
 #define AFD_POLL_ACCEPT 0x80
 
 int raven_entry(void)
@@ -81,6 +82,29 @@ int raven_entry(void)
 		return 12;
 	if (status.Status != (NTSTATUS)0xC0000120L)
 		return 13;
+	// The peer's graceful close is reported while its last data is still unread, as mio's read-closed interest needs.
+	SOCKET accepted = accept(listener, NULL, NULL);
+	if (accepted == INVALID_SOCKET || send(client, "tail", 4, 0) != 4 || shutdown(client, SD_SEND))
+		return 14;
+	for (int attempt = 0;; ++attempt) {
+		poll.count = 1;
+		poll.handles[0].socket = (HANDLE)accepted;
+		poll.handles[0].events = AFD_POLL_DISCONNECT;
+		result = NtDeviceIoControlFile(afd, NULL, NULL, &status, &status, IOCTL_AFD_POLL, &poll, sizeof poll, &poll, sizeof poll);
+		if (result != STATUS_PENDING && result != 0)
+			return 15;
+		if (!GetQueuedCompletionStatus(port, &bytes, &key, &context, 10000) || context != (OVERLAPPED *)&status || status.Status)
+			return 16;
+		if (poll.count == 1 && (poll.handles[0].events & AFD_POLL_DISCONNECT))
+			break;
+		if (attempt == 50)
+			return 17;
+		Sleep(20);
+	}
+	char tail[4];
+	if (recv(accepted, tail, sizeof tail, 0) != 4 || tail[0] != 't' || tail[3] != 'l')
+		return 18;
+	closesocket(accepted);
 	closesocket(client);
 	closesocket(listener);
 	CloseHandle(afd);

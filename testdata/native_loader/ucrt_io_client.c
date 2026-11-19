@@ -284,6 +284,29 @@ static int secure_scan(void)
 	return 0;
 }
 
+/* A _locale_t as code built with the Windows headers reads it inline: { locinfo, mbcinfo }, and locinfo begins with the character
+   class table (indexed from -1), MB_CUR_MAX and the code page. libc++ formats numbers through exactly these reads. */
+static int locale_layout(void)
+{
+	HMODULE crt = GetModuleHandleA("ucrtbase.dll");
+	void *(__cdecl *create)(int, const char *) = (void *)GetProcAddress(crt, "_create_locale");
+	int (__cdecl *is_class)(int, int, void *) = (void *)GetProcAddress(crt, "_isctype_l");
+	const unsigned short *(__cdecl *classes)(void) = (void *)GetProcAddress(crt, "__pctype_func");
+	if (!create || !is_class || !classes)
+		return 1;
+	struct public_data { const unsigned short *pctype; int mb_cur_max; unsigned code_page; };
+	struct locale { struct public_data *locinfo; void *mbcinfo; } *locale = create(0, "C");
+	if (!locale || !locale->locinfo || !locale->mbcinfo)
+		return 2;
+	const struct public_data *data = locale->locinfo;
+	if (data->pctype != classes() || !(data->pctype['9'] & 0x4) || (data->pctype['a'] & 0x4) || data->mb_cur_max != 1 || data->code_page != GetACP())
+		return 3;
+	/* The class of '9' is the digit's own, not the next character's. */
+	if (!is_class('9', 0x4, locale) || is_class(':', 0x4, locale) || !is_class('A', 0x1, locale))
+		return 4;
+	return 0;
+}
+
 /* The entry points the .NET host and runtime import: an error message in UTF-16, a fused multiply-add, the time zone as functions. */
 static int runtime_helpers(void)
 {
@@ -306,6 +329,28 @@ static int runtime_helpers(void)
 	if (flush_all() < 0) return 6;
 	long seconds = 0;
 	if (get_zone(&seconds) || *zone() != seconds || !zone_names()[0] || !zone_names()[1]) return 7;
+	return 0;
+}
+
+/* A command's output read through a pipe, its exit code from the close, and rotations whose count wraps at the width. */
+static int command_pipes(void)
+{
+	HMODULE crt = GetModuleHandleA("ucrtbase.dll");
+	void *(__cdecl *wide_open)(const wchar_t *, const wchar_t *) = (void *)GetProcAddress(crt, "_wpopen");
+	void *(__cdecl *narrow_open)(const char *, const char *) = (void *)GetProcAddress(crt, "_popen");
+	int (__cdecl *close_pipe)(void *) = (void *)GetProcAddress(crt, "_pclose");
+	unsigned (__cdecl *rotate)(unsigned, int) = (void *)GetProcAddress(crt, "_rotl");
+	unsigned (__cdecl *rotate_right)(unsigned, int) = (void *)GetProcAddress(crt, "_rotr");
+	unsigned long long (__cdecl *rotate64)(unsigned long long, int) = (void *)GetProcAddress(crt, "_rotl64");
+	char *(__cdecl *read_line)(char *, int, void *) = (void *)GetProcAddress(crt, "fgets");
+	if (!wide_open || !narrow_open || !close_pipe || !rotate || !rotate_right || !rotate64 || !read_line) return 1;
+	if (rotate(0x80000001u, 1) != 3 || rotate(5, 32) != 5 || rotate_right(3, 1) != 0x80000001u || rotate64(1ULL << 63, 1) != 1) return 2;
+	if (wide_open(L"echo", L"x") || wide_open(NULL, L"r") || close_pipe(NULL) != -1 || close_pipe(&crt) != -1) return 3;
+	void *pipe = narrow_open("echo raven", "r");
+	if (!pipe) return GetFileAttributesA("C:\\Windows\\System32\\cmd.exe") == INVALID_FILE_ATTRIBUTES ? 0 : 4;
+	char line[32];
+	if (!read_line(line, sizeof line, pipe) || line[0] != 'r' || line[4] != 'n') return 5;
+	if (close_pipe(pipe) != 0) return 6;
 	return 0;
 }
 
@@ -395,11 +440,15 @@ int raven_entry(void)
 	if ((count = office_helpers())) return 100 + (int)count;
 	if ((count = secure_scan()))
 		return 200 + (int)count;
-	if ((count = runtime_helpers()))
+	if ((count = locale_layout()))
 		return 300 + (int)count;
-	if ((count = float_conversions()))
+	if ((count = runtime_helpers()))
 		return 400 + (int)count;
 	if ((count = own_exit_functions()))
 		return 500 + (int)count;
+	if ((count = command_pipes()))
+		return 600 + (int)count;
+	if ((count = float_conversions()))
+		return 700 + (int)count;
 	return temp_names();
 }

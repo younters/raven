@@ -1,0 +1,20 @@
+{
+  "dxmt": {
+    "src/winemetal/unix/winemetal_unix.c": "364d09e88d823548614b4b9ae566c8a4bb09c532b107031da69eec10a9db6987",
+    "src/winemetal/unix/cache.c": "1cf1e93c4af52fe10672c1d92e68c0188be30377093f4bc93845373b40455c8a",
+    "src/winemetal/winemetal.h": "0602671b1a3dd3994dfa12492ec1dfb4001e02534f2b7429949eea840ec8940c",
+    "src/winemetal/winemetal_thunks.h": "c424046b565f99e0b99cf8aa95c28008c64d5812dd1c0d6d15753aab76445215",
+    "src/winemetal/airconv_thunks.h": "4902be82172b93f0508ab512340906a47c276af22139b9b3c549664a5adf8fb0",
+    "src/airconv/airconv_public.h": "359fab3ffda84cd41e1ef2c344d2630f1fbe55e51036086bb182456baafdee98",
+    "src/airconv/dxbc_converter.cpp": "8e73b8d9e02bc2f08749f67688210414bb0b8297c6652842cf7c99f38e9bd76e"
+  },
+  "mullion": {
+    "src/winemetal/unix/winemetal_unix.c": "5460395fc0cc02e497b37a90b89b11b1ce3e06e3386f052b139138a836581ba5",
+    "src/winemetal/unix/cache.c": "9cefae4a33cec3cdefdaabf62938b3927e0c741d610416a1d56185b9597323c1",
+    "src/winemetal/winemetal.h": "bc8cbddf24bcfccb26cb8edb6bc4385ba24569a718abaf6836d21a348ac4b4bc",
+    "src/winemetal/winemetal_thunks.h": "95e8d265e0737f26c29e73accc701607eef7cb67f810e485c887bd69c0af5bdf",
+    "src/winemetal/airconv_thunks.h": "4286ad9cbbe6179eaa4452c6214e4574345bf3fe5efed3ca456765de0c0fcfe5",
+    "src/airconv/airconv_public.h": "c7bb227f14cc677eae1e9d319c9e42505e9c88289a5fded2e08a22b3190bc5f1",
+    "src/airconv/dxbc_converter.cpp": "9cf237fd3e1a995e270b94ab566e7c8cf30cae35f54b6a60e8ab464e8776524c"
+  }
+}

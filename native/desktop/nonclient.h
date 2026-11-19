@@ -9,6 +9,8 @@ struct DesktopMetrics {
 	int32_t button_x=18,button_y=25,small_button_x=17,small_button_y=17;
 	// Default screen size for backends without output geometry.
 	int32_t screen_x=1920,screen_y=1080;
+	uint32_t dpi=96;
+	DesktopMetrics at_dpi(uint32_t value) const;
 	int32_t get(int32_t index) const;
 };
 

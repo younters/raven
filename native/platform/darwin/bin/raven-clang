@@ -1,0 +1,17 @@
+#!/bin/sh
+# clang for Windows targets on macOS: Homebrew's MinGW-w64 keeps each target's headers and libraries in its own toolchain directory,
+# which clang does not look for on its own. Linux distributions install them where clang does look.
+for argument in "$@"; do
+	case "$argument" in
+		--target=x86_64-w64-mingw32*|--target=x86_64-pc-windows*) triple=x86_64-w64-mingw32 ;;
+		--target=i686-w64-mingw32*|--target=i686-pc-windows*) triple=i686-w64-mingw32 ;;
+	esac
+done
+if [ -n "$triple" ] && root=$("$triple-gcc" -print-sysroot 2>/dev/null) && [ -n "$root" ]; then
+	case " $* " in
+		*" --target=$triple"*) exec clang --sysroot="$root" "$@" ;;
+		# MSVC targets keep their own search rules; give them only the MinGW headers.
+		*) exec clang -isystem "$root/$triple/include" "$@" ;;
+	esac
+fi
+exec clang "$@"

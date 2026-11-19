@@ -1,0 +1,18 @@
+From: Raven macOS integration
+Upstream: 3Shain/dxmt 3b252590cb0290e36fca6f088b5255b871d2d95a
+Reason: Non-indexed geometry draws must not dereference LLVM argument ~0u.
+Evidence: darwin_dxmt_geometry faults in convert_dxbc_vertex_for_geometry_shader
+          at the getArg(index_buffer_idx) load without this guard.
+
+diff --git a/src/airconv/dxbc_converter_gs.cpp b/src/airconv/dxbc_converter_gs.cpp
+--- a/src/airconv/dxbc_converter_gs.cpp
++++ b/src/airconv/dxbc_converter_gs.cpp
+@@ -793,7 +793,7 @@ convert_dxbc_vertex_for_geometry_shader(
+       builder.CreateBr(finalize_index);
+     }
+ 
+-  } else if (index_buffer_idx) {
++  } else if (index_buffer_idx != ~0u) {
+     auto start_index = builder.CreateExtractValue(draw_arguments, 2);
+     auto index_buffer = function->getArg(index_buffer_idx);
+     auto index_buffer_element_type = index_buffer->getType()->getNonOpaquePointerElementType();

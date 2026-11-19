@@ -1,4 +1,7 @@
 #include "environment.h"
+#ifdef __APPLE__
+#include "platform/darwin/memory/commit.h"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -53,6 +56,11 @@ bool NativeEnvironment::system_information()
 		return false;
 	uint32_t status=0;
 	try {
+#ifdef __APPLE__
+		if (uint32_t(args[0])==2 && memory_accounting)
+			status=commit_system_information(process,*memory_accounting,args);
+		else
+#endif
 		if (uint32_t(args[0])!=0)
 			status=0xc0000002U;
 		else {

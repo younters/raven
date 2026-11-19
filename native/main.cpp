@@ -1,3 +1,7 @@
+#ifdef __APPLE__
+#include "raven_darwin_launch.h"
+#include "platform/darwin/fd_budget.h"
+#endif
 #include "pe/pe.h"
 #include "pe/resources.h"
 #include "pe/loaded_image.h"
@@ -18,6 +22,9 @@
 #include "nt/text.h"
 #include "nt/system_exports.h"
 #include "nt/warm_host.h"
+#ifdef __APPLE__
+#include "platform/darwin/unix_calls.h"
+#endif
 #ifdef RAVEN_OPENGL
 #include "graphics/opengl_bridge.h"
 #endif
@@ -26,6 +33,9 @@
 #endif
 #ifdef RAVEN_XCB
 #include "desktop/xcb.h"
+#endif
+#ifdef RAVEN_COCOA
+#include "platform/darwin/cocoa.h"
 #endif
 #endif
 
@@ -182,8 +192,21 @@ static void leave_exit_code(uint32_t code)
 
 static int native_result(const raven::NativeResult &result,bool process_exit=false,bool inherited_stdio=false)
 {
+#ifdef __APPLE__
+	if (result.stop==raven::NativeStop::exited || (process_exit && result.exception_code)) {
+		const auto code=result.exception_code ? result.exception_code : uint32_t(result.value);
+		// A fault nothing handled ends the process with its code. A child started with inherited stdio prints no status line, so name
+		// the fault in the runtime's own diagnostics; otherwise a crashed game simply vanishes (RAVEN_TRACE_FAULT adds the registers).
+		if (result.stop!=raven::NativeStop::exited && result.exception_code) {
+			std::cerr << "raven: unhandled exception 0x" << std::hex << std::setw(8) << std::setfill('0') << code << std::setfill(' ') << " ended the process at 0x" << result.instruction;
+			if (result.fault_address)
+				std::cerr << " (address 0x" << result.fault_address << ")";
+			std::cerr << std::dec << '\n';
+		}
+#else
 	if (result.stop==raven::NativeStop::exited) {
 		const auto code=uint32_t(result.value);
+#endif
 		leave_exit_code(code);
 		if (!inherited_stdio) std::cout << "Native process exited with status " << code << '\n';
 		return !code ? 0 : (code & 0xff) ? int(code & 0xff) : 1;
@@ -241,25 +264,37 @@ static void show_fault(int signal)
 
 int main(int argc, char **argv)
 {
+#ifdef __APPLE__
+	if (const int error = raven_darwin::prepare_fd_budget())
+		std::fprintf(stderr, "raven: descriptor budget unchanged (errno=%d)\n", error);
+	raven_macos_startup(argc, argv);
+#endif
 	if (std::getenv("RAVEN_BACKTRACE")) {
 		std::set_terminate(show_backtrace);
 		std::signal(SIGSEGV, show_fault);
 		std::signal(SIGBUS, show_fault);
 	}
+	// Preserve the child's inherited guest stderr before opening its per-process runtime trace.
 	// RAVEN_TRACE_FILE=path sends the diagnostics of every process, a child program's included, to its own file path.<pid>.
-	if (const char *trace = std::getenv("RAVEN_TRACE_FILE")) {
-		const auto name = std::string(trace) + "." + std::to_string(::getpid());
-		if (!std::freopen(name.c_str(), "w", stderr))
-			return 2;
-		// A file is fully buffered once opened; diagnostics are read while the process runs, a line at a time.
-		std::setvbuf(stderr, nullptr, _IOLBF, 0);
-	}
+#ifndef __APPLE__
 	// The threads of a guest run in parallel unless RAVEN_SERIAL asks for one at a time, or the process may use only one processor: a
 	// thread waiting in a served stub would then spin away the time of the host thread that answers it.
 	if (cpu_set_t usable; !std::getenv("RAVEN_PARALLEL") && !std::getenv("RAVEN_SERIAL") &&
 		(::sched_getaffinity(0, sizeof usable, &usable) != 0 || CPU_COUNT(&usable) > 1))
 		::setenv("RAVEN_PARALLEL", "1", 1);
+#endif
+	const auto trace_runtime = [] {
+		if (const char *trace = std::getenv("RAVEN_TRACE_FILE")) {
+			const auto name = std::string(trace) + "." + std::to_string(::getpid());
+			if (!std::freopen(name.c_str(), "w", stderr))
+				return false;
+			// A file is fully buffered once opened; diagnostics are read while the process runs, a line at a time.
+			std::setvbuf(stderr, nullptr, _IOLBF, 0);
+		}
+		return true;
+	};
 	const std::string mode = argc > 1 ? argv[1] : "";
+	if (mode != "--run-process" && !trace_runtime()) return 2;
 	// A restart of Windows: the moves and deletions installers left for it, then the programs that run once at the next logon.
 	if (mode == "--reboot") {
 		const auto done = raven::simulate_restart(raven::NativePrefix::from_environment(), std::filesystem::read_symlink("/proc/self/exe"));
@@ -314,6 +349,9 @@ int main(int argc, char **argv)
 	auto timeout=std::chrono::milliseconds(5000);
 	bool timeout_given=false;
 	bool wayland=false,x11=false;
+#ifdef RAVEN_COCOA
+	bool macos=false;
+#endif
 	bool inherited_stdio=false;
 	// A program started by another one carries the command line and the directory its parent chose.
 	std::optional<std::string> command_line_text, directory_text;
@@ -332,8 +370,18 @@ int main(int argc, char **argv)
 			timeout=std::chrono::milliseconds(milliseconds);
 			timeout_given=true;
 		}
+#ifdef RAVEN_COCOA
+		else if (option=="--desktop=wayland") { wayland=true; x11=false; macos=false; }
+		else if (option=="--desktop=x11") { x11=true; wayland=false; macos=false; }
+		else if (option=="--desktop=macos") { macos=true; wayland=false; x11=false; }
+#else
 		else if (option=="--desktop=wayland") { wayland=true; x11=false; }
 		else if (option=="--desktop=x11") { x11=true; wayland=false; }
+		else if (option=="--desktop=macos") {
+			std::cerr << "raven: native macOS presentation was not built\n";
+			return 2;
+		}
+#endif
 		else if (option=="--stdio=inherit") inherited_stdio=true;
 		else if (option.starts_with("--command-line=")) command_line_text=std::string(option.substr(15));
 		else if (option.starts_with("--directory=")) directory_text=std::string(option.substr(12));
@@ -375,11 +423,15 @@ int main(int argc, char **argv)
 		else more=false;
 		if (more) ++first_file;
 	}
+	if (run_process && !trace_runtime()) return 2;
 	// What programs it starts inherit: how long they may run and which window system they use.
 	const auto pass_options=[&] {
 		std::string options="--timeout-ms="+std::to_string(timeout.count());
 		if (wayland) options+=" --desktop=wayland";
 		if (x11) options+=" --desktop=x11";
+#ifdef RAVEN_COCOA
+		if (macos) options+=" --desktop=macos";
+#endif
 		setenv("RAVEN_CHILD_OPTIONS",options.c_str(),1);
 	};
 	if (run_process) pass_options();
@@ -399,7 +451,14 @@ int main(int argc, char **argv)
 			<< "       raven --bind-imports program.exe dependency.dll ...\n"
 			<< "       raven --run-entry --execution=native fixture.exe\n"
 			<< "       raven --run-modules --execution=native fixture.exe dependency.dll ...\n"
-			<< "       raven --run-process --execution=native [--timeout-ms=N] [--desktop=wayland|--desktop=x11] [--stdio=inherit] program.exe [dependency.dll ...] [-- guest-argument ...]\n"
+			<< "       raven --run-process --execution=native [--timeout-ms=N] [--desktop=wayland|--desktop=x11"
+#ifdef RAVEN_COCOA
+			<< "|--desktop=macos"
+#endif
+			<< "] [--stdio=inherit] program.exe [dependency.dll ...] [-- guest-argument ...]\n"
+#ifdef RAVEN_FEX_PROCESS
+			<< "       Use --execution=fex with --run-entry, --run-modules, or --run-process to select FEX.\n"
+#endif
 			<< "Complete Windows process initialization is not implemented yet.\n";
 		return 2;
 	}
@@ -425,13 +484,20 @@ int main(int argc, char **argv)
 							character = char(character + ('a' - 'A'));
 					raven::set_process_noninteractive(noninteractive || (program == "msiexec.exe" && command_line_text &&
 						command_line_text->find("-Embedding") != std::string::npos));
-					// RAVEN_PARALLEL_PROGRAM runs only the named program's threads in parallel; each program it starts decides again.
+					// RAVEN_PARALLEL_PROGRAM runs only the named programs' threads in parallel (a comma-separated list of basenames, such
+					// as steam.exe,steamwebhelper.exe); each program it starts decides again.
 					if (const char *parallel = std::getenv("RAVEN_PARALLEL_PROGRAM")) {
 						std::string wanted = parallel;
 						for (auto &character : wanted)
 							if (character >= 'A' && character <= 'Z')
 								character = char(character + ('a' - 'A'));
-						if (program == wanted)
+						bool listed = false;
+						for (size_t at = 0; at <= wanted.size() && !listed;) {
+							const auto end = std::min(wanted.find(',', at), wanted.size());
+							listed = wanted.substr(at, end - at) == program;
+							at = end + 1;
+						}
+						if (listed)
 							::setenv("RAVEN_PARALLEL", "1", 1);
 						else
 							::unsetenv("RAVEN_PARALLEL");
@@ -545,7 +611,7 @@ int main(int argc, char **argv)
 								const auto file = from / server;
 								if (std::filesystem::exists(file, error))
 									stamp += file.string() + " " + std::to_string(std::filesystem::file_size(file, error)) + " " +
-										std::to_string(std::filesystem::last_write_time(file, error).time_since_epoch().count()) + "\n";
+										std::to_string(static_cast<long long>(std::filesystem::last_write_time(file, error).time_since_epoch().count())) + "\n";
 							}
 						const auto marker = prefix.root() / "drive_c" / "windows" / "raven-registered.txt";
 						std::string recorded;
@@ -630,13 +696,32 @@ int main(int argc, char **argv)
 						}
 						// What the installation made belongs to the program it installed: once the installer and every program it started have
 						// ended, the prefix is compared with the snapshot. This process waits for them, and the installer runs in a child.
+#ifdef __APPLE__
+						// macOS has no child subreaper: the installer leads a process group of its own, which the programs it starts stay in,
+						// and the installation is over when the group is empty.
+						if (!before.empty()) {
+#else
 						if (!before.empty() && ::prctl(PR_SET_CHILD_SUBREAPER, 1) == 0) {
+#endif
 							const pid_t installer = ::fork();
 							// The programs the installer starts, the setup it unpacks among them, install with it.
+#ifdef __APPLE__
+							if (installer == 0) {
+								::setenv("RAVEN_INSTALLATION", "1", 1);
+								::setpgid(0, 0);
+							}
+#else
 							if (installer == 0)
 								::setenv("RAVEN_INSTALLATION", "1", 1);
+#endif
 							if (installer > 0) {
 								int status = 0, code = 1;
+#ifdef __APPLE__
+								::setpgid(installer, installer);
+								while (::waitpid(installer, &status, 0) < 0 && errno == EINTR) {}
+								code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+								raven_darwin::wait_process_group(installer);
+#else
 								for (;;) {
 									const pid_t ended = ::waitpid(-1, &status, 0);
 									if (ended < 0) {
@@ -647,6 +732,7 @@ int main(int argc, char **argv)
 									if (ended == installer)
 										code = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
 								}
+#endif
 								try {
 									const auto app = raven::record_installation(prefix.root(), before, stem);
 									if (!app.id.empty())
@@ -789,12 +875,17 @@ int main(int argc, char **argv)
 								return read_module(component.c_str());
 						}
 						// DirectWrite, Direct2D and Windows Animation are the runtime's own components too: the library names resolve to them.
-						if (!selected && (name=="dwrite.dll" || name=="d2d1.dll" || name=="uianimation.dll") && entry->image.is_64) {
-							const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() /
+						if (!selected && (name=="dwrite.dll" || name=="d2d1.dll" || name=="uianimation.dll")) {
+							const auto component = component_directory /
 								(name=="dwrite.dll" ? "raven-dwrite.dll" : name=="d2d1.dll" ? "raven-d2d1.dll" : "raven-uianimation.dll");
 							if (std::filesystem::exists(component))
 								return read_module(component.c_str());
 						}
+#ifdef __APPLE__
+						if (!selected)
+							if (auto module = raven::darwin_graphics_module(name, entry->image.is_64))
+								return module;
+#endif
 						// The Direct3D libraries a Windows installation provides come from RAVEN_D3D_DIRECTORY (one or more directories separated by
 						// colons, such as a DXVK build and a vkd3d-proton build of the program's width) or from beside the runtime.
 						if (!selected && (name=="dxgi.dll" || name=="d3d11.dll" || name=="d3d10core.dll" || name=="d3d10_1.dll" || name=="d3d9.dll" || name=="d3d8.dll" ||
@@ -910,11 +1001,25 @@ int main(int argc, char **argv)
 					}();
 					// A .NET program reaches every system library through its runtime, which loads them as it needs them, and rundll32 and regsvr32 run a
 					// library they know nothing about: they get every component.
+#ifdef __APPLE__
+					auto executable_name = std::filesystem::path(argv[first_file]).filename().string();
+					for (auto &c : executable_name) if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+					const bool managed = (entry->image.directories[14].address && entry->image.directories[14].size) ||
+						executable_name == "rundll32.exe" || executable_name == "regsvr32.exe";
+					// Packed programs rebuild their imports through GetProcAddress: their file's import table does not name the libraries whose
+					// components they need. Put those components in place before the runtime providers and their forwarders are bound.
+					const bool resolves_imports = std::any_of(entry->imports.begin(), entry->imports.end(), [](const auto &symbol) {
+						return !symbol.by_ordinal && symbol.name == "GetProcAddress";
+					});
+					const auto imports_any = [&](std::initializer_list<const char *> libraries) {
+						return managed || resolves_imports || std::any_of(libraries.begin(), libraries.end(), [&](const char *library) {
+	#else
 					const bool managed = (entry->image.directories[14].address && entry->image.directories[14].size) ||
 						std::filesystem::path(argv[first_file]).filename() == "rundll32.exe" || std::filesystem::path(argv[first_file]).filename() == "regsvr32.exe";
 					const auto imports_any = [&](std::initializer_list<const char *> libraries) {
 						return managed || std::any_of(libraries.begin(), libraries.end(), [&](const char *library) {
-							const std::string_view wanted(library);
+#endif
+						const std::string_view wanted(library);
 							// A trailing '*' names a family of API set libraries.
 							if (wanted.ends_with('*'))
 								return std::any_of(imported_libraries.begin(), imported_libraries.end(), [&](const auto &name) { return name.starts_with(wanted.substr(0, wanted.size() - 1)); });
@@ -993,6 +1098,10 @@ int main(int argc, char **argv)
 					if (x11) presentation=x11_backend.callbacks();
 #else
 					if (x11) throw std::runtime_error("native X11 presentation was not built");
+#endif
+#ifdef RAVEN_COCOA
+					raven::CocoaPresentation macos_backend;
+					if (macos) presentation=macos_backend.callbacks();
 #endif
 					std::optional<raven::NativeLaunch> launch;
 					{

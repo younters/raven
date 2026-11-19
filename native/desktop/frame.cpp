@@ -31,7 +31,7 @@ NativeWindows::FrameLayout NativeWindows::frame_layout(const DesktopWindow &wind
 	const bool modern = themed();
 	const int32_t inset = modern ? 0 : 2;
 	const int32_t button_height = std::max(layout.caption.bottom - layout.caption.top - 2 * inset + (modern ? 1 : 0), 0);
-	const int32_t button_width = std::min(modern ? 46 : metrics.button_x, std::max(layout.caption.right - layout.caption.left, 0));
+	const int32_t button_width = std::min(modern ? int32_t(46 * metrics.dpi / 96) : metrics.button_x, std::max(layout.caption.right - layout.caption.left, 0));
 	int32_t cursor = layout.caption.right - inset;
 	layout.close = layout.maximize = layout.minimize = {0, 0, 0, 0};
 	if (layout.caption_height && (style & 0x80000U)) {
@@ -123,6 +123,16 @@ void NativeWindows::nonclient_pointer(uint64_t handle,uint64_t hit,uint32_t mess
 		return;
 	}
 	if (message==0x201) {
+		// A second press on the caption within the double-click time and distance is WM_NCLBUTTONDBLCLK, which DefWindowProc
+		// answers by maximizing or restoring a window that can be.
+		const auto now=uint32_t(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+		const bool twice=last_frame_press_window==handle && last_frame_press_hit==hit && now-last_frame_press_time<=500 &&
+			std::abs(x-last_frame_press_x)<=4 && std::abs(y-last_frame_press_y)<=4;
+		last_frame_press_window=twice ? 0 : handle; last_frame_press_hit=hit; last_frame_press_x=x; last_frame_press_y=y; last_frame_press_time=now;
+		if (twice && hit==2 && (window->style & 0x10000U)) {
+			send(handle,0x112,(window->style & 0x01000000U) ? 0xf120 : 0xf030,0);
+			return;
+		}
 		pressed_frame_hit=hit; pressed_frame_window=handle;
 		// A drag that starts on the caption or a sizing border continues in the compositor (maximized windows do not move).
 		// A tool window shown on its owner is moved here: the compositor moves only the host windows it places itself.
@@ -130,6 +140,8 @@ void NativeWindows::nonclient_pointer(uint64_t handle,uint64_t hit,uint32_t mess
 			frame_drag={handle,cursor_x,cursor_y,window->outer};
 			return;
 		}
+		// A maximized window's caption drag restores it under the pointer where the host can; its edges do not size it.
+		if (presentation.interactive && hit==2 && (window->style & 0x01000000U)) { presentation.interactive(handle,0); return; }
 		if (presentation.interactive && !(window->style & 0x01000000U)) {
 			// Hit codes 10..17 are the sizing borders: left, right, top, top-left, top-right, bottom, bottom-left, bottom-right.
 			static constexpr uint32_t edges[]{4,8,1,5,9,2,6,10};
@@ -343,6 +355,7 @@ uint32_t NativeWindows::caption_color(const DesktopWindow &window, bool is_activ
 // The minimize, maximize and close buttons of the Windows 11 caption, which also appear over the frame a program extends into its client area.
 void NativeWindows::paint_caption_buttons(uint64_t handle, const DesktopWindow &window, const FrameLayout &layout, Canvas &canvas, bool is_active)
 {
+	const double scale = objects.nonclient_metrics().dpi / 96.0;
 	CanvasSurface surface{canvas};
 	shapes::Shapes<CanvasSurface> shapes{surface};
 	const bool dark = window.dark_frame;
@@ -364,16 +377,16 @@ void NativeWindows::paint_caption_buttons(uint64_t handle, const DesktopWindow &
 		}
 		const double cx = (rect.left + rect.right) / 2.0, cy = (rect.top + rect.bottom) / 2.0;
 		if (hit == 20) {
-			shapes.segment(cx - 5, cy - 5, cx + 5, cy + 5, 1, glyph);
-			shapes.segment(cx + 5, cy - 5, cx - 5, cy + 5, 1, glyph);
+			shapes.segment(cx - 5 * scale, cy - 5 * scale, cx + 5 * scale, cy + 5 * scale, scale, glyph);
+			shapes.segment(cx + 5 * scale, cy - 5 * scale, cx - 5 * scale, cy + 5 * scale, scale, glyph);
 		} else if (hit == 9 && maximized) {
-			shapes.rounded(cx - 5, cy - 3, cx + 3, cy + 5, 1, std::nullopt, glyph);
-			shapes.segment(cx - 3, cy - 5, cx + 5, cy - 5, 1, glyph);
-			shapes.segment(cx + 5, cy - 5, cx + 5, cy + 3, 1, glyph);
+			shapes.rounded(cx - 5 * scale, cy - 3 * scale, cx + 3 * scale, cy + 5 * scale, scale, std::nullopt, glyph);
+			shapes.segment(cx - 3 * scale, cy - 5 * scale, cx + 5 * scale, cy - 5 * scale, scale, glyph);
+			shapes.segment(cx + 5 * scale, cy - 5 * scale, cx + 5 * scale, cy + 3 * scale, scale, glyph);
 		} else if (hit == 9) {
-			shapes.rounded(cx - 5, cy - 5, cx + 5, cy + 5, 1, std::nullopt, glyph);
+			shapes.rounded(cx - 5 * scale, cy - 5 * scale, cx + 5 * scale, cy + 5 * scale, scale, std::nullopt, glyph);
 		} else {
-			shapes.segment(cx - 5, cy, cx + 5, cy, 1, glyph);
+			shapes.segment(cx - 5 * scale, cy, cx + 5 * scale, cy, scale, glyph);
 		}
 	};
 	button(layout.close, 20);

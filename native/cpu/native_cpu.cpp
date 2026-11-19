@@ -975,6 +975,14 @@ void NativeProcess::install_seccomp()
 	state->seccomp = true;
 }
 
+user_regs_struct NativeProcess::registers() const
+{
+	state->require_stopped();
+	user_regs_struct result{};
+	trace(PTRACE_GETREGS, state->child->pid, &result);
+	return result;
+}
+
 NativeContext NativeProcess::context() const
 {
 	state->require_stopped();
@@ -1396,6 +1404,8 @@ bool NativeProcess::has_protection(uint64_t address, size_t size, int protection
 	}
 	return true;
 }
+
+void NativeProcess::flush_instruction_cache(uint64_t, size_t) {}
 
 void NativeProcess::protect_memory(uint64_t address, size_t size, int protection)
 {

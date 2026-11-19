@@ -47,6 +47,9 @@ public:
 	virtual uint32_t table_semaphore() const { return 0; }
 	// The same for a mutex the table keeps.
 	virtual uint32_t table_mutex() const { return 0; }
+	// A descriptor that turns readable when the object may have turned signaled by itself, as a child process's does when it ends: a
+	// waiter's sleep ends then instead of at the scheduler's next look. -1 when nothing announces it.
+	virtual int wake_descriptor() const { return -1; }
 };
 
 class NativeObjects;
@@ -81,7 +84,7 @@ public:
 	NativeObjectResult create_named_event(const std::u16string &name, uint32_t access, uint32_t type, bool signaled, bool &existed);
 	// A new handle for the named event; the status is 0xc0000034 when no such event is alive.
 	NativeObjectResult open_named_event(const std::u16string &name, uint32_t access);
-	NativeObjectResult inherit_file(int descriptor);
+	NativeObjectResult inherit_file(int descriptor, uint64_t value = 0);
 	// A handle inherit_file made, given another descriptor in place of its own: the same handle now names what that one does.
 	uint32_t refresh_file(uint64_t handle, int descriptor);
 	// Reads from an inherited standard handle; the value is the byte count, zero at the end of the input.
@@ -176,6 +179,8 @@ public:
 	void consume(size_t index, uint32_t thread);
 	// When the object turns signaled by itself, as a timer does.
 	std::optional<std::chrono::steady_clock::time_point> wakes_at(size_t index) const;
+	// The host descriptor that turns readable when the object may have turned signaled, or -1.
+	int wake_descriptor(size_t index) const;
 
 private:
 	NativeObjects &objects;

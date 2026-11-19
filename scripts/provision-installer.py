@@ -56,6 +56,15 @@ COMPONENTS = ("cabinet.dll", "sxs.dll", "rpcrt4.dll", "msi.dll", "raven-storage.
               "raven-appx.dll", "mspatcha.dll", "vbscript.dll", "scrrun.dll", "wshom.ocx", "jscript.dll")
 
 
+def widl_target(triple):
+    # Width alone retains the host ISA on arm64. RPC stubs need the guest ABI. A widl built on its own has no interface definitions
+    # installed with it, so it reads those of the Wine tree it came from.
+    command = ["widl", "-b", triple]
+    found = shutil.which("widl")
+    include = Path(found).resolve().parent.parent / "wine-src/include" if found else None
+    return command + ["-I", str(include)] if include and (include / "oaidl.idl").is_file() else command
+
+
 # The export list of a library from its specification file: the subset of the format the specifications here use, one export per line,
 # an ordinal or "@" for the next one, stdcall or cdecl, -private, and a stdcall name decorated with its argument bytes on x86.
 def spec_exports(spec, name, x86):
@@ -123,6 +132,7 @@ def fetch(url, archive, sha256, what):
 
 def main():
     parser = argparse.ArgumentParser(description="Build the Windows Installer components and the libraries they install with")
+    parser.add_argument("--rpc-abi-probe", action="store_true", help="generate a minimal RPC client using the installer WIDL command, then exit")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--arch", choices=("x64", "x86"), default="x64", help="build the 64-bit components, or the 32-bit ones for PE32 programs")
     args = parser.parse_args()
@@ -135,10 +145,19 @@ def main():
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     # The tools' temporary files go to a directory of their own, removed on exit, so none of them stays in the output.
-    output.mkdir(parents=True, exist_ok=True)
     scratch = tempfile.mkdtemp(prefix=".tmp-", dir=output)
     atexit.register(shutil.rmtree, scratch, True)
     env = dict(os.environ, TMPDIR=scratch, TMP=scratch, TEMP=scratch)
+    widl = widl_target(triple)
+    if args.rpc_abi_probe:
+        probe = output / "probe.idl"
+        probe.write_text("""[uuid(39c732ad-1d36-47f3-9ca8-a8cc307aa859), version(1.0), explicit_handle]
+interface probe {
+    long check([in] handle_t binding, [in] long first, [in] long second);
+}
+""")
+        subprocess.run(widl + ["-Oif", "-c", "-o", str(output / "probe.c"), str(probe)], check=True)
+        return
     repo = Path(__file__).resolve().parents[1]
     upstream_sources = {}
     for name, release in UPSTREAM.items():
@@ -172,6 +191,10 @@ def main():
     records = []
 
     def run(command, cwd=None):
+        # GCC 14 and later make pointer mismatches errors; upstream's own components still carry some (ULONG * for unsigned int *),
+        # so they stay warnings for every MinGW compile, as for the ReactOS sources below.
+        if str(command[0]).endswith("-gcc"):
+            command = [command[0], "-Wno-error=incompatible-pointer-types", *command[1:]]
         result = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
         records.append(dict(command=[str(part) for part in command], returncode=result.returncode))
         if result.returncode:
@@ -237,7 +260,7 @@ def main():
     shutil.rmtree(generated, ignore_errors=True)
     generated.mkdir(parents=True)
     # Type libraries are compiled against the interface definitions installed with the IDL compiler.
-    widl = ["widl", "-m32" if x86 else "-m64"]
+    widl = widl_target(triple)
     # A toolchain whose default C runtime is the UCRT gives that library the name msvcrt and keeps the one of msvcrt.dll as msvcrt-os.
     msvcrt = "-lmsvcrt-os" if Path(run([triple + "-gcc", "-print-file-name=libmsvcrt-os.a"]).stdout.strip()).is_absolute() else "-lmsvcrt"
     # Raven code and the upstream libraries on the MinGW-w64 headers. A function the headers do not declare would return a truncated int: none

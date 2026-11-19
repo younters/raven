@@ -26,13 +26,12 @@ def main():
     link_extra = ["-Wl,--kill-at"] if x86 else []
     bases = dict(comctl32=0x1f000000, user32=0x1f400000, shell=0x1f800000, crt=0x1fc00000) if x86 else dict(
         comctl32=0x1f0000000, user32=0x1f4000000, shell=0x1f8000000, crt=0x1fc000000)
+    bases.update(dwrite=0x1ed00000 if x86 else 0x1fb000000, d2d1=0x1ee00000 if x86 else 0x1fa000000,
+                 uianimation=0x1ef00000 if x86 else 0x1f9000000)
     wanted = {"comctl32", "user32", "shell", "crt", "dwrite", "d2d1", "uianimation"} if args.components == "all" else set(args.components.split(","))
     if x86:
         # The 32-bit C runtime component is built by the main build; the others are described here.
         wanted.discard("crt")
-        wanted.discard("dwrite")
-        wanted.discard("d2d1")
-        wanted.discard("uianimation")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     # The tools' temporary files go to a directory of their own, removed on exit, so none of them stays in the output.
@@ -164,13 +163,14 @@ def main():
                    "SHCreateStreamOnFileA", "SHCreateStreamOnFileW", "SHCreateStreamOnFileEx", "SHCreateMemStream", "PropVariantCopy", "CoGetContextToken", "CoGetObjectContext", "CoGetDefaultContext", "ExtractIconExW", "ExtractIconW", "SHDefExtractIconW", "UiaGetReservedNotSupportedValue", "UiaGetReservedMixedAttributeValue", "SHGetMalloc",
                    "OpenRegStream", "SHOpenRegStreamW", "SHOpenRegStreamA", "SHOpenRegStream2W", "SHOpenRegStream2A", "InitNetworkAddressControl",
                    "RoGetActivationFactory", "RoActivateInstance", "CoCreateFreeThreadedMarshaler",
+                   "SHBrowseForFolderW", "SHBrowseForFolderA", "OleSetClipboard", "OleGetClipboard", "OleFlushClipboard", "OleIsCurrentClipboard", "ReleaseStgMedium",
                    "SHGetDesktopFolder", "SHCreateItemFromIDList", "SHCreateShellItem", "CreateFileMoniker", "SHLoadIndirectString", "SHGetPropertyStoreFromParsingName", "ILGetSize", "ILGetNext", "ILFindLastID", "ILClone", "ILCloneFirst", "ILCombine", "ILFree", "ILCreateFromPathW", "SHILCreateFromPath", "SHParseDisplayName", "SHBindToParent", "SHGetDataFromIDListW", "ILIsEqual",
                    "CreateErrorInfo", "SetErrorInfo", "GetErrorInfo", "CoWaitForMultipleHandles", "OleGetClipboard",
                    "CoRegisterClassObject", "CoRevokeClassObject", "CoResumeClassObjects", "CoSuspendClassObjects", "CoAddRefServerProcess", "CoReleaseServerProcess",
                    "SHGetFileInfoW", "SHGetFileInfoA")
     (output / "raven-shell.def").write_text("NAME raven-shell.dll\nEXPORTS\n" + "".join(definition_line(name, shell_defined.get(name)) for name in shell_names))
     run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['shell']:#x},--no-insert-timestamp", *link_extra,
-         "-o", output / "raven-shell.dll", *shell_objects, output / "raven-shell.def", "-luser32", "-lgdi32", "-ladvapi32", "-lkernel32", "-lole32", "-loleaut32", "-luuid", "-lruntimeobject", "-lgcc"])
+         "-o", output / "raven-shell.dll", *shell_objects, output / "raven-shell.def", "-luser32", "-lgdi32", "-ladvapi32", "-lkernel32", "-lole32", "-loleaut32", "-luuid", "-lruntimeobject", "-lshell32", "-lgcc"])
     # The host services Raven's components call: fonts measured and rasterized with FreeType, surfaces drawn with Skia, and the sandbox
     # calls of the control panel and the file picker.
     host_names = ["RavenFontClose", "RavenFontGlyphs", "RavenFontInfo", "RavenFontMetrics", "RavenFontName", "RavenFontOpen", "RavenFontOutline",
@@ -226,7 +226,7 @@ def main():
         run([triple + "-gcc", "-c", *dwrite_flags, "-I" + str(dwrite_support), dwrite_support / "dwrite.c", "-o", dwrite_objects[0]])
         run([triple + "-gcc", "-c", *dwrite_flags, dwrite_support / "crt.c", "-o", dwrite_objects[1]])
         (output / "raven-dwrite.def").write_text("NAME raven-dwrite.dll\nEXPORTS\nDWriteCreateFactory\n")
-        run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,0x1fb000000,--no-insert-timestamp", *link_extra,
+        run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['dwrite']:#x},--no-insert-timestamp", *link_extra,
              "-o", output / "raven-dwrite.dll", *dwrite_objects, output / "raven-dwrite.def", "-L" + str(output), "-lravenhost", "-lgdi32", "-lkernel32", "-lgcc"])
     if "d2d1" in wanted:
         # The Direct2D component: Raven code on the public headers; surfaces live with the host and are drawn with Skia through ravenhost.dll,
@@ -242,7 +242,7 @@ def main():
         (output / "raven-d2d1.def").write_text("NAME raven-d2d1.dll\nEXPORTS\nD2D1CreateFactory @1\n" + "".join(name + "\n" for name in (
             "D2D1ComputeMaximumScaleFactor", "D2D1ConvertColorSpace", "D2D1CreateDevice", "D2D1CreateDeviceContext",
             "D2D1InvertMatrix", "D2D1IsMatrixInvertible", "D2D1MakeRotateMatrix", "D2D1MakeSkewMatrix", "D2D1SinCos", "D2D1Tan", "D2D1Vec3Length")))
-        run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,0x1fa000000,--no-insert-timestamp", *link_extra,
+        run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['d2d1']:#x},--no-insert-timestamp", *link_extra,
              "-o", output / "raven-d2d1.dll", *d2d1_objects, output / "raven-d2d1.def", "-L" + str(output), "-lravenhost", "-ldwrite",
              "-lwindowscodecs", "-luser32", "-lgdi32", "-lkernel32", "-lgcc"])
     if "uianimation" in wanted:
@@ -254,7 +254,7 @@ def main():
         run([triple + "-gcc", "-c", *animation_flags, "-I" + str(animation_support), animation_support / "uianimation.c", "-o", animation_objects[0]])
         run([triple + "-gcc", "-c", *animation_flags, repo / "native/guest/raven-dwrite/crt.c", "-o", animation_objects[1]])
         (output / "raven-uianimation.def").write_text("NAME raven-uianimation.dll\nEXPORTS\nDllCanUnloadNow PRIVATE\nDllGetClassObject PRIVATE\n")
-        run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,0x1f9000000,--no-insert-timestamp", *link_extra,
+        run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['uianimation']:#x},--no-insert-timestamp", *link_extra,
              "-o", output / "raven-uianimation.dll", *animation_objects, output / "raven-uianimation.def", "-L" + str(output), "-lravenhost",
              "-luuid", "-lkernel32", "-lgcc"])
     if "crt" in wanted:
@@ -263,7 +263,7 @@ def main():
         run([triple + "-gcc", "-c", "-O2", "-w", "-ffreestanding", "-fno-builtin", f"-ffile-prefix-map={repo}=raven",
              repo / "native/guest/raven-crt/ucrtbase.c", "-o", crt_object])
         run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['crt']:#x},--no-insert-timestamp", *link_extra,
-             "-o", output / "ucrtbase.dll", crt_object, "-lkernel32", "-lgcc"])
+             "-o", output / "ucrtbase.dll", crt_object, "-lmingwex", "-lkernel32", "-lgcc"])
     result = dict(commands=records,
                   component_sha256={name: hashlib.sha256((output / name).read_bytes()).hexdigest()
                                     for name in ("comctl32.dll", "raven-user32.dll", "raven-shell.dll", "raven-dwrite.dll", "raven-d2d1.dll", "raven-uianimation.dll",

@@ -3,6 +3,7 @@
 #include "shared_pixels.h"
 #include "nt/host_names.h"
 #include "nt/prefix.h"
+#include "nt/shared_file.h"
 #include "nt/sandbox.h"
 
 #include <algorithm>
@@ -23,6 +24,7 @@
 #include <sys/mman.h>
 #include <sys/inotify.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 namespace raven {
@@ -94,7 +96,7 @@ static void sweep_windows(const std::filesystem::path &directory)
 		std::filesystem::remove(path, error);
 }
 
-void publish_window(uint64_t window, uint32_t width, uint32_t height)
+void publish_window(uint64_t window, uint32_t width, uint32_t height, uint32_t thread, uint64_t parent)
 {
 	// The windows of the runtime's control panel and file dialog are not shown to other programs: none can find them, send them a message
 	// or draw into them.
@@ -107,7 +109,7 @@ void publish_window(uint64_t window, uint32_t width, uint32_t height)
 	const auto temporary = directory / (window_name(window) + ".window." + std::to_string(::getpid()));
 	{
 		std::ofstream output(temporary, std::ios::trunc);
-		output << ::getpid() << ' ' << width << ' ' << height << '\n';
+		output << ::getpid() << ' ' << width << ' ' << height << ' ' << thread << ' ' << parent << '\n';
 	}
 	std::error_code error;
 	std::filesystem::rename(temporary, final_path, error);
@@ -119,6 +121,7 @@ void withdraw_window(uint64_t window)
 	std::error_code error;
 	std::filesystem::remove(directory / (window_name(window) + ".window"), error);
 	std::filesystem::remove(directory / (window_name(window) + ".pixels"), error);
+	std::filesystem::remove(directory / (window_name(window) + ".update"), error);
 	std::filesystem::remove(directory / (window_name(window) + ".traits"), error);
 }
 
@@ -152,6 +155,83 @@ static std::optional<ForeignRecord> foreign_record(uint64_t window)
 	if (::kill(pid_t(record.owner), 0) != 0 && errno == ESRCH)
 		return std::nullopt;
 	return record;
+}
+
+std::optional<ForeignWindowInfo> foreign_window_info(uint64_t window)
+{
+	std::ifstream input(window_directory() / (window_name(window) + ".window"));
+	long owner = 0;
+	ForeignWindowInfo info{};
+	if (!(input >> owner >> info.width >> info.height) || owner <= 0 || owner == ::getpid())
+		return std::nullopt;
+	if (::kill(pid_t(owner), 0) != 0 && errno == ESRCH)
+		return std::nullopt;
+	input >> info.thread >> info.parent; // Older records have neither optional field.
+	info.process = uint32_t(owner);
+	return info;
+}
+
+bool window_under(uint64_t ancestor, uint64_t window, const std::function<std::optional<uint64_t>(uint64_t)> &local_parent)
+{
+	for (unsigned depth = 0; ancestor && window && depth < 64; ++depth) {
+		auto parent = local_parent(window);
+		if (!parent) {
+			const auto foreign = foreign_window_info(window);
+			if (!foreign)
+				return false;
+			parent = foreign->parent;
+		}
+		if (*parent == ancestor)
+			return true;
+		window = *parent;
+	}
+	return false;
+}
+
+bool request_window_update(uint64_t window, const ForeignWindowUpdate &update)
+{
+	if (!foreign_window_info(window)) return false;
+	const auto path=window_directory()/(window_name(window)+".update");
+	const int fd=::open(path.c_str(),O_RDWR|O_CREAT|O_CLOEXEC,0600);
+	if (fd<0) return false;
+	if (::flock(fd,LOCK_EX)!=0) { ::close(fd);return false; }
+	ForeignWindowUpdate pending{};
+	if (::pread(fd,&pending,sizeof(pending),0)!=sizeof(pending)) pending={};
+	if (update.mask&1) pending.parent=update.parent;
+	if (update.mask&2) {
+		pending.after=update.after;pending.flags=update.flags;
+		pending.x=update.x;pending.y=update.y;pending.width=update.width;pending.height=update.height;
+	}
+	pending.mask|=update.mask;
+	const bool ok=::pwrite(fd,&pending,sizeof(pending),0)==sizeof(pending);
+	::flock(fd,LOCK_UN);::close(fd);
+	// The owner may be asleep in a message wait: it is told, as Windows sends a window its placement, instead of finding the mailbox the
+	// next time it happens to look.
+	if (ok) {
+		if (auto *word=window_update_word()) word->fetch_add(1);
+		announce_shared_change();
+	}
+	return ok;
+}
+
+std::atomic<uint32_t> *window_update_word()
+{
+	auto *words=shared_changes();
+	return words ? words+1 : nullptr;
+}
+
+std::optional<ForeignWindowUpdate> take_window_update(uint64_t window, bool consume)
+{
+	const auto path=window_directory()/(window_name(window)+".update");
+	const int fd=::open(path.c_str(),O_RDWR|O_CLOEXEC);
+	if (fd<0) return std::nullopt;
+	if (::flock(fd,LOCK_EX)!=0) { ::close(fd);return std::nullopt; }
+	ForeignWindowUpdate pending{};
+	const bool ready=::pread(fd,&pending,sizeof(pending),0)==sizeof(pending) && pending.mask;
+	const ForeignWindowUpdate empty{};
+	if (ready && consume && ::pwrite(fd,&empty,sizeof(empty),0)!=sizeof(empty)) pending.mask=0;
+	::flock(fd,LOCK_UN);::close(fd);
+	return pending.mask ? std::optional(pending) : std::nullopt;
 }
 
 std::optional<std::pair<uint32_t, uint32_t>> foreign_window_size(uint64_t window)
@@ -433,7 +513,7 @@ bool take_foreign_frame(uint64_t window, uint32_t &seen, const std::function<voi
 		void *mapped = ::mmap(nullptr, size_t(status.st_size), PROT_READ, MAP_SHARED, file, 0);
 		if (mapped != MAP_FAILED) {
 			const auto *header = static_cast<const uint32_t *>(mapped);
-			const uint32_t sequence = std::atomic_ref<const uint32_t>(header[3]).load(std::memory_order_acquire);
+			const uint32_t sequence = __atomic_load_n(&header[3], __ATOMIC_ACQUIRE);
 			const uint32_t width = header[1], height = header[2];
 			if (header[0] == surface_magic && sequence && sequence != seen && width && height &&
 				header_size + size_t(width) * height * 4 <= size_t(status.st_size)) {

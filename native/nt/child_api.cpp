@@ -4,10 +4,15 @@
 #include "kernel_context.h"
 #include "security_attributes.h"
 #include "text.h"
+#ifdef __APPLE__
+#include "platform/darwin/process_creation.h"
+#endif
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <fstream>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -212,6 +217,20 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(pipe->server ? 536 : 233);
 			return;
 		}
+		// FIONREAD reports zero both for an empty pipe and for one whose last writer died.
+		// Peek at one byte to distinguish EOF without consuming data. A caller that polls
+		// PeekNamedPipe must see the same broken-pipe error as a reader, or it can spin forever.
+		if (const auto pipe = std::dynamic_pointer_cast<PipeObject>(file)) {
+			char byte;
+			const auto count = ::recv(file->descriptor, &byte, 1, MSG_PEEK | MSG_DONTWAIT);
+			pollfd state{file->descriptor, 0, 0};
+			const bool closed = count == 0 &&
+				(!pipe->message_mode || (::poll(&state, 1, 0) > 0 && (state.revents & (POLLHUP | POLLERR))));
+			if (closed || (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+				call.fail(109);
+				return;
+			}
+		}
 		int available = 0;
 		if (::ioctl(file->descriptor, FIONREAD, &available) || available < 0) {
 			call.fail(109);
@@ -343,7 +362,11 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 					call.fail(87);
 					return;
 				}
-				if (!object || !object->describe(record)) {
+				const int standard_descriptor = objects.descriptor(handle);
+				if (standard_descriptor >= 0) {
+					record.kind = "standard";
+					record.descriptor = standard_descriptor;
+				} else if (!object || !object->describe(record)) {
 					if (std::getenv("RAVEN_TRACE_API"))
 						std::fprintf(stderr, "raven: handle %llx (%s) cannot be inherited\n", static_cast<unsigned long long>(handle),
 							object ? std::string(object->type_name().begin(), object->type_name().end()).c_str() : "none");
@@ -419,7 +442,9 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 		call.store_pointer(call[9], process_handle.value);
 		call.store_pointer(call[9] + width, thread_handle.value);
 		call.store<uint32_t>(call[9] + 2 * width, uint32_t(child->pid));
-		call.store<uint32_t>(call[9] + 2 * width + 4, 1);
+		// A thread id means one thread on the whole machine, and a program can open it. The child's first thread is known here only by
+		// its process, whose id stands for it as it does for a window's thread; its own number 1 would name the caller's main thread.
+		call.store<uint32_t>(call[9] + 2 * width + 4, uint32_t(child->pid));
 		call.ret(1);
 	};
 	registry.add("CreateProcessW", 10, [create_process](ApiCall &call) { create_process(call, nullptr); });

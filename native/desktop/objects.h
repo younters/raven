@@ -7,6 +7,9 @@
 #include "nonclient.h"
 #include "colors.h"
 #include "menu.h"
+#ifdef __APPLE__
+#include "platform/darwin/printing.h"
+#endif
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -151,6 +154,9 @@ struct DesktopDC {
 	// Parts of the window other windows cover; drawing never reaches them.
 	std::optional<DesktopRegion> visible{};
 	std::vector<DesktopDCState> saved{};
+#ifdef __APPLE__
+	std::shared_ptr<PrinterDC> printer{};
+#endif
 	// Clip coordinates belong to the DC, not its bitmap backing.
 	bool contains(int64_t x,int64_t y) const
 	{
@@ -234,6 +240,7 @@ struct DesktopWindow {
 	bool destroying = false;
 	uint64_t bitmap = 0, dc = 0;
 	bool visible = false;
+	bool message_only = false;
 	bool painting = false, erase_pending = false;
 	DesktopRegion update{};
 	// A window with no client area still has its frame to paint once invalidated: on Windows the update region takes in the
@@ -405,6 +412,7 @@ public:
 #endif
 	const DesktopMetrics &nonclient_metrics() const;
 	bool set_screen_size(int32_t width,int32_t height);
+	void set_dpi(uint32_t dpi);
 
 private:
 	TouchedHandles windows_touched{}, menus_touched{}, bitmaps_touched{}, dcs_touched{}, icons_touched{}, regions_touched{};

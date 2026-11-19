@@ -19,13 +19,15 @@ def main():
         shutil.copy2(raven.parent / "raven-runtime", runtime / "raven-runtime")
         (runtime / "raven-bootstrap").symlink_to(raven.parent / "raven-bootstrap")
         (runtime / "regsvr32.exe").symlink_to(client)
-        for name in ("msxml3.dll", "windowscodecs.dll", "mlang.dll", "propsys.dll"):
+        servers = ("oleaut32.dll", "msxml3.dll", "windowscodecs.dll", "mlang.dll", "propsys.dll")
+        # oleaut32 is loaded eagerly; leave its image absent in this probe runtime.
+        for name in servers[1:]:
             (runtime / name).write_bytes(b"registration probe")
         prefix = work / "prefix"
         env = os.environ | {"RAVEN_PREFIX": str(prefix), "TMPDIR": str(work), "TMP": str(work), "TEMP": str(work)}
         env.pop("RAVEN_PREFIX_SETUP", None)
-        # A failed launch runs regsvr32 once with all five servers, then once for each server on its own.
-        per_launch = 6
+        # A failed launch runs regsvr32 once with every server, then once for each server on its own.
+        per_launch = 1 + len(servers)
         for attempt in range(2):
             result = subprocess.run([str(runtime / "raven"), "--run-process", "--execution=native", str(client)],
                                     env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=25)

@@ -25,6 +25,7 @@ public:
 	bool describe(InheritedHandle &record) const override;
 	// Waiting for a process succeeds once it has ended; the host reports that, not another guest thread.
 	int signaled(uint32_t) const override { return exited() ? 1 : 0; }
+	int wake_descriptor() const override;
 	bool exited() const;
 	// Takes a process descriptor of a process this runtime did not start itself: one the broker started for it.
 	void adopt(int process);
@@ -47,6 +48,8 @@ private:
 	mutable int process_descriptor = -1;
 	void reap() const;
 	mutable bool done = false;
+	// A kqueue that reports the process's end, made the first time something waits for it.
+	mutable int exit_watch = -2;
 	mutable uint32_t code = 259;
 	uint32_t requested = 0;
 	bool killed = false;
@@ -67,7 +70,8 @@ private:
 	mutable int process_descriptor = -1;
 };
 
-// The host handle a process handle carries to another process: a pidfd naming the process, whose id travels beside it.
+// The host handle a process handle carries to another process: a pidfd naming the process, whose id travels beside it. macOS has no
+// pidfd, so there the id travels alone.
 bool describe_process(pid_t pid, int &descriptor, InheritedHandle &record);
 
 // Whether the process id belongs to a running instance of this runtime, the only processes a guest may name that it did not start.

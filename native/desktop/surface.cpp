@@ -47,7 +47,14 @@ bool NativeDesktop::delete_dc(uint64_t handle)
 	const auto *dc = objects.dc(handle);
 	if (!dc || dc->window)
 		return false;
+#ifdef __APPLE__
+	const auto bitmap = dc->printer ? dc->bitmap : 0;
+	const bool erased = objects.erase(handle);
+	if (bitmap) objects.erase(bitmap);
+	return erased;
+#else
 	return objects.erase(handle);
+#endif
 }
 
 uint64_t NativeDesktop::select(uint64_t handle, uint64_t bitmap_handle)
@@ -62,6 +69,12 @@ uint64_t NativeDesktop::select(uint64_t handle, uint64_t bitmap_handle)
 		return result;
 	}
 	const auto *bitmap = objects.bitmap(bitmap_handle);
+#ifdef __APPLE__
+	if (dc && dc->printer) {
+		environment.set_last_error(6);
+		return 0;
+	}
+#endif
 	if (!dc || !bitmap || dc->window || (bitmap->stock && bitmap_handle != dc->default_bitmap)) {
 		environment.set_last_error(6);
 		return 0;

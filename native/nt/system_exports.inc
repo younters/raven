@@ -743,7 +743,7 @@ static constexpr std::string_view kernel32_exports[]{
 	"UnregisterConsoleIME","UnregisterWait","UnregisterWaitEx","UnregisterWaitUntilOOBECompleted","UnsignedMultiplyExtract128","UpdateCalendarDayOfWeek",
 	"UpdateProcThreadAttribute","UpdateResourceA","UpdateResourceW","VDMConsoleOperation","VDMOperationStarted","ValidateLCType",
 	"ValidateLocale","VerLanguageNameA","VerLanguageNameW","VerSetConditionMask","VerifyConsoleIoHandle","VerifyScripts",
-	"VerifyVersionInfoA","VerifyVersionInfoW","VirtualAlloc","VirtualAllocEx","VirtualAllocExNuma","VirtualFree",
+	"VerifyVersionInfoA","VerifyVersionInfoW","VirtualAlloc","VirtualAlloc2FromApp","VirtualAllocEx","VirtualAllocExNuma","VirtualFree",
 	"VirtualFreeEx","VirtualLock","VirtualProtect","VirtualProtectEx","VirtualQuery","VirtualQueryEx",
 	"VirtualUnlock","WTSGetActiveConsoleSessionId","WaitCommEvent","WaitForDebugEvent","WaitForDebugEventEx","WaitForMultipleObjects",
 	"WaitForMultipleObjectsEx","WaitForSingleObject","WaitForSingleObjectEx","WaitForThreadpoolIoCallbacks","WaitForThreadpoolTimerCallbacks","WaitForThreadpoolWaitCallbacks",

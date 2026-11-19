@@ -1,5 +1,9 @@
 #include "environment.h"
 #include "nls.h"
+#include "kernel_context.h"
+#ifdef __APPLE__
+#include "platform/darwin/processor_count.h"
+#endif
 
 #include <array>
 #include <atomic>
@@ -30,6 +34,11 @@ static uint32_t value(NativeProcess &process, uint64_t address)
 	for (size_t index = 0; index < bytes.size(); ++index)
 		result |= uint32_t(bytes[index]) << (index * 8);
 	return result;
+}
+
+uint64_t NativeEnvironment::x86_user_limit() const
+{
+	return 0x7fff0000ULL;
 }
 
 // KUSER_SHARED_DATA, the page Windows maps read-only at 0x7ffe0000 in every process: programs and installers read the version of
@@ -129,7 +138,7 @@ static void map_shared_user_data(NativeProcess &process)
 	field(process, base + 0x270, 0, 4);
 	field(process, base + 0x2d0, 0x100, 4);
 	field(process, base + 0x2e8, sysconf(_SC_PHYS_PAGES), 4);
-	field(process, base + 0x3c0, std::max<long>(1, sysconf(_SC_NPROCESSORS_ONLN)), 4);
+	field(process, base + 0x3c0, guest_processor_count(process.mode() == NativeMode::x86 ? 4 : 8, true), 4);
 	process.protect_memory(base, 4096, PROT_READ);
 	keep_clocks(page);
 }

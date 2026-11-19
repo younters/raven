@@ -1,0 +1,7 @@
+; On macOS the DirectComposition device is the Metal implementation in dcomp-metal.dll, which the DXMT overlay provides; the
+; runtime's dcomp.dll keeps Windows.UI.Composition and the compositor clock and forwards the device functions to it, so a program
+; finds every dcomp.dll export in one library, as on Windows.
+EXPORTS
+DCompositionCreateDevice = dcomp-metal.DCompositionCreateDevice
+DCompositionCreateDevice2 = dcomp-metal.DCompositionCreateDevice2
+DCompositionCreateDevice3 = dcomp-metal.DCompositionCreateDevice3

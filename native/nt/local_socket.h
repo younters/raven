@@ -22,6 +22,14 @@ namespace raven {
 // where the kernel can.
 inline socklen_t local_socket_address(const std::string &name, sockaddr_un &storage)
 {
+#ifdef __APPLE__
+	// macOS keeps Linux's abstract names through the compat socket layer (platform/darwin/compat/sockets.cpp), which tells a live
+	// name from a stale one by a lock its binding process holds; macOS has no /proc/net/unix to ask about socket files.
+	std::memset(&storage, 0, sizeof(storage));
+	storage.sun_family = AF_UNIX;
+	std::memcpy(storage.sun_path + 1, name.data(), std::min(name.size(), sizeof(storage.sun_path) - 1));
+	return socklen_t(offsetof(sockaddr_un, sun_path) + 1 + std::min(name.size(), sizeof(storage.sun_path) - 1));
+#endif
 	const auto file = hex_text(name_hash(name));
 	auto folder = shared_objects_directory();
 	if (folder.string().size() + file.size() + 2 >= sizeof(storage.sun_path))
@@ -52,6 +60,10 @@ inline int bind_local_socket(int descriptor, const std::string &name)
 {
 	sockaddr_un storage;
 	const auto length = local_socket_address(name, storage);
+#ifdef __APPLE__
+	// The compat layer replaces a name whose binding process has gone and refuses a live one with EADDRINUSE.
+	return ::bind(descriptor, reinterpret_cast<const sockaddr *>(&storage), length);
+#endif
 	if (!::bind(descriptor, reinterpret_cast<const sockaddr *>(&storage), length))
 		return 0;
 	if (errno != EADDRINUSE)

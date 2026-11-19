@@ -6,6 +6,11 @@
 #include <array>
 #include <chrono>
 #include <cstdio>
+#ifdef __APPLE__
+#include "../platform/darwin/dxmt/identity.h"
+#include "platform/darwin/processor_count.h"
+#include "../platform/darwin/dxmt/kernel_thunks.h"
+#endif
 
 namespace raven {
 
@@ -21,6 +26,7 @@ constexpr std::array exported{
 	Export{"kernel32.dll", "SleepConditionVariableSRW", 4}, Export{"kernel32.dll", "WakeConditionVariable", 1},
 	Export{"kernel32.dll", "WakeAllConditionVariable", 1}, Export{"kernel32.dll", "WaitOnAddress", 4}, Export{"kernel32.dll", "WakeByAddressSingle", 1},
 	Export{"kernel32.dll", "WakeByAddressAll", 1}, Export{"kernel32.dll", "TlsAlloc", 0}, Export{"kernel32.dll", "TlsFree", 1},
+	Export{"kernel32.dll", "GetCurrentThreadStackLimits", 2}, Export{"kernel32.dll", "SetProcessWorkingSetSize", 3},
 	Export{"kernel32.dll", "TlsGetValue", 1}, Export{"kernel32.dll", "TlsSetValue", 2}, Export{"kernel32.dll", "CreateSemaphoreA", 4},
 	Export{"kernel32.dll", "CreateSemaphoreW", 4}, Export{"kernel32.dll", "ReleaseSemaphore", 3}, Export{"ntdll.dll", "NtQuerySemaphore", 5},
 	Export{"ntdll.dll", "ZwQuerySemaphore", 5},
@@ -31,6 +37,9 @@ constexpr std::array exported{
 	Export{"kernel32.dll", "SetProcessAffinityMask", 2}, Export{"kernel32.dll", "GetSystemInfo", 1}, Export{"kernel32.dll", "VirtualQuery", 3},
 	Export{"kernel32.dll", "DuplicateHandle", 7}, Export{"kernel32.dll", "VirtualQueryEx", 4}, Export{"kernel32.dll", "SetProcessDEPPolicy", 1},
 	Export{"user32.dll", "ChangeDisplaySettingsExW", 5},
+	Export{"user32.dll", "ChangeDisplaySettingsExA", 5},
+	Export{"user32.dll", "ChangeDisplaySettingsA", 2},
+	Export{"user32.dll", "ChangeDisplaySettingsW", 2},
 	Export{"user32.dll", "DisplayConfigGetDeviceInfo", 1}, Export{"user32.dll", "EnumDisplayDevicesA", 4},
 	Export{"user32.dll", "SetProcessDPIAware", 0},
 	Export{"gdi32.dll", "D3DKMTCloseAdapter", 1}, Export{"gdi32.dll", "D3DKMTCreateDCFromMemory", 1}, Export{"gdi32.dll", "D3DKMTCreateDevice", 1},
@@ -41,16 +50,10 @@ constexpr std::array exported{
 	Export{"gdi32.dll", "D3DKMTOpenResourceFromNtHandle", 1}, Export{"gdi32.dll", "D3DKMTOpenSyncObjectFromNtHandle", 1},
 	Export{"gdi32.dll", "D3DKMTOpenSynchronizationObject", 1}, Export{"gdi32.dll", "D3DKMTQueryResourceInfo", 1},
 	Export{"advapi32.dll", "AllocateLocallyUniqueId", 1}, Export{"advapi32.dll", "RegNotifyChangeKeyValue", 5},
+#ifndef __APPLE__
 	Export{"setupapi.dll", "SetupDiEnumDeviceInterfaces", 5}, Export{"setupapi.dll", "SetupDiGetClassDevsW", 4},
+#endif
 	Export{"setupapi.dll", "SetupDiGetDeviceInterfaceDetailW", 6}, Export{"setupapi.dll", "SetupDiOpenDevRegKey", 6},
-};
-
-class SemaphoreObject : public KernelObject {
-public:
-	std::u16string_view type_name() const override { return u"Semaphore"; }
-	int signaled(uint32_t) const override { return count > 0; }
-	void consume(uint32_t) override { --count; }
-	int64_t count = 0, maximum = 0;
 };
 
 constexpr uint32_t wait_timeout = 0x102, wait_failed = UINT32_MAX, not_supported = 0xc00000bbU;
@@ -130,10 +133,14 @@ uint32_t NativeX86System::wait(const std::vector<uint64_t> &handles, bool all, u
 		}
 		// An object that turns signaled by itself, such as a timer, is looked at again when it says.
 		auto until = wake;
-		for (size_t index = 0; index < handles.size(); ++index)
+		std::vector<pollfd> announced;
+		for (size_t index = 0; index < handles.size(); ++index) {
 			if (const auto due = waited.wakes_at(index); due && (!until || *due < *until))
 				until = due;
-		threads.block(ready, until);
+			if (const int descriptor = waited.wake_descriptor(index); descriptor >= 0)
+				announced.push_back({descriptor, POLLIN, 0});
+		}
+		threads.block(ready, until, false, false, false, announced);
 	}
 }
 
@@ -154,8 +161,28 @@ void NativeX86System::lock_shared(uint64_t address)
 	++lock.shared;
 }
 
+void NativeX86System::clear_tls_slot(uint32_t index)
+{
+	// Every thread's copy goes, as on Windows: a program that takes this slot next must find zero wherever it looks.
+	for (auto &[thread, values] : tls_values)
+		values.erase(index);
+	if (index >= 64)
+		return;
+	const uint32_t zero = 0;
+	for (const auto block : threads.thread_blocks())
+		process.write_memory(block + 0xe10 + index * 4, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&zero), 4));
+	process.write_memory(environment.teb() + 0xe10 + index * 4, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&zero), 4));
+}
+
 bool NativeX86System::dispatch(std::string_view name)
 {
+	if (name == "GetThreadContext" || name == "SetThreadContext") return false;
+	// Semaphore state and cross-process transfers use the same implementation in both widths.
+	if (name == "CreateSemaphoreA" || name == "CreateSemaphoreW" || name == "ReleaseSemaphore") return false;
+#ifdef __APPLE__
+	// Darwin handlers supply DPI and keyed-mutex behavior before the legacy fallback.
+	if (name=="SetProcessDPIAware" || darwin_keyed_mutex_api(name)) return false;
+#endif
 	const auto known = std::find_if(exported.begin(), exported.end(), [&](const auto &item) { return item.name == name; });
 	if (known == exported.end())
 		return false;
@@ -246,6 +273,25 @@ bool NativeX86System::dispatch(std::string_view name)
 			fail(1460);
 			return true;
 		}
+        process.return_api(1);
+	} else if (name == "GetCurrentThreadStackLimits") {
+		// The whole reservation, from the TEB: DeallocationStack (0xe0c) is its bottom, StackBase (4) its top; StackLimit (8) stands in
+		// for a bottom that was never recorded.
+		const uint64_t teb = process.registers().fs_base;
+		const auto word = [&](uint64_t offset) {
+			const auto bytes = process.read_memory(teb + offset, 4);
+			return uint32_t(bytes[0]) | uint32_t(bytes[1]) << 8 | uint32_t(bytes[2]) << 16 | uint32_t(bytes[3]) << 24;
+		};
+		const uint32_t high = word(4), low = word(0xe0c) ? word(0xe0c) : word(8);
+		const auto put = [&](uint64_t address, uint32_t value) {
+			const uint8_t bytes[4] = {uint8_t(value), uint8_t(value >> 8), uint8_t(value >> 16), uint8_t(value >> 24)};
+			process.write_memory(address, bytes);
+		};
+		put(uint32_t(args[0]), low);
+		put(uint32_t(args[1]), high);
+		process.return_api(0);
+	} else if (name == "SetProcessWorkingSetSize") {
+		// A hint to the memory manager, which the host's own paging makes moot.
 		process.return_api(1);
 	} else if (name == "WakeByAddressSingle" || name == "WakeByAddressAll") {
 		process.return_api(0);
@@ -255,7 +301,9 @@ bool NativeX86System::dispatch(std::string_view name)
 			fail(1168, UINT32_MAX);
 		} else {
 			*free = true;
-			process.return_api(uint32_t(free - tls_used.begin()));
+			const auto index = uint32_t(free - tls_used.begin());
+			clear_tls_slot(index);
+			process.return_api(index);
 		}
 	} else if (name == "TlsFree") {
 		const auto index = uint32_t(args[0]);
@@ -263,12 +311,7 @@ bool NativeX86System::dispatch(std::string_view name)
 			fail(87);
 		} else {
 			tls_used[index] = false;
-			for (auto &[thread, values] : tls_values)
-				values.erase(index);
-			if (index < 64) {
-				const uint32_t zero = 0;
-				process.write_memory(environment.teb() + 0xe10 + index * 4, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&zero), 4));
-			}
+			clear_tls_slot(index);
 			process.return_api(1);
 		}
 	} else if (name == "TlsGetValue") {
@@ -277,79 +320,30 @@ bool NativeX86System::dispatch(std::string_view name)
 			fail(87);
 		} else {
 			environment.set_last_error(0);
-			const auto &values = tls_values[threads.current_id()];
-			const auto found = values.find(index);
-			process.return_api(found == values.end() ? 0 : found->second);
+			if (index < 64) {
+				const auto bytes = process.read_memory(environment.teb() + 0xe10 + index * 4, 4);
+				process.return_api(uint32_t(bytes[0]) | uint32_t(bytes[1]) << 8 | uint32_t(bytes[2]) << 16 | uint32_t(bytes[3]) << 24);
+			} else {
+				const auto &values = tls_values[threads.current_id()];
+				const auto found = values.find(index);
+				process.return_api(found == values.end() ? 0 : found->second);
+			}
 		}
 	} else if (name == "TlsSetValue") {
 		const auto index = uint32_t(args[0]);
 		if (index >= tls_used.size() || !tls_used[index]) {
 			fail(87);
 		} else {
-			tls_values[threads.current_id()][index] = uint32_t(args[1]);
-			// The first 64 slots also live in the thread's TEB, TlsSlots at 0xe10, where code that reads its slot through fs: finds them, as
-			// the .NET runtime's thread lookups do.
+			// The first 64 slots live in the thread's TEB, TlsSlots at 0xe10, as on Windows: the guest-side paths read them there, and so does
+			// code that reads its slot through fs:, as the .NET runtime's thread lookups do.
 			if (index < 64) {
 				const auto value = uint32_t(args[1]);
 				process.write_memory(environment.teb() + 0xe10 + index * 4,
 					std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&value), 4));
+			} else {
+				tls_values[threads.current_id()][index] = uint32_t(args[1]);
 			}
 			process.return_api(1);
-		}
-	} else if (name == "CreateSemaphoreA" || name == "CreateSemaphoreW") {
-		const int32_t initial = int32_t(args[1]), maximum = int32_t(args[2]);
-		if (args[0] || maximum <= 0 || initial < 0 || initial > maximum) {
-			fail(87);
-		} else {
-			auto semaphore = std::make_shared<SemaphoreObject>();
-			semaphore->count = initial;
-			semaphore->maximum = maximum;
-			const auto made = objects.add_object(semaphore);
-			if (made.status)
-				fail(8);
-			else
-				process.return_api(made.value);
-		}
-	} else if (name == "ReleaseSemaphore") {
-		const auto semaphore = objects.object_as<SemaphoreObject>(args[0]);
-		const int32_t amount = int32_t(args[1]);
-		if (!semaphore) {
-			fail(6);
-		} else if (amount <= 0 || semaphore->count + amount > semaphore->maximum) {
-			fail(298);
-		} else {
-			try {
-				if (args[2])
-					write32(args[2], uint32_t(semaphore->count));
-			} catch (const std::runtime_error &) {
-				fail(998);
-				return true;
-			}
-			semaphore->count += amount;
-			process.return_api(1);
-		}
-	} else if (name == "NtQuerySemaphore") {
-		// The semaphores made here; every other handle, and the statuses for it, are the shared handler's. The checks and their order are
-		// the shared handler's (thread_api.cpp), including SEMAPHORE_QUERY_STATE or an unmapped GENERIC_READ on the handle.
-		const auto semaphore = objects.object_as<SemaphoreObject>(args[0]);
-		if (!semaphore)
-			return false;
-		if (uint32_t(args[1])) {
-			process.return_api(0xc0000003U);
-		} else if (uint32_t(args[3]) != 8) {
-			process.return_api(0xc0000004U);
-		} else if (!(objects.access_of(args[0]) & (0x0001U | 0x80000000U))) {
-			process.return_api(0xc0000022U);
-		} else {
-			try {
-				write32(args[2], uint32_t(semaphore->count));
-				write32(args[2] + 4, uint32_t(semaphore->maximum));
-				if (args[4])
-					write32(args[4], 8);
-				process.return_api(0);
-			} catch (const std::runtime_error &) {
-				process.return_api(0xc0000005U);
-			}
 		}
 	} else if (name == "WaitForMultipleObjects") {
 		const uint32_t count = uint32_t(args[0]);
@@ -392,7 +386,7 @@ bool NativeX86System::dispatch(std::string_view name)
 	} else if (name == "GetSystemInfo") {
 		// The processor count and mask are the ones the shared GetSystemInfo and the ideal-processor calls use (processors.h).
 		std::vector<uint8_t> info(36);
-		const uint32_t fields[] = {0, 4096, 0x10000, 0x7ffeffff, uint32_t(reported_processor_mask(4)), reported_processors(4), 586, 65536, 0x0a000006};
+		const uint32_t fields[] = {0, 4096, 0x10000, uint32_t(environment.x86_user_limit() - 1), uint32_t(reported_processor_mask(4)), reported_processors(4), 586, 65536, 0x0a000006};
 		for (size_t index = 0; index < 9; ++index)
 			for (size_t byte = 0; byte < 4; ++byte)
 				info[index * 4 + byte] = uint8_t(fields[index] >> (byte * 8));
@@ -438,7 +432,8 @@ bool NativeX86System::dispatch(std::string_view name)
 				write32(args[3], uint32_t(made.value));
 			process.return_api(1);
 		}
-	} else if (name == "ChangeDisplaySettingsExW") {
+	} else if (name == "ChangeDisplaySettingsExW" || name == "ChangeDisplaySettingsExA" || name == "ChangeDisplaySettingsA" ||
+		name == "ChangeDisplaySettingsW") {
 		// A mode change is accepted without changing anything: the host shows the program's window at its own size.
 		process.return_api(0);
 	} else if (name == "DisplayConfigGetDeviceInfo") {
@@ -459,9 +454,18 @@ bool NativeX86System::dispatch(std::string_view name)
 				text(168, "MONITOR\\RAVEN0000");
 			} else {
 				text(4, "\\\\.\\DISPLAY1");
+	#ifdef __APPLE__
+				const auto identity = darwin_dxgi::identity();
+				text(36, identity ? identity->description : "Raven Display");
+				#else
 				text(36, "Raven Display");
+				#endif
 				device[164] = 5;
+	#ifdef __APPLE__
+				text(168, identity ? darwin_dxgi::pci_id(*identity) : "PCI\\VEN_1AF4&DEV_1050");
+				#else
 				text(168, "PCI\\VEN_1AF4&DEV_1050");
+				#endif
 			}
 			process.write_memory(args[2], device);
 			process.return_api(1);
@@ -476,9 +480,13 @@ bool NativeX86System::dispatch(std::string_view name)
 		process.return_api(1);
 	} else if (name == "RegNotifyChangeKeyValue") {
 		process.return_api(0);
+#ifndef __APPLE__
 	} else if (name == "SetupDiEnumDeviceInterfaces") {
 		fail(259);
-	} else if (name == "SetupDiGetClassDevsW" || name == "SetupDiOpenDevRegKey") {
+	} else if (name == "SetupDiGetClassDevsW") {
+		fail(50, UINT32_MAX);
+#endif
+	} else if (name == "SetupDiOpenDevRegKey") {
 		fail(50, UINT32_MAX);
 	} else {
 		fail(50);

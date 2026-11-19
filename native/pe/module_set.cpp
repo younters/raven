@@ -80,6 +80,7 @@ static PEImage named_image(const std::string &name, std::span<const uint8_t> byt
 
 PEModule &ModuleSet::add(std::string name, ModuleBytes bytes, std::function<bool(uint64_t, uint64_t)> available)
 {
+	if (!available) available = address_available;
 	const PEImage image = named_image(name, bytes);
 	const uint64_t limit = image.is_64 ? 0x800000000000ULL : 0x100000000ULL;
 	uint64_t base = image.image_base;
@@ -136,7 +137,7 @@ PEModule &ModuleSet::add(std::string name, ModuleBytes bytes, std::function<bool
 		}
 	}
 	if (overlap_for(base, image.image_size)) {
-		base = image.is_64 ? 0x180000000ULL : 0x10000000ULL;
+		base = image.is_64 ? relocation_base64 : 0x10000000ULL;
 		for (;;) {
 			if (base >= limit || image.image_size > limit - base)
 				throw std::runtime_error("no guest address available for PE module");

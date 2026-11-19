@@ -28,13 +28,17 @@ static BOOL listed(HMODULE module, BOOL expected)
 	return TRUE;
 }
 
+#ifndef RAVEN_DYNAMIC_IMAGE_BASE
+#define RAVEN_DYNAMIC_IMAGE_BASE 0x190000000ULL
+#endif
+
 DWORD raven_entry(void)
 {
 	SetLastError(99);
 	if (GetModuleHandleA("tlsprobe.dll"))
 		return 1;
-	volatile unsigned char *reserved = VirtualAlloc((void *)0x190000000ULL, 65536, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	if (reserved != (void *)0x190000000ULL)
+	volatile unsigned char *reserved = VirtualAlloc((void *)RAVEN_DYNAMIC_IMAGE_BASE, 65536, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	if (reserved != (void *)RAVEN_DYNAMIC_IMAGE_BASE)
 		return 16;
 	reserved[0] = 0x5a;
 	reserved[65535] = 0xa5;

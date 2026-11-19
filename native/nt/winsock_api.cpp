@@ -16,6 +16,11 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#ifdef __APPLE__
+#include <mutex>
+#include "platform/darwin/socket_catalog.h"
+#include "platform/darwin/socket_options.h"
+#endif
 #include <sstream>
 #include <tuple>
 #include <fcntl.h>
@@ -40,6 +45,9 @@ public:
 	~SocketObject() override { ::close(descriptor); }
 	int signaled(uint32_t) const override { return 1; }
 	int descriptor;
+#ifdef __APPLE__
+	darwin::SocketOptions options;
+#endif
 	bool guest_nonblocking = false;
 	// Set when the program closed the handle while transfers on it were still pending: they end as aborted.
 	bool closed = false;
@@ -136,7 +144,15 @@ void trace_received(int descriptor, ssize_t count, const char *path)
 constexpr uint16_t windows_inet6 = 23;
 
 int host_family(int family) { return family == windows_inet6 ? AF_INET6 : family; }
-int windows_family(int family) { return family == AF_INET6 ? windows_inet6 : family; }
+int windows_family(int family)
+{
+#ifdef __APPLE__
+	// The first two bytes of a macOS sockaddr: its length, then the family.
+	if (family > 0xff)
+		family >>= 8;
+#endif
+	return family == AF_INET6 ? windows_inet6 : family;
+}
 
 // Whether the sandbox lets the program send to an address of the host's layout.
 bool reachable(const std::vector<uint8_t> &address)
@@ -152,6 +168,10 @@ std::vector<uint8_t> host_address(ApiCall &call, uint64_t address, size_t length
 		uint16_t family;
 		std::memcpy(&family, bytes.data(), 2);
 		family = uint16_t(host_family(family));
+#ifdef __APPLE__
+		// macOS keeps the length in the first byte, which the kernel fills in, and the family in the second.
+		family = uint16_t(family << 8);
+#endif
 		std::memcpy(bytes.data(), &family, 2);
 	}
 	return bytes;
@@ -273,6 +293,13 @@ std::shared_ptr<KernelObject> make_afd_endpoint() { return std::make_shared<AfdE
 
 namespace {
 
+// Darwin reports a peer shutdown as readable EOF rather than POLLRDHUP.
+#ifdef POLLRDHUP
+constexpr short peer_shutdown = POLLRDHUP;
+#else
+constexpr short peer_shutdown = 0;
+#endif
+
 // AFD_POLL_* events.
 constexpr uint32_t afd_receive = 0x1, afd_receive_expedited = 0x2, afd_send = 0x4, afd_disconnect = 0x8, afd_abort = 0x10,
 	afd_local_close = 0x20, afd_accept = 0x80, afd_connect_fail = 0x100;
@@ -286,6 +313,14 @@ uint32_t afd_events(SocketObject &socket, short ready)
 		socklen_t length = sizeof(listening);
 		::getsockopt(socket.descriptor, SOL_SOCKET, SO_ACCEPTCONN, &listening, &length);
 		events |= listening ? afd_accept : afd_receive;
+#ifdef __APPLE__
+		int type = 0;
+		length = sizeof(type);
+		::getsockopt(socket.descriptor, SOL_SOCKET, SO_TYPE, &type, &length);
+		char byte;
+		if (!listening && type == SOCK_STREAM && ::recv(socket.descriptor, &byte, 1, MSG_PEEK | MSG_DONTWAIT) == 0)
+			events |= afd_disconnect;
+#endif
 	}
 	if (ready & POLLPRI)
 		events |= afd_receive_expedited;
@@ -295,7 +330,7 @@ uint32_t afd_events(SocketObject &socket, short ready)
 		events |= afd_send;
 		socket.connecting = false;
 	}
-	if (ready & (POLLRDHUP | POLLHUP))
+	if (ready & (peer_shutdown | POLLHUP))
 		events |= afd_disconnect;
 	return events;
 }
@@ -366,7 +401,7 @@ bool afd_device_control(KernelContext &context, ApiCall &call)
 			return true;
 		std::vector<pollfd> descriptors;
 		for (const auto &item : watched)
-			descriptors.push_back({item.socket->closed ? -1 : item.socket->descriptor, short(POLLIN | POLLPRI | POLLOUT | POLLRDHUP), 0});
+			descriptors.push_back({item.socket->closed ? -1 : item.socket->descriptor, short(POLLIN | POLLPRI | POLLOUT | peer_shutdown), 0});
 		::poll(descriptors.data(), descriptors.size(), 0);
 		std::vector<std::pair<uint64_t, uint32_t>> ready;
 		for (size_t index = 0; index < watched.size(); ++index) {
@@ -404,7 +439,7 @@ bool afd_device_control(KernelContext &context, ApiCall &call)
 			std::erase(owner->polls, poll);
 		return true;
 	};
-	context.reactor->add(attempt, watched.front().socket->descriptor, short(POLLIN | POLLPRI | POLLOUT | POLLRDHUP));
+	context.reactor->add(attempt, watched.front().socket->descriptor, short(POLLIN | POLLPRI | POLLOUT | peer_shutdown));
 	call.ret(status_pending);
 	return true;
 }
@@ -446,6 +481,9 @@ static uint32_t windows_tcp_state(unsigned host)
 // The sockets of the processes this user runs, by inode: the owner a TCP table names.
 static std::map<uint64_t, uint32_t> socket_owners()
 {
+#ifdef __APPLE__
+	return raven_darwin::socket_owners();
+#endif
 	std::map<uint64_t, uint32_t> owners;
 	std::error_code error;
 	for (const auto &process : std::filesystem::directory_iterator("/proc", error)) {
@@ -470,7 +508,11 @@ static std::map<uint64_t, uint32_t> socket_owners()
 static std::vector<TcpEntry> tcp_entries(bool v6)
 {
 	std::vector<TcpEntry> entries;
+#ifdef __APPLE__
+	auto table = raven_darwin::proc_stream(v6 ? "/proc/net/tcp6" : "/proc/net/tcp");
+#else
 	std::ifstream table(v6 ? "/proc/net/tcp6" : "/proc/net/tcp");
+#endif
 	std::string line;
 	std::getline(table, line);
 	std::map<uint64_t, uint32_t> owners;
@@ -532,7 +574,8 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 		if (ready())
 			return true;
 		HostWait waiting;
-		return threads.block(ready, wake);
+		const pollfd descriptor_wait{descriptor, events, 0};
+		return threads.block(ready, wake, false, false, false, {&descriptor_wait, 1});
 	};
 
 	const auto make_socket = [&objects](ApiCall &call, int family, int type, int protocol) -> uint64_t {
@@ -1638,6 +1681,9 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			fail(call, wsaenotsock);
 			return;
 		}
+#ifdef __APPLE__
+		if (socket->options.handle(call, socket->descriptor, true)) return;
+#endif
 		// SO_EXCLUSIVEADDRUSE: a Linux socket without SO_REUSEADDR already refuses an address another socket holds, which is what a
 		// server asks for with it (Analysis Services sets it on its listening port).
 		if (call.u32(1) == sol_socket_windows && call.u32(2) == 0xfffffffbU) {
@@ -1665,6 +1711,21 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		const auto value = call[3] ? call.read(call[3], size_t(std::max(call.i32(4), 0))) : std::vector<uint8_t>{};
+		static const bool trace_options = std::getenv("RAVEN_TRACE_SOCKET_OPTIONS") != nullptr;
+		if (trace_options) {
+			int setting = 0;
+			if (value.size() >= sizeof(setting)) std::memcpy(&setting, value.data(), sizeof(setting));
+			std::fprintf(stderr, "raven: setsockopt level=%x option=%x size=%zu value=%d\n", call.u32(1), call.u32(2), value.size(), setting);
+		}
+#ifdef __APPLE__
+		// Winsock permits providers to ignore buffer-size hints. A zero send buffer disables Winsock buffering, but macOS requires
+		// a nonzero kernel buffer even for overlapped sends; retain that buffer rather than rejecting the Windows request.
+		if (option->level == SOL_SOCKET && option->name == SO_SNDBUF && value.size() >= 4) {
+			int setting;
+			std::memcpy(&setting, value.data(), 4);
+			if (!setting) { call.ret(0); return; }
+		}
+#endif
 		int result;
 		if (option->level == SOL_SOCKET && (option->name == SO_RCVTIMEO || option->name == SO_SNDTIMEO) && value.size() >= 4) {
 			uint32_t milliseconds;
@@ -1698,6 +1759,9 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			fail(call, socket ? wsaefault : wsaenotsock);
 			return;
 		}
+#ifdef __APPLE__
+		if (socket->options.handle(call, socket->descriptor, false)) return;
+#endif
 		// SO_CONNECT_TIME: the seconds a socket has been connected, all bits set while it is not. Servers ask it of the sockets they
 		// hand to AcceptEx; the time a connection began is not kept, so a connected socket answers zero.
 		if (call.u32(1) == sol_socket_windows && call.u32(2) == 0x700c) {
@@ -2088,11 +2152,19 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			wake = std::chrono::steady_clock::now() + std::chrono::seconds(std::max(seconds, 0)) + std::chrono::microseconds(std::max(micros, 0));
 		}
 		static constexpr short events[3] = {POLLIN, POLLOUT, POLLPRI};
+		// A socket can occur in several sets. macOS poll only observes the last
+		// entry for a descriptor, so combine its requested events into one entry.
+		std::map<int, size_t> positions;
+		std::vector<pollfd> requested;
+		for (int kind = 0; kind < 3; ++kind)
+			for (const auto &item : sets[kind]) {
+				const auto [position, added] = positions.emplace(item.descriptor, requested.size());
+				if (added)
+					requested.push_back({item.descriptor, 0, 0});
+				requested[position->second].events |= events[kind];
+			}
 		const auto poll_once = [&](std::vector<pollfd> &entries) {
-			entries.clear();
-			for (int kind = 0; kind < 3; ++kind)
-				for (const auto &item : sets[kind])
-					entries.push_back({item.descriptor, events[kind], 0});
+			entries = requested;
 			return entries.empty() ? 0 : ::poll(entries.data(), nfds_t(entries.size()), 0);
 		};
 		std::vector<pollfd> entries;
@@ -2102,20 +2174,19 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			threads.block([&] {
 				std::vector<pollfd> again;
 				return poll_once(again) > 0;
-			}, wake);
+			}, wake, false, false, false, requested);
 			ready = poll_once(entries);
 		}
 		if (ready < 0) {
 			fail(call, wsa_error(errno));
 			return;
 		}
-		size_t position = 0;
 		uint32_t total = 0;
 		for (int kind = 0; kind < 3; ++kind) {
 			const auto address = call[1 + size_t(kind)];
 			std::vector<uint64_t> kept;
 			for (const auto &item : sets[kind]) {
-				const auto revents = entries[position++].revents;
+				const auto revents = entries[positions.at(item.descriptor)].revents;
 				const auto socket = socket_of(item.handle);
 				const bool connecting = socket && socket->connecting;
 				const bool failed = (revents & (POLLERR | POLLHUP)) != 0;
@@ -2456,19 +2527,35 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 		const auto protocol = call[1] ? call.narrow(call[1], 32) : std::string();
 		servent entry{}, *found = nullptr;
 		std::array<char, 1024> buffer{};
+#ifdef __APPLE__
+        static std::mutex services_mutex;
+        const std::lock_guard lock(services_mutex);
+        found = ::getservbyname(name.c_str(), call[1] ? protocol.c_str() : nullptr);
+#else
 		getservbyname_r(name.c_str(), call[1] ? protocol.c_str() : nullptr, &entry, buffer.data(), buffer.size(), &found);
+#endif
 		service(call, found);
 	});
 	registry.add("getservbyport", 2, [service](ApiCall &call) {
 		const auto protocol = call[1] ? call.narrow(call[1], 32) : std::string();
 		servent entry{}, *found = nullptr;
 		std::array<char, 1024> buffer{};
+#ifdef __APPLE__
+        static std::mutex services_mutex;
+        const std::lock_guard lock(services_mutex);
+        found = ::getservbyport(int(uint16_t(call.u32(0))), call[1] ? protocol.c_str() : nullptr);
+#else
 		getservbyport_r(int(uint16_t(call.u32(0))), call[1] ? protocol.c_str() : nullptr, &entry, buffer.data(), buffer.size(), &found);
+#endif
 		service(call, found);
 	});
 	// getprotobyname and getprotobynumber answer from the protocols database into one PROTOENT the process reuses, as the SERVENT above
 	// is: the name and its aliases are pointers, so the record keeps the 32-bit and 64-bit layouts apart.
 	auto protocol_block = std::make_shared<uint64_t>(0);
+#ifdef __APPLE__
+	// macOS has no reentrant forms; both lookups share libc's one record, so one lock covers them and the copy into the guest's record.
+	static std::mutex protocols_mutex;
+#endif
 	const auto protocol_entry = [&context, protocol_block](ApiCall &call, const protoent *found) {
 		if (!found) {
 			call.fail(11004, 0);
@@ -2491,13 +2578,23 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 		const auto name = call.narrow(call[0], 256);
 		protoent entry{}, *found = nullptr;
 		std::array<char, 1024> buffer{};
+#ifdef __APPLE__
+		const std::lock_guard lock(protocols_mutex);
+		found = ::getprotobyname(name.c_str());
+#else
 		getprotobyname_r(name.c_str(), &entry, buffer.data(), buffer.size(), &found);
+#endif
 		protocol_entry(call, found);
 	});
 	registry.add("getprotobynumber", 1, [protocol_entry](ApiCall &call) {
 		protoent entry{}, *found = nullptr;
 		std::array<char, 1024> buffer{};
+#ifdef __APPLE__
+		const std::lock_guard lock(protocols_mutex);
+		found = ::getprotobynumber(int(call.u32(0)));
+#else
 		getprotobynumber_r(int(call.u32(0)), &entry, buffer.data(), buffer.size(), &found);
+#endif
 		protocol_entry(call, found);
 	});
 	registry.add("htons", 1, [](ApiCall &call) { call.ret(uint16_t(call.u32(0) << 8 | (call.u32(0) >> 8 & 0xff))); });
@@ -2661,6 +2758,9 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("WSAEnumProtocolsW", 3, [enumerate_protocols](ApiCall &call) { enumerate_protocols(call, true); });
 	registry.add("WSAEnumProtocolsA", 3, [enumerate_protocols](ApiCall &call) { enumerate_protocols(call, false); });
+#ifdef __APPLE__
+	darwin::register_socket_catalog(registry);
+#endif
 	registry.add("WSAStartup", 2, [](ApiCall &call) {
 		if (!call[1]) {
 			call.ret(10014);

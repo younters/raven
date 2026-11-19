@@ -99,7 +99,8 @@ unsigned int raven_entry(void)
 	VkRenderPassCreateInfo2 pass_info = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2, 0, 0, 0, 0, 2, subpasses};
 	VkRenderPass pass = VK_NULL_HANDLE;
 	if (create_pass(device, &pass_info, 0, &pass) != VK_SUCCESS) return 19;
-	VkFramebufferCreateInfo framebuffer_info = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO, 0, VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT,
+	VkFramebufferAttachmentsCreateInfo attachments = {VK_STRUCTURE_TYPE_FRAMEBUFFER_ATTACHMENTS_CREATE_INFO};
+	VkFramebufferCreateInfo framebuffer_info = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO, &attachments, VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT,
 		pass, 0, 0, 16, 16, 1};
 	VkFramebuffer framebuffer = VK_NULL_HANDLE;
 	if (vkCreateFramebuffer(device, &framebuffer_info, 0, &framebuffer) != VK_SUCCESS) return 20;

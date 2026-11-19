@@ -2,12 +2,20 @@
 #include "apps.h"
 #include "system_exports.h"
 
+#include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <system_error>
 #include <vector>
 #include <stdexcept>
 #include <string>
+#ifdef __APPLE__
+#include <raven_darwin_fonts.h>
+#include <copyfile.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#endif
 
 namespace raven {
 
@@ -28,10 +36,15 @@ NativePrefix::NativePrefix(std::filesystem::path root) : directory(std::move(roo
 	// The Fonts folder holds the installed fonts, as on Windows: links to the host's font files, made once when the folder is new.
 	const auto fonts = directory / "drive_c" / "windows" / "Fonts";
 	std::error_code error;
-	if (std::filesystem::create_directory(fonts, error)) {
+	// Older prefixes may have an empty Fonts folder from before host font discovery was available.
+	if (std::filesystem::create_directory(fonts, error) || std::filesystem::is_empty(fonts, error)) {
+#ifdef __APPLE__
+		const auto roots = raven_darwin::font_roots();
+#else
 		std::vector<std::filesystem::path> roots{"/usr/share/fonts", "/usr/local/share/fonts"};
 		if (const char *home = std::getenv("HOME"); home && *home)
 			roots.push_back(std::filesystem::path(home) / ".local" / "share" / "fonts");
+#endif
 		for (const auto &root : roots)
 			for (std::filesystem::recursive_directory_iterator walk(root, std::filesystem::directory_options::follow_directory_symlink, error), end;
 					walk != end; walk.increment(error)) {
@@ -49,13 +62,67 @@ void NativePrefix::place_runtime_components(const std::filesystem::path &runtime
 	// The loader takes these libraries from beside the runtime whatever the prefix holds: the copies only answer programs that search for,
 	// read or hash them. A newer runtime refreshes them.
 	const auto windows = directory / "drive_c" / "windows";
-	for (const auto &[source, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}})
+	for (const auto &[source, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}}) {
+#ifdef __APPLE__
+		// Sweep the copies an interrupted refresh abandoned, in one listing of the folder: a listing for every component was dozens of
+		// listings of a folder of thousands of files in every process's start.
+		{
+			std::error_code error;
+			const auto stale = std::filesystem::file_time_type::clock::now() - std::chrono::hours(24);
+			for (std::filesystem::directory_iterator it(windows / folder, error), end; !error && it != end; it.increment(error)) {
+				const auto name = it->path().filename().string();
+				const auto mark = name.find(".tmp.");
+				if (mark == name.npos || std::find(std::begin(runtime_components), std::end(runtime_components), name.substr(0, mark)) ==
+					std::end(runtime_components))
+					continue;
+				std::error_code ignored;
+				if (std::filesystem::last_write_time(it->path(), ignored) < stale && !ignored)
+					std::filesystem::remove(it->path(), ignored);
+			}
+		}
+#endif
 		for (const auto name : runtime_components) {
 			std::error_code error;
 			const auto from = source / name;
-			if (std::filesystem::is_regular_file(from, error))
-				std::filesystem::copy_file(from, windows / folder / name, std::filesystem::copy_options::update_existing, error);
+			if (!std::filesystem::is_regular_file(from, error))
+				continue;
+			const auto destination = windows / folder / name;
+#ifdef __APPLE__
+            // Publish a complete replacement atomically.
+            const auto size = std::filesystem::file_size(destination, error);
+            if (!error && size == std::filesystem::file_size(from, error) && !error) {
+                const auto stamp = std::filesystem::last_write_time(destination, error);
+                if (!error && stamp == std::filesystem::last_write_time(from, error) && !error) continue;
+            }
+            auto pattern = destination.string() + ".tmp.XXXXXX";
+            std::vector<char> temporary(pattern.begin(), pattern.end()); temporary.push_back(0);
+            const int fd = mkstemp(temporary.data());
+            if (fd < 0) {
+                std::fprintf(stderr, "raven: prefix temporary file failed: %s\n", destination.c_str());
+                continue;
+            }
+            close(fd);
+            error.clear();
+            if (copyfile(from.c_str(), temporary.data(), nullptr, COPYFILE_DATA | COPYFILE_STAT | COPYFILE_CLONE | COPYFILE_UNLINK))
+                error = std::error_code(errno, std::generic_category());
+            if (!error) std::filesystem::permissions(temporary.data(), std::filesystem::perms::owner_write,
+                std::filesystem::perm_options::add, error);
+            // The copy carries the source's modification time, which the check above compares: a clone on ZFS takes the time it was
+            // made, and every process then copied every component again.
+            if (!error) {
+                const auto stamp = std::filesystem::last_write_time(from, error);
+                if (!error) std::filesystem::last_write_time(temporary.data(), stamp, error);
+            }
+            if (!error) std::filesystem::rename(temporary.data(), destination, error);
+            if (error) {
+                unlink(temporary.data());
+                std::fprintf(stderr, "raven: prefix copy failed for %s: %s\n", destination.c_str(), error.message().c_str());
+            }
+#else
+			std::filesystem::copy_file(from, destination, std::filesystem::copy_options::update_existing, error);
+#endif
 		}
+	}
 	// The Windows Runtime metadata stands in each system directory's WinMetadata folder, where the type resolution of the Windows Runtime
 	// looks for it.
 	for (const auto folder : {"system32", "syswow64"}) {

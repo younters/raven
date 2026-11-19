@@ -182,6 +182,69 @@ CRT char *_ctime64(const long long *time)
 
 CRT double _difftime64(long long later, long long earlier) { return (double)(later - earlier); }
 
+/* The 32-bit time_t forms (UCRT's _gmtime32 family). The 32-bit msvcrt.dll exports them under the classic names (gmtime, time, ...),
+   which programs built against it import directly (libfreetype-6.dll in Source games imports msvcrt.dll!gmtime). */
+CRT RavenTime *_gmtime32(const long *time)
+{
+	if (!time)
+		return NULL;
+	const long long wide = *time;
+	return _gmtime64(&wide);
+}
+
+CRT int _gmtime32_s(RavenTime *out, const long *time)
+{
+	if (!time) {
+		if (out)
+			memset(out, 0xff, sizeof *out);
+		return 22;
+	}
+	const long long wide = *time;
+	return _gmtime64_s(out, &wide);
+}
+
+CRT RavenTime *_localtime32(const long *time)
+{
+	if (!time)
+		return NULL;
+	const long long wide = *time;
+	return _localtime64(&wide);
+}
+
+CRT int _localtime32_s(RavenTime *out, const long *time)
+{
+	if (!time) {
+		if (out)
+			memset(out, 0xff, sizeof *out);
+		return 22;
+	}
+	const long long wide = *time;
+	return _localtime64_s(out, &wide);
+}
+
+/* A time past 2038 does not fit the 32-bit forms; they report -1 for it, as Windows does. */
+CRT long _mktime32(RavenTime *time)
+{
+	const long long seconds = _mktime64(time);
+	return seconds < 0 || seconds > 0x7fffffffLL ? -1 : (long)seconds;
+}
+
+CRT long _mkgmtime32(RavenTime *time)
+{
+	const long long seconds = _mkgmtime64(time);
+	return seconds < 0 || seconds > 0x7fffffffLL ? -1 : (long)seconds;
+}
+
+CRT char *_ctime32(const long *time)
+{
+	if (!time)
+		return NULL;
+	const long long wide = *time;
+	return _ctime64(&wide);
+}
+
+CRT double _difftime32(long later, long earlier) { return (double)later - (double)earlier; }
+
 /* clock: milliseconds of wall time since the process started, as on Windows (CLOCKS_PER_SEC is 1000). */
 CRT long clock(void)
 {
@@ -677,6 +740,161 @@ CRT int _wfindnext64(intptr_t search, RavenFindWide *out)
 
 CRT int _findclose(intptr_t search) { return FindClose((HANDLE)search) ? 0 : (set_errno(9), -1); }
 
+/* The 32-bit-time layouts that the 32-bit msvcrt.dll uses for _fstat, _stati64/_fstati64, _findfirst/_findnext and _ftime, under their
+   UCRT names (_fstat32, _stat32i64, _findfirst32, _ftime32); the 32-bit library also exports them under msvcrt's names. */
+typedef struct {
+	unsigned st_dev;
+	unsigned short st_ino, st_mode;
+	short st_nlink, st_uid, st_gid;
+	unsigned st_rdev;
+	long st_size;
+	long st_atime, st_mtime, st_ctime;
+} StatBuffer32;
+
+#ifdef _WIN64
+typedef struct {
+	unsigned st_dev;
+	unsigned short st_ino, st_mode;
+	short st_nlink, st_uid, st_gid;
+	unsigned st_rdev;
+	long long st_size;
+	long st_atime, st_mtime, st_ctime;
+} StatBuffer32i64;
+#endif
+
+static long narrow_time(long long seconds) { return seconds < -0x80000000LL || seconds > 0x7fffffffLL ? -1 : (long)seconds; }
+
+static void to_stat32i64(const StatBuffer *from, StatBuffer32i64 *to)
+{
+	memset(to, 0, sizeof *to);
+	to->st_dev = from->st_dev;
+	to->st_ino = from->st_ino;
+	to->st_mode = from->st_mode;
+	to->st_nlink = from->st_nlink;
+	to->st_uid = from->st_uid;
+	to->st_gid = from->st_gid;
+	to->st_rdev = from->st_rdev;
+	to->st_size = from->st_size;
+	to->st_atime = narrow_time(from->st_atime);
+	to->st_mtime = narrow_time(from->st_mtime);
+	to->st_ctime = narrow_time(from->st_ctime);
+}
+
+CRT int _stat32i64(const char *path, StatBuffer32i64 *out)
+{
+	StatBuffer full;
+	if (!out || _stat64(path, &full))
+		return -1;
+	to_stat32i64(&full, out);
+	return 0;
+}
+
+CRT int _wstat32i64(const wchar_t *path, StatBuffer32i64 *out)
+{
+	StatBuffer full;
+	if (!out || stat_wide(path, &full))
+		return -1;
+	to_stat32i64(&full, out);
+	return 0;
+}
+
+CRT int _fstat32i64(int fd, StatBuffer32i64 *out)
+{
+	StatBuffer full;
+	if (!out || _fstat64(fd, &full))
+		return -1;
+	to_stat32i64(&full, out);
+	return 0;
+}
+
+CRT int _fstat32(int fd, StatBuffer32 *out)
+{
+	StatBuffer32i64 wide;
+	if (!out || _fstat32i64(fd, &wide))
+		return -1;
+	memset(out, 0, sizeof *out);
+	out->st_dev = wide.st_dev;
+	out->st_ino = wide.st_ino;
+	out->st_mode = wide.st_mode;
+	out->st_nlink = wide.st_nlink;
+	out->st_uid = wide.st_uid;
+	out->st_gid = wide.st_gid;
+	out->st_rdev = wide.st_rdev;
+	out->st_size = (long)wide.st_size;
+	out->st_atime = wide.st_atime;
+	out->st_mtime = wide.st_mtime;
+	out->st_ctime = wide.st_ctime;
+	return 0;
+}
+
+/* struct __timeb32 */
+typedef struct {
+	long time;
+	unsigned short milliseconds;
+	short zone, daylight;
+} RavenTimeB32;
+
+CRT void _ftime32(RavenTimeB32 *out)
+{
+	RavenTimeB wide;
+	if (!out)
+		return;
+	_ftime64(&wide);
+	out->time = narrow_time(wide.time);
+	out->milliseconds = wide.milliseconds;
+	out->zone = wide.zone;
+	out->daylight = wide.daylight;
+}
+
+CRT int _ftime32_s(RavenTimeB32 *out)
+{
+	if (!out)
+		return 22;
+	_ftime32(out);
+	return 0;
+}
+
+/* struct _finddata32_t: attributes, three 32-bit times, a 32-bit size and the ANSI name. */
+typedef struct {
+	unsigned attributes;
+	long created, accessed, written;
+	unsigned long size;
+	char name[260];
+} RavenFind32;
+
+static void fill_found32(RavenFind32 *out, const WIN32_FIND_DATAA *data)
+{
+	out->attributes = data->dwFileAttributes;
+	out->created = narrow_time(file_time_to_unix(data->ftCreationTime));
+	out->accessed = narrow_time(file_time_to_unix(data->ftLastAccessTime));
+	out->written = narrow_time(file_time_to_unix(data->ftLastWriteTime));
+	out->size = data->nFileSizeLow;
+	memcpy(out->name, data->cFileName, sizeof out->name);
+}
+
+CRT intptr_t _findfirst32(const char *pattern, RavenFind32 *out)
+{
+	WIN32_FIND_DATAA data;
+	HANDLE search = pattern && out ? FindFirstFileA(pattern, &data) : INVALID_HANDLE_VALUE;
+	if (search == INVALID_HANDLE_VALUE) {
+		windows_failure();
+		return -1;
+	}
+	fill_found32(out, &data);
+	return (intptr_t)search;
+}
+
+CRT int _findnext32(intptr_t search, RavenFind32 *out)
+{
+	WIN32_FIND_DATAA data;
+	if (!out || !FindNextFileA((HANDLE)search, &data)) {
+		set_errno(2);
+		return -1;
+	}
+	fill_found32(out, &data);
+	return 0;
+}
+
 /* ---- streams ---- */
 
 CRT int fopen_s(void **stream, const char *path, const char *mode)
@@ -1088,13 +1306,28 @@ CRT void _register_thread_local_exe_atexit_callback(void *callback) {}
 
 /* ---- locales ---- */
 
-/* Every locale is the C locale with the ANSI code page here, so a created locale is one shared object that formats as the default. */
-static struct { int code_page; } shared_locale = {1252};
+/* Every locale is the C locale with the ANSI code page here, so a created locale is one shared object that formats as the default.
+   A _locale_t points at { locinfo, mbcinfo }, and code built with the Windows headers reads the public head of each directly: the
+   inline character tests and MB_CUR_MAX of <ctype.h> (inlined into libc++, among others) take locinfo's character class table, indexed
+   from -1 as __pctype_func's is, its MB_CUR_MAX and its code page; mbcinfo begins with a count, the code page and whether it is one of
+   several bytes per character. */
+static struct { const unsigned short *pctype; int mb_cur_max; unsigned code_page; } locale_data = {NULL, 1, 1252};
+static struct { long references; int code_page; int multibyte; } multibyte_data = {1, 1252, 0};
+static struct { void *locinfo, *mbcinfo; } shared_locale = {&locale_data, &multibyte_data};
 
-CRT void *_create_locale(int category, const char *name) { return &shared_locale; }
-CRT void *_wcreate_locale(int category, const wchar_t *name) { return &shared_locale; }
+static void *locale_object(void)
+{
+	if (!locale_data.pctype) {
+		locale_data.code_page = multibyte_data.code_page = GetACP();
+		locale_data.pctype = __pctype_func();
+	}
+	return &shared_locale;
+}
+
+CRT void *_create_locale(int category, const char *name) { return locale_object(); }
+CRT void *_wcreate_locale(int category, const wchar_t *name) { return locale_object(); }
 CRT void _free_locale(void *locale) {}
-CRT void *_get_current_locale(void) { return &shared_locale; }
+CRT void *_get_current_locale(void) { return locale_object(); }
 
 CRT long _wcstol_l(const wchar_t *text, wchar_t **end, int base, _locale_t locale) { return wcstol(text, end, base); }
 CRT unsigned long _wcstoul_l(const wchar_t *text, wchar_t **end, int base, _locale_t locale) { return wcstoul(text, end, base); }
@@ -1262,6 +1495,7 @@ CRT double nearbyint(double x) { return rint(x); }
 CRT long lrint(double x) { return (long)rint(x); }
 CRT long lrintf(float x) { return (long)rint(x); }
 CRT long long llrint(double x) { return (long long)rint(x); }
+CRT long long llrintf(float x) { return (long long)rint(x); }
 
 CRT double trunc(double x)
 {
@@ -1329,11 +1563,6 @@ CRT int _fdsign(float x) { return __builtin_signbit(x) ? 0x8000 : 0; }
 CRT unsigned _statusfp(void) { return 0; }
 
 /* ---- what the Office Click-to-Run client imports besides ---- */
-CRT int __stdio_common_vfwprintf_s(unsigned long long options, void *stream, const wchar_t *text, void *locale, va_list arguments)
-{
-	return __stdio_common_vfwprintf(options, stream, text, locale, arguments);
-}
-
 CRT int _ui64toa_s(unsigned long long value, char *buffer, size_t size, int radix)
 {
 	wchar_t wide[66];
@@ -1429,8 +1658,6 @@ static int change_case_s(wchar_t *text, size_t size, wchar_t *(*change)(wchar_t 
 	return 0;
 }
 CRT int _wcslwr_s(wchar_t *text, size_t size) { return change_case_s(text, size, _wcslwr); }
-CRT int _wcsupr_s(wchar_t *text, size_t size) { return change_case_s(text, size, _wcsupr); }
-
 /* One part of a split path into its own buffer; a part that does not fit fails the whole split. */
 static int path_part(wchar_t *to, size_t size, const wchar_t *from, size_t length)
 {
@@ -1622,4 +1849,52 @@ CRT int wcstombs_s(size_t *converted, char *to, size_t size, const wchar_t *text
 	}
 	free(whole);
 	return result;
+}
+
+/* Keep the Windows double ABI for math names the Office module does not yet supply. */
+extern long double fmal(long double, long double, long double), remainderl(long double, long double);
+CRT char *_i64toa(long long value, char *to, int radix)
+{
+	return digits_of(value < 0 && radix == 10 ? 0ULL - (unsigned long long)value : (unsigned long long)value,
+		value < 0 && radix == 10, to, radix);
+}
+CRT char *_ui64toa(unsigned long long value, char *to, int radix) { return digits_of(value, 0, to, radix); }
+typedef struct { long long quotient, remainder; } RavenLongLongDivision;
+__asm__(".section .drectve\n\t.ascii \" -export:lldiv=raven_lldiv -export:imaxdiv=raven_lldiv\"\n\t.text");
+RavenLongLongDivision raven_lldiv(long long numerator, long long denominator)
+{
+	RavenLongLongDivision result = {numerator / denominator, numerator % denominator};
+	return result;
+}
+CRT int _mktemp_s(char *name, size_t capacity)
+{
+	if (!name || !capacity || strnlen(name, capacity) == capacity) {
+		if (name && capacity) name[0] = 0;
+		set_errno(22); _invalid_parameter_noinfo(); return 22;
+	}
+	if (_mktemp(name)) return 0;
+	name[0] = 0;
+	return *_errno();
+}
+extern double nextafter(double, double);
+CRT double nexttoward(double x, double y) { return nextafter(x, y); }
+
+CRT int _wmktemp_s(wchar_t *name, size_t capacity)
+{
+	if (!name || !capacity || wcsnlen(name, capacity) == capacity) {
+		if (name && capacity) name[0] = 0;
+		set_errno(22); _invalid_parameter_noinfo(); return 22;
+	}
+	const size_t length = wcslen(name);
+	if (length < 6 || memcmp(name + length - 6, L"XXXXXX", 12)) {
+		name[0] = 0; set_errno(22); return 22;
+	}
+	wchar_t *suffix = name + length - 6;
+	unsigned number = GetCurrentThreadId() % 100000;
+	for (int at = 5; at; --at) { suffix[at] = L'0' + number % 10; number /= 10; }
+	for (wchar_t letter = L'a'; letter <= L'z'; ++letter) {
+		suffix[0] = letter;
+		if (GetFileAttributesW(name) == INVALID_FILE_ATTRIBUTES) return 0;
+	}
+	name[0] = 0; set_errno(17); return 17;
 }

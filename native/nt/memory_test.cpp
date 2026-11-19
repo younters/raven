@@ -1,5 +1,8 @@
 #include "loader.h"
 #include "memory.h"
+#ifdef __APPLE__
+#include "platform/darwin/memory/decommit_transaction.h"
+#endif
 #include "providers.h"
 
 #include <algorithm>
@@ -20,11 +23,31 @@ static void rejected(const std::function<void()> &operation, const char *message
 	try { operation(); } catch (const std::runtime_error &error) { failure=error.what(); }
 	check(failure.find(message)!=failure.npos,"memory negative failed for another reason");
 }
+#ifdef __APPLE__
+#include "platform/darwin/memory/commit_test_cases.h"
+#endif
 
 int main(int argc, char **argv)
 {
 	try {
 		check(argc==2,"bootstrap path required");
+#ifdef __APPLE__
+        for (unsigned failure=0;failure<3;++failure) {
+            const std::array<raven::DecommitRun,2> runs{{{0,4096,PROT_READ},{4096,4096,PROT_NONE}}};
+            int actual[2]={PROT_READ,PROT_NONE}; unsigned discarded=0;
+            bool rejected=false;
+            try {
+                raven::decommit_transaction(runs,0,8192,
+                    [&](uint64_t at,uint64_t bytes,int access) {
+                        if (bytes==8192) { if (failure==2) throw std::runtime_error("final protection"); actual[0]=actual[1]=access; }
+                        else actual[at/4096]=access;
+                    },
+                    [&](uint64_t,uint64_t) { if (discarded++==failure) throw std::runtime_error("discard"); });
+            } catch (const std::runtime_error &) { rejected=true; }
+            check(rejected && actual[0]==PROT_READ && actual[1]==PROT_NONE,
+                "failed decommit left a committed run writable");
+        }
+#endif
 		raven::ModuleSet modules;
 		auto &entry=modules.add("entry.exe",raven::environment_provider("kernel32.dll",0x200000000ULL));
 		const auto service=modules.resolve({"entry.exe","VirtualAlloc",0,false,0});
@@ -62,13 +85,20 @@ int main(int argc, char **argv)
 			memory.count()==1,"invalid release removed a reservation");
 		check(!memory.free(reserved.address,0,0x4000).status && !memory.free(reserved.address,0,0x8000).status &&
 			!memory.count() && !memory.bytes(),"whole decommit/release leaked state");
+#ifdef __APPLE__
+		check(memory.allocate(0,20000,0x3000,4).status==0xc000012dU && !memory.count(),"reservation limit created state");
+#else
 		check(memory.allocate(0,20000,0x3000,4).status==0xc0000017U && !memory.count(),"reservation limit created state");
+#endif
 		check(memory.allocate(0,0,0x3000,4).status && memory.allocate(UINT64_MAX,4096,0x3000,4).status &&
 			memory.allocate(0,4096,0x403000,4).status && memory.allocate(0,4096,0x3000,0x104).status && !memory.count(),
 			"invalid geometry or unsupported modifiers succeeded");
 		// MEM_TOP_DOWN only states a preference for high addresses, which any free address satisfies.
 		const auto top_down=memory.allocate(0,4096,0x103000,4);
 		check(!top_down.status && !memory.free(top_down.address,0,0x8000).status && !memory.count(),"top-down allocation failed");
+#ifdef __APPLE__
+		commit_test_cases(process,environment,memory);
+#endif
 		const auto code=memory.allocate(0,4096,0x3000,4);
 		check(!code.status,"executable test allocation failed");
 		process.write_memory(code.address,std::array<uint8_t,6>{0xb8,42,0,0,0,0xc3});
@@ -136,7 +166,7 @@ int main(int argc, char **argv)
 		check(print.stop==raven::NativeStop::fault && print.instruction==debug+5 && print.value==1,
 			"debug print service did not produce its captured fault");
 		rejected([&] { process.complete_debug_print(print.instruction+1); },"INT 2D");
-		const auto context=process.context().registers;
+		const auto context=process.registers();
 		check(process.read_memory(context.rcx,size_t(uint32_t(context.rdx)))==std::vector<uint8_t>{'t','r','a','c','e','\n'},
 			"debug print payload capture differs");
 		process.complete_debug_print(print.instruction);

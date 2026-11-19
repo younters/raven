@@ -3,6 +3,7 @@
 #include "kernel_context.h"
 #include "mutex.h"
 #include "processors.h"
+#include "semaphore.h"
 #include "event.h"
 #include "kernel_waits.h"
 #include "security_attributes.h"
@@ -50,45 +51,6 @@ uint32_t thread_access(uint32_t requested)
 	return access;
 }
 
-struct SemaphoreState {
-	std::atomic<int32_t> count{0};
-	int32_t maximum = 0;
-};
-
-// A semaphore without a name lives in the process's table (kernel_waits.h); a named one in the memory the processes share.
-class SemaphoreObject : public KernelObject {
-public:
-	~SemaphoreObject() override
-	{
-		if (waits_object)
-			raven_waits_close(kernel_waits(), waits_object);
-	}
-	std::u16string_view type_name() const override { return u"Semaphore"; }
-	uint32_t table_semaphore() const override { return waits_object; }
-	int signaled(uint32_t) const override
-	{
-		uint32_t count = 0;
-		if (waits_object)
-			return raven_waits_query(kernel_waits(), waits_object, &count) == 0 && count > 0;
-		return state->count.load() > 0;
-	}
-	bool try_consume(uint32_t thread) override
-	{
-		if (waits_object)
-			return raven_waits_wait(kernel_waits(), thread, &waits_object, 1, 0, 0, 0) == 0;
-		auto current = state->count.load();
-		while (current > 0)
-			if (state->count.compare_exchange_weak(current, current - 1))
-				return true;
-		return false;
-	}
-	void consume(uint32_t thread) override { try_consume(thread); }
-	std::atomic<uint32_t> *wait_word() const override { return shared ? reinterpret_cast<std::atomic<uint32_t> *>(&state->count) : nullptr; }
-	SemaphoreState local;
-	SemaphoreState *state = &local;
-	std::shared_ptr<SharedFile> shared;
-	uint32_t waits_object = 0;
-};
 
 // A named event: its state is shared memory, so a program in another process of the prefix sees it set.
 struct EventState {
@@ -135,26 +97,6 @@ private:
 	mutable bool state = false;
 	mutable std::optional<std::chrono::steady_clock::time_point> due;
 	std::chrono::milliseconds period{0};
-};
-
-class SharedEventObject : public KernelObject {
-public:
-	std::u16string_view type_name() const override { return u"Event"; }
-	int signaled(uint32_t) const override { return state->signaled.load() ? 1 : 0; }
-	bool try_consume(uint32_t) override { return state->manual || state->signaled.exchange(0) == 1; }
-	void consume(uint32_t thread) override { try_consume(thread); }
-	int set_state(bool value) override
-	{
-		const int previous = int(state->signaled.exchange(value ? 1 : 0));
-		if (value) {
-			wake_word(&state->signaled);
-			announce_shared_change();
-		}
-		return previous;
-	}
-	std::atomic<uint32_t> *wait_word() const override { return &state->signaled; }
-	EventState *state = nullptr;
-	std::shared_ptr<SharedFile> shared;
 };
 
 // A registered wait: the callback runs on a guest thread once the object is signaled or the time runs out.
@@ -421,10 +363,14 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			}
 			// A timer among the handles turns signaled at its due time with nobody announcing it: the wait looks again then.
 			auto until = wake;
-			for (size_t index = 0; index < resolved.size(); ++index)
+			std::vector<pollfd> announced;
+			for (size_t index = 0; index < resolved.size(); ++index) {
 				if (const auto due = waited.wakes_at(index); due && (!until || *due < *until))
 					until = due;
-			threads.block(ready, until);
+				if (const int descriptor = waited.wake_descriptor(index); descriptor >= 0)
+					announced.push_back({descriptor, POLLIN, 0});
+			}
+			threads.block(ready, until, false, false, false, announced);
 		}
 	};
 	registry.add("WaitForSingleObject", 2, [wait](ApiCall &call) { call.ret(wait(call, {call[0]}, false, call.u32(1), false)); });
@@ -562,8 +508,11 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			if (alertable && !me->apcs.empty() && run_apcs()) return wait_io_completion;
 			if (!milliseconds || (wake && std::chrono::steady_clock::now() >= *wake)) return wait_timeout;
 			auto until = wake;
-			for (size_t index = 0; index < handles.size(); ++index)
+			std::vector<pollfd> announced;
+			for (size_t index = 0; index < handles.size(); ++index) {
 				if (const auto due = waited.wakes_at(index); due && (!until || *due < *until)) until = due;
+				if (const int descriptor = waited.wake_descriptor(index); descriptor >= 0) announced.push_back({descriptor, POLLIN, 0});
+			}
 			HostWait waiting;
 			threads.block([&] {
 				if (alertable && !me->apcs.empty()) return true;
@@ -575,7 +524,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 					every &= state == 1;
 				}
 				return all ? every && input() : any || input();
-			}, until);
+			}, until, false, false, false, announced);
 		}
 	};
 	registry.add("MsgWaitForMultipleObjects", 5, [message_wait](ApiCall &call) {
@@ -640,6 +589,36 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		const auto woken = sleep(native_wake(call, call[1]), call.u32(0) & 0xff, true);
 		call.ret(woken == Woken::apcs ? status_user_apc : woken == Woken::alerted ? status_alerted : 0);
 	});
+	// The system timer's resolution, in 100 ns units: Windows ranges from 15.625 ms down to 0.5 ms. Waits here already use the host's
+	// precise clocks, so a request changes nothing about them; the process's request is kept so the calls answer as Windows does.
+	// Games ask for 0.5 ms at startup through ntdll (Source's tier0 calls the result of GetProcAddress unchecked).
+	static constexpr uint32_t coarsest_resolution = 156250, finest_resolution = 5000;
+	static std::atomic<uint32_t> requested_resolution{0};
+	registry.add("NtQueryTimerResolution", 3, [](ApiCall &call) {
+		if (!call[0] || !call[1] || !call[2]) {
+			call.ret(0xc0000005U);
+			return;
+		}
+		const uint32_t requested = requested_resolution.load();
+		call.store<uint32_t>(call[0], coarsest_resolution);
+		call.store<uint32_t>(call[1], finest_resolution);
+		call.store<uint32_t>(call[2], requested ? requested : coarsest_resolution);
+		call.ret(0);
+	});
+	registry.add("NtSetTimerResolution", 3, [](ApiCall &call) {
+		if (!call[2]) {
+			call.ret(0xc0000005U);
+			return;
+		}
+		uint32_t status = 0;
+		if (call.u32(1) & 0xff)
+			requested_resolution.store(std::clamp(call.u32(0), finest_resolution, coarsest_resolution));
+		else if (!requested_resolution.exchange(0))
+			status = 0xc0000245U; // STATUS_TIMER_RESOLUTION_NOT_SET: this process never asked for one.
+		const uint32_t current = requested_resolution.load();
+		call.store<uint32_t>(call[2], current ? current : coarsest_resolution);
+		call.ret(status);
+	});
 	registry.add("NtAlertThread", 1, [thread_from](ApiCall &call) {
 		const auto thread = thread_from(call[0]);
 		if (!thread) {
@@ -673,11 +652,12 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(0);
 	});
 	// The whole allocation, guard pages included: from DeallocationStack up to the base in the thread block.
-	registry.add("GetCurrentThreadStackLimits", 2, [&threads](ApiCall &call) {
-		const auto teb = threads.current().teb;
-		call.write(call[0], call.read(teb + 0x1478, 8));
-		call.write(call[1], call.read(teb + 0x08, 8));
-		call.ret(0);
+	registry.add("GetCurrentThreadStackLimits", 2, [&context](ApiCall &call) {
+		const auto teb = context.environment.teb();
+		const size_t width = call.pointer_width();
+		const auto allocation = call.load_pointer(teb + (width == 4 ? 0xe0c : 0x1478));
+		call.store_pointer(call[0], allocation ? allocation : call.load_pointer(teb + 2 * width));
+		call.store_pointer(call[1], call.load_pointer(teb + width));
 	});
 	registry.add("SwitchToThread", 0, [&threads](ApiCall &call) { call.ret(threads.yield()); });
 
@@ -890,104 +870,166 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		threads.resume(*thread);
 		call.ret(uint32_t(previous));
 	});
-	// The registers of a thread as a CONTEXT (x64), from where the thread stopped: the control and integer groups, the floating-point
-	// state, and the upper halves of the YMM registers when the context has an extended area whose mask asks for them. The .NET runtime
-	// takes all of it from a thread it interrupts for a collection, and puts it back when the thread goes on.
-	registry.add("GetThreadContext", 2, [thread_from, &threads](ApiCall &call) {
-		if (call.pointer_width() == 4 || !call[1]) {
-			call.fail(call[1] ? 50 : 87);
-			return;
+	// All entry points share the same stopped guest packet and register-group codec.
+	auto thread_context = [thread_from, &threads](ApiCall &call, bool set, bool wow, bool nt) {
+		const auto fail = [&](uint32_t error) { if (nt) call.ret(error == 6 ? 0xc0000008u : 0xc000000du); else call.fail(error); };
+		if (!call[1]) { fail(87); return; }
+		auto thread = thread_from(call[0]);
+		if (!thread || thread->state == GuestThread::State::done) { fail(6); return; }
+		const bool x86 = wow || call.pointer_width() == 4;
+		if (x86 != (call.process.mode() == NativeMode::x86)) { fail(87); return; }
+		const auto flags = call.load<uint32_t>(call[1] + (x86 ? 0 : 0x30));
+		if (!(flags & (x86 ? 0x10000 : 0x100000))) { fail(87); return; }
+		const bool self = thread->id == threads.current_id();
+#ifdef __APPLE__
+		const bool resume = !self && !thread->snapshot.stopped && !thread->suspend_count;
+		struct ResumeContext {
+			NativeProcess &process;
+			NativeThreadState &snapshot;
+			bool active;
+			~ResumeContext() { finish(); }
+            void finish() noexcept {
+                if (!active) return;
+                try { process.resume_context_thread(snapshot); active=false; }
+                catch (const std::exception &e) {
+                    // A committed edit remains successful; make a parked worker diagnosable.
+                    std::fprintf(stderr, "raven: context worker resume failed: %s\n", e.what());
+                }
+            }
+		} resume_context{call.process, thread->snapshot, false};
+#endif
+		if (!self) call.process.pause_thread(thread->snapshot);
+#ifdef __APPLE__
+		resume_context.active = resume;
+#endif
+		auto packet = self ? call.process.context() : thread->snapshot.context;
+		auto debug = thread->debug_registers;
+		auto &r = packet.registers;
+		const auto original = r;
+		const auto word = [&](size_t offset, auto &value, size_t width) {
+			if (set) {
+				value = width == 8 ? call.load<uint64_t>(call[1]+offset) : width == 4 ? call.load<uint32_t>(call[1]+offset) : call.load<uint16_t>(call[1]+offset);
+			} else if (width == 8) call.store<uint64_t>(call[1]+offset, value);
+			else if (width == 4) call.store<uint32_t>(call[1]+offset, value);
+			else call.store<uint16_t>(call[1]+offset, value);
+		};
+		if (flags & 1) {
+			word(x86 ? 0xb4 : 0xa0, r.rbp, x86 ? 4 : 8);
+			word(x86 ? 0xb8 : 0xf8, r.rip, x86 ? 4 : 8);
+			word(x86 ? 0xc4 : 0x98, r.rsp, x86 ? 4 : 8);
+			word(x86 ? 0xbc : 0x38, r.cs, x86 ? 4 : 2);
+			word(x86 ? 0xc8 : 0x42, r.ss, x86 ? 4 : 2);
+			word(x86 ? 0xc0 : 0x44, r.eflags, 4);
+			if (set) {
+                // User arithmetic flags, TF, DF, OF, RF, AC and ID are writable.
+                constexpr uint32_t writable = 0x250dd5u;
+                r.eflags = ((original.eflags & ~writable) | (r.eflags & writable) | 2) & ~0x1a7000u;
+                r.cs = original.cs; r.ss = original.ss;
+            }
 		}
-		const auto thread = thread_from(call[0]);
-		if (!thread) {
-			call.fail(6);
-			return;
+		if (flags & 2) {
+			unsigned long long *regs[]{&r.rax,&r.rcx,&r.rdx,&r.rbx,&r.rsi,&r.rdi,&r.r8,&r.r9,&r.r10,&r.r11,&r.r12,&r.r13,&r.r14,&r.r15};
+			const size_t offsets64[]{0x78,0x80,0x88,0x90,0xa8,0xb0,0xb8,0xc0,0xc8,0xd0,0xd8,0xe0,0xe8,0xf0};
+			const size_t offsets32[]{0xb0,0xac,0xa8,0xa4,0xa0,0x9c};
+			for (size_t i=0;i<(x86 ? 6u : 14u);++i) word(x86 ? offsets32[i] : offsets64[i], *regs[i], x86 ? 4 : 8);
 		}
-		const auto &registers = thread->id == threads.current_id() ? call.process.context().registers : thread->snapshot.context.registers;
-		const uint32_t flags = call.load<uint32_t>(call[1] + 0x30);
-		const auto put = [&](size_t at, uint64_t value) { call.store<uint64_t>(call[1] + at, value); };
-		if (flags & 0x1) {
-			call.store<uint16_t>(call[1] + 0x38, uint16_t(registers.cs));
-			call.store<uint16_t>(call[1] + 0x42, uint16_t(registers.ss));
-			call.store<uint32_t>(call[1] + 0x44, uint32_t(registers.eflags));
-			put(0x98, registers.rsp);
-			put(0xa0, registers.rbp);
-			put(0xf8, registers.rip);
+		if (flags & 4) {
+			word(x86 ? 0x98 : 0x3a, r.ds, x86 ? 4 : 2);
+			word(x86 ? 0x94 : 0x3c, r.es, x86 ? 4 : 2);
+			word(x86 ? 0x90 : 0x3e, r.fs, x86 ? 4 : 2);
+			word(x86 ? 0x8c : 0x40, r.gs, x86 ? 4 : 2);
+            // Selectors describe runtime-owned descriptors, including the x86 TEB.
+            if (set) { r.ds=original.ds; r.es=original.es; r.fs=original.fs; r.gs=original.gs; }
 		}
-		if (flags & 0x2) {
-			put(0x78, registers.rax); put(0x80, registers.rcx); put(0x88, registers.rdx); put(0x90, registers.rbx);
-			put(0xa8, registers.rsi); put(0xb0, registers.rdi);
-			put(0xb8, registers.r8); put(0xc0, registers.r9); put(0xc8, registers.r10); put(0xd0, registers.r11);
-			put(0xd8, registers.r12); put(0xe0, registers.r13); put(0xe8, registers.r14); put(0xf0, registers.r15);
-		}
-		const auto &state = thread->id == threads.current_id() ? call.process.context() : thread->snapshot.context;
-		if ((flags & 0x8) && state.xstate.size() >= 512) {
-			call.write(call[1] + x64_context::float_area, std::span<const uint8_t>(state.xstate.data(), 512));
-			call.write(call[1] + x64_context::mxcsr, std::span<const uint8_t>(state.xstate.data() + 24, 4));
-		}
-		if (const uint64_t area = context_extended_area(call.process, call[1])) {
-			const uint64_t asked = call.load<uint64_t>(area) & x64_context::avx_mask;
-			call.store<uint64_t>(area, asked);
-			if (asked) {
-				const auto halves = native_avx(state);
-				call.write(area + x64_context::extended_header, halves);
+		if (flags & 0x10) {
+            for (size_t i=0;i<6;++i)
+                word((x86 ? 4 : 0x48)+i*(x86 ? 4 : 8), debug[i], x86 ? 4 : 8);
+            // Register read-back only: neither engine currently arms breakpoints.
+            // Discard reserved bits and the privileged global-detect bit.
+            if (set) {
+                for (unsigned i=0; i<4; ++i) {
+                    const unsigned type=(debug[5]>>(16+i*4))&3, length=(debug[5]>>(18+i*4))&3;
+                    if (type==2 || (!type && length) || (x86 && length==2)) { fail(87); return; }
+                }
+                for (unsigned i=0; i<4; ++i)
+                    if (debug[i] >= (x86 ? call.environment.x86_user_limit() : native_user_limit)) { fail(87); return; }
+                debug[5] &= 0xffff0755u;
+            }
+        }
+		if ((!x86 && (flags & 8)) || (x86 && (flags & 0x20))) {
+			const auto address = call[1] + (x86 ? 0xcc : 0x100);
+			if (packet.xstate.size() < 512) throw std::runtime_error("missing guest floating-point state");
+			if (set) {
+				auto bytes = call.read(address, 512);
+				std::copy(bytes.begin(), bytes.end(), packet.xstate.begin());
+			} else call.write(address, std::span<const uint8_t>(packet.xstate.data(),512));
+			if (!x86) {
+				uint32_t mxcsr; std::memcpy(&mxcsr, packet.xstate.data()+24,4);
+				word(0x34,mxcsr,4); std::memcpy(packet.xstate.data()+24,&mxcsr,4);
 			}
 		}
-		call.ret(1);
-	});
-	// The registers of a suspended thread from a CONTEXT (x64), which it continues with when resumed: the control and integer groups,
-	// the floating-point state, and the upper halves of the YMM registers from an extended area, which are cleared when its mask leaves
-	// them out. A thread that is not suspended, the caller among them, keeps its registers: Windows leaves the outcome of that undefined.
-	registry.add("SetThreadContext", 2, [thread_from, &threads, &context](ApiCall &call) {
-		if (call.pointer_width() == 4 || !call[1]) {
-			call.fail(call[1] ? 50 : 87);
-			return;
-		}
-		const auto thread = thread_from(call[0]);
-		if (!thread) {
-			call.fail(6);
-			return;
-		}
-		if (thread->id == threads.current_id() || !thread->suspend_count) {
-			call.fail(5);
-			return;
-		}
-		auto registers = thread->snapshot.context.registers;
-		const uint32_t flags = call.load<uint32_t>(call[1] + 0x30);
-		const auto get = [&](size_t at) { return call.load<uint64_t>(call[1] + at); };
-		if (flags & 0x1) {
-			// The flags a program may change: the status flags, direction and trap; the rest stay as the processor needs them.
-			registers.eflags = (registers.eflags & ~uint64_t(0xdd5)) | (call.load<uint32_t>(call[1] + 0x44) & 0xdd5);
-			registers.rsp = get(0x98);
-			registers.rbp = get(0xa0);
-			registers.rip = get(0xf8);
-		}
-		if (flags & 0x2) {
-			registers.rax = get(0x78); registers.rcx = get(0x80); registers.rdx = get(0x88); registers.rbx = get(0x90);
-			registers.rsi = get(0xa8); registers.rdi = get(0xb0);
-			registers.r8 = get(0xb8); registers.r9 = get(0xc0); registers.r10 = get(0xc8); registers.r11 = get(0xd0);
-			registers.r12 = get(0xd8); registers.r13 = get(0xe0); registers.r14 = get(0xe8); registers.r15 = get(0xf0);
-		}
-		context.threads.set_registers(*thread, registers);
-		// The floating-point and extended state wait in the thread's saved state for its next turn; a thread that runs on a task of its
-		// own has them written into its task, which holds them while the thread is paused.
-		auto &state = thread->snapshot.context;
-		if (!context.process.parallel() || thread->paused) {
-			if ((flags & 0x8) && state.xstate.size() >= 512) {
-				const auto area = call.read(call[1] + x64_context::float_area, 512);
-				std::memcpy(state.xstate.data(), area.data(), 512);
+		if (x86 && (flags & 8)) {
+			if (packet.xstate.size() < 512) throw std::runtime_error("missing guest x87 state");
+			auto &fp = packet.xstate;
+			const auto legacy = [&](size_t at, size_t fx, size_t size) {
+				uint32_t value=0; std::memcpy(&value,fp.data()+fx,size);
+				word(0x1c+at,value,4); if (set) std::memcpy(fp.data()+fx,&value,size);
+			};
+			legacy(0,0,2); legacy(4,2,2); legacy(12,8,4); legacy(20,16,4); legacy(24,20,2);
+			uint16_t selector, opcode;
+			std::memcpy(&selector,fp.data()+12,2); std::memcpy(&opcode,fp.data()+6,2);
+			uint32_t error_selector=selector|(uint32_t(opcode)<<16);
+			word(0x2c,error_selector,4);
+			if (set) { selector=error_selector; opcode=error_selector>>16; std::memcpy(fp.data()+12,&selector,2); std::memcpy(fp.data()+6,&opcode,2); }
+			uint32_t tags=0;
+			uint16_t status; std::memcpy(&status,fp.data()+2,2);
+			for (unsigned physical=0; physical<8; ++physical) {
+				const unsigned logical=(physical+8-((status>>11)&7))&7;
+				const auto *st=fp.data()+32+logical*16;
+				uint64_t fraction; uint16_t exponent;
+				std::memcpy(&fraction,st,8); std::memcpy(&exponent,st+8,2); exponent &= 0x7fff;
+				unsigned tag=!(fp[4]&(1<<physical)) ? 3 : !exponent && !fraction ? 1 : exponent==0x7fff || !exponent || !(fraction>>63) ? 2 : 0;
+				tags |= tag<<(physical*2);
 			}
+			word(0x24,tags,4);
+			if (set) { fp[4]=0; for (unsigned i=0;i<8;++i) if (((tags>>(i*2))&3)!=3) fp[4]|=1<<i; }
+			for (unsigned i=0;i<8;++i) {
+				if (set) { auto bytes=call.read(call[1]+0x38+i*10,10); std::copy(bytes.begin(),bytes.end(),fp.begin()+32+i*16); }
+				else call.write(call[1]+0x38+i*10,std::span<const uint8_t>(fp.data()+32+i*16,10));
+			}
+			if (!set) call.store<uint32_t>(call[1]+0x88,0);
+		}
+		// The upper halves of the YMM registers, from or into the extended area of an x64 context whose mask asks for them; a set
+		// whose mask leaves them out clears them.
+		if (!x86)
 			if (const uint64_t area = context_extended_area(call.process, call[1])) {
-				if (call.load<uint64_t>(area) & x64_context::avx_mask)
-					set_native_avx(state, call.read(area + x64_context::extended_header, x64_context::avx_size).data());
-				else
-					set_native_avx(state, nullptr);
+				const uint64_t asked = call.load<uint64_t>(area) & x64_context::avx_mask;
+				if (set)
+					set_native_avx(packet, asked ? call.read(area + x64_context::extended_header, x64_context::avx_size).data() : nullptr);
+				else {
+					call.store<uint64_t>(area, asked);
+					if (asked) call.write(area + x64_context::extended_header, native_avx(packet));
+				}
 			}
-			if (context.process.parallel())
-				context.threads.set_xstate(*thread);
+		if (set) {
+			if (self) call.process.set_context(packet);
+			else { thread->snapshot.context = std::move(packet); thread->snapshot.context_in_task = false; }
+			thread->debug_registers = debug;
 		}
-		call.ret(1);
-	});
+#ifdef __APPLE__
+        resume_context.finish();
+#endif
+        call.ret(nt ? 0 : 1);
+	};
+	for (auto name : {"GetThreadContext", "SetThreadContext", "Wow64GetThreadContext", "Wow64SetThreadContext", "NtGetContextThread", "NtSetContextThread"}) {
+		const std::string api(name);
+		registry.add(name, 2, [thread_context, api](ApiCall &call) {
+            try { thread_context(call, api.find("Set") != std::string::npos, api.starts_with("Wow64"), api.starts_with("Nt")); }
+            catch (const std::runtime_error &) {
+                if (api.starts_with("Nt")) call.ret(0xc000000du); else call.fail(87);
+            }
+        });
+	}
 	// A thread's description is a name the program gives it; it is kept per thread and handed back in memory the program frees with LocalFree.
 	auto descriptions = std::make_shared<std::map<uint32_t, std::u16string>>();
 	registry.add("SetThreadDescription", 2, [thread_from, descriptions](ApiCall &call) {
@@ -1228,8 +1270,8 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 		}
 	});
 	registry.add("GetThreadId", 1, [&objects, thread_from](ApiCall &call) {
-		if (objects.object_as<ChildThreadObject>(call[0])) {
-			call.ret(1);
+		if (const auto child = objects.object_as<ChildThreadObject>(call[0])) {
+			call.ret(uint32_t(child->owner()->pid));
 			return;
 		}
 		const auto thread = thread_from(call[0]);
@@ -1579,9 +1621,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			fail_shared(call, error);
 			return;
 		}
-		auto event = std::make_shared<SharedEventObject>();
-		event->shared = shared;
-		event->state = static_cast<EventState *>(shared->data);
+		auto event = std::make_shared<EventObject>(shared);
 		const auto made = objects.add_object(event);
 		if (made.status) {
 			call.fail(8, 0);
@@ -1640,9 +1680,7 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 			fail_shared(call, error);
 			return;
 		}
-		auto event = std::make_shared<SharedEventObject>();
-		event->shared = shared;
-		event->state = static_cast<EventState *>(shared->data);
+		auto event = std::make_shared<EventObject>(shared);
 		const auto made = objects.add_object(event);
 		if (made.status) {
 			call.fail(8, 0);
@@ -1847,28 +1885,10 @@ void register_thread_api(ApiRegistry &registry, KernelContext &context)
 				return;
 			}
 		}
-		if (semaphore->waits_object) {
-			uint32_t previous = 0;
-			if (amount <= 0 || raven_waits_release_semaphore(kernel_waits(), semaphore->waits_object, uint32_t(amount), &previous)) {
-				call.fail(298);
-				return;
-			}
-			if (call[2]) call.store<int32_t>(call[2], int32_t(previous));
-			call.ret(1);
+		int32_t current = 0;
+		if (!semaphore->release(amount, current)) {
+			call.fail(298);
 			return;
-		}
-		auto current = semaphore->state->count.load();
-		for (;;) {
-			if (amount <= 0 || int64_t(current) + amount > semaphore->state->maximum) {
-				call.fail(298);
-				return;
-			}
-			if (semaphore->state->count.compare_exchange_weak(current, current + amount))
-				break;
-		}
-		if (semaphore->shared) {
-			wake_word(semaphore->wait_word());
-			announce_shared_change();
 		}
 		if (call[2]) call.store<int32_t>(call[2], current);
 		call.ret(1);

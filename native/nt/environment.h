@@ -3,6 +3,9 @@
 #include "cpu/native_cpu.h"
 #include "inherit.h"
 
+#ifdef __APPLE__
+#include <utility>
+#endif
 #include <string_view>
 #include <string>
 #include <optional>
@@ -11,6 +14,10 @@
 
 namespace raven {
 
+#ifdef __APPLE__
+class NativeMemory;
+
+#endif
 // The end of the user address range of a 64-bit Windows process. The host's own mappings in the guest sit near its top; a request
 // that meets one of them fails as any taken range does.
 inline constexpr uint64_t native_user_limit = 0x7fffffff0000ULL;
@@ -44,9 +51,13 @@ struct NativeLaunch {
 // Initial x64 thread fields only. Mappings belong to the process and survive this view.
 class NativeEnvironment {
 public:
+#ifdef __APPLE__
+	NativeMemory *set_memory_accounting(NativeMemory *memory) { return std::exchange(memory_accounting,memory); }
+#endif
 	NativeEnvironment(NativeProcess &process, uint64_t image_base, uint32_t process_id, uint32_t thread_id);
 	uint64_t teb() const { return thread_block; }
 	uint64_t peb() const { return process_block; }
+	uint64_t x86_user_limit() const;
 	// Guest address of the ANSI command line, valid once process parameters exist.
 	uint64_t command_line() const { return command_line_ansi; }
 	uint32_t last_error() const;
@@ -74,6 +85,9 @@ public:
 	static std::span<const std::string_view> nt_exports();
 
 private:
+#ifdef __APPLE__
+	NativeMemory *memory_accounting = nullptr;
+#endif
 	NativeProcess &process;
 	uint64_t thread_block = 0;
 	uint64_t process_block = 0;

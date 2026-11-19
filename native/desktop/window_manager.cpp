@@ -10,6 +10,9 @@
 #include <memory>
 #include <cstring>
 #include <sys/mman.h>
+#ifdef __APPLE__
+#include "../platform/darwin/dxmt/identity.h"
+#endif
 #include <utility>
 
 namespace raven {
@@ -30,6 +33,17 @@ Layout position_layout(bool narrow)
 	return narrow ? Layout{28, 4, 24} : Layout{40, 8, 32};
 }
 
+}
+
+DesktopRect NativeWindows::fit_placement(DesktopRect rect) const
+{
+	const auto &screen = objects.nonclient_metrics();
+	const auto width = std::min<int64_t>(int64_t(rect.right) - rect.left, screen.screen_x);
+	const auto height = std::min<int64_t>(int64_t(rect.bottom) - rect.top, screen.screen_y);
+	if (width <= 0 || height <= 0) return rect;
+	const auto x = std::clamp<int64_t>(rect.left, 0, screen.screen_x - width);
+	const auto y = std::clamp<int64_t>(rect.top, 0, screen.screen_y - height);
+	return {int32_t(x), int32_t(y), int32_t(x + width), int32_t(y + height)};
 }
 
 std::vector<uint64_t> NativeWindows::top_level_windows() const
@@ -141,11 +155,25 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 	const bool previous = window->visible;
 	if (command > 11)
 		throw uint32_t(87);
+#ifdef __APPLE__
+	if (command) initialize_window_dpi(handle);
+	window=objects.window(handle);
+	if (!window) return previous;
+#endif
 	const bool hide = command == 0;
 	const bool minimize = command == 2 || command == 6 || command == 7 || command == 11;
 	const bool maximize = command == 3;
 	const bool activate_it = command == 1 || command == 3 || command == 5 || command == 9 || command == 10 || command == 2;
 	if (!window->parent && (minimize || maximize || command == 9 || command == 1 || command == 10)) {
+		const auto place = [&](DesktopRect target) {
+			// State changes need the same WINDOWPOS notifications as SetWindowPos,
+			// and retain the host surface that the compositor maximizes.
+			const bool kept = keep_host_window;
+			keep_host_window = true;
+			try { place_window(handle, target, 0, swp_nozorder | swp_noactivate | 0x20); }
+			catch (...) { keep_host_window = kept; throw; }
+			keep_host_window = kept;
+		};
 		// Maximizing fills the work area; restoring brings back the rectangle remembered when the state first changed.
 		const auto &screen = objects.nonclient_metrics();
 		const bool is_max = window->style & ws_maximize, is_min = window->style & ws_minimize;
@@ -153,8 +181,9 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 			if (!is_min)
 				window->restore = window->outer;
 			window->style = (window->style & ~ws_minimize) | ws_maximize;
-			// The window hears of its new place as of any other: WM_WINDOWPOSCHANGED, which a program may lay its content out from.
-			place_window(handle, {0, 0, screen.screen_x, screen.screen_y}, 0, 0x14);
+			const auto frame = adjust_window_rect(objects.nonclient_metrics(), {0, 0, 0, 0}, window->style & ~ws_visible, window->menu != 0, window->ex_style);
+			(void)frame;
+			place({0, 0, screen.screen_x, screen.screen_y});
 		} else if (minimize && !is_min) {
 			if (!is_max)
 				window->restore = window->outer;
@@ -163,7 +192,7 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 			window->style &= ~(ws_maximize | ws_minimize);
 			const auto target = window->restore.right > window->restore.left ? window->restore : window->outer;
 			if (is_max)
-				place_window(handle, target, 0, 0x14);
+				place(target);
 		}
 		window = objects.window(handle);
 	}
@@ -186,6 +215,7 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 	if (!window)
 		throw uint32_t(1400);
 	const bool show = !hide && !(window->style & ws_minimize && !window->parent);
+	if (presentation.visibility) presentation.visibility(handle, !hide);
 	if (show && (!window->parent || objects.window_visible(window->parent)))
 		present(handle);
 	else if (!hide && (window->style & ws_minimize) && previous && !window->parent && presentation.minimize)
@@ -566,15 +596,29 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		}
 	});
 	registry.add("SetParent", 2, [this](ApiCall &call) {
+		// A window cannot go under one of its descendants, which may be windows of other processes.
+		const auto local_parent = [this](uint64_t handle) -> std::optional<uint64_t> {
+			if (const auto *record = objects.window(handle)) return record->parent;
+			return std::nullopt;
+		};
 		auto *window = objects.window(call[0]);
 		// HWND_MESSAGE takes the window off the desktop: it stays a top-level window that only receives messages.
 		const bool message_only = call[1] == UINT64_MAX - 2 || call[1] == 0xfffffffdULL;
 		const uint64_t target = message_only ? 0 : call[1];
-		if (!window || (target && !std::as_const(objects).window(target))) {
+		if (!window) {
+			const auto foreign=foreign_window_info(call[0]);
+			// The update a window's own process applies carries no message-only state.
+			if (!foreign || message_only || call[0]==target || (target&&!std::as_const(objects).window(target)&&!foreign_window_info(target))) { call.fail(1400);return; }
+			if (window_under(call[0],target,local_parent)) { call.fail(87);return; }
+			ForeignWindowUpdate update{};update.mask=1;update.parent=target;
+			if (!request_window_update(call[0],update)) {call.fail(1400);return;}
+			call.ret(foreign->parent ? foreign->parent : desktop_window());return;
+		}
+		if (target && !std::as_const(objects).window(target) && !foreign_window_info(target)) {
 			call.fail(1400);
 			return;
 		}
-		if (target == call[0] || objects.is_child(call[0], target)) {
+		if (target == call[0] || window_under(call[0], target, local_parent)) {
 			call.fail(87);
 			return;
 		}
@@ -602,7 +646,9 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		shift_window(call[0], new_x - old_x, new_y - old_y);
 		objects.restack(call[0], true);
 		objects.update_window_dcs(call[0]);
-		call.ret(previous);
+		// The previous parent of a top-level window is the desktop window, as Windows reports it: a caller that checks for NULL would
+		// otherwise take a successful move for a failure.
+		call.ret(previous ? previous : desktop_window());
 	});
 	registry.add("BringWindowToTop", 1, [this](ApiCall &call) {
 		if (!std::as_const(objects).window(call[0])) {
@@ -820,7 +866,14 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 				call.fail(1400);
 				return;
 			}
-			window->properties[property_key(call, wide)] = call[2];
+			const auto key = property_key(call, wide);
+#ifdef __APPLE__
+			if (key == u"RAVENDCOMPCOMMIT") {
+				call.ret(commit_composition(call));
+				return;
+			}
+#endif
+			window->properties[key] = call[2];
 			call.ret(1);
 		});
 		registry.add("GetProp" + suffix, 2, [this, property_key, wide](ApiCall &call) {
@@ -852,8 +905,11 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	registry.add("SetWindowPos", 7, [this](ApiCall &call) {
 		const auto *window = std::as_const(objects).window(call[0]);
 		if (!window) {
-			call.fail(1400);
-			return;
+			ForeignWindowUpdate update{};update.mask=2;update.after=call[1];update.flags=call.u32(6);
+			update.x=call.i32(2);update.y=call.i32(3);update.width=std::max(call.i32(4),0);update.height=std::max(call.i32(5),0);
+			if (update.x<-1000000||update.x>1000000||update.y<-1000000||update.y>1000000||update.width>32768||update.height>32768) {call.fail(87);return;}
+			if (!request_window_update(call[0],update)) {call.fail(1400);return;}
+			call.ret(1);return;
 		}
 		const uint32_t flags = call.u32(6);
 		const auto *parent = window->parent ? objects.window(window->parent) : nullptr;
@@ -937,6 +993,9 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		// A child window's place is in its parent's client coordinates, as MoveWindow takes it.
 		if (const auto *parent = window->parent ? objects.window(window->parent) : nullptr)
 			normal = {normal.left - parent->x, normal.top - parent->y, normal.right - parent->x, normal.bottom - parent->y};
+#ifdef __APPLE__
+		normal=placement_rect(normal,false);
+#endif
 		std::vector<uint8_t> bytes(44);
 		const uint32_t fields[11] = {44, 0, uint32_t(minimized ? 2 : maximized ? 3 : window->visible ? 1 : 0), UINT32_MAX, UINT32_MAX, UINT32_MAX,
 			UINT32_MAX, uint32_t(normal.left), uint32_t(normal.top), uint32_t(normal.right), uint32_t(normal.bottom)};
@@ -958,9 +1017,15 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			return;
 		}
 		try {
+			DesktopRect normal{int32_t(fields[7]), int32_t(fields[8]), int32_t(fields[9]), int32_t(fields[10])};
+#ifdef __APPLE__
+			normal=placement_rect(normal,true);
+#endif
 			const auto *parent = window->parent ? objects.window(window->parent) : nullptr;
 			const int32_t ox = parent ? parent->x : 0, oy = parent ? parent->y : 0;
-			const DesktopRect normal{int32_t(fields[7]) + ox, int32_t(fields[8]) + oy, int32_t(fields[9]) + ox, int32_t(fields[10]) + oy};
+			normal = {normal.left + ox, normal.top + oy, normal.right + ox, normal.bottom + oy};
+			// A saved placement can come from a larger or disconnected monitor. Explicit SetWindowPos sizes remain unrestricted.
+			if (!window->parent) normal=fit_placement(normal);
 			objects.window(call[0])->restore = normal;
 			// The window becomes visible before it is sized, so its size notifications reach a window that is already shown.
 			if (fields[2] != 0)
@@ -1231,7 +1296,9 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		}
 		const auto layout = frame_layout(*window);
 		const int32_t x = int16_t(call[3] & 0xffff) - window->outer.left, y = int16_t((call[3] >> 16) & 0xffff) - window->outer.top;
-		if (window->y - window->outer.top > layout.close.top) {
+		const auto &margins = *window->glass;
+		const bool whole = std::any_of(margins.begin(), margins.end(), [](int32_t margin) { return margin < 0; });
+		if (window->y - window->outer.top > layout.close.top || (!whole && margins[2] < layout.close.bottom - (window->y - window->outer.top))) {
 			call.ret(0);
 			return;
 		}
@@ -1387,17 +1454,16 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	};
 	registry.add("EnumDisplaySettingsA", 3, [=](ApiCall &call) { display_mode_ansi(call); });
 	registry.add("EnumDisplaySettingsExA", 4, [=](ApiCall &call) { display_mode_ansi(call); });
-	// There is no kernel graphics subsystem behind the host's display: the adapter thunks report that the request is not supported, and
-	// programs that probe them (to size video memory, for instance) fall back to what the graphics API reports.
+	// Unsupported kernel-graphics operations fail explicitly; callers can use DXGI's reported capabilities.
 	for (const auto *thunk : {"D3DKMTOpenAdapterFromLuid", "D3DKMTOpenAdapterFromGdiDisplayName", "D3DKMTOpenAdapterFromHdc", "D3DKMTCloseAdapter",
 			"D3DKMTQueryAdapterInfo", "D3DKMTQueryVideoMemoryInfo", "D3DKMTEnumAdapters", "D3DKMTEnumAdapters2", "D3DKMTGetDeviceState",
 			"D3DKMTCreateDevice", "D3DKMTDestroyDevice", "D3DKMTWaitForVerticalBlankEvent", "D3DKMTCheckVidPnExclusiveOwnership"})
-		registry.add(thunk, 1, [](ApiCall &call) { call.ret(0xC00000BBU); });
+		if (!registry.has(thunk)) registry.add(thunk, 1, [](ApiCall &call) { call.ret(0xC00000BBU); });
 	// The same answer for every other thunk the library exports: each takes one pointer to its parameter structure.
 	for (const auto name : system_export_names("gdi32.dll"))
 		if (name.starts_with("D3DKMT") && !registry.has(name))
 			registry.add(name, 1, [](ApiCall &call) { call.ret(0xC00000BBU); });
-	// One adapter, and one monitor on it, for programs that ask which display they are on.
+// One adapter, and one monitor on it, for programs that ask which display they are on.
 	const auto display_device = [](ApiCall &call, bool wide) {
 		const size_t size = wide ? 840 : 424;
 		if (call.u32(1) != 0 || !call[2] || call.load<uint32_t>(call[2]) != size) {
@@ -1415,18 +1481,32 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 		record[1] = uint8_t(size >> 8);
 		const size_t name = 4, description = wide ? 68 : 36, flags = wide ? 324 : 164, identifier = wide ? 328 : 168;
 		put(name, monitor ? "\\\\.\\DISPLAY1\\Monitor0" : "\\\\.\\DISPLAY1");
+		#ifdef __APPLE__
+		const auto identity = darwin_dxgi::identity();
+		put(description, monitor ? "Raven Monitor" : identity ? identity->description : "Raven Display");
+		#else
 		put(description, monitor ? "Raven Monitor" : "Raven Display");
+		#endif
 		record[flags] = monitor ? 3 : 5;
+		#ifdef __APPLE__
+		const auto pci = identity ? darwin_dxgi::pci_id(*identity) : "PCI\\VEN_1AF4&DEV_1050";
+		put(identifier, monitor ? "MONITOR\\RAVEN0000" : pci);
+		if (!monitor && identity) put(wide ? 584 : 296,
+			"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0000");
+		#else
 		put(identifier, monitor ? "MONITOR\\RAVEN0000" : "PCI\\VEN_1AF4&DEV_1050");
+		#endif
 		call.write(call[2], record);
 		call.ret(1);
 	};
 	registry.add("EnumDisplayDevicesA", 4, [=](ApiCall &call) { display_device(call, false); });
 	registry.add("EnumDisplayDevicesW", 4, [=](ApiCall &call) { display_device(call, true); });
 	// Programs declare how they handle scaling; the host's windows are not scaled by a second layer, so every declaration is accepted.
+#ifndef __APPLE__
 	registry.add("SetProcessDPIAware", 0, [](ApiCall &call) { call.ret(1); });
 	registry.add("IsProcessDPIAware", 0, [](ApiCall &call) { call.ret(1); });
 	registry.add("SetProcessDpiAwarenessContext", 1, [](ApiCall &call) { call.ret(1); });
+#endif
 	// There is no display topology to report: callers fall back to their single-monitor behavior.
 	registry.add("GetDisplayConfigBufferSizes", 3, [](ApiCall &call) {
 		if (call[1]) call.store<uint32_t>(call[1], 0);

@@ -1,0 +1,54 @@
+From: Raven macOS integration
+Upstream: 3Shain/dxmt 3b252590cb0290e36fca6f088b5255b871d2d95a
+Reason: connect HWND-less DXGI swapchains to the DirectComposition visual tree.
+
+--- a/src/dxgi/dxgi_factory.cpp
++++ b/src/dxgi/dxgi_factory.cpp
+@@ -153,9 +153,26 @@
+       IUnknown *pDevice, const DXGI_SWAP_CHAIN_DESC1 *pDesc,
+       IDXGIOutput *pRestrictToOutput, IDXGISwapChain1 **ppSwapChain) final {
+     InitReturnPtr(ppSwapChain);
+-
+-    ERR("Not implemented");
+-    return E_NOTIMPL;
++    if (!ppSwapChain || !pDevice || !pDesc || !pDesc->Width || !pDesc->Height ||
++        pDesc->Scaling != DXGI_SCALING_STRETCH || pDesc->SampleDesc.Count != 1 ||
++        pDesc->SampleDesc.Quality || pDesc->BufferCount < 2 || pDesc->BufferCount > 16 ||
++        (pDesc->SwapEffect != DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL && pDesc->SwapEffect != DXGI_SWAP_EFFECT_FLIP_DISCARD))
++      return DXGI_ERROR_INVALID_CALL;
++    // A private, invisible window identifies the IOSurface stream. DirectComposition
++    // attaches that stream to its target only at Commit; it is never a desktop window.
++    HWND proxy = CreateWindowExW(0, L"STATIC", L"", WS_POPUP, 0, 0,
++        pDesc->Width, pDesc->Height, nullptr, nullptr, nullptr, nullptr);
++    if (!proxy) return E_OUTOFMEMORY;
++    SetPropW(proxy, L"RavenDCompSwapChain", (HANDLE)1);
++    HRESULT hr = CreateSwapChainForHwnd(pDevice, proxy, pDesc, nullptr,
++        pRestrictToOutput, ppSwapChain);
++    if (SUCCEEDED(hr)) {
++      static const GUID key = {0x274d7681,0xd49f,0x46d6,{0xa4,0x9b,0x23,0x78,0xf0,0xcd,0x7e,0x71}};
++      hr = (*ppSwapChain)->SetPrivateData(key, sizeof(proxy), &proxy);
++      if (FAILED(hr)) { (*ppSwapChain)->Release(); *ppSwapChain = nullptr; }
++    }
++    if (FAILED(hr) && IsWindow(proxy)) DestroyWindow(proxy);
++    return hr;
+   }
+ 
+   HRESULT STDMETHODCALLTYPE EnumAdapters(UINT Adapter,
+--- a/src/d3d11/d3d11_swapchain.cpp
++++ b/src/d3d11/d3d11_swapchain.cpp
+@@ -210,6 +210,7 @@
+     WMT::ReleaseMetalView(native_view_);
+     native_view_ = {};
+     CloseHandle(present_semaphore_);
++    if (GetPropW(hWnd, L"RavenDCompSwapChain")) DestroyWindow(hWnd);
+   };
+ 
+   HRESULT
+@@ -690,6 +691,7 @@
+     if (pHwnd == NULL) {
+       return E_POINTER;
+     }
++    if (GetPropW(hWnd, L"RavenDCompSwapChain")) { *pHwnd = nullptr; return DXGI_ERROR_INVALID_CALL; }
+     *pHwnd = hWnd;
+     return S_OK;
+   };

@@ -12,16 +12,28 @@
 namespace raven {
 
 static constexpr uint32_t invalid = 0xc000000dU, unsupported = 0xc00000bbU;
+#ifdef __APPLE__
+static constexpr uint32_t no_memory = 0xc0000017U, conflict = 0xc0000018U, commitment_limit = 0xc000012dU;
+#else
 static constexpr uint32_t no_memory = 0xc0000017U, conflict = 0xc0000018U;
+#endif
 
 static int protection(uint32_t value)
 {
 	switch (value) {
 	case 1: return PROT_NONE;
 	case 2: return PROT_READ;
+#ifdef __APPLE__
+	case 8: case 4: return PROT_READ | PROT_WRITE;
+#else
 	case 4: return PROT_READ | PROT_WRITE;
+#endif
 	case 0x20: return PROT_READ | PROT_EXEC;
+#ifdef __APPLE__
+	case 0x80: case 0x40: return PROT_READ | PROT_WRITE | PROT_EXEC;
+#else
 	case 0x40: return PROT_READ | PROT_WRITE | PROT_EXEC;
+#endif
 	default: return -1;
 	}
 }
@@ -32,8 +44,10 @@ static void put(std::span<uint8_t> bytes, size_t at, uint64_t value, size_t widt
 		bytes[at+byte]=uint8_t(value>>(byte*8));
 }
 
+#ifndef __APPLE__
 // x86 guests keep Windows' default 2 GiB user range so every allocation stays positive as a signed pointer.
 static constexpr uint64_t x86_user_limit = 0x7fff0000ULL;
+#endif
 
 static bool range(uint64_t address, uint64_t size, uint64_t user_limit)
 {
@@ -49,8 +63,15 @@ void NativeMemory::clear(uint64_t address, uint64_t size)
 NativeMemory::NativeMemory(NativeProcess &process, NativeEnvironment &environment, size_t limit)
 	: process(process), environment(environment), limit(limit)
 {
+#ifdef __APPLE__
+	previous_accounting=environment.set_memory_accounting(this);
+#endif
 	if (process.mode()==NativeMode::x86) {
+#ifdef __APPLE__
+		user_limit=environment.x86_user_limit();
+#else
 		user_limit=x86_user_limit;
+#endif
 		next=floor=0x20000000ULL;
 	}
 }
@@ -62,6 +83,7 @@ std::span<const std::string_view> NativeMemory::nt_exports()
 	return names;
 }
 
+#ifndef __APPLE__
 void NativeMemory::settle()
 {
 	if (!commit_block)
@@ -137,6 +159,7 @@ void NativeMemory::close_windows(uint64_t from, uint64_t to)
 		}
 	}
 }
+#endif
 
 std::map<uint64_t,NativeMemory::Region>::iterator NativeMemory::region(uint64_t address, uint64_t size)
 {
@@ -147,6 +170,7 @@ std::map<uint64_t,NativeMemory::Region>::iterator NativeMemory::region(uint64_t 
 	return address-found->first<found->second.size && size<=found->second.size-(address-found->first) ? found : regions.end();
 }
 
+#ifndef __APPLE__
 NativeMemoryRange NativeMemory::allocate(uint64_t address, uint64_t size, uint32_t type, uint32_t access)
 {
 	std::lock_guard lock(guard);
@@ -281,10 +305,14 @@ NativeMemoryRange NativeMemory::map_view(int descriptor, uint64_t offset, uint64
 	reserved_total+=length;
 	return {address,length};
 }
+#endif
 
 NativeMemoryRange NativeMemory::free(uint64_t address, uint64_t size, uint32_t type)
 {
 	std::lock_guard lock(guard);
+#ifdef __APPLE__
+	auto commits=lock_commits(); // Serialize this transaction with guest commit preludes.
+#endif
 	settle();
 	if (type!=0x4000 && type!=0x8000)
 		return {0,0,unsupported};
@@ -297,9 +325,16 @@ NativeMemoryRange NativeMemory::free(uint64_t address, uint64_t size, uint32_t t
 		const auto length=found->second.size;
 		close_windows(address,address+length);
 		process.unmap_memory(address);
+#ifdef __APPLE__
+		if (found->second.charged) used-=found->second.pages.nonzero(0,found->second.pages.size())*4096;
+#else
 		used-=found->second.pages.nonzero(0,found->second.pages.size())*4096;
+#endif
 		reserved_total-=length;
 		regions.erase(found);
+#ifdef __APPLE__
+		commit_changed();
+#endif
 		return {address,length};
 	}
 	if (!size) {
@@ -317,12 +352,23 @@ NativeMemoryRange NativeMemory::free(uint64_t address, uint64_t size, uint32_t t
 		process.discard_memory(base,length);
 	} else {
 		close_windows(base,base+length);
+#ifdef __APPLE__
+		discard_committed(found->second, found->first, base, length);
+#else
 		process.discard_memory(base,length);
 		process.protect_memory(base,length,PROT_NONE);
+#endif
 	}
 	const auto first=(base-found->first)/4096;
+#ifdef __APPLE__
+	if (found->second.charged) used-=found->second.pages.nonzero(first,length/4096)*4096;
+#else
 	used-=found->second.pages.nonzero(first,length/4096)*4096;
+#endif
 	found->second.pages.fill(first,length/4096,0);
+#ifdef __APPLE__
+	commit_changed();
+#endif
 	return {base,length};
 }
 
@@ -356,6 +402,10 @@ std::map<uint64_t,NativeMemory::Image>::iterator NativeMemory::image_of(uint64_t
 NativeMemoryRange NativeMemory::protect(uint64_t address, uint64_t size, uint32_t access)
 {
 	std::lock_guard lock(guard);
+#ifdef __APPLE__
+	access &= ~control_flow_targets;
+	auto commits=lock_commits(); // Serialize this transaction with guest commit preludes.
+#endif
 	settle();
 	if (!range(address,size,user_limit))
 		return {0,0,invalid};
@@ -391,6 +441,9 @@ NativeMemoryRange NativeMemory::protect(uint64_t address, uint64_t size, uint32_
 std::optional<std::array<uint8_t,48>> NativeMemory::query(uint64_t address) const
 {
 	std::lock_guard lock(guard);
+#ifdef __APPLE__
+	auto commits=lock_commits(); // Serialize this transaction with guest commit preludes.
+#endif
 	// The guest's own commits count before anything is reported; the accounting is the only thing that changes.
 	const_cast<NativeMemory *>(this)->settle();
 	if (regions.upper_bound(address)==regions.begin() || [&]{ auto it=regions.upper_bound(address); --it; return address-it->first>=it->second.size; }()) {
@@ -427,6 +480,21 @@ std::optional<std::array<uint8_t,48>> NativeMemory::query(uint64_t address) cons
 			put(bytes,32,0x1000,4); put(bytes,36,4,4); put(bytes,40,0x20000,4);
 			return bytes;
 		}
+#ifdef __APPLE__
+		// The controller can own image or agent mappings that this allocator has not registered. They must never be reported free, but a
+		// query succeeds anywhere in the user range: programs walk the address space by each answer's size. Reserved says nothing can be
+		// read or allocated there, and the range ends where the address space is free again.
+		if (!process.memory_available(page, 4096)) {
+			uint64_t held=page+4096;
+			while (held<user_limit && held-page<(uint64_t(64)<<20) && !process.memory_available(held, 4096))
+				held+=4096;
+			std::array<uint8_t,48> bytes{};
+			put(bytes,0,page); put(bytes,8,page);
+			put(bytes,16,1,4); put(bytes,24,held-page);
+			put(bytes,32,0x2000,4); put(bytes,40,0x20000,4);
+			return bytes;
+		}
+#endif
 		uint64_t end=user_limit;
 		if (page<stack_low)
 			end=stack_low;
@@ -458,6 +526,9 @@ static uint32_t error(uint32_t status)
 {
 	if (status==unsupported) return 120;
 	if (status==no_memory) return 8;
+#ifdef __APPLE__
+	if (status==commitment_limit) return 1455;
+#endif
 	if (status==conflict || status==0xc000002dU) return 487;
 	if (status==0xc0000005U) return 998;
 	// A buffer too small for the record, as RtlNtStatusToDosError maps STATUS_INFO_LENGTH_MISMATCH.

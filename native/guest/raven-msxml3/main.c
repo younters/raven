@@ -17,7 +17,11 @@ typedef struct
 	const WCHAR *prog_id, *independent, *title;
 } class_entry;
 
+#define CLSID_FreeThreadedDOMDocument60 mx_clsid_FreeThreadedDOMDocument60
 #define DOM(id, version, prog, title) {&CLSID_##id, mx_document_create, NULL, version, prog, NULL, title}
+
+/* The public MSXML 6 class IDs are absent from some MinGW msxml2.h versions. */
+DEFINE_GUID(mx_clsid_FreeThreadedDOMDocument60, 0x88d96a06, 0xf192, 0x11d4, 0xa6,0x5f, 0x00,0x40,0x96,0x32,0x51,0xe5);
 
 /* The GUIDs headers leave out for older releases. */
 DEFINE_GUID(mx_clsid_old_document, 0x2933bf90, 0x7b36, 0x11d2, 0xb2, 0x0e, 0x00, 0xc0, 0x4f, 0x98, 0x3e, 0x60);

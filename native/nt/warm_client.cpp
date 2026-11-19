@@ -51,6 +51,10 @@ static void append_stamp(std::string &text, const Stamp &stamp)
 
 bool eligible()
 {
+#ifdef __APPLE__
+	// A warm host forks after the system's frameworks are loaded, and macOS does not support using them in a forked child.
+	return false;
+#endif
 	if (const char *warm = std::getenv("RAVEN_WARM"); warm && std::strcmp(warm, "0") == 0)
 		return false;
 	if (std::getenv("RAVEN_TRACE_FILE") || std::getenv("RAVEN_BACKTRACE"))

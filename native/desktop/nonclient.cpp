@@ -2,6 +2,16 @@
 
 namespace raven {
 
+DesktopMetrics DesktopMetrics::at_dpi(uint32_t value) const
+{
+	auto result=*this;
+	for (auto *metric : {&result.border_x,&result.border_y,&result.dialog_x,&result.dialog_y,&result.frame_x,&result.frame_y,
+		&result.caption,&result.small_caption,&result.menu,&result.button_x,&result.button_y,&result.small_button_x,&result.small_button_y})
+		*metric=int32_t((int64_t(*metric)*value+dpi/2)/dpi);
+	result.dpi=value;
+	return result;
+}
+
 int32_t DesktopMetrics::get(int32_t index) const
 {
 	switch (index) {
@@ -28,6 +38,12 @@ int32_t DesktopMetrics::get(int32_t index) const
 // the line of its border, and a client edge two more. A minimized window's frame does not resize, so the sizing part is left out.
 DesktopRect adjust_window_rect(const DesktopMetrics &metrics,DesktopRect rect,uint32_t style,bool menu,uint32_t ex_style)
 {
+	if (metrics.dpi!=96) {
+		// ReactOS counts border units before multiplying by SM_CXBORDER. Scale the result once, not those units twice.
+		const auto frame=adjust_window_rect(metrics.at_dpi(96),{0,0,0,0},style,menu,ex_style);
+		const auto scale=[&](int32_t value) { return int32_t((int64_t(value)*metrics.dpi+(value<0 ? -48 : 48))/96); };
+		return {rect.left+scale(frame.left),rect.top+scale(frame.top),rect.right+scale(frame.right),rect.bottom+scale(frame.bottom)};
+	}
 	constexpr uint32_t minimized=0x20000000,sizing=0x40000,dialog_frame=0x400000,caption_bits=0xc00000;
 	constexpr uint32_t modal_frame=1,client_edge=0x200,tool_window=0x80,static_edge=0x20000;
 	const bool raised=(style&minimized) || (ex_style&modal_frame) || (!(ex_style&static_edge) && (style&(sizing|dialog_frame)));

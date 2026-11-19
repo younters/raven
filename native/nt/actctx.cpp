@@ -49,6 +49,7 @@ std::vector<uint32_t> version_parts(std::string_view version)
 		}
 	}
 	parts.push_back(value);
+	while (parts.size() > 1 && !parts.back()) parts.pop_back();
 	return parts;
 }
 
@@ -101,8 +102,8 @@ void ActivationContexts::attach(KernelContext &context)
 	if (!directory.address || !directory.size || directory.size > image.image.image_size)
 		return;
 	try {
-		const auto resources = read_resources(directory, context.process.read_memory(image.loaded.base() + directory.address, directory.size),
-			image.image.image_size);
+		// An installer may carry its whole payload in resources; only the manifest itself is limited below. No guest code has run yet.
+		const auto resources = read_resources(directory, image.image.file_span(directory.address, directory.size), image.image.image_size);
 		for (const auto &resource : resources)
 			if (resource.type == ResourceKey(uint32_t(24)) && resource.name == ResourceKey(uint32_t(1)) && resource.size < 1024 * 1024) {
 				const auto bytes = context.process.read_memory(image.loaded.base() + resource.data_address, resource.size);
@@ -208,6 +209,23 @@ std::optional<ActivationContexts::Assembly> ActivationContexts::parse(std::strin
 			root.com_classes.emplace(std::move(clsid), std::move(entry));
 		} else if (element == "supportedos" && !closing && attributes.contains("id")) {
 			root.supported_os.push_back(lowered(attributes["id"]));
+		} else if ((element == "dpiaware" || element == "dpiawareness") && !closing && !in_dependency) {
+			const auto end_text=text.find('<',at);
+			auto value=lowered(std::string_view(text).substr(at,end_text-at));
+			value.erase(std::remove_if(value.begin(),value.end(),[](char c) { return c==' ' || c=='\n' || c=='\r' || c=='\t'; }),value.end());
+			// The newer element takes precedence over dpiAware, including an explicit Unaware declaration.
+			if (element=="dpiawareness") {
+				for (size_t start=0;start<value.size();) {
+					const auto comma=value.find(',',start);
+					const auto mode=value.substr(start,comma==value.npos ? value.size()-start : comma-start);
+					if (mode=="permonitorv2" || mode=="permonitor" || mode=="system" || mode=="unaware") {
+						root.dpi_context=mode=="permonitorv2" ? -4 : mode=="permonitor" ? -3 : mode=="system" ? -2 : -1;
+						break;
+					}
+					if (comma==value.npos) break;
+					start=comma+1;
+				}
+			} else if (!root.dpi_context) root.dpi_context=value=="true/pm" ? -3 : value=="true" ? -2 : -1;
 		} else if (element == "windowclass" && !closing && !self_closing && in_file && !in_dependency) {
 			const auto close = text.find('<', at);
 			if (close == text.npos)
@@ -222,7 +240,7 @@ std::optional<ActivationContexts::Assembly> ActivationContexts::parse(std::strin
 		}
 	}
 	// A program's manifest may leave out its own identity and still say which versions of Windows it supports.
-	if (!assembly || (!identified && root.dependencies.empty() && root.supported_os.empty() && root.classes.empty() && root.com_classes.empty()))
+	if (!assembly || (!identified && root.dependencies.empty() && root.supported_os.empty() && root.classes.empty() && root.com_classes.empty() && !root.dpi_context))
 		return std::nullopt;
 	return root;
 }
@@ -234,17 +252,36 @@ std::optional<ActivationContexts::Assembly> ActivationContexts::resolve(const As
 	std::error_code error;
 	// A private assembly lives with the program, as Windows looks for it: <name>.manifest in the program's folder, then
 	// <name>\<name>.manifest; its files are beside its manifest. One without a public key token is looked for there first, one with a
-	// key after the side-by-side store, so a strong-named assembly a program carries along is found too.
+	// key after the side-by-side store, so a strong-named assembly a program carries along is found too. DLLs carrying resource 1 precede
+	// each manifest. Language-specific subfolders and UI-language fallback are not yet modeled.
 	const auto private_assembly = [&]() -> std::optional<Assembly> {
-		if (identity.name.empty() || application.empty())
+		if (identity.name.empty() || application.empty() || std::filesystem::path(identity.name).filename() != identity.name ||
+			identity.name == "." || identity.name == "..")
 			return std::nullopt;
-		for (const auto &place : {application / (identity.name + ".manifest"), application / identity.name / (identity.name + ".manifest")}) {
+		for (const auto &place : {application / (identity.name + ".dll"), application / (identity.name + ".manifest"),
+			application / identity.name / (identity.name + ".dll"), application / identity.name / (identity.name + ".manifest")}) {
 			if (!std::filesystem::is_regular_file(place, error))
 				continue;
 			std::ifstream input(place, std::ios::binary);
 			const std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-			auto candidate = parse(bytes, false);
-			if (!candidate || lowered(candidate->name) != lowered(identity.name) || (!identity.token.empty() && candidate->token != identity.token))
+			std::optional<Assembly> candidate;
+			if (place.extension() == ".dll") {
+				try {
+					const PEImage image(std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size()));
+					const auto directory = image.directories[2];
+					if (directory.address && directory.size)
+						for (const auto &resource : read_resources(directory, image.file_span(directory.address, directory.size), image.image_size))
+							if (resource.type == ResourceKey(uint32_t(24)) && resource.name == ResourceKey(uint32_t(1)) && resource.size < 1024 * 1024) {
+								const auto data = image.file_span(resource.data_address, resource.size);
+								candidate = parse(std::string_view(reinterpret_cast<const char *>(data.data()), data.size()), false);
+								break;
+							}
+				} catch (const std::runtime_error &) {}
+			} else candidate = parse(bytes, false);
+			if (!candidate || lowered(candidate->name) != lowered(identity.name) || (!identity.token.empty() && candidate->token != identity.token) ||
+				(!identity.version.empty() && version_parts(candidate->version) != version_parts(identity.version)) ||
+				(!candidate->architecture.empty() && candidate->architecture != "*" &&
+				 candidate->architecture != (identity.architecture.empty() || identity.architecture == "*" ? (wide_process ? "amd64" : "x86") : identity.architecture)))
 				continue;
 			candidate->folder = place.parent_path().string();
 			return candidate;

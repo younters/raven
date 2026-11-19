@@ -1,4 +1,5 @@
 #include "host_names.h"
+#include "child_process.h"
 #include "firmware.h"
 #include "kernel_context.h"
 #include "section.h"
@@ -15,6 +16,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
+#ifdef __APPLE__
+#include <raven_darwin_system.h>
+#endif
 
 namespace raven {
 
@@ -89,14 +93,31 @@ uint64_t map_image(ApiCall &call, NativeMemory &memory, int descriptor, uint64_t
 			const uint32_t page = u32(blocks, at), size = u32(blocks, at + 4);
 			if (size < 8 || size > blocks.size() - at)
 				break;
+			// A large DLL can have hundreds of fixups on one page. Move that page through the guest boundary once, then
+			// apply all its relocations locally; a read and write for every fixup makes image mapping take seconds.
+			std::vector<uint8_t> page_bytes;
+			if (page < image_size)
+				page_bytes = call.read(address + page, std::min<uint64_t>(4096 + 7, image_size - page));
+			bool changed = false;
 			for (size_t item = at + 8; item + 2 <= at + size; item += 2) {
 				const uint32_t value = u16(blocks, item), kind = value >> 12;
-				const uint64_t target = address + page + (value & 0xfff);
-				if (kind == 10 && page + (value & 0xfff) + 8 <= image_size)
-					call.store<uint64_t>(target, call.load<uint64_t>(target) + delta);
-				else if (kind == 3 && page + (value & 0xfff) + 4 <= image_size)
-					call.store<uint32_t>(target, uint32_t(call.load<uint32_t>(target) + delta));
+				const uint64_t offset = value & 0xfff;
+				if (kind == 10 && offset + 8 <= page_bytes.size()) {
+					uint64_t pointer;
+					std::memcpy(&pointer, page_bytes.data() + offset, 8);
+					pointer += delta;
+					std::memcpy(page_bytes.data() + offset, &pointer, 8);
+					changed = true;
+				} else if (kind == 3 && offset + 4 <= page_bytes.size()) {
+					uint32_t pointer;
+					std::memcpy(&pointer, page_bytes.data() + offset, 4);
+					pointer += uint32_t(delta);
+					std::memcpy(page_bytes.data() + offset, &pointer, 4);
+					changed = true;
+				}
 			}
+			if (changed)
+				call.write(address + page, page_bytes);
 			at += size;
 		}
 	}
@@ -283,6 +304,9 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 	};
 	registry.add("LocalReAlloc", 3, resize_block);
 	registry.add("GlobalReAlloc", 3, resize_block);
+#ifdef __APPLE__
+	registry.add("GlobalMemoryStatusEx", 1, [&memory](ApiCall &call) { commit_global_status_ex(call, memory); });
+#else
 	registry.add("GlobalMemoryStatusEx", 1, [](ApiCall &call) {
 		std::vector<uint8_t> bytes(64);
 		const uint32_t length = 64, load = 20;
@@ -293,20 +317,29 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 		call.write(call[0], bytes);
 		call.ret(1);
 	});
+#endif
 	registry.add("GetPhysicallyInstalledSystemMemory", 1, [](ApiCall &call) {
 		if (!call[0]) {
 			call.fail(87);
 			return;
 		}
+#ifdef __APPLE__
+		const auto table = raven_darwin::smbios_table();
+#else
 		std::ifstream file("/sys/firmware/dmi/tables/DMI", std::ios::binary);
 		if (!file) {
 			call.fail(50);
 			return;
 		}
 		const std::vector<uint8_t> table(std::istreambuf_iterator<char>(file), {});
+#endif
 		const uint64_t memory = smbios_memory(table);
 		const long pages = sysconf(_SC_PHYS_PAGES), page_size = sysconf(_SC_PAGESIZE);
-		if (file.bad() || !memory || pages <= 0 || page_size <= 0 || memory < uint64_t(pages) * uint64_t(page_size) / 1024) {
+		if (
+#ifndef __APPLE__
+			file.bad() ||
+#endif
+			!memory || pages <= 0 || page_size <= 0 || memory < uint64_t(pages) * uint64_t(page_size) / 1024) {
 			call.fail(13);
 			return;
 		}
@@ -315,6 +348,9 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// MEMORYSTATUS: the same figures in SIZE_T fields; a 32-bit program sees them capped as Windows caps them, at 4 GiB less a byte for
 	// memory and at its 2 GiB address space.
+#ifdef __APPLE__
+	registry.add("GlobalMemoryStatus", 1, [&memory](ApiCall &call) { commit_global_status(call, memory); });
+#else
 	registry.add("GlobalMemoryStatus", 1, [](ApiCall &call) {
 		const size_t width = call.pointer_width();
 		const uint64_t cap = width == 4 ? 0xffffffffULL : UINT64_MAX;
@@ -330,6 +366,7 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.write(call[0], bytes);
 	});
+#endif
 	registry.add("HeapSetInformation", 4, [](ApiCall &call) { call.ret(1); });
 	// Only HeapCompatibilityInformation is answered: every heap is a low-fragmentation heap (2).
 	registry.add("HeapQueryInformation", 5, [](ApiCall &call) {
@@ -487,10 +524,24 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 		if (call[0])
 			thunks->free.push_back(call[0]);
 	});
-	// The guest runs as native code on a processor whose instruction cache follows stores, and nothing here caches translated code: a
-	// flush has nothing to do and succeeds.
-	registry.add("FlushInstructionCache", 3, [](ApiCall &call) { call.ret(1); });
-	registry.add("NtFlushInstructionCache", 3, [](ApiCall &call) { call.ret(0); });
+	// Wine ARM64EC forwards successful local flushes to the translator callback.
+	const auto flush = [&context](ApiCall &call, bool win32) {
+		const auto target = context.objects.object_as<ProcessObject>(call[0]);
+		const bool local = call[0] == UINT64_MAX || (call.pointer_width() == 4 && call[0] == UINT32_MAX) ||
+		    context.objects.object_as<SelfProcessObject>(call[0]) || (target && target->pid == ::getpid());
+		if (!local && !target) {
+			if (win32) { call.set_last_error(6); call.ret(0); }
+			else call.ret(0xc0000008);
+			return;
+		}
+		// Remote WriteProcessMemory already notifies the target through its
+		// write_memory handler. A valid remote handle retains flush success.
+		// Windows also permits ranges containing unmapped addresses.
+		if (local) context.process.flush_instruction_cache(call[1], call[2]);
+		call.ret(win32 ? 1 : 0);
+	};
+	registry.add("FlushInstructionCache", 3, [flush](ApiCall &call) { flush(call, true); });
+	registry.add("NtFlushInstructionCache", 3, [flush](ApiCall &call) { flush(call, false); });
 	// Locking keeps pages resident; a guest's memory is never paged out behind its back in a way it could notice, so the request
 	// holds as soon as it is made.
 	registry.add("VirtualLock", 2, [](ApiCall &call) { call.ret(1); });
@@ -660,7 +711,11 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 			const uint32_t access = rights & 0x2 ? ((rights & 0x20) ? 0x40 : 0x04) : rights & 0x1 ? 0x08 : (rights & 0x20) ? 0x20 : 0x02;
 			const auto view = memory.map_view(mapping->descriptor, offset, size, access, base);
 			if (view.status) {
+#ifdef __APPLE__
+				call.fail(view.status == 0xc000012dU ? 1455 : view.status == 0xc0000017U ? 8 : view.status == 0xc0000018U ? 487 : 87);
+#else
 				call.fail(view.status == 0xc0000017U ? 8 : view.status == 0xc0000018U ? 487 : 87);
+#endif
 				return;
 			}
 			views[view.address] = {mapping, offset, size, bool(rights & 2)};
@@ -690,7 +745,11 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 			const bool write = call.u32(1) & 0x2, execute = call.u32(1) & 0x20;
 			if (::fstat(mapping->file->descriptor, &status) == 0 && offset + size <= uint64_t(status.st_size)) {
 				try {
+#ifdef __APPLE__
+					const auto view = memory.map_view(mapping->file->descriptor, offset, size, write ? (execute ? 0x40 : 0x04) : execute ? 0x20 : 0x02, base, false);
+#else
 					const auto view = memory.map_view(mapping->file->descriptor, offset, size, write ? (execute ? 0x40 : 0x04) : execute ? 0x20 : 0x02, base);
+#endif
 					if (!view.status) {
 						views[view.address] = {mapping, offset, size, false};
 						call.ret(view.address);
@@ -702,7 +761,11 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 		}
 		const auto range = memory.allocate(base, (size + 4095) & ~uint64_t(4095), 0x3000, 4);
 		if (range.status) {
+#ifdef __APPLE__
+			call.fail(range.status == 0xc000012dU ? 1455 : base && range.status != 0xc0000017U ? 487 : 8);
+#else
 			call.fail(base && range.status != 0xc0000017U ? 487 : 8);
+#endif
 			return;
 		}
 		if (mapping->file) {
@@ -765,7 +828,11 @@ void register_memory_api(ApiRegistry &registry, KernelContext &context)
 		if (!inner.result) {
 			const uint32_t error = call.last_error();
 			call.set_last_error(before);
+#ifdef __APPLE__
+			call.ret(error == 5 ? 0xc0000022U : error == 1455 ? 0xc000012dU : error == 8 ? 0xc0000017U : error == 6 ? 0xc0000008U : 0xc000000dU);
+#else
 			call.ret(error == 5 ? 0xc0000022U : error == 8 ? 0xc0000017U : error == 6 ? 0xc0000008U : 0xc000000dU);
+#endif
 			return;
 		}
 		call.store_pointer(call[2], inner.result);

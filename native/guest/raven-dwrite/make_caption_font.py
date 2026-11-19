@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Generate the small, original outline font used when Windows caption symbol
+# fonts are absent. Only the four caption characters are advertised; other
+# symbols remain available to normal font fallback. No font tools are needed.
+import math
+from pathlib import Path
+import struct
+
+
+def words(*values):
+    return struct.pack('>' + 'H' * len(values), *(v & 0xffff for v in values))
+
+
+def rectangle(left, bottom, right, top):
+    return [(left, bottom), (left, top), (right, top), (right, bottom)]
+
+
+def outline(contours):
+    points = [point for contour in contours for point in contour]
+    xs, ys = zip(*points) if points else ([0], [0])
+    data = words(len(contours), min(xs), min(ys), max(xs), max(ys))
+    end = 0
+    for contour in contours:
+        end += len(contour)
+        data += words(end - 1)
+    data += words(0)  # No hint instructions; all points are on-curve.
+    data += bytes([1] * len(points))
+    for axis in range(2):
+        previous = 0
+        for point in points:
+            data += words(point[axis] - previous)
+            previous = point[axis]
+    return data + bytes((-len(data)) % 4)
+
+
+def checksum(data):
+    data += bytes((-len(data)) % 4)
+    return sum(struct.unpack('>' + 'I' * (len(data) // 4), data)) & 0xffffffff
+
+
+def make_font():
+    contours = [[], [rectangle(128, 472, 896, 552)],
+                [rectangle(128, 128, 896, 896), rectangle(208, 208, 816, 816)[::-1]],
+                [rectangle(128, 128, 704, 704), rectangle(208, 208, 624, 624)[::-1],
+                 [(320, 704), (320, 896), (896, 896), (896, 320), (704, 320),
+                  (704, 400), (816, 400), (816, 816), (400, 816), (400, 704)]],
+                [[(160, 216), (216, 160), (512, 456), (808, 160), (864, 216), (568, 512),
+                  (864, 808), (808, 864), (512, 568), (216, 864), (160, 808), (456, 512)]]]
+    glyphs = [outline(shape) for shape in contours]
+    offsets = [0]
+    for glyph in glyphs:
+        offsets.append(offsets[-1] + len(glyph))
+    head = bytearray(54)
+    struct.pack_into('>IIIIHH', head, 0, 0x10000, 0x10000, 0, 0x5f0f3cf5, 3, 1024)
+    struct.pack_into('>hhhhHHhhh', head, 36, 0, 0, 1024, 1024, 0, 8, 2, 1, 0)
+    hhea = bytearray(36)
+    struct.pack_into('>IhhhH', hhea, 0, 0x10000, 1024, 0, 0, 1024)
+    struct.pack_into('>hhh', hhea, 12, 0, 0, 1024)
+    struct.pack_into('>hh', hhea, 18, 1, 0)
+    struct.pack_into('>H', hhea, 34, len(glyphs))
+    maxp = struct.pack('>I', 0x10000) + words(len(glyphs), 18, 3, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0)
+    os2 = bytearray(78)
+    struct.pack_into('>HhHHH', os2, 0, 0, 1024, 400, 5, 0)
+    struct.pack_into('>I', os2, 46, 1 << 28)  # Unicode private-use area.
+    os2[58:62] = b'RAVN'
+    struct.pack_into('>HHHhhhHH', os2, 62, 0x40, 0xe8bb, 0xe923, 1024, 0, 0, 1024, 0)
+    mapping = [(0xe8bb, 4), (0xe921, 1), (0xe922, 2), (0xe923, 3), (0xffff, 0)]
+    segment_count = len(mapping)
+    power = 2 ** int(math.log2(segment_count))
+    cmap = words(4, 16 + segment_count * 8, 0, segment_count * 2,
+                 power * 2, int(math.log2(power)), segment_count * 2 - power * 2)
+    cmap += words(*(code for code, glyph in mapping)) + words(0)
+    cmap += words(*(code for code, glyph in mapping))
+    cmap += words(*(glyph - code for code, glyph in mapping)) + words(*([0] * segment_count))
+    cmap = words(0, 1, 3, 1) + struct.pack('>I', 12) + cmap
+    names = {1: 'Raven UI Symbols', 2: 'Regular', 3: 'RavenUISymbols-Regular-1.0',
+             4: 'Raven UI Symbols Regular', 5: 'Version 1.0', 6: 'RavenUISymbols-Regular'}
+    records, strings = b'', b''
+    for key, value in names.items():
+        encoded = value.encode('utf-16-be')
+        records += words(3, 1, 0x409, key, len(encoded), len(strings))
+        strings += encoded
+    name = words(0, len(names), 6 + len(records)) + records + strings
+    tables = {'head': bytes(head), 'hhea': bytes(hhea), 'maxp': maxp, 'OS/2': bytes(os2),
+              'hmtx': words(*([1024, 0] * len(glyphs))), 'glyf': b''.join(glyphs),
+              'loca': struct.pack('>' + 'I' * len(offsets), *offsets), 'cmap': cmap,
+              'name': name, 'post': struct.pack('>I', 0x30000) + bytes(28)}
+    font = struct.pack('>IHHHH', 0x10000, len(tables), 128, 3, len(tables) * 16 - 128)
+    position = 12 + len(tables) * 16
+    directory, contents = b'', b''
+    head_at = 0
+    for tag, data in sorted(tables.items()):
+        directory += tag.encode('ascii') + struct.pack('>III', checksum(data), position, len(data))
+        if tag == 'head':
+            head_at = position
+        padded = data + bytes((-len(data)) % 4)
+        contents += padded
+        position += len(padded)
+    font = bytearray(font + directory + contents)
+    struct.pack_into('>I', font, head_at + 8, (0xb1b0afba - checksum(font)) & 0xffffffff)
+    return font
+
+
+if __name__ == '__main__':
+    data = make_font()
+    lines = ['/* SPDX-License-Identifier: MIT',
+             ' * Generated by make_caption_font.py; original caption outlines, not a Windows font. */',
+             'static const unsigned char caption_font[] = {']
+    for at in range(0, len(data), 16):
+        lines.append('\t' + ','.join(f'0x{value:02x}' for value in data[at:at + 16]) + ',')
+    lines.append('};\n')
+    Path(__file__).with_name('caption_font.h').write_text('\n'.join(lines))

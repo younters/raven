@@ -28,13 +28,15 @@ void VulkanBridge::release_foreign_swapchains(uint64_t) {}
 #endif
 
 // The export table of the guest provider is binary searched, so the names stay in byte order.
-static constexpr std::array<std::string_view, 14> names{
+static constexpr std::array<std::string_view, 16> names{
 	"vkCreateDevice",
 	"vkCreateInstance",
 	"vkDestroyDevice",
 	"vkDestroyInstance",
 	"vkDeviceWaitIdle",
 	"vkEnumerateInstanceVersion",
+	"vkEnumeratePhysicalDeviceGroups",
+	"vkEnumeratePhysicalDeviceGroupsKHR",
 	"vkEnumeratePhysicalDevices",
 	"vkGetDeviceProcAddr",
 	"vkGetDeviceQueue",
@@ -59,6 +61,7 @@ static_assert(sizeof(VkInstanceCreateInfo) == 64 && sizeof(VkApplicationInfo) ==
 static_assert(sizeof(VkDeviceCreateInfo) == 72 && sizeof(VkDeviceQueueCreateInfo) == 40 && sizeof(VkQueueFamilyProperties) == 24);
 static_assert(sizeof(VkPhysicalDeviceMemoryProperties) == 520 && sizeof(VkPhysicalDeviceFeatures) == 220);
 static_assert(sizeof(VkPhysicalDeviceProperties) == 824 && offsetof(VkPhysicalDeviceProperties, limits) == 296);
+static_assert(sizeof(VkPhysicalDeviceGroupProperties) == 288 && offsetof(VkPhysicalDeviceGroupProperties, physicalDevices) == 24);
 
 std::span<const std::string_view> VulkanBridge::exports()
 {
@@ -279,7 +282,8 @@ bool VulkanBridge::dispatch(std::string_view name)
 			return 1;
 		if (name == "vkGetDeviceQueue" || name == "vkCreateDevice")
 			return 4;
-		if (name == "vkCreateInstance" || name == "vkEnumeratePhysicalDevices" || name == "vkGetPhysicalDeviceQueueFamilyProperties")
+		if (name == "vkCreateInstance" || name == "vkEnumeratePhysicalDevices" || name == "vkEnumeratePhysicalDeviceGroups" ||
+			name == "vkEnumeratePhysicalDeviceGroupsKHR" || name == "vkGetPhysicalDeviceQueueFamilyProperties")
 			return 3;
 		return 2;
 	}();
@@ -310,10 +314,12 @@ bool VulkanBridge::dispatch(std::string_view name)
 			symbol == "vkEnumerateInstanceExtensionProperties" || symbol == "vkEnumerateInstanceLayerProperties";
 		const auto exported = VulkanBridge::exports();
 		const auto instance = arguments[0] ? instances.at(arguments[0]) : VK_NULL_HANDLE;
-		const bool xcb = surface_source.platform == HostPlatform::xcb;
-		const char *host_name = symbol == "vkCreateWin32SurfaceKHR" ? (xcb ? "vkCreateXcbSurfaceKHR" : "vkCreateWaylandSurfaceKHR") :
-			symbol == "vkGetPhysicalDeviceWin32PresentationSupportKHR" ?
-			(xcb ? "vkGetPhysicalDeviceXcbPresentationSupportKHR" : "vkGetPhysicalDeviceWaylandPresentationSupportKHR") : symbol.c_str();
+		const bool xcb = surface_source.platform == HostPlatform::xcb, metal = surface_source.platform == HostPlatform::metal;
+		// Metal has no presentation-support query of its own; any surface support query of the driver stands for it.
+		const char *host_name = symbol == "vkCreateWin32SurfaceKHR" ? (xcb ? "vkCreateXcbSurfaceKHR" : metal ? "vkCreateMetalSurfaceEXT" :
+			"vkCreateWaylandSurfaceKHR") : symbol == "vkGetPhysicalDeviceWin32PresentationSupportKHR" ?
+			(xcb ? "vkGetPhysicalDeviceXcbPresentationSupportKHR" : metal ? "vkGetPhysicalDeviceSurfaceSupportKHR" :
+			"vkGetPhysicalDeviceWaylandPresentationSupportKHR") : symbol.c_str();
 		if ((arguments[0] || global) && std::find(exported.begin(), exported.end(), symbol) != exported.end() &&
 			vkGetInstanceProcAddr(instance, host_name))
 			result = modules.resolve({"vulkan-1.dll", symbol, 0, false, 0});
@@ -362,6 +368,17 @@ bool VulkanBridge::dispatch(std::string_view name)
 			info.pApplicationInfo = &application;
 		}
 		info.ppEnabledLayerNames = nullptr;
+#ifdef __APPLE__
+		// MoltenVK is a portability driver, which the loader lists only to instances that ask for those.
+		uint32_t instance_extension_count = 0;
+		vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, nullptr);
+		std::vector<VkExtensionProperties> instance_extensions(instance_extension_count);
+		vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, instance_extensions.data());
+		if (std::ranges::any_of(instance_extensions, [](const auto &item) { return !std::strcmp(item.extensionName, "VK_KHR_portability_enumeration"); })) {
+			host_pointers.push_back("VK_KHR_portability_enumeration");
+			info.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+		}
+#endif
 		info.enabledExtensionCount = uint32_t(host_pointers.size());
 		info.ppEnabledExtensionNames = host_pointers.empty() ? nullptr : host_pointers.data();
 		writable(arguments[2], 8);
@@ -425,6 +442,43 @@ bool VulkanBridge::dispatch(std::string_view name)
 						physical.emplace(token, Physical{devices.at(index), arguments[0]});
 					write(arguments[2] + index * 8, token);
 				}
+			}
+			write(arguments[1], count);
+		}
+	} else if (name == "vkEnumeratePhysicalDeviceGroups" || name == "vkEnumeratePhysicalDeviceGroupsKHR") {
+		const auto found = instances.find(arguments[0]);
+		if (found == instances.end())
+			throw std::runtime_error("invalid Vulkan instance handle");
+		writable(arguments[1], 4);
+		uint32_t count = 0;
+		if (arguments[2]) {
+			count = read.template operator()<uint32_t>(arguments[1]);
+			if (count > 4096)
+				throw std::runtime_error("Vulkan physical device group capacity exceeds limit");
+			writable(arguments[2], size_t(count) * sizeof(VkPhysicalDeviceGroupProperties));
+		}
+		// The caller's structures keep their own chain, which holds nothing the driver fills in for a group.
+		std::vector<VkPhysicalDeviceGroupProperties> groups(std::max(count, 1U));
+		for (auto &group : groups)
+			group = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GROUP_PROPERTIES, nullptr};
+		const auto status = vkEnumeratePhysicalDeviceGroups(found->second, &count, arguments[2] ? groups.data() : nullptr);
+		result = static_cast<uint32_t>(status);
+		if (status == VK_SUCCESS || status == VK_INCOMPLETE) {
+			for (size_t index = 0; arguments[2] && index < count; ++index) {
+				auto group = groups.at(index);
+				std::array<uint64_t, VK_MAX_DEVICE_GROUP_SIZE> tokens{};
+				for (uint32_t member = 0; member < group.physicalDeviceCount; ++member) {
+					const auto existing = std::find_if(physical.begin(), physical.end(), [&](const auto &item) {
+						return item.second.instance == arguments[0] && item.second.handle == group.physicalDevices[member];
+					});
+					tokens.at(member) = existing == physical.end() ? next_handle++ : existing->first;
+					if (existing == physical.end())
+						physical.emplace(tokens.at(member), Physical{group.physicalDevices[member], arguments[0]});
+				}
+				const auto address = arguments[2] + index * sizeof(VkPhysicalDeviceGroupProperties);
+				write(address + offsetof(VkPhysicalDeviceGroupProperties, physicalDeviceCount), group.physicalDeviceCount);
+				write(address + offsetof(VkPhysicalDeviceGroupProperties, physicalDevices), tokens);
+				write(address + offsetof(VkPhysicalDeviceGroupProperties, subsetAllocation), group.subsetAllocation);
 			}
 			write(arguments[1], count);
 		}
@@ -511,6 +565,17 @@ bool VulkanBridge::dispatch(std::string_view name)
 		}
 		info.pQueueCreateInfos = queue_infos.data();
 		info.ppEnabledLayerNames = nullptr;
+#ifdef __APPLE__
+		// A device that implements Vulkan only in part must be created with the extension that says so.
+		{
+			uint32_t count = 0;
+			vkEnumerateDeviceExtensionProperties(found->second.handle, nullptr, &count, nullptr);
+			std::vector<VkExtensionProperties> available(count);
+			vkEnumerateDeviceExtensionProperties(found->second.handle, nullptr, &count, available.data());
+			if (std::ranges::any_of(available, [](const auto &item) { return !std::strcmp(item.extensionName, "VK_KHR_portability_subset"); }))
+				host_pointers.push_back("VK_KHR_portability_subset");
+		}
+#endif
 		info.enabledExtensionCount = uint32_t(host_pointers.size());
 		info.ppEnabledExtensionNames = host_pointers.empty() ? nullptr : host_pointers.data();
 		writable(arguments[3], 8);
@@ -569,6 +634,12 @@ bool VulkanBridge::dispatch(std::string_view name)
 		VkPhysicalDeviceProperties properties;
 		std::memset(&properties, 0, sizeof(properties));
 		vkGetPhysicalDeviceProperties(found->second.handle, &properties);
+#ifdef __APPLE__
+		// MoltenVK reports 2^30. Programs written against Windows drivers multiply this by a work group size in 32 bits, and the zero that
+		// gives makes them split their work into empty dispatches forever. 65535 is what Direct3D fixes and what Vulkan guarantees.
+		for (auto &count : properties.limits.maxComputeWorkGroupCount)
+			count = std::min(count, 65535U);
+#endif
 		write(arguments[1], properties);
 	}
 	process.return_api(result);

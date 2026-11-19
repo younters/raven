@@ -16,17 +16,25 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <raven_darwin_system.h>
+#include "platform/darwin/processor_count.h"
+#include "../platform/darwin/dxmt/identity.h"
+#endif
 
 namespace raven {
 
 namespace {
 
-constexpr uint32_t error_buffer_overflow = 111, error_insufficient_buffer = 122, error_no_data = 232, error_invalid_parameter = 87, wsaservice_not_found = 10108, wsa_invalid_handle = 6, wsa_not_enough_memory = 8, error_io_pending = 997, error_not_supported = 50, error_more_data = 234, error_no_more_items = 259;
+constexpr uint32_t error_buffer_overflow = 111, error_insufficient_buffer = 122, error_no_data = 232, error_invalid_parameter = 87, wsaservice_not_found = 10108, wsa_invalid_handle = 6, wsa_not_enough_memory = 8, error_io_pending = 997, error_not_supported = 50, error_more_data = 234, error_no_more_items = 259, error_invalid_user_buffer = 1784;
 constexpr uint32_t skip_unicast = 1, skip_anycast = 2, skip_multicast = 4, skip_dns_server = 8;
 constexpr uint32_t windows_inet6 = 23;
 
 // A set of device interfaces that SetupDi hands out; the host exposes no devices to the guest, so the set stays empty.
-class DeviceInfoSet : public KernelObject {};
+class DeviceInfoSet : public KernelObject {
+public:
+	bool display = false;
+};
 
 // An event log query: the log holds no records, so the query only ever reports that nothing more is there.
 class EventQuery : public KernelObject {};
@@ -141,6 +149,12 @@ std::vector<Adapter> host_adapters(uint32_t family)
 // The adapter list is built from the host interfaces. The records follow the IP_ADAPTER_ADDRESSES layout of the caller's pointer width.
 void register_host_api(ApiRegistry &registry, KernelContext &context)
 {
+#ifdef __APPLE__
+	raven_darwin::register_firmware_api(registry);
+	raven_darwin::register_appcontainer_api(registry);
+	raven_darwin::register_processor_count_api(registry);
+	raven_darwin::register_host_extensions(registry);
+#endif
 	auto &objects = context.objects;
 	registry.add("GetAdaptersAddresses", 5, [](ApiCall &call) {
 		const uint32_t family = call.u32(0), flags = call.u32(1);
@@ -734,6 +748,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		// The name goes to the second argument and its length to the third, as in GetComputerNameW.
 		report_name(call, call.u32(0), true);
 	});
+	registry.add("GetComputerNameExA", 3, [report_name](ApiCall &call) { report_name(call, call.u32(0), false); });
 	// Network accounts: the one account of the prefix, a member of Administrators, on a machine in a workgroup. Buffers come from the
 	// guest allocator and go back through NetApiBufferFree.
 	static constexpr std::u16string_view workgroup = u"WORKGROUP";
@@ -1022,21 +1037,58 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("SetupDiClassGuidsFromNameExW", 6, [class_guids](ApiCall &call) { class_guids(call, false); });
 	registry.add("SetupDiClassGuidsFromNameExA", 6, [class_guids](ApiCall &call) { class_guids(call, true); });
 	registry.add("SetupDiGetClassDevsW", 4, [&objects](ApiCall &call) {
-		const auto made = objects.add_object(std::make_shared<DeviceInfoSet>());
+		auto set = std::make_shared<DeviceInfoSet>();
+#ifdef __APPLE__
+		if (const auto gpu = darwin_dxgi::identity(); gpu && call[1])
+			set->display = call.wide(call[1]) == from_utf8(darwin_dxgi::pci_id(*gpu));
+#endif
+		const auto made = objects.add_object(set);
 		if (made.status) {
 			call.fail(8, UINT64_MAX);
 			return;
 		}
 		call.ret(made.value);
 	});
-	// The device sets here are empty: enumerating their devices ends at once, and every interface list holds only its terminator.
+	// A configured display identity has one SetupAPI device; other device sets remain empty.
 	registry.add("SetupDiEnumDeviceInfo", 3, [&objects](ApiCall &call) {
-		if (!objects.object_as<DeviceInfoSet>(call[0])) {
+		const auto set = objects.object_as<DeviceInfoSet>(call[0]);
+		if (!set) {
 			call.fail(6, 0);
+			return;
+		}
+		if (set->display && call.u32(1) == 0) {
+			// SP_DEVINFO_DATA ends in a pointer-sized Reserved field: 28 bytes for a 32-bit caller, 32 for a 64-bit one.
+			const uint32_t size = uint32_t(24 + call.pointer_width());
+			if (!call[2] || call.load<uint32_t>(call[2]) != size) {
+				call.fail(error_invalid_user_buffer, 0);
+				return;
+			}
+			std::vector<uint8_t> info(size);
+			info[0] = uint8_t(size);
+			info[20] = 1;
+			call.write(call[2], info);
+			call.ret(1);
 			return;
 		}
 		call.fail(error_no_more_items, 0);
 	});
+#ifdef __APPLE__
+	registry.add("SetupDiGetDeviceRegistryPropertyW", 7, [&objects](ApiCall &call) {
+		const auto set = objects.object_as<DeviceInfoSet>(call[0]);
+		if (!set || !set->display || !call[1] || call.load<uint32_t>(call[1]) != 24 + call.pointer_width() ||
+			call.load<uint32_t>(call[1] + 20) != 1 || call.u32(2) != 9) {
+			call.fail(error_invalid_parameter, 0);
+			return;
+		}
+		constexpr std::u16string_view driver = u"{4d36e968-e325-11ce-bfc1-08002be10318}\\0000";
+		const uint32_t bytes = uint32_t((driver.size() + 1) * 2);
+		if (call[3]) call.store<uint32_t>(call[3], 1);
+		if (call[6]) call.store<uint32_t>(call[6], bytes);
+		if (!call[4] || call.u32(5) < bytes) return call.fail(122, 0);
+		call.put_wide(call[4], driver, call.u32(5) / 2);
+		call.ret(1);
+	});
+#endif
 	for (const char *name : {"CM_Get_Device_Interface_List_SizeW", "CM_Get_Device_Interface_List_SizeA"})
 		registry.add(name, 4, [](ApiCall &call) {
 			if (!call[0]) {
@@ -1144,6 +1196,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(made.value);
 	});
+#ifndef __APPLE__
 	// Firmware tables: the SMBIOS provider ('RSMB') has one table, a header for SMBIOS 3.0 followed by the end-of-table structure alone,
 	// as on a machine whose firmware describes nothing; the ACPI and raw firmware providers have none.
 	constexpr uint32_t provider_smbios = 0x52534d42;
@@ -1169,6 +1222,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		call.write(call[2], table);
 		call.ret(table.size());
 	});
+#endif
 	// What the thread's queue holds: the high word the kinds of message waiting, the low word the ones that arrived since the last call.
 	registry.add("GetQueueStatus", 1, [&context](ApiCall &call) {
 		const uint32_t kinds = call.u32(0);
@@ -1201,8 +1255,16 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		std::vector<uint8_t> data;
 		if (level == 11) {
 			// PROCESSOR_POWER_INFORMATION per processor: number, maximum, current and limit in MHz, idle states.
+#ifdef __APPLE__
+			const long count = darwin::processor_count(call.pointer_width() == 4);
+#else
 			const long count = std::max<long>(1, ::sysconf(_SC_NPROCESSORS_ONLN));
+#endif
 			for (long index = 0; index < count; ++index) {
+#ifdef __APPLE__
+				const auto frequency = raven_darwin::cpu_frequency(unsigned(index));
+				const uint32_t maximum = frequency.maximum, current = frequency.current;
+#else
 				const auto read_khz = [&](const char *file) -> uint32_t {
 					std::ifstream input("/sys/devices/system/cpu/cpu" + std::to_string(index) + "/cpufreq/" + file);
 					uint64_t khz = 0;
@@ -1220,6 +1282,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 				}
 				if (!current)
 					current = maximum;
+#endif
 				const uint32_t fields[6] = {uint32_t(index), maximum, current, maximum, 0, 0};
 				const auto raw = reinterpret_cast<const uint8_t *>(fields);
 				data.insert(data.end(), raw, raw + sizeof(fields));
@@ -1511,10 +1574,10 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(int64_t(call[0]) == int64_t(call[1]));
 	});
+#ifndef __APPLE__
 	registry.add("GetWindowDpiAwarenessContext", 1, [](ApiCall &call) { call.ret(uint64_t(-2)); });
+#endif
 	registry.add("GetClassWord", 2, [](ApiCall &call) { call.ret(0); });
-	// The cursor is whatever the program set last; none is shown by the host.
-	registry.add("GetCursor", 0, [](ApiCall &call) { call.ret(0); });
 	// The root of a path's volume: the drive letter and a separator.
 	registry.add("GetVolumePathNameW", 3, [](ApiCall &call) {
 		if (!call[0] || !call[1]) {
@@ -1741,7 +1804,6 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	auto priority_class = std::make_shared<uint32_t>(0x20);
 	registry.add("GetPriorityClass", 1, [priority_class](ApiCall &call) { call.ret(*priority_class); });
 	// Host memory is the kernel's to manage: the limits a program asks for are advice, which Windows may ignore as well.
-	registry.add("SetProcessWorkingSetSize", 3, [](ApiCall &call) { call.ret(1); });
 	registry.add("SetProcessWorkingSetSizeEx", 4, [](ApiCall &call) { call.ret(1); });
 	// The documented default limits, 50 and 345 pages, neither of them enforced: the host decides what stays resident.
 	const auto working_set = [](ApiCall &call, bool extended) {
@@ -1895,10 +1957,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 		call.store<uint64_t>(call[0], 0);
 		call.ret(1);
 	});
-	registry.add("GetCurrentProcessExplicitAppUserModelID", 1, [](ApiCall &call) {
-		call.store_pointer(call[0], 0);
-		call.ret(0x80004005U);
-	});
+	// GetCurrentProcessExplicitAppUserModelID is answered with the program's identity in shell_api.cpp.
 	// The newer interface calls name an interface by a LUID or a GUID, which no interface here has: the rows of MIB_IF_ROW2 carry a GUID
 	// of their own that nothing else refers to, so they are left to the older MIB_IFROW calls, which go by the index.
 	registry.add("ConvertInterfaceGuidToLuid", 2, [](ApiCall &call) { call.ret(1168); });
@@ -2069,7 +2128,7 @@ void register_host_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("LsaNtStatusToWinError", 1, [](ApiCall &call) {
 		const uint32_t status = call.u32(0);
 		call.ret(status == 0 ? 0 : status == 0xc0000073U ? 1332 : status == 0x107 ? 1332 : status == 0xc0000022U ? 5 : status == 0xc000000dU ? 87 :
-			status == 0xc0000017U ? 8 : 317);
+			status == 0xc000012dU ? 1455 : status == 0xc0000017U ? 8 : 317);
 	});
 	// LSA_REFERENCED_DOMAIN_LIST: its header, the entries, then their names and SIDs, in memory LsaFreeMemory gives back.
 	const auto referenced_domains = [&context](ApiCall &call, const std::vector<std::u16string> &domains, const std::vector<std::vector<uint8_t>> &domain_sids) -> uint64_t {

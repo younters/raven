@@ -10,10 +10,13 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <vector>
 
 #include <poll.h>
+#include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -29,6 +32,26 @@ HandleChannel *parent = nullptr;
 // Frames that are not a handle sent over: a request names the value it wants in `handle` and its number in `size`; an answer carries
 // the request number in `handle` and the kind of the object after this prefix, nothing after it when there is no such handle.
 const std::string request_kind = "request", answer_prefix = "answer:", transfer_prefix = "transfer:";
+
+// macOS has no pidfd: a process record there carries no descriptor and its pid names the process. Elsewhere a process record without
+// one is refused, so a handle can never name a pid that has been reused.
+#ifdef __APPLE__
+constexpr bool descriptorless_processes = true;
+#else
+constexpr bool descriptorless_processes = false;
+#endif
+
+// Opt-in, bounded metadata only: never records addresses, handles or copied memory.
+void trace_phase(const char *phase, int fd, uint64_t number, const std::string &kind)
+{
+	static const bool enabled = std::getenv("RAVEN_TRACE_HANDLE_PHASES") != nullptr;
+	static unsigned count = 0;
+	if (!enabled || count >= 4096) return;
+	++count;
+	const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	std::fprintf(stderr, "handle-phase %lld %d %d %llu %s %s\n", (long long)ns, int(::getpid()), fd,
+		(unsigned long long)number, phase, kind.c_str());
+}
 
 struct ProcessChannels {
 	int listener = -1;
@@ -113,6 +136,8 @@ bool HandleChannel::send_frame(const InheritedHandle &record, int shared)
 {
 	if (descriptor < 0)
 		return false;
+	if (record.kind.starts_with(answer_prefix))
+		trace_phase("answer-send", descriptor, record.handle, record.kind);
 	const auto bytes = serialize_inherited({record});
 	iovec vector{const_cast<uint8_t *>(bytes.data()), bytes.size()};
 	alignas(cmsghdr) char control[CMSG_SPACE(sizeof(int))] = {};
@@ -138,7 +163,7 @@ NativeObjectResult HandleChannel::send(NativeObjects &objects, NativeThreads &th
 	if (process_only)
 		return {0, 0xc00000bbU};
 	const int shared = record.descriptor;
-	if (shared < 0)
+	if (shared < 0 && !(descriptorless_processes && record.kind == "process"))
 		return {0, 0xc0000008U};
 	// Exchange uses size for its request number; keep the object's size in the unused source-handle word.
 	record.handle = record.size;
@@ -160,7 +185,7 @@ std::shared_ptr<KernelObject> HandleChannel::fetch(NativeObjects &objects, Nativ
 	request.handle = value;
 	request.flags = close_source ? 1 : 0;
 	const auto answer = exchange(objects, threads, std::move(request));
-	if (!answer || answer->kind.empty() || answer->descriptor < 0)
+	if (!answer || answer->kind.empty() || (answer->descriptor < 0 && !(descriptorless_processes && answer->kind == "process")))
 		return nullptr;
 	access = answer->handle_access;
 	auto object = object_from_record(*answer);
@@ -181,10 +206,12 @@ std::optional<InheritedHandle> HandleChannel::exchange(NativeObjects &objects, N
 	const uint64_t number = next_request++;
 	request.size = number;
 	answers[number] = std::nullopt;
+	trace_phase("send", descriptor, number, request.kind);
 	if (!send_frame(request, shared)) {
 		answers.erase(number);
 		return std::nullopt;
 	}
+	trace_phase("sent", descriptor, number, request.kind);
 	// The other process answers when it next schedules its threads; meanwhile the threads of this one run.
 	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 	HostWait waiting;
@@ -195,6 +222,7 @@ std::optional<InheritedHandle> HandleChannel::exchange(NativeObjects &objects, N
 	}, deadline);
 	const auto found = answers.find(number);
 	if (found == answers.end() || !found->second) {
+		trace_phase("timeout", descriptor, number, request.kind);
 		answers.erase(number);
 		return std::nullopt;
 	}
@@ -233,6 +261,9 @@ void HandleChannel::receive(NativeObjects &objects)
 			continue;
 		}
 		auto &record = records.front();
+		const bool answer_receive = record.kind.starts_with(answer_prefix);
+		trace_phase(answer_receive ? "answer-receive" : "dispatch", descriptor,
+			answer_receive ? record.handle : record.size, record.kind);
 		if (process_only && !record.kind.starts_with("process:") && record.kind != answer_prefix + "process") {
 			if (received >= 0) ::close(received);
 			continue;
@@ -242,7 +273,7 @@ void HandleChannel::receive(NativeObjects &objects)
 			answer.kind = answer_prefix + "transfer";
 			answer.handle = record.size;
 			answer.access = 0xc0000008U;
-			if (received >= 0) {
+			if (received >= 0 || (descriptorless_processes && record.kind == transfer_prefix + "process")) {
 				record.kind.erase(0, transfer_prefix.size());
 				record.size = record.handle;
 				record.descriptor = received;
@@ -299,7 +330,7 @@ void HandleChannel::receive(NativeObjects &objects)
 				answer.handle_access = objects.access_of(record.handle);
 			}
 			send_frame(answer, shared);
-			if (shared >= 0 && (record.flags & 1))
+			if ((descriptorless_processes ? !answer.kind.empty() && answer.kind != answer_prefix : shared >= 0) && (record.flags & 1))
 				objects.close(record.handle);
 			continue;
 		}
@@ -319,7 +350,7 @@ void HandleChannel::receive(NativeObjects &objects)
 		try {
 			adopt_inherited(objects, records);
 		} catch (const std::exception &) {
-			::close(received);
+			// adopt_inherited consumes the descriptor, including on failure.
 		}
 	}
 }
@@ -348,6 +379,35 @@ void remove_child_channel(HandleChannel *channel)
 	children.erase(std::remove(children.begin(), children.end(), channel), children.end());
 }
 
+std::shared_ptr<void> watch_handles(std::vector<pollfd> &descriptors)
+{
+	struct Lease {
+		std::vector<int> descriptors;
+		~Lease() { for (int fd : descriptors) ::close(fd); }
+	};
+	auto lease = std::make_shared<Lease>();
+	const auto append = [&](int fd) {
+		const int duplicate = ::fcntl(fd, F_DUPFD_CLOEXEC, 0);
+		if (duplicate < 0) return; // The normal bounded scheduler sweep remains the fallback.
+		lease->descriptors.push_back(duplicate);
+		descriptors.push_back({duplicate, POLLIN, 0});
+	};
+	// Keep owners through the snapshot, including children whose last handles are being reaped.
+	const auto owners = retained_children();
+	{
+		std::lock_guard lock(channels_mutex);
+		for (const auto *channel : children)
+			if (channel->connected()) append(channel->host_descriptor());
+		if (parent && parent->connected()) append(parent->host_descriptor());
+	}
+	if (process_channels.listener >= 0) append(process_channels.listener);
+	for (const auto &channel : process_channels.accepted)
+		if (channel->connected()) append(channel->host_descriptor());
+	for (const auto &[pid, channel] : process_channels.outgoing)
+		if (channel && channel->connected()) append(channel->host_descriptor());
+	return lease;
+}
+
 void receive_handles(NativeObjects &objects)
 {
 	const auto owners = retained_children();
@@ -372,8 +432,22 @@ void receive_handles(NativeObjects &objects)
 	for (const auto &channel : peers)
 		descriptors.push_back({channel->host_descriptor(), POLLIN, 0});
 	int ready = 0;
+#ifdef __APPLE__
+	// On macOS the scheduler asks on every call it serves, so each channel is peeked and the listener is asked for a connection outright: a poll
+	// with no timeout costs about 20 us on macOS 26, a peek or a refused accept a fiftieth of that. Anything but "nothing yet" counts
+	// as ready, so a closed or failed channel is still received from.
+	if (listener)
+		descriptors[0].revents = POLLIN;
+	for (size_t index = listener; index < descriptors.size(); ++index) {
+		char byte;
+		if (descriptors[index].fd >= 0 && (::recv(descriptors[index].fd, &byte, 1, MSG_PEEK | MSG_DONTWAIT) >= 0 ||
+			(errno != EAGAIN && errno != EWOULDBLOCK)))
+			descriptors[index].revents = POLLIN;
+	}
+#else
 	if (!descriptors.empty())
 		do ready = ::poll(descriptors.data(), descriptors.size(), 0); while (ready < 0 && errno == EINTR);
+#endif
 	// A failed readiness query falls back to the nonblocking receives rather than losing pending transfers.
 	if (listener && (ready < 0 || descriptors[0].revents)) {
 		for (;;) {

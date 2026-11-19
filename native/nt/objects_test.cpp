@@ -2,14 +2,22 @@
 #include "providers.h"
 #include "event.h"
 #include "mutex.h"
+#include "shared_file.h"
 
+#include <cerrno>
+#include <cstdlib>
 #include <array>
 #include <future>
 #include <iostream>
+#include <spawn.h>
 #include <stdexcept>
+#include <string_view>
 #include <sys/mman.h>
+#include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
+
+extern char **environ;
 
 static void check(bool condition, const char *message)
 {
@@ -25,6 +33,8 @@ static void queued(raven::NativeObjects &objects, uint64_t handle, size_t count)
 
 int main(int argc, char **argv)
 {
+	if (argc == 3 && std::string_view(argv[1]) == "--closed-event-fd")
+		return ::fcntl(std::atoi(argv[2]), F_GETFD) == -1 && errno == EBADF ? 0 : 1;
 	try {
 		check(argc==2,"bootstrap required");
 		{
@@ -61,6 +71,35 @@ int main(int argc, char **argv)
 				!imported->try_consume(8) && imported->release(7) && imported->try_consume(8), "mutex transfer lost ownership or recursion");
 			mutex.reset();
 			check(imported->release(8), "mutex died with exporting handle");
+		}
+		{
+			bool existed = false;
+			uint32_t error = 0;
+			const auto name = raven::from_utf8("RavenNamedInheritance" + std::to_string(getpid()));
+			auto storage = raven::SharedFile::open("event", name, 8, true, existed, error, [](void *data) {
+				const uint32_t initial[2] = {1, 1}; // signaled, manual-reset
+				std::memcpy(data, initial, sizeof initial);
+			});
+			check(storage && !existed, "named event storage creation failed");
+			auto event = std::make_shared<raven::EventObject>(storage);
+			raven::InheritedHandle record;
+			check(event->describe(record) && record.kind == "named-event", "named event inheritance description failed");
+			auto descriptor = std::to_string(record.descriptor);
+			char *arguments[] = {argv[0], const_cast<char *>("--closed-event-fd"), descriptor.data(), nullptr};
+			pid_t child = 0;
+			check(!::posix_spawn(&child, argv[0], nullptr, nullptr, arguments, environ), "cannot probe event exec inheritance");
+			int status = 0;
+			check(::waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+				"named event leaked into an unrelated exec");
+			record.handle = 0x1000;
+			record.handle_access = 0x1f0003;
+			record.descriptor = ::dup(record.descriptor);
+			raven::NativeObjects receiver;
+			raven::adopt_inherited(receiver, {record});
+			check(receiver.query_event(record.handle).value == (1ULL << 32) && receiver.try_consume(record.handle, 1) &&
+				receiver.try_consume(record.handle, 1), "named event inheritance changed manual/signaled state");
+			event->set_state(false);
+			check(receiver.query_event(record.handle).value == 0 && !receiver.try_consume(record.handle, 1), "named event reset was copied");
 		}
 		raven::NativeObjects objects;
 		const auto end=std::chrono::steady_clock::now()+std::chrono::seconds(4);

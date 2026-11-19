@@ -11,6 +11,7 @@ With a second path it also writes the stdcall argument words of every function, 
 """
 
 from pathlib import Path
+import os
 import re
 import subprocess
 import sys
@@ -47,10 +48,13 @@ EXTRA_WORDS["loadperf"] = {"LoadPerfCounterTextStringsA": 2, "LoadPerfCounterTex
                            "UnloadPerfCounterTextStringsW": 2, "InstallPerfDllA": 3, "InstallPerfDllW": 3, "UpdatePerfNameFilesA": 4,
                            "UpdatePerfNameFilesW": 4, "SetServiceAsTrustedA": 2, "SetServiceAsTrustedW": 2, "BackupPerfRegistryToFileW": 2,
                            "RestorePerfRegistryFromFileW": 2}
+# These public prototypes have four arguments; some import libraries decorate the GDI aliases with five.
+WORD_OVERRIDES = {library: {"ScriptStringCPtoX": 4, "ScriptStringXtoCP": 4} for library in ("gdi32", "usp10")}
 # Libraries whose file does not end in .dll.
 FILE_NAMES = {"winspool": "winspool.drv"}
-DIRECTORY = Path("/usr/x86_64-w64-mingw32/lib")
-DIRECTORY32 = Path("/usr/i686-w64-mingw32/lib")
+# The mingw-w64 import libraries; RAVEN_MINGW_LIB64 and RAVEN_MINGW_LIB32 name them on hosts that keep them elsewhere.
+DIRECTORY = Path(os.environ.get("RAVEN_MINGW_LIB64", "/usr/x86_64-w64-mingw32/lib"))
+DIRECTORY32 = Path(os.environ.get("RAVEN_MINGW_LIB32", "/usr/i686-w64-mingw32/lib"))
 
 
 # Libraries whose names are listed here rather than read from an import library: the host services Raven's own components import, and
@@ -130,6 +134,7 @@ def stdcall_words(library):
                 words[match.group(1)] = int(match.group(2)) // 4
     for name, count in EXTRA_WORDS.get(library, {}).items():
         words.setdefault(name, count)
+    words.update(WORD_OVERRIDES.get(library, {}))
     return words
 
 

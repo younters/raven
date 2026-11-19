@@ -8,6 +8,11 @@
 #include <sched.h>
 #include <string>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <climits>
+#include <cstdint>
+#include <mach-o/dyld.h>
+#endif
 
 // The raven command. The runtime host links the graphics, sound, font and network libraries of the system, and loading them takes a
 // start several milliseconds before it does anything; this launcher asks a warm host for the start first, with nothing but the C
@@ -15,7 +20,14 @@
 int main(int argc, char **argv)
 {
 	char self[4096];
+#ifdef __APPLE__
+	uint32_t capacity = sizeof self;
+	char resolved[PATH_MAX];
+	const auto length = ::_NSGetExecutablePath(self, &capacity) == 0 && ::realpath(self, resolved) ?
+		ssize_t(std::strlen(std::strcpy(self, resolved))) : ssize_t(-1);
+#else
 	const auto length = ::readlink("/proc/self/exe", self, sizeof self - 1);
+#endif
 	if (length <= 0) {
 		std::perror("raven: cannot find the runtime host");
 		return 127;
@@ -23,9 +35,11 @@ int main(int argc, char **argv)
 	std::string host(self, size_t(length));
 	host = host.substr(0, host.rfind('/') + 1) + "raven-runtime";
 	// As the runtime does (main.cpp), before the environment names the start to a warm host.
+#ifndef __APPLE__
 	if (cpu_set_t usable; !std::getenv("RAVEN_PARALLEL") && !std::getenv("RAVEN_SERIAL") &&
 		(::sched_getaffinity(0, sizeof usable, &usable) != 0 || CPU_COUNT(&usable) > 1))
 		::setenv("RAVEN_PARALLEL", "1", 1);
+#endif
 	if (argc > 1 && std::strcmp(argv[1], "--run-process") == 0 && raven::warm::eligible()) {
 		if (const auto status = raven::run_on_warm_host(raven::warm::identity_of(host, argc, argv)))
 			return *status;

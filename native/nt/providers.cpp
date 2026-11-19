@@ -10,6 +10,9 @@
 #include "exceptions.h"
 #include "resources.h"
 #include "memory.h"
+#ifdef __APPLE__
+#include "platform/darwin/memory/commit_guest.h"
+#endif
 #include "object_api.h"
 #include "heap.h"
 #include "api.h"
@@ -31,6 +34,15 @@
 #include "cpu/served_queue.h"
 #include "cpu/served_stub.h"
 #include "cpu/call_cycles.h"
+#ifdef __APPLE__
+#include "platform/darwin/unix_calls.h"
+#include "platform/darwin/audio/api.h"
+#include "platform/darwin/dxmt/presentation.h"
+#include "platform/darwin/dxmt/identity.h"
+#include "platform/darwin/dxmt/kernel_thunks.h"
+#include "platform/darwin/nt_file_api.h"
+#include "platform/darwin/screen_caps_prelude.h"
+#endif
 #ifdef RAVEN_OPENGL
 #include "graphics/opengl_bridge.h"
 #endif
@@ -70,15 +82,31 @@ static std::vector<uint8_t> read_host_file(const std::filesystem::path &path)
 }
 
 // The PathCch functions live in kernelbase.dll on Windows and are not in the import libraries the public lists come from.
-static constexpr std::array<std::string_view, 51> names{
+static constexpr std::array<std::string_view, 53> names{
 	"CloseHandle","CreateEventA","CreateEventW","ExitProcess",
 	"FindResourceA", "FindResourceExA", "FindResourceExW", "FindResourceW", "FreeLibrary",
 	"GetACP", "GetCommandLineA", "GetCommandLineW", "GetCurrentProcessId", "GetCurrentThreadId", "GetFileType", "GetLastError", "GetModuleHandleA",
 	"GetModuleHandleW", "GetProcAddress", "GetProcessHeap", "GetStartupInfoA", "GetStartupInfoW", "GetStdHandle", "HeapAlloc", "HeapCreate", "HeapDestroy", "HeapFree", "HeapReAlloc", "HeapSize",
 	"LoadLibraryA", "LoadLibraryW", "LoadResource",
-	"LockResource", "MultiByteToWideChar", "PathAllocCanonicalize", "PathCchCanonicalize", "PathCchCanonicalizeEx", "PathCchCombineEx", "PathCchRemoveFileSpec", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
+	"LockResource", "MultiByteToWideChar", "OpenProcessToken", "OpenThreadToken", "PathAllocCanonicalize", "PathCchCanonicalize", "PathCchCanonicalizeEx", "PathCchCombineEx", "PathCchRemoveFileSpec", "PathCchSkipRoot", "RaiseException", "ResetEvent", "SetEvent", "SetLastError", "SizeofResource",
 	"VirtualAlloc", "VirtualFree", "VirtualProtect", "VirtualQuery", "WaitForSingleObject", "WriteFile"
 };
+
+bool host_device_export([[maybe_unused]] std::string_view library, [[maybe_unused]] std::string_view name)
+{
+#ifdef __APPLE__
+	// The host owns the MMDevice class. Its CoCreateInstance handler must see the class ID
+	// before the guest shell component's registry based COM activation path.
+	if (library == "ole32.dll" && name == "CoCreateInstance") return true;
+	if (library == "user32.dll" && name == "MessageBeep") return true;
+	// With a display identity the host owns the device sets that hold its display adapter, so the functions that open, walk,
+	// query and close one stay together. Without it every device set belongs to raven-setupapi, as on Linux.
+	if (library == "setupapi.dll" && darwin_dxgi::identity())
+		return name == "SetupDiGetClassDevsW" || name == "SetupDiEnumDeviceInfo" || name == "SetupDiEnumDeviceInterfaces" ||
+			name == "SetupDiGetDeviceRegistryPropertyW" || name == "SetupDiDestroyDeviceInfoList";
+#endif
+	return false;
+}
 
 std::vector<uint8_t> environment_provider(std::string_view name, uint64_t base)
 {
@@ -98,6 +126,80 @@ struct FastStub {
 	std::vector<uint8_t> code;
 };
 
+// The same for 32-bit programs, on their thread block at fs. A call into the runtime costs microseconds and these are called constantly: the
+// C runtime and the program's allocator ask for a thread slot and the last error around almost everything they do.
+const std::vector<FastStub> &fast_stubs_x86()
+{
+	static const std::vector<FastStub> stubs = {
+		// mov eax, fs:[0x34]; ret
+		{"GetLastError", {0x64, 0xa1, 0x34, 0, 0, 0, 0xc3}},
+		// mov eax,[esp+4]; mov fs:[0x34],eax; ret 4
+		{"SetLastError", {0x8b, 0x44, 0x24, 0x04, 0x64, 0xa3, 0x34, 0, 0, 0, 0xc2, 0x04, 0}},
+		// mov eax, fs:[0x24]; ret (the thread's ClientId.UniqueThread)
+		{"GetCurrentThreadId", {0x64, 0xa1, 0x24, 0, 0, 0, 0xc3}},
+		// mov eax, fs:[0x20]; ret (the thread's ClientId.UniqueProcess)
+		{"GetCurrentProcessId", {0x64, 0xa1, 0x20, 0, 0, 0, 0xc3}},
+		// mov eax,-1; ret (the pseudo handle of the current process)
+		{"GetCurrentProcess", {0xb8, 0xff, 0xff, 0xff, 0xff, 0xc3}},
+		// mov eax,-2; ret (the pseudo handle of the current thread)
+		{"GetCurrentThread", {0xb8, 0xfe, 0xff, 0xff, 0xff, 0xc3}},
+		// Slots below 64 live in TlsSlots at 0xe10; the others are served. The last error is cleared, as Windows does.
+		// mov eax,[esp+4]; cmp eax,64; jae slow; mov dword fs:[0x34],0; mov eax,fs:[eax*4+0xe10]; ret 4
+		{"TlsGetValue", {0x8b, 0x44, 0x24, 0x04, 0x83, 0xf8, 0x40, 0x73, 0x27, 0x64, 0xc7, 0x05, 0x34, 0, 0, 0, 0, 0, 0, 0,
+			0x64, 0x8b, 0x04, 0x85, 0x10, 0x0e, 0, 0, 0xc2, 0x04, 0}},
+		// mov eax,[esp+4]; cmp eax,64; jae slow; mov ecx,[esp+8]; mov fs:[eax*4+0xe10],ecx; mov eax,1; ret 8
+		{"TlsSetValue", {0x8b, 0x44, 0x24, 0x04, 0x83, 0xf8, 0x40, 0x73, 0x27, 0x8b, 0x4c, 0x24, 0x08,
+			0x64, 0x89, 0x0c, 0x85, 0x10, 0x0e, 0, 0, 0xb8, 1, 0, 0, 0, 0xc2, 0x08, 0}},
+		// The slot array the runtime keeps at 0x17c8, of 8-byte entries, once the thread has one.
+		// mov eax,fs:[0x17c8]; test eax,eax; jz slow; mov ecx,[esp+4]; cmp ecx,4080; jae slow; mov eax,[eax+ecx*8]; mov dword fs:[0x34],0; ret 4
+		{"FlsGetValue", {0x64, 0xa1, 0xc8, 0x17, 0, 0, 0x85, 0xc0, 0x74, 0x26, 0x8b, 0x4c, 0x24, 0x04, 0x81, 0xf9, 0xf0, 0x0f, 0, 0, 0x73, 0x1a,
+			0x8b, 0x04, 0xc8, 0x64, 0xc7, 0x05, 0x34, 0, 0, 0, 0, 0, 0, 0, 0xc2, 0x04, 0}},
+		// The same without touching the last error, as the second form does.
+		{"FlsGetValue2", {0x64, 0xa1, 0xc8, 0x17, 0, 0, 0x85, 0xc0, 0x74, 0x26, 0x8b, 0x4c, 0x24, 0x04, 0x81, 0xf9, 0xf0, 0x0f, 0, 0, 0x73, 0x1a,
+			0x8b, 0x04, 0xc8, 0xc2, 0x04, 0}},
+		// Pointers are not encoded here. mov eax,[esp+4]; ret 4
+		{"EncodePointer", {0x8b, 0x44, 0x24, 0x04, 0xc2, 0x04, 0}},
+		{"DecodePointer", {0x8b, 0x44, 0x24, 0x04, 0xc2, 0x04, 0}},
+		{"EncodeSystemPointer", {0x8b, 0x44, 0x24, 0x04, 0xc2, 0x04, 0}},
+		{"DecodeSystemPointer", {0x8b, 0x44, 0x24, 0x04, 0xc2, 0x04, 0}},
+		// Waiters of an address look again on their own, so a wake has nothing to do. ret 4
+		{"WakeByAddressSingle", {0xc2, 0x04, 0}},
+		{"WakeByAddressAll", {0xc2, 0x04, 0}},
+		// Critical sections in their own fields, with the lock word Windows XP used: LockCount is -1 while free and counts the owner's
+		// entries and the waiters after that, OwningThread (0xc) and RecursionCount (8) belong to the owner. A thread that finds the section
+		// held by another jumps to the trap at 0x30, served as RavenCriticalSectionWait, which hands it the section; a release that finds
+		// waiters jumps there as RavenCriticalSectionWake.
+		// mov ecx,[esp+4]; mov edx,fs:[0x24]; lock inc dword [ecx+4]; jnz busy; mov [ecx+0xc],edx; mov dword [ecx+8],1; ret 4
+		// busy: cmp [ecx+0xc],edx; jne wait; inc dword [ecx+8]; ret 4; wait: jmp trap
+		{"EnterCriticalSection", {0x8b, 0x4c, 0x24, 0x04, 0x64, 0x8b, 0x15, 0x24, 0, 0, 0, 0xf0, 0xff, 0x41, 0x04, 0x75, 0x0d,
+			0x89, 0x51, 0x0c, 0xc7, 0x41, 0x08, 1, 0, 0, 0, 0xc2, 0x04, 0, 0x39, 0x51, 0x0c, 0x75, 0x06, 0xff, 0x41, 0x08, 0xc2, 0x04, 0,
+			0xeb, 0x05}},
+		// A free section is taken here; any other state is served. mov ecx,[esp+4]; mov eax,-1; xor edx,edx; lock cmpxchg [ecx+4],edx;
+		// jne trap; mov edx,fs:[0x24]; mov [ecx+0xc],edx; mov dword [ecx+8],1; xor eax,eax; inc eax; ret 4
+		{"TryEnterCriticalSection", {0x8b, 0x4c, 0x24, 0x04, 0xb8, 0xff, 0xff, 0xff, 0xff, 0x31, 0xd2, 0xf0, 0x0f, 0xb1, 0x51, 0x04, 0x75, 0x1e,
+			0x64, 0x8b, 0x15, 0x24, 0, 0, 0, 0x89, 0x51, 0x0c, 0xc7, 0x41, 0x08, 1, 0, 0, 0, 0x31, 0xc0, 0x40, 0xc2, 0x04, 0}},
+		// mov ecx,[esp+4]; dec dword [ecx+8]; jnz still; mov dword [ecx+0xc],0; lock dec dword [ecx+4]; jge trap; jmp done;
+		// still: lock dec dword [ecx+4]; done: ret 4
+		{"LeaveCriticalSection", {0x8b, 0x4c, 0x24, 0x04, 0xff, 0x49, 0x08, 0x75, 0x0f, 0xc7, 0x41, 0x0c, 0, 0, 0, 0, 0xf0, 0xff, 0x49, 0x04,
+			0x7d, 0x1a, 0xeb, 0x04, 0xf0, 0xff, 0x49, 0x04, 0xc2, 0x04, 0}},
+		// In the guest these are atomic against other threads that run at the same time, which a served call cannot be.
+		// mov ecx,[esp+4]; mov eax,1; lock xadd [ecx],eax; inc eax; ret 4
+		{"InterlockedIncrement", {0x8b, 0x4c, 0x24, 0x04, 0xb8, 1, 0, 0, 0, 0xf0, 0x0f, 0xc1, 0x01, 0x40, 0xc2, 0x04, 0}},
+		// mov ecx,[esp+4]; mov eax,-1; lock xadd [ecx],eax; dec eax; ret 4
+		{"InterlockedDecrement", {0x8b, 0x4c, 0x24, 0x04, 0xb8, 0xff, 0xff, 0xff, 0xff, 0xf0, 0x0f, 0xc1, 0x01, 0x48, 0xc2, 0x04, 0}},
+		// mov ecx,[esp+4]; mov eax,[esp+8]; xchg [ecx],eax; ret 8
+		{"InterlockedExchange", {0x8b, 0x4c, 0x24, 0x04, 0x8b, 0x44, 0x24, 0x08, 0x87, 0x01, 0xc2, 0x08, 0}},
+		// mov ecx,[esp+4]; mov eax,[esp+8]; lock xadd [ecx],eax; ret 8
+		{"InterlockedExchangeAdd", {0x8b, 0x4c, 0x24, 0x04, 0x8b, 0x44, 0x24, 0x08, 0xf0, 0x0f, 0xc1, 0x01, 0xc2, 0x08, 0}},
+		// mov ecx,[esp+4]; mov edx,[esp+8]; mov eax,[esp+12]; lock cmpxchg [ecx],edx; ret 12
+		{"InterlockedCompareExchange", {0x8b, 0x4c, 0x24, 0x04, 0x8b, 0x54, 0x24, 0x08, 0x8b, 0x44, 0x24, 0x0c, 0xf0, 0x0f, 0xb1, 0x11, 0xc2, 0x0c, 0}},
+	};
+	for (const auto &stub : stubs)
+		if (stub.code.size() > 0x30)
+			throw std::runtime_error("native x86 fast stub overlaps its trap");
+	return stubs;
+}
+
 const std::vector<FastStub> &fast_stubs()
 {
 	static const std::vector<FastStub> stubs = {
@@ -113,9 +215,14 @@ const std::vector<FastStub> &fast_stubs()
 		{"GetCurrentProcess", {0x48, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff, 0xc3}},
 		// mov rax, -2; ret (the pseudo handle of the current thread)
 		{"GetCurrentThread", {0x48, 0xc7, 0xc0, 0xfe, 0xff, 0xff, 0xff, 0xc3}},
-		// cmp ecx,64; jae slow; mov ecx,ecx; mov rax,gs:[rcx*8+0x1480]; mov dword gs:[0x68],0; ret
-		{"TlsGetValue", {0x83, 0xf9, 0x40, 0x73, 0x2b, 0x8b, 0xc9, 0x65, 0x48, 0x8b, 0x04, 0xcd, 0x80, 0x14, 0, 0,
-			0x65, 0xc7, 0x04, 0x25, 0x68, 0, 0, 0, 0, 0, 0, 0, 0xc3}},
+		// The last error is cleared first (the slow path sets its own). Slots below 64 come from TlsSlots; 64 to 1087 from the
+		// TlsExpansionSlots array, past the trap at 0x30, when the thread has one; anything else traps.
+		// mov dword gs:[0x68],0; mov ecx,ecx; cmp ecx,64; jae expansion; mov rax,gs:[rcx*8+0x1480]; ret
+		// expansion: cmp ecx,1088; jae slow; mov rax,gs:[0x1780]; jmp over the trap; test rax,rax; jz slow; mov rax,[rax+rcx*8-0x200]; ret
+		{"TlsGetValue", {0x65, 0xc7, 0x04, 0x25, 0x68, 0, 0, 0, 0, 0, 0, 0, 0x8b, 0xc9, 0x83, 0xf9, 0x40, 0x73, 0x0a,
+			0x65, 0x48, 0x8b, 0x04, 0xcd, 0x80, 0x14, 0, 0, 0xc3,
+			0x81, 0xf9, 0x40, 0x04, 0, 0, 0x73, 0x0b, 0x65, 0x48, 0x8b, 0x04, 0x25, 0x80, 0x17, 0, 0, 0xeb, 0x02,
+			0xcc, 0xc3, 0x48, 0x85, 0xc0, 0x74, 0xf9, 0x48, 0x8b, 0x84, 0xc8, 0x00, 0xfe, 0xff, 0xff, 0xc3}},
 		// cmp ecx,64; jae slow; mov ecx,ecx; mov gs:[rcx*8+0x1480],rdx; mov eax,1; ret
 		{"TlsSetValue", {0x83, 0xf9, 0x40, 0x73, 0x2b, 0x8b, 0xc9, 0x65, 0x48, 0x89, 0x14, 0xcd, 0x80, 0x14, 0, 0,
 			0xb8, 1, 0, 0, 0, 0xc3}},
@@ -170,6 +277,8 @@ const std::vector<FastStub> &fast_stubs()
 // the answer is there, so the guest never stops for them.
 static bool served_api(std::string_view module, std::string_view name)
 {
+	if (module == "user32.dll")
+		return name == "GetWindow" || name == "MonitorFromWindow";
 	if (module == "kernel32.dll" || module == "kernelbase.dll")
 		return name == "QueryPerformanceCounter" || name == "QueryPerformanceFrequency" || name == "QueryUnbiasedInterruptTime" ||
 			name == "QueryUnbiasedInterruptTimePrecise" || name == "WakeConditionVariable" ||
@@ -432,11 +541,27 @@ static bool guest_commit_api(std::string_view module, std::string_view name)
 	return guest_memory_api(module, name) != GuestMemoryApi::none;
 }
 
+#ifdef __APPLE__
+// All APIs whose guest preludes acquire the shared commit lock.
+static bool guest_locked_commit_api(std::string_view module, std::string_view name)
+{
+	return guest_commit_api(module, name) || (module == "ntdll.dll" &&
+		(name == "NtAllocateVirtualMemory" || name == "ZwAllocateVirtualMemory" ||
+		 name == "NtFreeVirtualMemory" || name == "ZwFreeVirtualMemory"));
+}
+
+static constexpr size_t commit_prelude_size = 384;
+#else
 static constexpr size_t commit_prelude_size = 192;
+#endif
 
 static size_t commit_jump(GuestMemoryApi kind)
 {
+#ifdef __APPLE__
+	return commit_guest_jump(kind == GuestMemoryApi::decommit);
+#else
 	return kind == GuestMemoryApi::commit ? 37 : 31;
+#endif
 }
 
 // mov r10,[pointer]; test r10,r10; jz slow; test rcx,rcx; jz slow; test rdx,rdx; jz slow; cmp r8d,MEM_DECOMMIT; je main; slow: jmp trap;
@@ -445,6 +570,9 @@ static size_t commit_jump(GuestMemoryApi kind)
 // its low bit set and return TRUE; a full log or no range goes back to restore.
 static std::vector<uint8_t> decommit_prelude(int32_t to_pointer, int32_t to_trap)
 {
+#ifdef __APPLE__
+	return commit_guest_prelude(to_pointer, to_trap, true);
+#else
 	std::vector<uint8_t> code{0x4c, 0x8b, 0x15, 0, 0, 0, 0, 0x4d, 0x85, 0xd2, 0x74, 0x13, 0x48, 0x85, 0xc9, 0x74, 0x0e, 0x48, 0x85, 0xd2,
 		0x74, 0x09, 0x41, 0x81, 0xf8, 0x00, 0x40, 0x00, 0x00, 0x74, 0x0d, 0xe9, 0, 0, 0, 0, 0x41, 0xb8, 0x00, 0x40, 0x00, 0x00,
 		0xeb, 0xf3, 0x48, 0x81, 0xfa, 0x00, 0x00, 0x04, 0x00, 0x77, 0xea, 0x48, 0x89, 0xc8, 0x48, 0x25, 0x00, 0xf0, 0xff, 0xff, 0x4c,
@@ -459,6 +587,7 @@ static std::vector<uint8_t> decommit_prelude(int32_t to_pointer, int32_t to_trap
 	const int32_t relative = to_trap - int32_t(commit_jump(GuestMemoryApi::decommit) + 5);
 	std::memcpy(code.data() + commit_jump(GuestMemoryApi::decommit) + 1, &relative, 4);
 	return code;
+#endif
 }
 
 // String services that the guest runs itself in their common case: lengths and bounded copies, and conversions of plain ASCII text
@@ -606,7 +735,12 @@ static const std::vector<uint8_t> &screen_device_caps_prelude()
 		0xfa, 0x58, 0x74, 0x15, 0x83, 0xfa, 0x5a, 0x74, 0x10, 0x83, 0xfa, 0x0e, 0x74, 0x11, 0x83, 0xfa, 0x78, 0x74, 0x12, 0xeb, 0x1e, 0x8b, 0x40, 0x18,
 		0xc3, 0xb8, 0x60, 0x00, 0x00, 0x00, 0xc3, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x31, 0xc0, 0xc3, 0x89, 0xd0, 0x41, 0x8b, 0x84, 0x82, 0x00, 0x04,
 		0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+#ifdef __APPLE__
+	static const auto scaled = raven_darwin::screen_caps_prelude(code);
+	return scaled;
+#else
 	return code;
+#endif
 }
 
 // Window state the guest reads from the window table the runtime keeps (see NativeWindows::publish_windows), found through the served
@@ -716,6 +850,9 @@ static const std::vector<uint8_t> &locale_prelude()
 // base and size are written back and STATUS_SUCCESS returned; anything else goes to the runtime with the arguments as they came.
 static const std::vector<uint8_t> &nt_commit_prelude()
 {
+#ifdef __APPLE__
+	return commit_guest_nt_prelude(false);
+#else
 	static const std::vector<uint8_t> code{
 		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0xce, 0x00, 0x00, 0x00, 0x48, 0x83, 0xf9, 0xff, 0x0f, 0x85, 0xc4, 0x00,
 		0x00, 0x00, 0x4d, 0x85, 0xc0, 0x0f, 0x85, 0xbb, 0x00, 0x00, 0x00, 0x48, 0x85, 0xd2, 0x0f, 0x84, 0xb2, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xc9, 0x0f,
@@ -730,12 +867,16 @@ static const std::vector<uint8_t> &nt_commit_prelude()
 	static_assert(NativeMemory::commit_windows == 0xa00 && NativeMemory::commit_log == 0xd10 && NativeMemory::commit_log_count == 32,
 		"the commit preludes' offsets are written into their code");
 	return code;
+#endif
 }
 
 // NtFreeVirtualMemory decommitting at most 256 KiB of an open range, as the decommit prelude of VirtualFree does: the pages are
 // zeroed in place and logged with the low bit set, and the rounded base and size are written back.
 static const std::vector<uint8_t> &nt_decommit_prelude()
 {
+#ifdef __APPLE__
+	return commit_guest_nt_prelude(true);
+#else
 	static const std::vector<uint8_t> code{
 		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0xe5, 0x00, 0x00, 0x00, 0x48, 0x83, 0xf9, 0xff, 0x0f, 0x85, 0xdb, 0x00,
 		0x00, 0x00, 0x48, 0x85, 0xd2, 0x0f, 0x84, 0xd2, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xc0, 0x0f, 0x84, 0xc9, 0x00, 0x00, 0x00, 0x41, 0x81, 0xf9, 0x00,
@@ -749,6 +890,7 @@ static const std::vector<uint8_t> &nt_decommit_prelude()
 		0x29, 0xc3, 0x4d, 0x89, 0x18, 0x31, 0xc0, 0xc3, 0x49, 0x83, 0xc1, 0x10, 0xff, 0xc9, 0xeb, 0x9e, 0x48, 0xc7, 0xc1, 0xff, 0xff, 0xff, 0xff, 0x41,
 		0xb9, 0x00, 0x40, 0x00, 0x00, 0xe9, 0x00, 0x00, 0x00, 0x00};
 	return code;
+#endif
 }
 
 // IsChild walks the parents the window table holds, GetFocus reads the focus window the runtime publishes with it, and GetDpiForWindow
@@ -766,12 +908,14 @@ static const std::vector<uint8_t> &window_child_prelude()
 	return code;
 }
 
+#ifndef __APPLE__
 static const std::vector<uint8_t> &window_dpi_prelude()
 {
 	static const std::vector<uint8_t> code{
 		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0xb8, 0x60, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
 	return code;
 }
+#endif
 
 static const std::vector<uint8_t> &focus_prelude()
 {
@@ -1732,8 +1876,10 @@ static const std::vector<uint8_t> *block_prelude(std::string_view module, std::s
 		add({"gdi32.dll"}, {"RectInRegion"}, rect_in_region_prelude);
 		add({"gdi32.dll"}, {"GetRgnBox"}, region_box_prelude);
 		add({"gdi32.dll"}, {"PtInRegion"}, point_in_region_prelude);
+#ifndef __APPLE__ // Darwin keeps each thread's context in the host: the metrics it answers scale by it.
 		add({"user32.dll"}, {"SetThreadDpiAwarenessContext"}, dpi_set_prelude);
 		add({"user32.dll"}, {"GetThreadDpiAwarenessContext"}, dpi_get_prelude);
+#endif
 		add({"user32.dll"}, {"GetKeyboardLayout"}, keyboard_layout_prelude);
 		add({"user32.dll"}, {"IsWinEventHookInstalled"}, win_event_hook_prelude);
 		add({"user32.dll"}, {"PtInRect"}, point_in_rect_prelude);
@@ -1751,7 +1897,9 @@ static const std::vector<uint8_t> *block_prelude(std::string_view module, std::s
 		add({"user32.dll"}, {"InflateRect"}, inflate_rect_prelude);
 		add({"user32.dll"}, {"UnionRect"}, union_rect_prelude);
 		add({"user32.dll"}, {"MonitorFromPoint", "MonitorFromRect", "MonitorFromWindow"}, monitor_prelude);
+#ifndef __APPLE__ // Darwin keeps each thread's context in the host: the metrics it answers scale by it.
 		add({"user32.dll"}, {"GetWindowDpiAwarenessContext"}, window_dpi_context_prelude);
+#endif
 		add({"kernel32.dll", "kernelbase.dll"}, {"GetTickCount", "GetTickCount64"}, tick_prelude);
 		add({"winmm.dll"}, {"timeGetTime"}, tick_prelude);
 		add({"kernel32.dll", "kernelbase.dll"}, {"GetLocaleInfoEx"}, locale_prelude);
@@ -1795,7 +1943,9 @@ static const std::vector<uint8_t> *block_prelude(std::string_view module, std::s
 		add({"user32.dll"}, {"GetClientRect"}, window_client_prelude);
 		add({"user32.dll"}, {"GetWindowRect"}, window_outer_prelude);
 		add({"user32.dll"}, {"IsChild"}, window_child_prelude);
+#ifndef __APPLE__ // Darwin keeps each thread's context in the host: the metrics it answers scale by it.
 		add({"user32.dll"}, {"GetDpiForWindow"}, window_dpi_prelude);
+#endif
 		add({"user32.dll"}, {"GetFocus"}, focus_prelude);
 		add({"user32.dll"}, {"GetForegroundWindow"}, foreground_prelude);
 		add({"user32.dll"}, {"GetCursorPos"}, cursor_position_prelude);
@@ -1870,6 +2020,9 @@ static size_t string_prelude_slot(const GuestPrelude &prelude)
 
 static std::vector<uint8_t> commit_prelude(int32_t to_pointer, int32_t to_trap)
 {
+#ifdef __APPLE__
+	return commit_guest_prelude(to_pointer, to_trap, false);
+#else
 	// mov r10,[pointer]; test r10,r10; jz slow; test rcx,rcx; jz slow; test rdx,rdx; jz slow; cmp r8d,MEM_COMMIT; jne slow;
 	// cmp r9d,PAGE_READWRITE; je main; slow: jmp trap; restore: mov r8d,MEM_COMMIT; mov r9d,PAGE_READWRITE; jmp slow;
 	// main: rax = first page, r11 = end page; jbe slow; look through the open ranges at commit_windows for one holding [rax, r11),
@@ -1889,10 +2042,17 @@ static std::vector<uint8_t> commit_prelude(int32_t to_pointer, int32_t to_trap)
 	const int32_t relative = to_trap - int32_t(commit_jump(GuestMemoryApi::commit) + 5);
 	std::memcpy(code.data() + commit_jump(GuestMemoryApi::commit) + 1, &relative, 4);
 	return code;
+#endif
 }
 
 // Where the served stub behind an export sits: the export itself, or the stub a clock prelude falls back to; for a commit prelude, the
 // breakpoint it falls back to.
+// A plain x64 slot with the breakpoint past the hook space, NOPs before it.
+static bool plain_hookable_slot(std::span<const uint8_t> image, size_t rva)
+{
+	return rva + 15 < image.size() && image[rva + 14] == 0xcc && image[rva] == 0x90;
+}
+
 static uint32_t served_stub_rva(std::span<const uint8_t> image, std::string_view module, std::string_view name, uint32_t rva)
 {
 	if (queued_arguments(module, name) && rva <= image.size() && image.size() - rva >= queued_prelude_size &&
@@ -1905,7 +2065,7 @@ static uint32_t served_stub_rva(std::span<const uint8_t> image, std::string_view
 		image[rva] == 0x4c && image[rva + 1] == 0x8b && image[rva + 2] == 0xd1 && image[rva + 3] == 0xb8)
 		return rva;
 	// A plain provider has no guest-side prelude in front of its trap.
-	if (rva < image.size() && (image[rva] == 0xcc || (image[rva] == 0x90 && size_t(rva) + 15 < image.size() && image[rva + 14] == 0xcc)))
+	if (rva < image.size() && (image[rva] == 0xcc || plain_hookable_slot(image, rva)))
 		return rva;
 	if (answer_wrapper_at(image, rva)) {
 		int32_t relative = 0;
@@ -1953,11 +2113,84 @@ uint64_t api_trap_address(const PEModule &provider, std::string_view module, std
 		return provider.loaded.base() + address;
 	const uint32_t stub = served_stub_rva(image, module, name, address);
 	// A plain x64 slot keeps its breakpoint past the space hooking libraries overwrite.
-	if (!served_api(module, name) && size_t(stub) + 15 < image.size() && image[stub] == 0x90 && image[stub + 14] == 0xcc)
+	if (!served_api(module, name) && plain_hookable_slot(image, stub))
 		return provider.loaded.base() + stub + 14;
 	if (!served_api(module, name) && call_stubs() && stub_at(image, stub))
 		return provider.loaded.base() + stub + served_trap;
 	return provider.loaded.base() + stub + fast_stub_trap_offset(module, name);
+}
+
+std::string_view x86_fast_stub_slow_name(std::string_view name)
+{
+	if (name == "EnterCriticalSection")
+		return "RavenCriticalSectionWait";
+	if (name == "LeaveCriticalSection")
+		return "RavenCriticalSectionWake";
+	return name;
+}
+
+// RAVEN_SAMPLE_GUEST=1 reports every five seconds where the guest spent its running time, by module and 256-byte block, for either loop.
+void install_guest_sampler(NativeProcess &process, ModuleSet &modules)
+{
+	if (std::getenv("RAVEN_SAMPLE_GUEST")) {
+		auto samples = std::make_shared<std::map<uint64_t, uint32_t>>();
+		auto reported = std::make_shared<std::chrono::steady_clock::time_point>(std::chrono::steady_clock::now());
+		process.set_guest_sampler(std::chrono::milliseconds(2), [&modules, samples, reported](uint64_t rip) {
+			++(*samples)[rip & ~uint64_t(255)];
+			if (std::chrono::steady_clock::now() - *reported < std::chrono::seconds(5))
+				return;
+			*reported = std::chrono::steady_clock::now();
+			std::vector<std::pair<uint32_t, uint64_t>> top;
+			uint32_t total = 0;
+			for (const auto &[where, count] : *samples) {
+				top.emplace_back(count, where);
+				total += count;
+			}
+			std::sort(top.rbegin(), top.rend());
+			std::cerr << "samples: " << total << " in the last period\n";
+			for (size_t index = 0; index < std::min<size_t>(top.size(), 15); ++index) {
+				std::string place = "?";
+				for (const auto &[module_name, module] : modules.all())
+					if (top[index].second >= module->loaded.base() && top[index].second < module->loaded.base() + module->image.image_size) {
+						std::ostringstream text;
+						text << module_name << '+' << std::hex << top[index].second - module->loaded.base();
+						place = text.str();
+					}
+				std::cerr << "  " << top[index].first << ' ' << place << '\n';
+			}
+			// Then the modules, which show where the time goes when no single block stands out.
+			std::map<std::string_view, uint32_t> by_module;
+			for (const auto &[where, count] : *samples) {
+				std::string_view name = "?";
+				for (const auto &[module_name, module] : modules.all())
+					if (where >= module->loaded.base() && where < module->loaded.base() + module->image.image_size)
+						name = module_name;
+				by_module[name] += count;
+			}
+			std::vector<std::pair<uint32_t, std::string_view>> ranked;
+			for (const auto &[name, count] : by_module)
+				ranked.emplace_back(count, name);
+			std::sort(ranked.rbegin(), ranked.rend());
+			for (size_t index = 0; index < std::min<size_t>(ranked.size(), 10); ++index)
+				std::cerr << "  module " << ranked[index].first << ' ' << ranked[index].second << '\n';
+			samples->clear();
+		});
+	}
+}
+
+uint64_t x86_api_trap_address(const PEModule &provider, uint32_t address)
+{
+	// A trap is a breakpoint. An export that does not start with one is a fast stub, whose slow path sits at the fixed offset.
+	const auto image = provider.loaded.data();
+	const auto base = provider.loaded.base();
+	const auto trap_at = [&](uint64_t at) -> uint64_t {
+		return at < image.size() && image[at] == 0xcc ? base + at : 0;
+	};
+	if (const auto trap = trap_at(address))
+		return trap;
+	if (const auto trap = trap_at(address + 0x30))
+		return trap;
+	return base + address;
 }
 
 // Offset of the slow-path breakpoint inside a fast or served stub.
@@ -2041,11 +2274,12 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 	const size_t module_name = ordinals + exports.size() * 2;
 	// Each data export owns one zeroed 16-byte slot after the strings; the section becomes writable for them.
 	const size_t data_start = (module_name + string_size + 15) & ~size_t(15);
-	const bool kernel_module = fast_paths && !x86 && (name == "kernel32.dll" || name == "kernelbase.dll");
+	const bool kernel_module = fast_paths && (name == "kernel32.dll" || name == "kernelbase.dll");
+	const auto &stubs = x86 ? fast_stubs_x86() : fast_stubs();
 	size_t fast_count = 0;
 	if (kernel_module)
 		for (const auto symbol : exports)
-			for (const auto &stub : fast_stubs())
+			for (const auto &stub : stubs)
 				fast_count += stub.name == symbol;
 	const size_t fast_start = (data_start + data_exports.size() * 16 + 63) & ~size_t(63);
 	size_t served_count = 0;
@@ -2078,7 +2312,7 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 	const size_t commit_start = clock_start + clock_count * clock_prelude_size;
 	const size_t strings_start = commit_start + commit_count * commit_prelude_size;
 	size_t strings_size = 0;
-	if (kernel_module)
+	if (kernel_module && !x86)
 		for (const auto symbol : exports)
 			if (const auto *prelude = string_prelude(name, symbol))
 				strings_size += string_prelude_slot(*prelude);
@@ -2199,7 +2433,7 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 				code = wrapper;
 			}
 		}
-		if (const auto *prelude = kernel_module ? string_prelude(name, exports[index]) : nullptr) {
+		if (const auto *prelude = kernel_module && !x86 ? string_prelude(name, exports[index]) : nullptr) {
 			const size_t trap = code;
 			code = strings_next;
 			strings_next += string_prelude_slot(*prelude);
@@ -2217,7 +2451,7 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 			std::copy(prelude.begin(), prelude.end(), bytes.begin() + ptrdiff_t(code));
 		}
 		if (kernel_module)
-			for (const auto &stub : fast_stubs())
+			for (const auto &stub : stubs)
 				if (stub.name == exports[index]) {
 					code = fast_start + fast_next++ * 64;
 					std::copy(stub.code.begin(), stub.code.end(), bytes.begin() + ptrdiff_t(code));
@@ -2266,7 +2500,7 @@ struct ServedThreadScope {
 };
 
 // RAVEN_NO_GUEST_PATHS builds the providers without the paths the guest answers itself, for comparing the two.
-static bool guest_paths()
+bool guest_paths()
 {
 	static const bool enabled = !std::getenv("RAVEN_NO_GUEST_PATHS");
 	return enabled;
@@ -2317,6 +2551,29 @@ bool releasing_memory()
 	return releasing.load(std::memory_order_relaxed);
 }
 
+void write_native_api_inventory(const ModuleSet &modules, std::initializer_list<const ApiRegistry *> registries)
+{
+	const char *path = std::getenv("RAVEN_API_INVENTORY");
+	if (!path)
+		return;
+	std::ofstream output(path);
+	if (!output)
+		throw std::runtime_error("cannot write native API inventory");
+	for (const auto *registry : registries)
+		for (const auto &[name, words] : registry->exports())
+			output << "host\t" << name << '\t' << words << '\n';
+	for (const auto &[name, module] : modules.all())
+		for (const auto &symbol : module->exports) {
+			if (!symbol.address && symbol.forwarder.empty())
+				continue;
+			const auto kind = module->runtime_api ? "provider\t" : "guest\t";
+			if (symbol.names.empty())
+				output << kind << name << "\t#" << symbol.ordinal << '\t' << symbol.forwarder << '\n';
+			for (const auto &exported : symbol.names)
+				output << kind << name << '\t' << exported << '\t' << symbol.forwarder << '\n';
+		}
+}
+
 NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	const std::string &bootstrap, std::chrono::milliseconds timeout,
 	std::function<std::optional<ModuleBytes>(std::string_view)> source,
@@ -2329,6 +2586,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	for (const auto &[name,module]:modules.all()) validate_native_image(module->image,name);
 	// The system libraries are the runtime's, except those a copy in the program's folder may replace: those are looked for there first.
 	std::vector<std::string_view> native_modules{"kernel32.dll","kernelbase.dll","user32.dll","gdi32.dll","comctl32.dll","ntdll.dll"};
+#ifdef __APPLE__
+	native_modules.emplace_back("raven-audio.dll");
+#endif
 	for (const auto library : system_library_names())
 		if (!program_may_replace(library) && std::find(native_modules.begin(), native_modules.end(), library) == native_modules.end())
 			native_modules.push_back(library);
@@ -2357,6 +2617,19 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	std::map<uint64_t,std::pair<uint32_t,std::string>> services;
 	std::map<uint32_t, std::string> generated_services;
 	std::vector<std::string_view> nt_names(NativeMemory::nt_exports().begin(),NativeMemory::nt_exports().end());
+	nt_names.push_back("NtGetContextThread");
+	nt_names.push_back("NtSetContextThread");
+#ifdef __APPLE__
+	nt_names.push_back("__wine_dbg_output");
+	nt_names.push_back("__wine_unix_call_dispatcher");
+	nt_names.push_back("LdrGetDllHandle");
+	nt_names.push_back("RtlFindExportedRoutineByName");
+	// Chromium's sandbox resolves the natives it intercepts from ntdll's export table, not through GetProcAddress.
+	for (const auto name : {"NtCreateFile", "NtOpenFile", "NtQueryAttributesFile", "NtQueryFullAttributesFile", "NtSetInformationFile",
+		"NtOpenSection"})
+		nt_names.push_back(name);
+	nt_names.push_back("strncpy"); // winemetal.dll can be loaded after ntdll's export table was built.
+#endif
 	nt_names.insert(nt_names.end(),NativeEnvironment::nt_exports().begin(),NativeEnvironment::nt_exports().end());
 	nt_names.insert(nt_names.end(),NativeObjectAPI::nt_exports().begin(),NativeObjectAPI::nt_exports().end());
 	const bool has_heap=modules.all().contains("raven-rtl.dll");
@@ -2374,6 +2647,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"NtWriteFile", "NtQueryDirectoryFile", "ZwQueryDirectoryFile", "RtlNtStatusToDosError", "NtQueryObject", "NtMapViewOfSection", "NtUnmapViewOfSection",
 		"RtlAcquireSRWLockExclusive", "RtlAcquireSRWLockShared", "RtlWakeConditionVariable", "RtlWakeAllConditionVariable", "RtlWaitOnAddress",
 		"RtlWakeAddressSingle", "RtlWakeAddressAll",
+		// The system timer's resolution, which games request at startup.
+		"NtQueryTimerResolution", "NtSetTimerResolution",
 		// The processor a thread runs on.
 		"NtGetCurrentProcessorNumber", "NtGetCurrentProcessorNumberEx", "RtlGetCurrentProcessorNumber", "RtlGetCurrentProcessorNumberEx",
 		// The C runtime string functions ntdll exports.
@@ -2384,11 +2659,15 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"NtImpersonateAnonymousToken",
 		// Opening files by their native names, which Rust's standard library and mio look up at run time.
 		"NtCreateFile", "NtOpenFile",
+		"RtlRunOnceExecuteOnce", "RtlSetLastWin32Error", "RtlCompareMemory", "RtlMoveMemory", "RtlFillMemory", "RtlZeroMemory",
+		"memcpy", "memmove", "memset", "memcmp", "wcslen",
+		"RtlReleaseSRWLockExclusive", "RtlReleaseSRWLockShared",
 		// What an open file and its volume are, which paint.net's file system layer looks up at run time.
 		"NtQueryInformationFile", "NtQueryVolumeInformationFile",
 		// What the runtime's own components import from ntdll, which they need whether a program loads them at start or later.
-		"DbgPrint", "NtCancelIoFile", "NtCreateSection", "NtFsControlFile", "NtReadFile", "RtlCreateUnicodeStringFromAsciiz", "RtlFreeHeap",
-		"RtlFreeUnicodeString", "RtlDllShutdownInProgress", "RtlGetVersion", "RtlIpv6AddressToStringExW", "RtlIpv6StringToAddressW", "RtlLengthSid", "RtlUnicodeToMultiByteN",
+		"DbgPrint", "NtCancelIoFileEx", "NtDeviceIoControlFile", "NtOpenDirectoryObject", "NtQueryDirectoryObject",
+		"RtlDosPathNameToNtPathName_U_WithStatus", "NtCancelIoFile", "NtCreateSection", "NtFsControlFile", "NtReadFile", "RtlCreateUnicodeStringFromAsciiz", "RtlFreeHeap",
+		"RtlFreeUnicodeString", "RtlDllShutdownInProgress", "RtlGetVersion", "RtlGetNtVersionNumbers", "RtlIpv6AddressToStringExW", "RtlIpv6StringToAddressW", "RtlLengthSid", "RtlUnicodeToMultiByteN",
 		"RtlUnicodeToMultiByteSize", "RtlIsTextUnicode", "RtlImageNtHeader", "NtDeleteKey",
 		// What the Chromium Embedded Framework imports from ntdll, which the WebBrowser control loads when it first shows a page.
 		"RtlFormatCurrentUserKeyPath", "RtlGetLastNtStatus",
@@ -2424,6 +2703,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	std::sort(nt_names.begin(),nt_names.end());
 	// Every Windows system library that a program may import gets a provider; names without a handler stop visibly when called.
 	std::vector<std::string> system_modules{"kernel32.dll", "kernelbase.dll", "user32.dll", "gdi32.dll", "comctl32.dll"};
+#ifdef __APPLE__
+	system_modules.emplace_back("raven-audio.dll");
+	system_modules.emplace_back("xaudio2_9.dll");
+#endif
 	for (const auto library : system_library_names())
 		if (std::find(system_modules.begin(), system_modules.end(), library) == system_modules.end())
 			system_modules.emplace_back(library);
@@ -2469,6 +2752,16 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		// find ones that cannot run, as it does not on a system that lacks them.
 		const auto listed = library == "ntdll.dll" ? std::span<const std::string_view>() : system_export_names(library);
 		symbols.insert(symbols.end(), listed.begin(), listed.end());
+#ifdef __APPLE__
+		if (library == "raven-audio.dll") {
+			const auto audio = raven_darwin::audio_method_names();
+			symbols.insert(symbols.end(), audio.begin(), audio.end());
+		}
+		if (library == "xaudio2_9.dll") {
+			symbols.push_back("XAudio2Create");
+			symbols.push_back("XAudio2CreateWithVersionInfo");
+		}
+#endif
 		if (library == "ntdll.dll")
 			for (const auto &[module_name, module] : modules.all())
 				for (const auto &symbol : module->imports) {
@@ -2509,6 +2802,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		std::vector<std::pair<std::string_view, uint16_t>> ordinals(published_numbers.begin(), published_numbers.end());
 		if (const auto extra = unknown_ordinals.find(std::string(name)); extra != unknown_ordinals.end())
 			ordinals.insert(ordinals.end(), extra->second.begin(), extra->second.end());
+#ifdef __APPLE__
+		if (darwin_graphics_system_module(name, true))
+			continue; // The provisioned library loads in place of a stub.
+#endif
 		PEModule *provider = nullptr;
 		const auto found = modules.all().find(name);
 		if (found != modules.all().end() && found->second->runtime_api) {
@@ -2576,7 +2873,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				if (overlay == modules.all().end() || overlay->second->runtime_api)
 					continue;
 				for (auto &symbol : provider->exports)
-					if (!symbol.names.empty() && (!nt_only || symbol.names.at(0).find("GenericTable") != std::string::npos || symbol.names.at(0).find("CriticalSection") != std::string::npos || symbol.names.at(0).find("SRWLock") != std::string::npos || symbol.names.at(0) == "RtlVirtualUnwind" || symbol.names.at(0) == "RtlGrowFunctionTable") && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
+					if (!symbol.names.empty() && !host_device_export(name, symbol.names.at(0)) && (!nt_only || symbol.names.at(0).find("GenericTable") != std::string::npos || symbol.names.at(0).find("CriticalSection") != std::string::npos || symbol.names.at(0).find("SRWLock") != std::string::npos || symbol.names.at(0) == "RtlVirtualUnwind" || symbol.names.at(0) == "RtlGrowFunctionTable") && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
 							return candidate.forwarder.empty() && std::find(candidate.names.begin(), candidate.names.end(), symbol.names.at(0)) != candidate.names.end();
 						}))
 						symbol.forwarder = overlay_rule.prefix + symbol.names.at(0);
@@ -2615,6 +2912,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	if (modules.all().contains("ntdll.dll"))
 		for (const auto &symbol : modules.all().at("ntdll.dll")->exports)
 			for (const auto &name : symbol.names)
+#ifdef __APPLE__
+				if (name != "__wine_unix_call_dispatcher")
+#endif
 				if (symbol.address && (modules.all().at("ntdll.dll")->runtime_api || std::find(nt_names.begin(),nt_names.end(),name)!=nt_names.end()) && symbol.forwarder.empty()) {
 					const auto &image=*modules.all().at("ntdll.dll");
 					if (image.runtime_api) {
@@ -2687,6 +2987,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			module->loaded.detach();
 	});
 	NativeProcess process(images, bootstrap, timeout, NativeMode::x64, entry.image.stack_reserve);
+#ifdef __APPLE__
+	DarwinUnixCalls darwin_unix_calls(process, modules);
+#endif
 	process.add_api_traps(std::move(api_traps));
 	// A start a warm host forked ahead has no time limit until its request comes (warm_ready below).
 	auto deadline = std::chrono::steady_clock::now() + (warm_waiting() ? std::chrono::milliseconds(86400000) : timeout);
@@ -2733,6 +3036,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	NativeTLS tls(process, environment, tls_order);
 	NativeModuleAPI module_api(process, environment, modules, entry);
 	NativeResources resources(process, environment, modules, entry);
+#ifdef __APPLE__
+	// Per-process private commit quota; the modeled system limit is enforced separately.
+	const size_t commit_limit=process_commit_limit();
+#else
 	// What a program may commit, as set by RAVEN_COMMIT_LIMIT_MB. By default the host's memory, as Windows lets a 64-bit program commit up
 	// to its memory and page file: a .NET program maps assemblies of more than 100 MiB as images, and each is committed whole.
 	const size_t host_memory=size_t(std::max<long>(::sysconf(_SC_PHYS_PAGES),0))*size_t(std::max<long>(::sysconf(_SC_PAGESIZE),0));
@@ -2740,6 +3047,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	const char *setting=std::getenv("RAVEN_COMMIT_LIMIT_MB");
 	const size_t requested=setting ? size_t(std::strtoull(setting,nullptr,10)) : 0;
 	const size_t commit_limit=requested ? requested*1024*1024 : std::max(host_memory,size_t(512)*1024*1024);
+#endif
 	NativeMemory memory(process,environment,commit_limit);
 	register_images(memory,modules);
 	NativeObjectAPI object_api(process,environment,kernel_objects,deadline);
@@ -2753,6 +3061,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	windows.set_deadline(deadline);
 	windows.set_menu_loader([&desktop](uint64_t instance,uint64_t identifier) { return desktop.menu_resource(instance,identifier); });
 	windows.set_presentation(std::move(presentation));
+#ifdef __APPLE__
+	DarwinDXMTPresentation dxmt_presentation(process, windows);
+#endif
 #ifdef RAVEN_OPENGL
 	std::unique_ptr<OpenGLBridge> opengl;
 	if (native_opengl) opengl = std::make_unique<OpenGLBridge>(process, modules, desktop_objects, windows);
@@ -2789,7 +3100,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 							const auto saved=process.context();
 							(void)saved;
 						}
-						const auto rip=process.context().registers.rip;
+						const auto rip=process.registers().rip;
 						for (const auto &[module_name,module]:modules.all())
 							if (rip>=module->loaded.base() && rip<module->loaded.base()+module->image.image_size)
 								std::cerr << ' ' << module_name << '+' << std::hex << rip-module->loaded.base() << std::dec;
@@ -2805,10 +3116,13 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 									return module_name+"+"+std::to_string(at-module->loaded.base());
 							return std::string("?");
 						};
-						const auto registers=process.context().registers;
-						std::cerr << "fault: signal " << result.signal << " at " << std::hex << result.instruction << " (" << describe(result.instruction) << ")"
-							<< " address=" << result.fault_address << " rax=" << registers.rax << " rbx=" << registers.rbx
-							<< " rcx=" << registers.rcx << " rdx=" << registers.rdx << " rsp=" << registers.rsp;
+						const auto registers=process.registers();
+						std::cerr << "fault: signal " << result.signal << " code=" << std::dec << result.signal_code << " at " << std::hex << result.instruction << " (" << describe(result.instruction) << ")"
+							<< " eflags=" << registers.eflags << " address=" << result.fault_address << " rax=" << registers.rax << " rbx=" << registers.rbx
+							<< " rcx=" << registers.rcx << " rdx=" << registers.rdx << " rsp=" << registers.rsp
+							<< " r8=" << registers.r8 << " r9=" << registers.r9 << " r10=" << registers.r10
+							<< " r11=" << registers.r11 << " r12=" << registers.r12 << " r13=" << registers.r13
+							<< " r14=" << registers.r14 << " r15=" << registers.r15;
 						for (const auto address : {registers.rsp, registers.rbx}) {
 							try {
 								const auto bytes = process.read_memory(address, 64);
@@ -2819,6 +3133,18 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 								}
 							} catch (const std::runtime_error &) {}
 						}
+						try {
+							NativeUnwinder trace_unwinder(process, modules);
+							auto frame = context_from_process(process.context());
+							std::cerr << " stack:";
+							for (int depth = 0; depth < 24; ++depth) {
+								const auto pc = context_rip(frame);
+								if (!trace_unwinder.module_at(pc)) break;
+								std::cerr << ' ' << describe(pc);
+								if (const auto function = trace_unwinder.lookup(pc)) trace_unwinder.unwind(0, pc, *function, frame);
+								else trace_unwinder.unwind_leaf(frame);
+							}
+						} catch (const std::runtime_error &) {}
 						std::cerr << std::dec << '\n';
 					}
 					// A CPU fault is a Windows exception: structured handlers of the faulting frames get the first chance.
@@ -2836,7 +3162,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 					}
 					return result;
 				}
-				const auto context=process.context().registers;
+				const auto context=process.registers();
 				const auto length=uint32_t(context.rdx);
 				if (length>512 || length>1024*1024-debug_bytes)
 					return result;
@@ -2907,26 +3233,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				process.abandon_call();
 				throw ProcessExit{code,result.instruction};
 			}
-			// RAVEN_TRACE_API is 1 for every call or a comma-separated list of API names to follow.
-			bool tracing = false;
-			static const char *const trace_selection = std::getenv("RAVEN_TRACE_API");
+			const bool tracing = api_trace_selected(entry.name, api_name);
 			static const char *const trace_program = std::getenv("RAVEN_TRACE_PROGRAM");
-			if (const char *selection = trace_selection; selection &&
-				(!trace_program || equal_fold(from_utf8(entry.name), from_utf8(trace_program)))) {
-				const std::string wanted = std::string(",") + selection + ",";
-				tracing = wanted == ",1," || wanted.find("," + api_name + ",") != wanted.npos;
-			}
-			// RAVEN_TRACE_API_ON names a file: while it exists every call is traced, checked at most ten times a second.
-			static const char *const trace_switch = std::getenv("RAVEN_TRACE_API_ON");
-			if (trace_switch && !tracing) {
-				static auto checked = std::chrono::steady_clock::time_point{};
-				static bool switched = false;
-				if (const auto now = std::chrono::steady_clock::now(); now - checked > std::chrono::milliseconds(100)) {
-					checked = now;
-					switched = ::access(trace_switch, F_OK) == 0;
-				}
-				tracing = switched;
-			}
 			if (tracing) {
 				static const bool trace_time = std::getenv("RAVEN_TRACE_TIME") != nullptr;
 				if (trace_time)
@@ -2942,7 +3250,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 						if (const auto text = describe_text(process, value); !text.empty())
 							std::cerr << " <" << text << '>';
 				// The caller shows which guest module and offset asked, which is what a diagnosis needs most.
-				const auto stack = process.read_memory(process.context().registers.rsp, 8);
+				const auto stack = process.read_memory(process.registers().rsp, 8);
 				uint64_t caller = 0;
 				std::memcpy(&caller, stack.data(), 8);
 				for (const auto &[module_name, module] : modules.all())
@@ -2968,7 +3276,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 							if (rip >= module->loaded.base() && rip < module->loaded.base() + module->image.image_size)
 								std::cerr << ' ' << module_name << '+' << std::hex << rip - module->loaded.base() << std::dec;
 						if (std::getenv("RAVEN_TRACE_STRINGS")) {
-							const auto registers = process.context().registers;
+							const auto registers = process.registers();
 							for (const auto value : {registers.rcx, registers.rdx, registers.r8, registers.r9})
 								if (const auto value_text = describe_text(process, value); !value_text.empty())
 									std::cerr << " <" << value_text << '>';
@@ -2998,6 +3306,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 					kernel_ptr->leave_abandoned_callbacks();
 				const WindowCallScope window_scope(windows);
 				// The generalized desktop services come first so that they replace the older narrow ones.
+#ifdef __APPLE__
+				if (darwin_unix_calls.dispatch(api_name))
+					dispatched = true;
+				else
+#endif
 				dispatched = desktop_api.dispatch(process, environment, api_name) || environment.dispatch(api_name) || module_api.dispatch(api_name) || resources.dispatch(api_name) || memory.dispatch(api_name) || object_api.dispatch(api_name) || heap.dispatch(api_name) || desktop.dispatch(api_name) || windows.dispatch(api_name) || api_registry.dispatch(process, environment, api_name)
 #ifdef RAVEN_VULKAN
 					|| vulkan.dispatch(api_name)
@@ -3083,7 +3396,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				}
 
 				for (const auto &[module_name, module] : modules.all()) {
-					const auto stack = process.read_memory(process.context().registers.rsp, 8);
+					const auto stack = process.read_memory(process.registers().rsp, 8);
 					uint64_t caller = 0;
 					std::memcpy(&caller, stack.data(), 8);
 					if (caller >= module->loaded.base() && caller < module->loaded.base() + module->image.image_size)
@@ -3129,9 +3442,21 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	});
 	GuestAllocator allocator(memory, heap);
 	NativeThreads threads(process, environment, memory, &tls, deadline);
+#ifdef __APPLE__
+	const auto unix_events = [&] {
+		process.drain_unix_events([&](uint64_t event) { kernel_objects.set_event(event, true); });
+		dxmt_presentation.poll();
+	};
+	threads.add_service(unix_events);
+	threads.add_pump(unix_events);
+#endif
 	threads.set_runner(invoke);
 	threads.default_stack_reserve = entry.image.stack_reserve;
 	threads_ptr = &threads;
+#ifdef __APPLE__
+	if (windows.needs_idle_poll())
+		threads.set_idle([&windows](std::chrono::milliseconds budget) { windows.poll_idle(budget); });
+#endif
 	// Other processes ask for handles of this one and send theirs; the scheduler answers them.
 	threads.add_service([&kernel_objects] { receive_handles(kernel_objects); });
 	object_api.set_cooperative(true);
@@ -3142,7 +3467,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	});
 	windows.set_input_taken([&threads] { threads.took_input(); });
 	windows.set_idle_sources([&threads](std::chrono::steady_clock::time_point limit) { return threads.idle_until(limit); },
-		[&threads](std::vector<pollfd> &descriptors) { threads.idle_descriptors(descriptors); }, [&threads] { threads.drain_wake(); });
+		[&threads](std::vector<pollfd> &descriptors) { return threads.idle_descriptors(descriptors); }, [&threads] { threads.drain_wake(); });
 	KernelContext kernel{process, environment, memory, allocator, kernel_objects, threads, paths, modules, entry, *launch, invoke};
 	if (launch->process_token_fd >= 0)
 		kernel.process_token = std::make_shared<AccessToken>(launch->process_token_fd);
@@ -3192,15 +3517,40 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	} served_pointers;
 	std::vector<uint64_t> called_stubs;
 	std::map<uint64_t, std::string> beside_names;
+#ifdef __APPLE__
+	// A parallel guest can be suspended between instructions. Only cooperative Rosetta uses the
+	// shared commit log, and its scheduler defers time-slice yields across the commit preludes.
+	bool bypass_commits = process.parallel();
+#endif
 	for (const auto &[module_key, module] : modules.all()) {
 		if (!module->runtime_api)
 			continue;
 		const std::string_view module_name = module_key.starts_with("system32-") ? std::string_view(module_key).substr(9) : std::string_view(module_key);
 		for (const auto &symbol : module->exports) {
+#ifdef __APPLE__
+			if (bypass_commits && symbol.address && !symbol.names.empty() && symbol.forwarder.empty() &&
+				guest_locked_commit_api(module_name, symbol.names.at(0))) {
+				const auto target = served_stub_rva(module->loaded.data(), module_name, symbol.names.at(0), symbol.address);
+				if (target != symbol.address) {
+					auto *place = module->loaded.data().data() + symbol.address;
+					std::array<uint8_t, 12> saved;
+					std::copy_n(place, saved.size(), saved.begin());
+					served_pointers.entries.emplace_back(place, saved);
+					place[0] = 0xe9;
+					const int32_t relative = int32_t(target) - int32_t(symbol.address + 5);
+					std::memcpy(place + 1, &relative, 4);
+				}
+			}
+#endif
 			// The clock and the tick counts only read calibration; their pointers are safe while other threads run.
 			const auto *prelude = symbol.address && !symbol.names.empty() && symbol.forwarder.empty() ? block_prelude(module_name, symbol.names.at(0)) : nullptr;
 			if (symbol.address && !symbol.names.empty() && symbol.forwarder.empty() &&
+#ifdef __APPLE__
+				(guest_clock_api(module_name, symbol.names.at(0)) || prelude == &tick_prelude() ||
+					(!process.parallel() && !(bypass_commits && guest_locked_commit_api(module_name, symbol.names.at(0))) && prelude) ||
+#else
 				(guest_clock_api(module_name, symbol.names.at(0)) || prelude == &tick_prelude() || (!process.parallel() && prelude) ||
+#endif
 					(process.parallel() && answer_wrapper_at(module->loaded.data(), symbol.address))) &&
 				served_stub_rva(module->loaded.data(), module_name, symbol.names.at(0), symbol.address) != symbol.address) {
 				auto image = module->loaded.data();
@@ -3272,7 +3622,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			for (const auto &symbol : module->exports)
 				if (symbol.address && !symbol.names.empty() && symbol.forwarder.empty() && guest_commit_api(module_name, symbol.names.at(0)) &&
 					served_stub_rva(module->loaded.data(), module_name, symbol.names.at(0), symbol.address) != symbol.address)
+#ifdef __APPLE__
+					for (uint64_t piece=0; piece<commit_prelude_size; piece+=served_trap)
+#else
 					for (const uint64_t piece : {uint64_t(0), uint64_t(served_trap)})
+#endif
 						served_stubs.push_back(module->loaded.base() + symbol.address + piece);
 		}
 	// So must one between taking the screen context and reading which it is, or reading a window's or a region's record.
@@ -3288,7 +3642,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 						for (uint64_t piece = 0; piece < prelude->size(); piece += served_trap)
 							served_stubs.push_back(module->loaded.base() + symbol.address + piece);
 		}
+#ifdef __APPLE__
+	memory.set_commit_block(bypass_commits ? nullptr : served_block);
+#else
 	memory.set_commit_block(served_block);
+#endif
 	windows.set_screen_block(served_block);
 	static_assert(focus_published == NativeWindows::focus_published && focus_window == NativeWindows::focus_window &&
 		foreground_window == NativeWindows::foreground_window && cursor_position == NativeWindows::cursor_position,
@@ -3547,7 +3905,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		windows.screen_dc_use(found->second);
 		const WindowCallScope window_scope(windows);
 		const auto profile_start = RuntimeProfile::instance().enabled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-		const bool dispatched = api_registry.dispatch(process, environment, found->second)
+		const bool dispatched = desktop_api.dispatch(process, environment, found->second) || api_registry.dispatch(process, environment, found->second)
 #ifdef RAVEN_VULKAN
 			|| vulkan.dispatch(found->second)
 #endif
@@ -3589,51 +3947,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		published[3] = second[3];
 		__atomic_store_n(&published[1], second[1], __ATOMIC_RELEASE);
 	});
-	// RAVEN_SAMPLE_GUEST=1 reports every five seconds where the guest spent its running time, by module and 256-byte block.
-	if (std::getenv("RAVEN_SAMPLE_GUEST")) {
-		auto samples = std::make_shared<std::map<uint64_t, uint32_t>>();
-		auto reported = std::make_shared<std::chrono::steady_clock::time_point>(std::chrono::steady_clock::now());
-		process.set_guest_sampler(std::chrono::milliseconds(2), [&modules, samples, reported](uint64_t rip) {
-			++(*samples)[rip & ~uint64_t(255)];
-			if (std::chrono::steady_clock::now() - *reported < std::chrono::seconds(5))
-				return;
-			*reported = std::chrono::steady_clock::now();
-			std::vector<std::pair<uint32_t, uint64_t>> top;
-			uint32_t total = 0;
-			for (const auto &[where, count] : *samples) {
-				top.emplace_back(count, where);
-				total += count;
-			}
-			std::sort(top.rbegin(), top.rend());
-			std::cerr << "samples: " << total << " in the last period\n";
-			for (size_t index = 0; index < std::min<size_t>(top.size(), 15); ++index) {
-				std::string place = "?";
-				for (const auto &[module_name, module] : modules.all())
-					if (top[index].second >= module->loaded.base() && top[index].second < module->loaded.base() + module->image.image_size) {
-						std::ostringstream text;
-						text << module_name << '+' << std::hex << top[index].second - module->loaded.base();
-						place = text.str();
-					}
-				std::cerr << "  " << top[index].first << ' ' << place << '\n';
-			}
-			// Then the modules, which show where the time goes when no single block stands out.
-			std::map<std::string_view, uint32_t> by_module;
-			for (const auto &[where, count] : *samples) {
-				std::string_view name = "?";
-				for (const auto &[module_name, module] : modules.all())
-					if (where >= module->loaded.base() && where < module->loaded.base() + module->image.image_size)
-						name = module_name;
-				by_module[name] += count;
-			}
-			std::vector<std::pair<uint32_t, std::string_view>> ranked;
-			for (const auto &[name, count] : by_module)
-				ranked.emplace_back(count, name);
-			std::sort(ranked.rbegin(), ranked.rend());
-			for (size_t index = 0; index < std::min<size_t>(ranked.size(), 10); ++index)
-				std::cerr << "  module " << ranked[index].first << ' ' << ranked[index].second << '\n';
-			samples->clear();
-		});
-	}
+	install_guest_sampler(process, modules);
 	kernel_ptr=&kernel;
 	NativeUnwinder unwinder(process, modules);
 	register_exception_api(api_registry, kernel, unwinder);
@@ -3668,15 +3982,22 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_file_api(api_registry, kernel);
 	register_shlwapi_api(api_registry, kernel);
 	register_platform_api(api_registry, kernel);
+#ifdef __APPLE__
+	raven_darwin::register_audio_api(api_registry, kernel);
+#endif
 	register_actctx_api(api_registry, kernel);
 	register_version_api(api_registry, kernel);
 #ifdef RAVEN_OPENGL
 	if (opengl) opengl->register_api(api_registry, threads);
 #endif
+#ifdef __APPLE__
+	register_darwin_d3dkmt(desktop_api, kernel_objects, threads);
+#endif
 	windows.register_api(desktop_api);
 	desktop.register_gdi_api(desktop_api);
 	desktop.register_text_api(desktop_api);
 	desktop.register_image_api(desktop_api);
+	desktop.register_print_api(desktop_api, kernel);
 	apply_registry_settings(hive);
 	__atomic_store_n(&served_block[theme_state / 8], classic_theme() ? 1 : 2, __ATOMIC_RELEASE);
 	paths.set_package_roots([&hive] { return virtual_package_roots(hive); });
@@ -3687,6 +4008,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_profile_api(api_registry, profile);
 	register_ansi_adapters(api_registry);
 	register_legacy_file_api(api_registry);
+#ifdef __APPLE__
+	raven_darwin::register_nt_file_api(api_registry, kernel);
+#endif
+	write_native_api_inventory(modules, {&api_registry, &desktop_api});
 	std::vector<const PEModule *> attached;
 	attached.reserve(order.size());
 	const auto notify_tls = [&](const PEModule &module, uint64_t reason) {
@@ -3778,6 +4103,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		// managed code alone loads, as the runtime of .NET 2.0 loads its class library. A library loaded as a data file or for its
 		// resources is mapped the same way, whatever its width and even when it is a program, and stays out of the loader's list.
 		const uint32_t flags = module_api.load_flags();
+		bool system_requested = (flags & 0x1f00) == 0x800;
 		const bool as_data = flags & 0x62;
 		const bool unresolved = (flags & 1) || as_data;
 		if (name.empty()) {
@@ -3807,6 +4133,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 					character = static_cast<char>(character + ('a' - 'A'));
 			}
 			const bool system_folder = folder == "c:\\windows\\system32" || folder == "c:\\windows\\syswow64";
+			system_requested = system_requested || system_folder;
 			if (system_folder && modules.all().contains("system32-" + identity)) {
 				name = "system32-" + identity;
 			} else {
@@ -3836,7 +4163,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			name += ".dll";
 		if (const auto host = apiset_host(name); !host.empty())
 			name = host;
-		if ((flags & 0x1f00) == 0x800 && modules.all().contains("system32-" + name))
+		if (system_requested && modules.all().contains("system32-" + name))
 			name = "system32-" + name;
 		const auto existing = modules.all().find(name);
 		// Other threads waited above, so a load already under way is this thread's own: a library starting up loads another, as
@@ -3906,8 +4233,22 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				origin = explicit_file->second;
 			} else {
 				const auto system_names = system_library_names();
-				const bool system = std::find(system_names.begin(), system_names.end(), identity) != system_names.end();
-				if ((!system || (has_launch && program_may_replace(identity))) && !activation_contexts().library_folder(identity)) {
+				// Guest components and their CRT have no Win32 import-library export list, but are system libraries too.
+				const bool component = identity == "dwrite.dll" || identity == "d2d1.dll" || identity == "uianimation.dll" ||
+					identity == "msvcrt.dll" || identity == "ucrtbase.dll" ||
+					std::find(std::begin(runtime_components), std::end(runtime_components), identity) != std::end(runtime_components)
+#ifdef __APPLE__
+					|| darwin_graphics_system_module(identity, true)
+#endif
+					;
+				const bool system = std::find(system_names.begin(), system_names.end(), identity) != system_names.end() || component;
+#ifdef __APPLE__
+				// System32 requests use the configured graphics family even when an app ships a library of the same name.
+				if (system_requested)
+					if (auto configured = darwin_graphics_module(identity, true))
+						bytes.emplace(std::move(*configured));
+#endif
+				if (!bytes && (!system || (has_launch && program_may_replace(identity))) && !activation_contexts().library_folder(identity)) {
 					if (const auto found = paths.find_library(launch->image_path, from_utf8(identity), true, flags)) {
 						bool system_copy = false;
 						if (system) {
@@ -3928,7 +4269,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 					}
 				}
 				// The DirectSound component is what a search of the system directory finds for dsound.dll.
-				if (!bytes && (!(system && (flags & 0x1f00)) || identity == "dsound.dll"))
+				if (!bytes && (!(system && (flags & 0x1f00)) || component || identity == "dsound.dll"))
 					if (auto read = source(identity)) bytes.emplace(std::move(*read));
 				if (!bytes && system) {
 					if (const auto fallback = modules.all().find("system32-" + identity); fallback != modules.all().end())

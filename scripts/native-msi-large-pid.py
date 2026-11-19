@@ -16,6 +16,10 @@ START = 'echo "$1" > /proc/sys/kernel/ns_last_pid || exit 1; shift; exec "$@"'
 
 def main():
     raven, program = sys.argv[1:]
+    # The probe places processes in a Linux PID namespace; other systems have neither it nor this limit.
+    if not Path("/proc/sys/kernel/pid_max").exists():
+        print("SKIP: no Linux PID namespace to start processes in")
+        return SKIP
     if int(Path("/proc/sys/kernel/pid_max").read_text()) <= FIRST + 1000:
         print(f"SKIP: pid_max is at most {FIRST + 1000:#x}, so process ids do not reach six hex digits")
         return SKIP

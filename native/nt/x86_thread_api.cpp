@@ -10,6 +10,19 @@ namespace raven {
 
 namespace {
 
+#ifdef __APPLE__
+constexpr std::array<std::pair<std::string_view, uint32_t>, 25> thread_exports{{
+	{"CreateThread", 6}, {"DeleteCriticalSection", 1}, {"EnterCriticalSection", 1}, {"ExitThread", 1}, {"GetCurrentThreadStackLimits", 2}, {"GetExitCodeThread", 2},
+	{"InitializeCriticalSection", 1}, {"InitializeCriticalSectionAndSpinCount", 2}, {"InitializeCriticalSectionEx", 3}, {"LeaveCriticalSection", 1}, {"ResumeThread", 1}, {"SetThreadPriority", 2},
+	// The ntdll forms of the same calls, which programs that name the RTL directly (vox.dll among them) import: a status instead of the
+	// last error, and the same sections as the kernel32 forms.
+	{"RtlDeleteCriticalSection", 1}, {"RtlEnterCriticalSection", 1}, {"RtlInitializeCriticalSection", 1}, {"RtlInitializeCriticalSectionAndSpinCount", 2},
+	{"RtlInitializeCriticalSectionEx", 3}, {"RtlLeaveCriticalSection", 1}, {"RtlTryEnterCriticalSection", 1},
+	{"Sleep", 1}, {"SwitchToThread", 0}, {"TryEnterCriticalSection", 1}, {"WaitForSingleObject", 2},
+	// The slow paths of the guest-side critical section stubs, which reach the runtime under these names.
+	{"RavenCriticalSectionWait", 1}, {"RavenCriticalSectionWake", 1},
+}};
+#else
 constexpr std::array<std::pair<std::string_view, uint32_t>, 23> thread_exports{{
 	{"CreateThread", 6}, {"DeleteCriticalSection", 1}, {"EnterCriticalSection", 1}, {"ExitThread", 1}, {"GetCurrentThreadStackLimits", 2}, {"GetExitCodeThread", 2},
 	{"InitializeCriticalSection", 1}, {"InitializeCriticalSectionAndSpinCount", 2}, {"InitializeCriticalSectionEx", 3}, {"LeaveCriticalSection", 1}, {"ResumeThread", 1}, {"SetThreadPriority", 2},
@@ -19,6 +32,7 @@ constexpr std::array<std::pair<std::string_view, uint32_t>, 23> thread_exports{{
 	{"RtlInitializeCriticalSectionEx", 3}, {"RtlLeaveCriticalSection", 1}, {"RtlTryEnterCriticalSection", 1},
 	{"Sleep", 1}, {"SwitchToThread", 0}, {"TryEnterCriticalSection", 1}, {"WaitForSingleObject", 2},
 }};
+#endif
 
 constexpr uint32_t wait_timeout = 0x102, wait_failed = UINT32_MAX, still_active = 259;
 
@@ -63,18 +77,80 @@ uint32_t NativeX86Threads::wait(uint64_t handle, uint32_t milliseconds)
 		}
 		// An object that turns signaled by itself, such as a timer, is looked at again when it says.
 		auto until = wake;
+		std::vector<pollfd> announced;
 		if (const auto due = waited.wakes_at(0); due && (!until || *due < *until))
 			until = due;
-		threads.block(ready, until);
+		if (const int descriptor = waited.wake_descriptor(0); descriptor >= 0)
+			announced.push_back({descriptor, POLLIN, 0});
+		threads.block(ready, until, false, false, false, announced);
 	}
 }
 
+#ifdef __APPLE__
+// A section is its guest fields, as on Windows, so the stubs in the guest and the calls served here share it. LockCount (4) is the lock
+// word of Windows XP: -1 while free, and each entry adds one, so after the owner's entries it counts the threads waiting. OwningThread (0xc)
+// and RecursionCount (8) belong to the owner. A thread that finds the section held waits here for a handoff, which a release that sees
+// waiters gives: one token per release, taken by one waiter, so no thread is woken to find the section gone again.
+uint32_t NativeX86Threads::section_word_at(uint64_t address)
+{
+	try {
+		const auto bytes = process.read_memory(address, 4);
+		return uint32_t(bytes[0]) | uint32_t(bytes[1]) << 8 | uint32_t(bytes[2]) << 16 | uint32_t(bytes[3]) << 24;
+	} catch (const std::runtime_error &) {
+		return 0;
+	}
+}
+
+void NativeX86Threads::section_word(uint64_t address, uint32_t value)
+{
+	process.write_memory(address, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(&value), 4));
+}
+
+int32_t NativeX86Threads::add_lock_count(uint64_t address, int32_t delta)
+{
+	// Atomic against the guest's own lock inc and dec on other threads; a section packed off its alignment is rare enough to take as is.
+	const auto word = address + 4;
+	for (;;) {
+		const auto old = section_word_at(word);
+		const auto wanted = uint32_t(int32_t(old) + delta);
+		if (word % 4) {
+			section_word(word, wanted);
+			return int32_t(wanted);
+		}
+		if (uint32_t(process.compare_exchange(word, old, wanted, 4)) == old)
+			return int32_t(wanted);
+	}
+}
+
+void NativeX86Threads::wait_for_section(uint64_t address)
+{
+	auto &state = section_waits[address];
+	++state.waiting;
+	threads.block([this, address] {
+		const auto found = section_waits.find(address);
+		return found != section_waits.end() && found->second.handoffs > 0;
+	}, std::nullopt);
+	auto &after = section_waits[address];
+	--after.handoffs;
+	if (--after.waiting == 0 && after.handoffs == 0)
+		section_waits.erase(address);
+	section_word(address + 0xc, threads.current_id());
+	section_word(address + 8, 1);
+}
+
+void NativeX86Threads::wake_section(uint64_t address)
+{
+	++section_waits[address].handoffs;
+	threads.yield();
+}
+#else
 void NativeX86Threads::mirror_section(uint64_t address, const Section &section)
 {
 	// LockCount is -1 while the section is free and -2 while a thread holds it; RecursionCount and OwningThread follow it.
 	const uint32_t fields[3] = {section.depth ? 0xfffffffeU : UINT32_MAX, section.depth, section.depth ? section.owner : 0};
 	process.write_memory(address + 4, std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(fields), sizeof fields));
 }
+#endif
 
 bool NativeX86Threads::dispatch(std::string_view name)
 {
@@ -171,6 +247,71 @@ bool NativeX86Threads::dispatch(std::string_view name)
 			threads.block([] { return false; }, wake);
 		}
 		process.return_api(0);
+#ifdef __APPLE__
+	} else if (name == "DeleteCriticalSection" || name == "RtlDeleteCriticalSection") {
+		section_waits.erase(args[0]);
+		process.return_api(0);
+	} else if (name == "InitializeCriticalSection" || name == "InitializeCriticalSectionAndSpinCount" || name == "InitializeCriticalSectionEx" ||
+		name == "RtlInitializeCriticalSection" || name == "RtlInitializeCriticalSectionAndSpinCount" || name == "RtlInitializeCriticalSectionEx") {
+		const bool extended = name == "InitializeCriticalSectionEx" || name == "RtlInitializeCriticalSectionEx";
+		const bool rtl = name.starts_with("Rtl");
+		// The high byte contains the flags; lower bits do not affect initialization.
+		if (extended && ((uint32_t(args[2]) & 0xff000000U) & ~0x1f000000U)) {
+			if (!rtl)
+				environment.set_last_error(87);
+			process.return_api(rtl ? 0xc000000dU : 0);
+			return true;
+		}
+		const bool no_debug = extended && (uint32_t(args[2]) & 0x01000000U);
+		if (!no_debug && !section_debug)
+			section_debug = process.map_memory(4096, PROT_READ | PROT_WRITE);
+		// The fields Windows keeps: DebugInfo, LockCount (-1 when free), RecursionCount, OwningThread, LockSemaphore and SpinCount.
+		const uint32_t spin = name == "InitializeCriticalSection" || name == "RtlInitializeCriticalSection" ? 0U : uint32_t(args[1]);
+		const uint32_t fields[6] = {no_debug ? UINT32_MAX : uint32_t(section_debug), UINT32_MAX, 0, 0, 0, spin};
+		process.write_memory(args[0], std::span<const uint8_t>(reinterpret_cast<const uint8_t *>(fields), sizeof fields));
+		section_waits.erase(args[0]);
+		process.return_api(rtl ? 0 : name == "InitializeCriticalSection" ? 0 : 1);
+	} else if (name == "EnterCriticalSection" || name == "RtlEnterCriticalSection") {
+		const uint32_t id = threads.current_id();
+		if (add_lock_count(args[0], 1) == 0) {
+			section_word(args[0] + 0xc, id);
+			section_word(args[0] + 8, 1);
+		} else if (section_word_at(args[0] + 0xc) == id) {
+			section_word(args[0] + 8, section_word_at(args[0] + 8) + 1);
+		} else {
+			wait_for_section(args[0]);
+		}
+		process.return_api(0);
+	} else if (name == "TryEnterCriticalSection" || name == "RtlTryEnterCriticalSection") {
+		const uint32_t id = threads.current_id();
+		bool taken = false;
+		if (!(args[0] % 4) && uint32_t(process.compare_exchange(args[0] + 4, UINT32_MAX, 0, 4)) == UINT32_MAX) {
+			section_word(args[0] + 0xc, id);
+			section_word(args[0] + 8, 1);
+			taken = true;
+		} else if (section_word_at(args[0] + 0xc) == id) {
+			add_lock_count(args[0], 1);
+			section_word(args[0] + 8, section_word_at(args[0] + 8) + 1);
+			taken = true;
+		}
+		process.return_api(taken);
+	} else if (name == "LeaveCriticalSection" || name == "RtlLeaveCriticalSection") {
+		const auto depth = section_word_at(args[0] + 8) - 1;
+		section_word(args[0] + 8, depth);
+		if (depth == 0)
+			section_word(args[0] + 0xc, 0);
+		if (add_lock_count(args[0], -1) >= 0 && depth == 0)
+			wake_section(args[0]);
+		process.return_api(0);
+	} else if (name == "RavenCriticalSectionWait") {
+		// The guest's stub counted itself into a held section: this thread waits for a release to hand it over.
+		wait_for_section(args[0]);
+		process.return_api(0);
+	} else if (name == "RavenCriticalSectionWake") {
+		// A release in the guest found threads counted after it.
+		wake_section(args[0]);
+		process.return_api(0);
+#else
 	} else if (name == "DeleteCriticalSection" || name == "RtlDeleteCriticalSection") {
 		sections.erase(args[0]);
 		process.return_api(0);
@@ -216,6 +357,7 @@ bool NativeX86Threads::dispatch(std::string_view name)
 			section.owner = 0;
 		mirror_section(args[0], section);
 		process.return_api(0);
+#endif
 	} else if (name == "SwitchToThread") {
 		process.return_api(threads.yield());
 	} else {

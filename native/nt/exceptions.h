@@ -16,7 +16,10 @@ struct ProcessorException {
 	uint32_t status = 0xc0000005U;
 	std::vector<uint64_t> parameters;
 	uint64_t address = 0;
+	uint32_t flags = 0;
 };
 ProcessorException processor_exception(NativeProcess &process, const NativeResult &fault, uint64_t ip);
+// Whether `code`, from the instruction pointer on, is an instruction user mode may not run (a general protection fault).
+bool privileged_instruction(const std::vector<uint8_t> &code);
 
 }

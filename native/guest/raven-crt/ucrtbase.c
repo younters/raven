@@ -676,7 +676,25 @@ static ErrorState *thread_errors(void)
 
 CRT int *_errno(void) { return &thread_errors()->error; }
 CRT unsigned long *__doserrno(void) { return &thread_errors()->dos_error; }
-CRT void _invalid_parameter_noinfo(void) {}
+typedef void (__cdecl *RavenInvalidParameterHandler)(const wchar_t *, const wchar_t *, const wchar_t *, unsigned, uintptr_t);
+typedef RavenInvalidParameterHandler invalid_parameter_handler;
+static RavenInvalidParameterHandler process_parameter_handler;
+/* The TLS slot of a thread's own handler, which _set_thread_local_invalid_parameter_handler allocates when first used. */
+static DWORD invalid_parameter_slot;
+CRT RavenInvalidParameterHandler _set_invalid_parameter_handler(RavenInvalidParameterHandler handler)
+{
+	RavenInvalidParameterHandler previous = process_parameter_handler;
+	process_parameter_handler = handler;
+	return previous;
+}
+CRT void _invalid_parameter_noinfo(void)
+{
+	RavenInvalidParameterHandler handler = invalid_parameter_slot == TLS_OUT_OF_INDEXES ? NULL :
+		(RavenInvalidParameterHandler)TlsGetValue(invalid_parameter_slot);
+	if (!handler)
+		handler = process_parameter_handler;
+	if (handler) handler(NULL, NULL, NULL, 0, 0);
+}
 CRT void _invalid_parameter_noinfo_noreturn(void) { ExitProcess(3); }
 
 /* ---- streams ---- */
@@ -1005,6 +1023,27 @@ CRT int __stdio_common_vfwprintf(unsigned long long options, void *stream, const
 	sink.stream = stream;
 	format(&sink, NULL, text, arguments);
 	return finish(&sink);
+}
+
+/* The secure stream forms share the formatter, but reject missing streams and formats before writing. */
+CRT int __stdio_common_vfprintf_s(unsigned long long options, void *stream, const char *text, void *locale, va_list arguments)
+{
+	if (!stream || !text) {
+		*_errno() = 22;
+		_invalid_parameter_noinfo();
+		return -1;
+	}
+	return __stdio_common_vfprintf(options, stream, text, locale, arguments);
+}
+
+CRT int __stdio_common_vfwprintf_s(unsigned long long options, void *stream, const wchar_t *text, void *locale, va_list arguments)
+{
+	if (!stream || !text) {
+		*_errno() = 22;
+		_invalid_parameter_noinfo();
+		return -1;
+	}
+	return __stdio_common_vfwprintf(options, stream, text, locale, arguments);
 }
 
 CRT int __stdio_common_vsprintf(unsigned long long options, char *buffer, size_t count, const char *text, void *locale, va_list arguments)

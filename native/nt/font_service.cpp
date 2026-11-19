@@ -22,6 +22,9 @@
 #include <set>
 #include <string>
 #include <vector>
+#ifdef __APPLE__
+#include <raven_darwin_fonts.h>
+#endif
 
 namespace raven {
 
@@ -116,6 +119,10 @@ std::vector<uint8_t> scan_fonts()
 		if (std::filesystem::is_directory(installed, error))
 			roots.push_back(installed);
 	} catch (const std::exception &) {}
+#ifdef __APPLE__
+	const auto platform_roots = raven_darwin::font_roots();
+	roots.insert(roots.begin(), platform_roots.begin(), platform_roots.end());
+#else
 	// The fonts Raven bundles, such as the Raven Sans dialog faces, then the host's.
 	if (const auto bundled = std::filesystem::read_symlink("/proc/self/exe", error).parent_path() / "fonts"; std::filesystem::is_directory(bundled, error))
 		roots.push_back(bundled);
@@ -124,6 +131,8 @@ std::vector<uint8_t> scan_fonts()
 		roots.emplace_back(RAVEN_FONT_DIRECTORY);
 #endif
 	roots.insert(roots.end(), {"/usr/share/fonts", "/usr/local/share/fonts"});
+#endif
+
 	std::set<std::filesystem::path> seen;
 	for (const auto &root : roots) {
 		if (!std::filesystem::exists(root, error))

@@ -1,0 +1,588 @@
+#include "presentation.h"
+#include "slot_state.h"
+#include "cpu/native_cpu.h"
+#include "desktop/windows.h"
+#include "nt/host_names.h"
+#include "../guest/protocol.h"
+#include <algorithm>
+#include <array>
+#include <bsm/libbsm.h>
+#include <cstring>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <libproc.h>
+#include <map>
+#include <optional>
+#include <vector>
+#include <mach/mach.h>
+#include <servers/bootstrap.h>
+#include <unistd.h>
+#import <IOSurface/IOSurface.h>
+#import <QuartzCore/QuartzCore.h>
+
+namespace raven {
+
+namespace {
+constexpr mach_msg_id_t surface_message = 0x52445631;
+constexpr mach_msg_id_t release_message = 0x52445632;
+constexpr mach_msg_id_t retire_message = 0x52445633;
+
+struct SurfaceMessage {
+	mach_msg_header_t header;
+	mach_msg_body_t body;
+	mach_msg_port_descriptor_t surface;
+	mach_msg_port_descriptor_t reply;
+	uint64_t window, sequence;
+	uint32_t slot, width, height, format;
+	uint64_t layer;
+	darwin::CompositionBinding binding;
+};
+
+struct ReleaseMessage {
+	mach_msg_header_t header;
+	uint64_t sequence;
+	uint32_t slot;
+};
+
+struct RetireMessage {
+	mach_msg_header_t header;
+	uint64_t window, layer;
+};
+
+std::string service_name(pid_t owner)
+{
+	return "org.raven.dxmt." + prefix_tag() + "." + std::to_string(owner);
+}
+
+struct MessageBuffer {
+	SurfaceMessage message;
+	mach_msg_max_trailer_t trailer;
+};
+
+std::optional<audit_token_t> audit_sender(const MessageBuffer &buffer)
+{
+	const auto size = buffer.message.header.msgh_size;
+	if (size < sizeof(mach_msg_header_t) || size > sizeof(SurfaceMessage))
+		return std::nullopt;
+	mach_msg_audit_trailer_t trailer{};
+	const auto *bytes = reinterpret_cast<const unsigned char *>(&buffer);
+	std::memcpy(&trailer, bytes + round_msg(size), sizeof(trailer));
+	if (trailer.msgh_trailer_type != MACH_MSG_TRAILER_FORMAT_0 || trailer.msgh_trailer_size != sizeof(trailer) ||
+		audit_token_to_pid(trailer.msgh_audit) <= 0 || audit_token_to_euid(trailer.msgh_audit) != geteuid())
+		return std::nullopt;
+	return trailer.msgh_audit;
+}
+
+bool same_sender(audit_token_t first, audit_token_t second)
+{
+	return audit_token_to_pid(first) == audit_token_to_pid(second) &&
+		audit_token_to_pidversion(first) == audit_token_to_pidversion(second);
+}
+
+bool is_controller(audit_token_t sender)
+{
+	static const auto executable = [] {
+		std::array<char, PROC_PIDPATHINFO_MAXSIZE> path{};
+		(void)proc_pidpath(getpid(), path.data(), path.size());
+		return path;
+	}();
+	char path[PROC_PIDPATHINFO_MAXSIZE];
+	return executable[0] && proc_pidpath_audittoken(&sender, path, sizeof(path)) > 0 &&
+		std::strcmp(executable.data(), path) == 0;
+}
+
+bool owns_reply_service(pid_t owner, mach_port_t reply)
+{
+	const auto text = service_name(owner);
+	name_t name{};
+	if (text.size() >= sizeof(name)) return false;
+	std::copy(text.begin(), text.end(), name);
+	mach_port_t registered = MACH_PORT_NULL;
+	if (bootstrap_look_up(bootstrap_port, name, &registered) != KERN_SUCCESS) return false;
+	const bool matches = registered == reply;
+	mach_port_deallocate(mach_task_self(), registered);
+	return matches;
+}
+
+bool is_send_right(const mach_msg_port_descriptor_t &port)
+{
+	return port.type == MACH_MSG_PORT_DESCRIPTOR && port.disposition == MACH_MSG_TYPE_PORT_SEND &&
+		MACH_PORT_VALID(port.name);
+}
+
+CGPathRef rounded_path(CGRect rect, const std::array<float, 8> &radius, double unit_x, double unit_y) {
+	const double l = CGRectGetMinX(rect), t = CGRectGetMinY(rect), r = CGRectGetMaxX(rect), b = CGRectGetMaxY(rect);
+	double rx[4], ry[4];
+	for (size_t i = 0; i < 4; ++i) {
+		rx[i] = std::min<double>(radius[2 * i] * unit_x, rect.size.width / 2);
+		ry[i] = std::min<double>(radius[2 * i + 1] * unit_y, rect.size.height / 2);
+	}
+	constexpr double k = .5522847498307936;
+	CGMutablePathRef path = CGPathCreateMutable();
+	CGPathMoveToPoint(path, nullptr, l + rx[0], t);
+	CGPathAddLineToPoint(path, nullptr, r - rx[1], t);
+	CGPathAddCurveToPoint(path, nullptr, r - rx[1] * (1 - k), t, r, t + ry[1] * (1 - k), r, t + ry[1]);
+	CGPathAddLineToPoint(path, nullptr, r, b - ry[3]);
+	CGPathAddCurveToPoint(path, nullptr, r, b - ry[3] * (1 - k), r - rx[3] * (1 - k), b, r - rx[3], b);
+	CGPathAddLineToPoint(path, nullptr, l + rx[2], b);
+	CGPathAddCurveToPoint(path, nullptr, l + rx[2] * (1 - k), b, l, b - ry[2] * (1 - k), l, b - ry[2]);
+	CGPathAddLineToPoint(path, nullptr, l, t + ry[0]);
+	CGPathAddCurveToPoint(path, nullptr, l, t + ry[0] * (1 - k), l + rx[0] * (1 - k), t, l + rx[0], t);
+	CGPathCloseSubpath(path);
+	return path;
+}
+
+void acknowledge(mach_port_t reply, uint32_t slot, uint64_t sequence) {
+	if (!reply)
+		return;
+	ReleaseMessage message{};
+	message.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
+	message.header.msgh_size = sizeof(message);
+	message.header.msgh_remote_port = reply;
+	message.header.msgh_id = release_message;
+	message.slot = slot;
+	message.sequence = sequence;
+	(void)mach_msg(&message.header, MACH_SEND_MSG | MACH_SEND_TIMEOUT, sizeof(message), 0, MACH_PORT_NULL, 100, MACH_PORT_NULL);
+}
+}
+
+struct DarwinDXMTPresentation::State {
+	NativeProcess &process;
+	NativeWindows &windows;
+	bool polling = false;
+	uint64_t presented = 0, errors = 0;
+	mach_port_t service = MACH_PORT_NULL;
+	struct Displayed {
+		IOSurfaceRef surface = nullptr;
+		CALayer *__strong layer = nil;
+		uint32_t slot = 0;
+		uint64_t sequence = 0;
+		uint64_t window = 0;
+		mach_port_t reply = MACH_PORT_NULL;
+		audit_token_t sender{};
+	};
+	std::map<uint64_t, Displayed> displayed;
+	struct Forwarded {
+		pid_t owner = 0;
+		uint64_t sequence = 0;
+	};
+	std::array<Forwarded, RAVEN_SURFACE_SLOTS> forwarded{};
+
+	void release(Displayed &frame, bool acknowledge_frame=true)
+	{
+		frame.layer.contents = nil;
+		[frame.layer removeFromSuperlayer];
+		frame.layer = nil;
+		if (frame.surface) {
+			IOSurfaceDecrementUseCount(frame.surface);
+			CFRelease(frame.surface);
+			frame.surface = nullptr;
+		}
+		if (frame.reply) {
+			if (acknowledge_frame) acknowledge(frame.reply, frame.slot, frame.sequence);
+			mach_port_deallocate(mach_task_self(), frame.reply);
+			frame.reply = MACH_PORT_NULL;
+		} else if (auto *control = process.darwin_control(); acknowledge_frame && control) {
+			raven_surface_release(&control->surfaces[frame.slot], frame.sequence);
+		}
+	}
+
+	void capture(IOSurfaceRef surface, const raven_surface_frame &frame)
+	{
+		const char *directory = std::getenv("RAVEN_DXMT_CAPTURE_DIRECTORY");
+		if (!directory || !*directory) return;
+		std::filesystem::create_directories(directory);
+		const auto path = std::filesystem::path(directory) / (std::to_string(frame.width) + "x" + std::to_string(frame.height) + ".rgba");
+		if (IOSurfaceLock(surface, kIOSurfaceLockReadOnly, nullptr) != kIOReturnSuccess) return;
+		std::vector<uint8_t> pixels(size_t(frame.width) * frame.height * 4);
+		const auto *source = static_cast<const uint8_t *>(IOSurfaceGetBaseAddress(surface));
+		const auto stride = IOSurfaceGetBytesPerRow(surface);
+		for (size_t y = 0; y < frame.height; ++y)
+			for (size_t x = 0; x < frame.width; ++x) {
+				const auto *pixel = source + y * stride + x * 4;
+				auto *target = pixels.data() + (y * frame.width + x) * 4;
+				target[0] = pixel[frame.pixel_format == 'BGRA' ? 2 : 0];
+				target[1] = pixel[1];
+				target[2] = pixel[frame.pixel_format == 'BGRA' ? 0 : 2];
+				target[3] = pixel[3];
+			}
+		IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, nullptr);
+		std::ofstream output(path, std::ios::binary);
+		output.write(reinterpret_cast<const char *>(pixels.data()), std::streamsize(pixels.size()));
+	}
+
+	void start_service()
+	{
+		if (mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &service) != KERN_SUCCESS) return;
+		if (mach_port_insert_right(mach_task_self(), service, service, MACH_MSG_TYPE_MAKE_SEND) != KERN_SUCCESS) return;
+		const std::string name = service_name(getpid());
+		name_t service_name_buffer{};
+		if (name.size() >= sizeof(service_name_buffer)) return;
+		std::copy(name.begin(), name.end(), service_name_buffer);
+		if (bootstrap_register(bootstrap_port, service_name_buffer, service) != KERN_SUCCESS)
+			std::cerr << "raven DXMT: cannot register the IOSurface presentation service\n";
+	}
+
+	bool forward(const raven_surface_frame &frame, uint32_t slot, pid_t owner, uint64_t layer_id=0, darwin::CompositionBinding binding={}, IOSurfaceRef retained=nullptr)
+	{
+		name_t name{};
+		const auto text = service_name(owner);
+		if (text.size() >= sizeof(name)) return false;
+		std::copy(text.begin(), text.end(), name);
+		mach_port_t destination = MACH_PORT_NULL;
+		if (bootstrap_look_up(bootstrap_port, name, &destination) != KERN_SUCCESS) return false;
+		mach_port_t port = retained ? IOSurfaceCreateMachPort(retained) : process.copy_unix_port(frame.port);
+		if (!port) { mach_port_deallocate(mach_task_self(), destination); return false; }
+		SurfaceMessage message{};
+		message.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0) | MACH_MSGH_BITS_COMPLEX;
+		message.header.msgh_size = sizeof(message);
+		message.header.msgh_remote_port = destination;
+		message.header.msgh_id = surface_message;
+		message.body.msgh_descriptor_count = 2;
+		message.surface.name = port;
+		message.surface.disposition = MACH_MSG_TYPE_COPY_SEND;
+		message.surface.type = MACH_MSG_PORT_DESCRIPTOR;
+		message.reply.name = service;
+		message.reply.disposition = MACH_MSG_TYPE_COPY_SEND;
+		message.reply.type = MACH_MSG_PORT_DESCRIPTOR;
+		message.window = frame.window;
+		message.sequence = frame.sequence;
+		message.slot = slot;
+		message.width = frame.width;
+		message.height = frame.height;
+		message.format = frame.pixel_format;
+		message.layer=layer_id;message.binding=binding;
+		const auto result = mach_msg(&message.header, MACH_SEND_MSG | MACH_SEND_TIMEOUT, sizeof(message), 0,
+			MACH_PORT_NULL, 100, MACH_PORT_NULL);
+		mach_port_deallocate(mach_task_self(), port);
+		mach_port_deallocate(mach_task_self(), destination);
+		if (result != KERN_SUCCESS) return false;
+		forwarded[slot] = {owner, frame.sequence};
+		return true;
+	}
+
+	void retire(uint64_t window, pid_t owner, uint64_t layer_id=0)
+	{
+		name_t name{};
+		const auto text = service_name(owner);
+		if (text.size() >= sizeof(name)) return;
+		std::copy(text.begin(), text.end(), name);
+		mach_port_t destination = MACH_PORT_NULL;
+		if (bootstrap_look_up(bootstrap_port, name, &destination) != KERN_SUCCESS) return;
+		RetireMessage message{};
+		message.header.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
+		message.header.msgh_size = sizeof(message);
+		message.header.msgh_remote_port = destination;
+		message.header.msgh_id = retire_message;
+		message.window = window;
+		message.layer = layer_id;
+		(void)mach_msg(&message.header, MACH_SEND_MSG | MACH_SEND_TIMEOUT, sizeof(message), 0,
+			MACH_PORT_NULL, 100, MACH_PORT_NULL);
+		mach_port_deallocate(mach_task_self(), destination);
+	}
+
+	bool show(IOSurfaceRef surface, const raven_surface_frame &frame, uint32_t slot, mach_port_t *reply_right, uint64_t layer_id=0,
+		darwin::CompositionBinding binding={}, audit_token_t sender={})
+	{
+		const mach_port_t reply = reply_right ? *reply_right : MACH_PORT_NULL;
+		const auto host = windows.host_surface(frame.window);
+		if (!surface || !host || host->platform != HostPlatform::metal ||
+			IOSurfaceGetWidth(surface) != frame.width || IOSurfaceGetHeight(surface) != frame.height ||
+			IOSurfaceGetPixelFormat(surface) != frame.pixel_format)
+			return false;
+		const uint64_t key=layer_id?layer_id:frame.window;
+		auto old = displayed.find(key);
+		if (!reply && old != displayed.end() && old->second.sequence > frame.sequence) return false;
+		[CATransaction begin];
+		[CATransaction setDisableActions:YES];
+		if (old != displayed.end()) release(old->second, old->second.sequence != frame.sequence || old->second.slot != slot);
+		CALayer *parent = (__bridge CALayer *)host->surface;
+		CALayer *layer = [CALayer layer];
+		const auto client = windows.client_size(frame.window);
+		// DirectComposition coordinates are Windows client pixels. Cocoa layers use
+		// points; an aware guest on a Retina display can have two pixels per point.
+		const double unit_x = client ? parent.bounds.size.width / client->first : 1;
+		const double unit_y = client ? parent.bounds.size.height / client->second : 1;
+		layer.frame = layer_id ? CGRectMake(binding.x * unit_x, binding.y * unit_y,
+			frame.width * binding.sx * unit_x, frame.height * binding.sy * unit_y) : parent.bounds;
+		layer.zPosition=binding.order;
+		if (layer_id) {
+			const CGRect clip = CGRectMake(binding.left * unit_x, binding.top * unit_y,
+				fmax(0,binding.right-binding.left) * unit_x, fmax(0,binding.bottom-binding.top) * unit_y);
+			const CGRect clipped = CGRectIntersection(clip, layer.frame);
+			CAShapeLayer *mask = [CAShapeLayer layer];
+			const CGRect local = CGRectIsNull(clipped)
+									 ? CGRectZero
+									 : CGRectOffset(clipped, -layer.frame.origin.x, -layer.frame.origin.y);
+			CGPathRef path = CGPathCreateWithRect(local, nullptr);
+			if (std::any_of(binding.radius.begin(), binding.radius.end(), [](float r) { return r != 0; })) {
+				const CGRect rounded = CGRectMake(binding.rounded[0] * unit_x - layer.frame.origin.x,
+												  binding.rounded[1] * unit_y - layer.frame.origin.y,
+												  fmax(0, binding.rounded[2] - binding.rounded[0]) * unit_x,
+												  fmax(0, binding.rounded[3] - binding.rounded[1]) * unit_y);
+				CGPathRef round = rounded_path(rounded, binding.radius, unit_x, unit_y);
+				CGPathRef intersection = CGPathCreateCopyByIntersectingPath(path, round, false);
+				CGPathRelease(path);
+				CGPathRelease(round);
+				path = intersection;
+			}
+			mask.path = path;
+			CGPathRelease(path);
+			layer.mask = mask;
+		}
+		layer.contentsScale = parent.contentsScale;
+		layer.magnificationFilter = binding.linear ? kCAFilterLinear : kCAFilterNearest;
+		layer.minificationFilter = layer.magnificationFilter;
+		layer.autoresizingMask = layer_id ? 0 : kCALayerWidthSizable | kCALayerHeightSizable;
+		layer.contentsGravity = kCAGravityResize;
+		layer.opaque = layer_id ? NO : YES;
+		IOSurfaceIncrementUseCount(surface);
+		layer.contents = (__bridge id)surface;
+		[parent addSublayer:layer];
+		[CATransaction commit];
+		[CATransaction flush];
+		displayed[key] = {surface, layer, slot, frame.sequence, frame.window, reply, sender};
+		if (reply_right)
+			*reply_right = MACH_PORT_NULL; // The displayed frame now owns this send right.
+		else if (forwarded[slot].sequence == frame.sequence)
+			forwarded[slot] = {};
+		capture(surface, frame);
+		++presented;
+		if (auto *control = process.darwin_control())
+			__atomic_fetch_add(&control->surfaces_presented, 1, __ATOMIC_RELAXED);
+		if (std::getenv("RAVEN_TRACE_DXMT") && (presented == 1 || presented % 60 == 0))
+			std::cerr << "raven DXMT: presented " << presented << " IOSurfaces, " << frame.width << 'x' << frame.height << '\n';
+		return true;
+	}
+
+	void receive()
+	{
+		if (!service) return;
+		for (unsigned i = 0; i < 32; ++i) {
+			MessageBuffer buffer{};
+			auto &message = buffer.message;
+			auto &header = message.header;
+			const auto result = mach_msg(&header, MACH_RCV_MSG | MACH_RCV_TIMEOUT |
+				MACH_RCV_TRAILER_TYPE(MACH_MSG_TRAILER_FORMAT_0) | MACH_RCV_TRAILER_ELEMENTS(MACH_RCV_TRAILER_AUDIT),
+				0, sizeof(buffer), service, 0, MACH_PORT_NULL);
+			if ((result & ~MACH_MSG_MASK) == MACH_RCV_BODY_ERROR) {
+				// The kernel copies out any rights that were successfully translated.
+				mach_msg_destroy(&header);
+				continue;
+			}
+			if (result == MACH_RCV_TOO_LARGE) continue;
+			if (result != KERN_SUCCESS) break;
+			struct ReceivedMessage {
+				mach_msg_header_t &header;
+				~ReceivedMessage() { mach_msg_destroy(&header); }
+			} received{header};
+			const auto sender = audit_sender(buffer);
+			if (!sender || header.msgh_remote_port != MACH_PORT_NULL || header.msgh_voucher_port != MACH_PORT_NULL)
+				continue;
+			const pid_t sender_pid = audit_token_to_pid(*sender);
+			const bool complex = header.msgh_bits & MACH_MSGH_BITS_COMPLEX;
+			if (header.msgh_id == release_message && !complex && header.msgh_size == sizeof(ReleaseMessage)) {
+				ReleaseMessage ack{};
+				std::memcpy(&ack, &message, sizeof(ack));
+				if (auto *control = process.darwin_control(); control && ack.slot < forwarded.size()) {
+					auto &expected = forwarded[ack.slot];
+					if (expected.owner == sender_pid && expected.sequence == ack.sequence && is_controller(*sender)) {
+						raven_surface_release(&control->surfaces[ack.slot], ack.sequence);
+						expected = {};
+					}
+				}
+			} else if (header.msgh_id == retire_message && !complex && header.msgh_size == sizeof(RetireMessage)) {
+				RetireMessage retired{};
+				std::memcpy(&retired, &message, sizeof(retired));
+				const auto old = displayed.find(retired.layer ? retired.layer : retired.window);
+				if (old != displayed.end() && old->second.reply && old->second.window == retired.window &&
+					same_sender(old->second.sender, *sender)) {
+					release(old->second);
+					displayed.erase(old);
+					if (std::none_of(displayed.begin(),displayed.end(),[&](const auto &entry){return entry.second.window==retired.window;}))
+						windows.release_host_surface(retired.window);
+				}
+			} else if (header.msgh_id == surface_message && complex && header.msgh_size == sizeof(SurfaceMessage) &&
+				message.body.msgh_descriptor_count == 2 && is_send_right(message.surface) && is_send_right(message.reply) &&
+				message.slot < forwarded.size()) {
+				// The agent publishes through shared memory. Only a controller in this prefix forwards a Mach surface.
+				const auto old = displayed.find(message.layer ? message.layer : message.window);
+				const bool has_peer = old != displayed.end() && old->second.reply;
+				const bool authorized = has_peer ?
+					same_sender(old->second.sender, *sender) && old->second.reply == message.reply.name :
+					is_controller(*sender) && owns_reply_service(sender_pid, message.reply.name);
+				if (!authorized)
+					continue;
+				IOSurfaceRef surface = IOSurfaceLookupFromMachPort(message.surface.name);
+				raven_surface_frame frame{};
+				frame.window = message.window;
+				frame.sequence = message.sequence;
+				frame.width = message.width;
+				frame.height = message.height;
+				frame.pixel_format = message.format;
+				if (!show(surface, frame, message.slot, &message.reply.name, message.layer, message.binding, *sender)) {
+					if (surface) CFRelease(surface);
+					acknowledge(message.reply.name, message.slot, message.sequence);
+					++errors;
+				}
+			}
+		}
+	}
+
+	struct CompositionFrame {
+		raven_surface_frame frame{};
+		uint32_t slot=0;
+		IOSurfaceRef surface=nullptr;
+		darwin::CompositionBinding binding{};
+		bool sent=false;
+	};
+	std::map<uint64_t,CompositionFrame> compositions;
+	static bool same_binding(const darwin::CompositionBinding &a,const darwin::CompositionBinding &b)
+	{
+		return a.target==b.target && a.x==b.x && a.y==b.y && a.sx==b.sx && a.sy==b.sy && a.order==b.order &&
+			a.left==b.left && a.top==b.top && a.right==b.right && a.bottom==b.bottom && a.linear==b.linear && a.rounded==b.rounded && a.radius==b.radius;
+	}
+	void detach_composition(uint64_t stream,CompositionFrame &content)
+	{
+		if (!content.sent) return;
+		if (const auto foreign=foreign_window_info(content.binding.target))
+			retire(content.binding.target,pid_t(foreign->process),stream);
+		else if (auto old=displayed.find(stream);old!=displayed.end()) {
+			release(old->second);displayed.erase(old);
+		}
+		content.sent=false;
+	}
+	void release_composition(CompositionFrame &content)
+	{
+		if (!content.sent) {
+			if (auto *control=process.darwin_control()) {
+				auto &frame=control->surfaces[content.slot];
+				raven_surface_release(&frame, content.frame.sequence);
+			}
+		}
+		if (content.surface) {IOSurfaceDecrementUseCount(content.surface);CFRelease(content.surface);content.surface=nullptr;}
+	}
+	void publish_composition(uint64_t stream,CompositionFrame &content,darwin::CompositionBinding binding,bool new_frame=false)
+	{
+		if (!new_frame && content.sent && same_binding(content.binding,binding)) return;
+		if (content.sent && content.binding.target!=binding.target) detach_composition(stream,content);
+		content.binding=binding;
+		if (!binding.target) return;
+		content.sent=false;
+		auto routed=content.frame;routed.window=binding.target;
+		if (const auto foreign=foreign_window_info(binding.target)) {
+			if (forward(routed,content.slot,pid_t(foreign->process),stream,binding,content.surface)) content.sent=true;
+		} else if (windows.host_surface(binding.target)) {
+			CFRetain(content.surface);
+			if (show(content.surface,routed,content.slot,nullptr,stream,binding)) content.sent=true;
+			else CFRelease(content.surface);
+		}
+	}
+
+	void poll()
+	{
+		if (polling) return;
+		auto *control = process.darwin_control();
+		if (!control) return;
+		polling = true;
+		try {
+			receive();
+			std::vector<uint32_t> ready;
+			for (uint32_t i = 0; i < RAVEN_SURFACE_SLOTS; ++i) {
+				auto &frame = control->surfaces[i];
+				const auto status = __atomic_load_n(&frame.state, __ATOMIC_ACQUIRE);
+				if (status == RAVEN_SURFACE_RETIRE) {
+					if (auto source=compositions.find(frame.window);source!=compositions.end() && source->second.slot==i) {
+						detach_composition(frame.window,source->second);release_composition(source->second);compositions.erase(source);
+					}
+					const auto old = displayed.find(frame.window);
+					if (old != displayed.end() && old->second.slot == i) {
+						release(old->second);
+						displayed.erase(old);
+						windows.release_host_surface(frame.window);
+					}
+					if (const auto foreign = foreign_window_info(frame.window))
+						retire(frame.window, pid_t(foreign->process));
+					__atomic_store_n(&frame.state, RAVEN_SURFACE_UNUSED, __ATOMIC_RELEASE);
+				} else if (status == RAVEN_SURFACE_READY) ready.push_back(i);
+			}
+			std::sort(ready.begin(), ready.end(), [&](uint32_t a, uint32_t b) {
+				return control->surfaces[a].sequence < control->surfaces[b].sequence;
+			});
+			for (const auto index : ready) {
+				auto &frame = control->surfaces[index];
+				uint32_t expected = RAVEN_SURFACE_READY;
+				if (!__atomic_compare_exchange_n(&frame.state, &expected, RAVEN_SURFACE_IMPORTING, false,
+					__ATOMIC_ACQ_REL, __ATOMIC_RELAXED)) continue;
+				auto routed=frame;
+				const auto binding=windows.composition_binding(frame.window);
+				if (binding) {
+					const mach_port_t port=process.copy_unix_port(frame.port);
+					IOSurfaceRef surface=port?IOSurfaceLookupFromMachPort(port):nullptr;
+					if (port) mach_port_deallocate(mach_task_self(),port);
+					if (!surface) {
+						raven_surface_transition(&frame, routed.sequence, RAVEN_SURFACE_IMPORTING, RAVEN_SURFACE_AVAILABLE);
+						continue;
+					}
+					auto &content=compositions[frame.window];
+					release_composition(content);
+					content={frame,index,surface,content.binding,content.sent};
+					IOSurfaceIncrementUseCount(surface);
+					raven_surface_transition(&frame, routed.sequence, RAVEN_SURFACE_IMPORTING, RAVEN_SURFACE_DISPLAYED);
+					publish_composition(routed.window,content,*binding,true);
+					continue;
+				}
+				if (const auto foreign = foreign_window_info(routed.window); foreign && !windows.host_surface(routed.window)) {
+					if (forward(routed, index, pid_t(foreign->process), binding?frame.window:0, binding.value_or(darwin::CompositionBinding{}))) {
+						raven_surface_transition(&frame, routed.sequence, RAVEN_SURFACE_IMPORTING, RAVEN_SURFACE_DISPLAYED);
+						continue;
+					}
+				}
+				const mach_port_t port = process.copy_unix_port(frame.port);
+				IOSurfaceRef surface = port ? IOSurfaceLookupFromMachPort(port) : nullptr;
+				if (port) mach_port_deallocate(mach_task_self(), port);
+				if (!show(surface, routed, index, nullptr, binding?frame.window:0, binding.value_or(darwin::CompositionBinding{}))) {
+					if (surface) CFRelease(surface);
+					++errors;
+					__atomic_fetch_add(&control->surface_errors, 1, __ATOMIC_RELAXED);
+					raven_surface_transition(&frame, routed.sequence, RAVEN_SURFACE_IMPORTING, RAVEN_SURFACE_AVAILABLE);
+					if (errors == 1) {
+						std::cerr << "raven DXMT: cannot import IOSurface or find the macOS window surface; stream=" << std::hex << frame.window << " target=" << routed.window << std::dec << '\n';
+						windows.dump_windows();
+					}
+					continue;
+				}
+				raven_surface_transition(&frame, routed.sequence, RAVEN_SURFACE_IMPORTING, RAVEN_SURFACE_DISPLAYED);
+			}
+			for (auto &[stream,content]:compositions) {
+				if (const auto binding=windows.composition_binding(stream)) publish_composition(stream,content,*binding);
+			}
+		} catch (...) { polling = false; throw; }
+		polling = false;
+	}
+};
+
+DarwinDXMTPresentation::DarwinDXMTPresentation(NativeProcess &process, NativeWindows &windows)
+	: state(std::make_unique<State>(State{process, windows}))
+{
+	state->start_service();
+	process.set_unix_pump([this] { poll(); });
+}
+
+DarwinDXMTPresentation::~DarwinDXMTPresentation()
+{
+	state->process.set_unix_pump({});
+	for (auto &[stream,content]:state->compositions) {state->detach_composition(stream,content);state->release_composition(content);}
+	for (auto &[window, frame] : state->displayed) {
+		state->release(frame);
+		state->windows.release_host_surface(frame.window);
+	}
+	if (std::getenv("RAVEN_TRACE_DXMT") && state->presented)
+		std::cerr << "raven DXMT: " << state->presented << " frames presented, " << state->errors << " presentation errors\n";
+	if (state->service) mach_port_destroy(mach_task_self(), state->service);
+}
+
+void DarwinDXMTPresentation::poll() { state->poll(); }
+}

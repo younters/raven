@@ -9,7 +9,7 @@ NativeResult native_raise_exception(NativeProcess &process)
 {
 	const auto arguments = process.api_arguments(4);
 	NativeResult result{NativeStop::exception, static_cast<uint32_t>(arguments[0]),
-		process.context().registers.rip - 1, 0};
+		process.registers().rip - 1, 0};
 	result.exception_flags = static_cast<uint32_t>(arguments[1]);
 	if (arguments[3]) {
 		const auto count = static_cast<uint32_t>(arguments[2]);
@@ -28,7 +28,7 @@ NativeResult native_raise_exception(NativeProcess &process)
 NativeResult native_raise_rtl_exception(NativeProcess &process, bool status_only)
 {
 	const auto arguments=process.api_arguments(1);
-	NativeResult result{NativeStop::exception,uint32_t(arguments[0]),process.context().registers.rip-1,0};
+	NativeResult result{NativeStop::exception,uint32_t(arguments[0]),process.registers().rip-1,0};
 	if (status_only) { result.exception_flags=1; return result; }
 	const auto bytes=process.read_memory(arguments[0],152);
 	const auto field=[&](size_t offset,size_t size) {
@@ -44,8 +44,6 @@ NativeResult native_raise_rtl_exception(NativeProcess &process, bool status_only
 	for (size_t index=0; index<count; ++index) result.exception_information.push_back(field(32+index*8,8));
 	return result;
 }
-
-namespace {
 
 // The instructions user mode may not run, as the processor reports them with a general protection fault: port input and output, the
 // interrupt flag, hlt, invd, wbinvd, the control and debug register moves and the model-specific registers. Prefixes come first.
@@ -67,12 +65,17 @@ bool privileged_instruction(const std::vector<uint8_t> &code)
 	return second == 0x08 || second == 0x09 || second == 0x30 || second == 0x32 || (second >= 0x20 && second <= 0x23);
 }
 
-}
-
 ProcessorException processor_exception(NativeProcess &process, const NativeResult &fault, uint64_t ip)
 {
 	ProcessorException exception;
 	exception.address = ip;
+	// An engine that reports the Windows exception itself (the macOS agents) gives its code, flags and parameters as they are.
+	if (fault.exception_code) {
+		exception.status = fault.exception_code;
+		exception.flags = fault.exception_flags;
+		exception.parameters = fault.exception_information;
+		return exception;
+	}
 	switch (fault.signal) {
 	case SIGSEGV:
 		if (fault.signal_code == SI_KERNEL) {

@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <ucontext.h>
 #include <poll.h>
 #include <pthread.h>
@@ -36,6 +37,9 @@ struct GuestThread {
 	// Wait condition: pure check, evaluated by the scheduler; the thread resumes when it holds or the wake time passes.
 	std::function<bool()> ready;
 	std::optional<std::chrono::steady_clock::time_point> wake;
+	// Borrowed from the live waiting frame; readiness ends scheduler and desktop sleeps.
+	std::span<const pollfd> descriptors;
+	std::array<uint64_t, 6> debug_registers{};
 	// The API the thread waits in and since when, for the list RAVEN_DUMP_THREADS_ON asks for.
 	const char *waiting_in = nullptr;
 	std::chrono::steady_clock::time_point waiting_since;
@@ -180,7 +184,8 @@ public:
 	// sleep to, no later than `limit`, and the descriptors that end it early. A waiting thread whose condition nothing announces keeps
 	// it short, as the scheduler's own wait is. drain_wake() takes back what ended it.
 	std::chrono::steady_clock::time_point idle_until(std::chrono::steady_clock::time_point limit) const;
-	void idle_descriptors(std::vector<pollfd> &descriptors) const;
+	// Retain the returned descriptor lease until the idle wait and its callbacks have ended.
+	std::shared_ptr<void> idle_descriptors(std::vector<pollfd> &descriptors) const;
 	void drain_wake();
 
 	std::shared_ptr<GuestThread> create(uint64_t start, uint64_t parameter, uint64_t stack_size, bool suspended);
@@ -193,8 +198,10 @@ public:
 	// `polled` tells that the condition reads what the guest changes by itself, as the word of a lock it releases without a call: it is
 	// looked at whenever a thread gives the runtime up, where another is looked at again only after a call that may have ended a wait.
 	// `told` is for a wait that only another thread ends, which then calls tell: the scheduler does not look at its condition.
+	// Descriptors are borrowed until return; their readiness wakes idle polling, but ready() remains authoritative (including closure
+	// and cancellation).
 	bool block(std::function<bool()> ready, std::optional<std::chrono::steady_clock::time_point> wake, bool turn = false, bool polled = false,
-		bool told = false);
+		bool told = false, std::span<const pollfd> descriptors = {});
 	// Puts a thread in a wait that block was given `told` for in line for the runtime, after whatever ends its wait has changed. Any host
 	// thread may call it, holding the runtime or not.
 	void tell(GuestThread &thread);

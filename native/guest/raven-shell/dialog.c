@@ -1096,7 +1096,31 @@ static INT_PTR CALLBACK dialog_proc(HWND window, UINT message, WPARAM wparam, LP
 			navigate(browser, current, FALSE);
 		}
 		SendMessageW(window, WM_NEXTDLGCTL, (WPARAM)(browser->state->options & FOS_PICKFOLDERS ? browser->list : browser->name), TRUE);
+		if (browser->state->browse_callback)
+			browser->state->browse_callback(window, BFFM_INITIALIZED, 0, browser->state->browse_data);
 		return FALSE;
+	case BFFM_SETSELECTIONA:
+	case BFFM_SETSELECTIONW:
+		if (browser && lparam) {
+			WCHAR path[MAX_PATH];
+			path[0] = 0;
+			if (!wparam) {
+				/* Found at run time: the file picker links this dialog without the shell. */
+				BOOL (WINAPI *path_of)(PCIDLIST_ABSOLUTE, LPWSTR) = (void *)GetProcAddress(LoadLibraryW(L"shell32.dll"), "SHGetPathFromIDListW");
+				if (path_of)
+					path_of((PCIDLIST_ABSOLUTE)lparam, path);
+			}
+			else if (message == BFFM_SETSELECTIONW)
+				copy_text(path, MAX_PATH, (const WCHAR *)lparam);
+			else
+				MultiByteToWideChar(CP_ACP, 0, (const char *)lparam, -1, path, MAX_PATH);
+			if (path[0])
+				navigate(browser, path, FALSE);
+		}
+		return TRUE;
+	case BFFM_ENABLEOK:
+		EnableWindow(GetDlgItem(window, IDOK), lparam != 0);
+		return TRUE;
 	case WM_SETFOCUS:
 		/* The file name field takes the keyboard with its text selected when the dialog first gets it, so typing a name and Enter
 		   saves; the dialog manager, which has no saved focus yet, would give it to the first control. Later it restores what had it. */

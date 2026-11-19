@@ -1,3 +1,6 @@
+#ifdef __APPLE__
+#include "platform/darwin/processor_count.h"
+#endif
 #include "access_token.h"
 #include "child_process.h"
 #include "elevation.h"
@@ -73,7 +76,11 @@ uint64_t filetime_now()
 // CPU time a running child has used so far, in nanoseconds; 0 once the host no longer lists it.
 static uint64_t child_cpu_nanoseconds(pid_t pid)
 {
+#ifdef __APPLE__
+	auto stat = raven_darwin::proc_stream("/proc/" + std::to_string(pid) + "/stat");
+#else
 	std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+#endif
 	std::string text;
 	std::getline(stat, text);
 	const auto close = text.rfind(')');
@@ -136,7 +143,11 @@ static InheritedHandle local_process_information(KernelContext &context, uint32_
 			answer.access = 0xc00000bbU;
 			return answer;
 		}
+#ifdef __APPLE__
+		const auto processors = darwin::processor_count(width == 4);
+#else
 		const auto processors = std::clamp<long>(::sysconf(_SC_NPROCESSORS_ONLN), 1, width * 8);
+#endif
 		const uint64_t affinity = processors == 64 ? UINT64_MAX : (uint64_t(1) << processors) - 1;
 		data.assign(6 * width, 0);
 		put(0, 259, 4);
@@ -446,13 +457,52 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		const auto answer = own ? std::optional(objects.process_request(request)) : request_process(call[0], request);
 		if (!answer || answer->access) {
 			const uint32_t status = answer ? answer->access : 0xc0000001U;
+#ifdef __APPLE__
+			call.fail(status == 0xc000012dU ? 1455 : status == 0xc0000017U ? 8 : status == 0xc0000018U || status == 0xc000002dU ? 487 :
+				status == 0xc00000bbU ? 50 : 87);
+#else
 			call.fail(status == 0xc0000017U ? 8 : status == 0xc0000018U || status == 0xc000002dU ? 487 : status == 0xc00000bbU ? 50 : 87);
+#endif
 			return;
 		}
 		if (protect)
 			call.store<uint32_t>(call[4], answer->flags);
 		call.ret(allocate ? answer->size : 1);
 	};
+	registry.add("VirtualAlloc2FromApp", 7, [&context, is_self](ApiCall &call) {
+		if (call[0] && !is_self(call[0])) { call.fail(50); return; }
+		if (call.u32(4) & (0x10 | 0x20 | 0x40 | 0x80)) { call.fail(87); return; }
+		uint64_t alignment = 65536;
+		if (call.u32(6)) {
+			if (call.u32(6) != 1 || !call[5] || call.load<uint64_t>(call[5]) != 1) { call.fail(50); return; }
+			const auto requirements = call.load_pointer(call[5] + 8);
+			const auto width = call.pointer_width();
+			if (!requirements) { call.fail(87); return; }
+			// This initial implementation supports the unconstrained aligned reservation.
+			if (call.load_pointer(requirements) || call.load_pointer(requirements + width)) {
+				call.fail(50); return;
+			}
+			alignment = call.load_pointer(requirements + 2 * width);
+			if (call[1] && alignment) { call.fail(87); return; }
+			if (!alignment) alignment = 65536;
+			if (alignment < 65536 || (alignment & (alignment - 1))) { call.fail(87); return; }
+		}
+		if (call[1] || alignment == 65536 || !(call.u32(3) & (0x2000 | 0x1000))) {
+			if (call[1] && (call[1] & (alignment - 1))) { call.fail(87); return; }
+			const auto result = context.memory.allocate(call[1], call[2], call.u32(3), call.u32(4));
+			if (result.status) call.fail(87); else call.ret(result.address);
+			return;
+		}
+		if (!call[2] || call[2] > UINT64_MAX - alignment) { call.fail(87); return; }
+		// Find an available aligned interval without retaining invisible padding.
+		const auto probe = context.memory.allocate(0, call[2] + alignment, 0x2000, 4);
+		if (probe.status) { call.fail(8); return; }
+		const auto address = (probe.address + alignment - 1) & ~(alignment - 1);
+		const auto released = context.memory.free(probe.address, 0, 0x8000);
+		if (released.status) { call.fail(8); return; }
+		const auto result = context.memory.allocate(address, call[2], call.u32(3) | 0x2000, call.u32(4));
+		if (result.status) call.fail(8); else call.ret(result.address);
+	});
 	registry.add("VirtualAllocEx", 5, [memory_operation](ApiCall &call) { memory_operation(call, "process:allocate"); });
 	// One NUMA node holds all memory, so the preferred node changes nothing.
 	registry.add("VirtualAllocExNuma", 6, [memory_operation](ApiCall &call) { memory_operation(call, "process:allocate"); });
@@ -904,6 +954,9 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	// PROCESS_MEMORY_COUNTERS from the host's accounting of this process.
+#ifdef __APPLE__
+	registry.add("GetProcessMemoryInfo", 3, [&context](ApiCall &call) { commit_process_memory_info(call, context); });
+#else
 	registry.add("GetProcessMemoryInfo", 3, [is_self](ApiCall &call) {
 		if (!is_self(call[0]) || !call[1]) {
 			call.fail(call[1] ? 6 : 87);
@@ -929,6 +982,7 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		call.write(call[1], counters);
 		call.ret(1);
 	});
+#endif
 
 	const auto enum_processes = [](ApiCall &call) {
 		const size_t capacity = call.u32(1) / sizeof(uint32_t);
@@ -940,7 +994,11 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		if (capacity) {
 			ids.push_back(uint32_t(::getpid()));
 			std::error_code error;
+#ifdef __APPLE__
+			for (const auto &entry : raven_darwin::proc_directory(error)) {
+#else
 			for (const auto &entry : std::filesystem::directory_iterator("/proc", error)) {
+#endif
 				if (ids.size() == capacity) break;
 				const auto name = entry.path().filename().string();
 				if (name.empty() || !std::all_of(name.begin(), name.end(), [](char c) { return c >= '0' && c <= '9'; })) continue;
@@ -1053,16 +1111,23 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 			const auto image = context.launch.image_path;
 			snapshot->processes.push_back({uint32_t(::getpid()), runtime_process_alive(::getppid()) ? uint32_t(::getppid()) : 0, image.substr(image.find_last_of(u'\\') + 1)});
 			std::error_code error;
+#ifdef __APPLE__
+			for (const auto &entry : raven_darwin::proc_directory(error)) {
+#else
 			for (const auto &entry : std::filesystem::directory_iterator("/proc", error)) {
+#endif
 				const auto name = entry.path().filename().string();
 				if (name.empty() || !std::all_of(name.begin(), name.end(), [](char c) { return c >= '0' && c <= '9'; }))
 					continue;
 				const auto pid = pid_t(std::stol(name));
 				if (pid == ::getpid() || !runtime_process_alive(pid))
 					continue;
+#ifdef __APPLE__
+				auto arguments = raven_darwin::proc_stream(entry.path() / "cmdline");
+#else
 				std::ifstream arguments(entry.path() / "cmdline", std::ios::binary);
-				// The program is the runtime's first argument that is not an option: the last one for the processes it starts, and
-				// the one before -- and the program's own arguments when it was started by hand.
+#endif
+				// The program is the runtime's first non-option argument, before -- and the program's own arguments.
 				std::string argument, last;
 				bool first = true;
 				while (std::getline(arguments, argument, '\0')) {
@@ -1075,7 +1140,11 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 						break;
 					}
 				}
+#ifdef __APPLE__
+				auto stat = raven_darwin::proc_stream(entry.path() / "stat");
+#else
 				std::ifstream stat(entry.path() / "stat");
+#endif
 				std::string text;
 				std::getline(stat, text);
 				pid_t parent = 0;
@@ -1103,12 +1172,19 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 					Snapshot::Thread thread{0, owner, 0};
 					std::memcpy(&thread.id, answer.path.data() + offset, 4);
 					std::memcpy(&thread.priority, answer.path.data() + offset + 4, 4);
+					// Another process's first thread goes by its process id, as CreateProcess reported it.
+					if (thread.id == 1 && owner != uint32_t(::getpid()))
+						thread.id = owner;
 					snapshot->threads.push_back(thread);
 				}
 			};
 			append_threads(uint32_t(::getpid()), objects.process_request(request));
 			std::error_code error;
+#ifdef __APPLE__
+			for (const auto &entry : raven_darwin::proc_directory(error)) {
+#else
 			for (const auto &entry : std::filesystem::directory_iterator("/proc", error)) {
+#endif
 				const auto name = entry.path().filename().string();
 				if (name.empty() || !std::all_of(name.begin(), name.end(), [](char c) { return c >= '0' && c <= '9'; }))
 					continue;
@@ -1371,7 +1447,11 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 			break;
 		case 2: {
 			uint64_t pages = 0, resident = 0;
+#ifdef __APPLE__
+			auto statm = raven_darwin::proc_stream("/proc/self/statm");
+#else
 			std::ifstream statm("/proc/self/statm");
+#endif
 			statm >> pages >> resident;
 			info.assign(32, 0);
 			put(0, 8ULL << 30, 8);
@@ -1511,6 +1591,12 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		catch (const ApiFault &) { call.ret(0xc0000005U); }
 	});
 	// What the object manager tells about a handle: the basic record, the name (objects here have none), the type and the handle flags.
+	// Object-manager directories are not file-system directories. No such namespace is published by this runtime yet.
+	registry.add("NtOpenDirectoryObject", 3, [](ApiCall &call) {
+		if (call[0]) call.store_pointer(call[0], 0);
+		call.ret(0xc0000034U); // STATUS_OBJECT_NAME_NOT_FOUND
+	});
+	registry.add("NtQueryDirectoryObject", 7, [](ApiCall &call) { call.ret(0xc0000008U); });
 	registry.add("NtQueryObject", 5, [&objects](ApiCall &call) {
 		const uint64_t handle = call[0];
 		const size_t width = call.pointer_width();

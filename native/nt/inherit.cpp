@@ -3,6 +3,7 @@
 #include "child_process.h"
 #include "event.h"
 #include "mutex.h"
+#include "semaphore.h"
 
 #include "file_objects.h"
 #include "kernel_context.h"
@@ -11,7 +12,9 @@
 #include "threads.h"
 
 #include <cstring>
+#include <fcntl.h>
 #include <stdexcept>
+#include <sys/un.h>
 
 namespace raven {
 
@@ -105,10 +108,25 @@ std::vector<InheritedHandle> parse_inherited(std::span<const uint8_t> bytes)
 // The object a description stands for, rebuilt around the descriptor that came with it; null for a kind that cannot travel.
 std::shared_ptr<KernelObject> object_from_record(const InheritedHandle &item)
 {
+	if (item.kind == "process") {
+		// The process is named by its id; the pidfd only kept it from being mistaken for another while the handle travelled.
+		if (item.descriptor >= 0)
+			::close(item.descriptor);
+		if (item.size == uint64_t(::getpid()))
+			return std::make_shared<SelfProcessObject>();
+		auto process = find_child(pid_t(item.size));
+		if (!process) {
+			process = std::make_shared<ProcessObject>(pid_t(item.size), true);
+			process->name = item.text;
+		}
+		return process;
+	}
 	if (item.kind == "mutex")
 		return std::make_shared<MutexObject>(item.descriptor);
-	if (item.kind == "event")
-		return std::make_shared<EventObject>(item.descriptor);
+	if (item.kind == "semaphore")
+		return std::make_shared<SemaphoreObject>(item.descriptor);
+	if (item.kind == "event" || item.kind == "named-event")
+		return std::make_shared<EventObject>(item.descriptor, item.kind == "named-event" ? EventObject::Layout::manual : EventObject::Layout::type);
 	if (item.kind == "token")
 		return std::make_shared<AccessToken>(item.descriptor);
 	if (item.kind == "file") {
@@ -138,11 +156,6 @@ std::shared_ptr<KernelObject> object_from_record(const InheritedHandle &item)
 	}
 	if (item.kind == "thread")
 		return std::make_shared<RemoteThreadObject>(item.descriptor);
-	if (item.kind == "process") {
-		// The process is named by its id; the pidfd only kept it from being mistaken for another while the handle travelled.
-		::close(item.descriptor);
-		return std::make_shared<ProcessObject>(pid_t(item.size), true);
-	}
 	if (item.kind == "section") {
 		auto section = std::make_shared<SectionObject>();
 		section->descriptor = item.descriptor;
@@ -158,6 +171,30 @@ std::shared_ptr<KernelObject> object_from_record(const InheritedHandle &item)
 void adopt_inherited(NativeObjects &objects, const std::vector<InheritedHandle> &handles)
 {
 	for (const auto &item : handles) {
+		// The descriptor is closed here, even on a throw, unless something takes it; an object's constructor owns it from the call.
+		struct Pending {
+			int descriptor;
+			~Pending() { if (descriptor >= 0) ::close(descriptor); }
+		} pending{item.descriptor};
+		if (item.descriptor >= 0)
+			::fcntl(item.descriptor, F_SETFD, FD_CLOEXEC);
+#ifdef __APPLE__
+		if (item.kind == "darwin-binding") {
+			if (raven_darwin_adopt_unix_binding(int(item.size), item.descriptor))
+				throw std::runtime_error("cannot adopt inherited pipe name");
+			pending.descriptor = -1;
+			continue;
+		}
+#endif
+		if (item.kind == "standard") {
+			const auto made = objects.inherit_file(item.descriptor, item.handle);
+			if (made.status)
+				throw std::runtime_error("cannot adopt inherited standard handle");
+			objects.set_inherit(item.handle, true);
+			continue;
+		}
+		// The object takes the descriptor; a process closes its own, which only named it on the way.
+		pending.descriptor = -1;
 		const auto object = object_from_record(item);
 		if (!object) {
 			::close(item.descriptor);
@@ -165,7 +202,7 @@ void adopt_inherited(NativeObjects &objects, const std::vector<InheritedHandle> 
 		}
 		if (!objects.adopt(item.handle, object, true))
 			throw std::runtime_error("inherited handle value is taken");
-		if (item.handle_access || item.kind == "token" || item.kind == "event" || item.kind == "mutex")
+		if (item.handle_access || item.kind == "token" || item.kind == "event" || item.kind == "named-event" || item.kind == "mutex" || item.kind == "process")
 			objects.set_access(item.handle, item.handle_access);
 	}
 }

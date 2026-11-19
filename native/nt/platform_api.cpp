@@ -8,6 +8,9 @@
 #include "file_objects.h"
 #include "kernel_context.h"
 #include "system_exports.h"
+#ifdef __APPLE__
+#include "platform/darwin/audio/api.h"
+#endif
 
 #ifdef RAVEN_OPENSSL
 #include <openssl/evp.h>
@@ -20,6 +23,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -279,6 +283,8 @@ struct ComState {
 	std::map<uint64_t, Thread> threads;
 	uint64_t main_sta = 0;
 	int mta_threads = 0;
+	uint64_t next_cookie = 1;
+	std::set<uint64_t> mta_cookies;
 	// The IInitializeSpy objects each thread registered, in order, with their cookies. A registration outlives the thread's
 	// initialization, so it is kept apart from it.
 	struct Spy {
@@ -351,13 +357,21 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	// DirectSound where the runtime has no sound device to give: Windows without an audio device answers so, and programs go on silent.
 	// The 32-bit runtime's own DirectSound answers its entry points before these do.
 	constexpr uint32_t no_driver = 0x88780078U;
-	for (const auto *name : {"DirectSoundCreate", "DirectSoundCreate8", "DirectSoundCaptureCreate", "DirectSoundCaptureCreate8"})
+	for (const auto *name : {
+#ifndef __APPLE__
+		"DirectSoundCreate", "DirectSoundCreate8",
+#endif
+		"DirectSoundCaptureCreate", "DirectSoundCaptureCreate8"})
 		registry.add(name, 3, [](ApiCall &call) {
 			if (call[1])
 				call.store_pointer(call[1], 0);
 			call.ret(no_driver);
 		});
-	for (const auto *name : {"DirectSoundEnumerateA", "DirectSoundEnumerateW", "DirectSoundCaptureEnumerateA", "DirectSoundCaptureEnumerateW"})
+	for (const auto *name : {
+#ifndef __APPLE__
+		"DirectSoundEnumerateA", "DirectSoundEnumerateW",
+#endif
+		"DirectSoundCaptureEnumerateA", "DirectSoundCaptureEnumerateW"})
 		registry.add(name, 2, [](ApiCall &call) { call.ret(0); });
 	registry.add("DirectSoundFullDuplexCreate", 10, [](ApiCall &call) {
 		for (const size_t index : {6, 7, 8})
@@ -434,6 +448,9 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("SetWindowCompositionAttribute", 2, [](ApiCall &call) { call.ret(1); });
 	// PERFORMANCE_INFORMATION from the host's memory figures, in pages, with this process's handles and the host's process and thread counts.
 	for (const char *name : {"K32GetPerformanceInfo", "GetPerformanceInfo"})
+#ifdef __APPLE__
+		registry.add(name, 2, [&context](ApiCall &call) { commit_performance_info(call, context); });
+#else
 		registry.add(name, 2, [](ApiCall &call) {
 			const size_t width = call.pointer_width(), size = width == 8 ? 104 : 56;
 			if (!call[0] || call.u32(1) < size) {
@@ -461,6 +478,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 			call.write(call[0], bytes);
 			call.ret(1);
 		});
+#endif
 
 	// mpr, the network provider router: the machine has no network drives or shares, so an enumeration of the connected, remembered
 	// or browsable resources opens and finds nothing, and a drive or path has no remote connection. Each function returns its error and
@@ -533,6 +551,18 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("ImmGetOpenStatus", 1, [](ApiCall &call) { call.ret(0); });
 	registry.add("ImmSetOpenStatus", 2, [](ApiCall &call) { call.ret(0); });
 	registry.add("ImmGetConversionStatus", 3, [](ApiCall &call) { call.ret(0); });
+	registry.add("ImmSetConversionStatus", 3, [](ApiCall &call) { call.ret(0); });
+	// No input method is active: no window is the UI of one, no candidate lists exist, and keys are never processed into one.
+	registry.add("ImmIsUIMessageA", 4, [](ApiCall &call) { call.ret(0); });
+	registry.add("ImmIsUIMessageW", 4, [](ApiCall &call) { call.ret(0); });
+	registry.add("ImmGetCandidateListCountW", 2, [](ApiCall &call) {
+		if (call[1])
+			call.store<uint32_t>(call[1], 0);
+		call.ret(0);
+	});
+	registry.add("ImmGetCandidateListW", 4, [](ApiCall &call) { call.ret(0); });
+	// With no input method processing keys, Windows answers VK_PROCESSKEY.
+	registry.add("ImmGetVirtualKey", 1, [](ApiCall &call) { call.ret(0xe5); });
 
 	// Network and certificate services: no network is reported, and certificates are found nowhere else than where crypt32 keeps them.
 	registry.add("IsNetworkAlive", 1, [](ApiCall &call) {
@@ -693,8 +723,9 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		const auto extra = extra_at == rest.npos ? std::u16string() : rest.substr(extra_at);
 		// URL_COMPONENTSW: size, scheme ptr/len, scheme id, host ptr/len, port, user ptr/len, password ptr/len, path ptr/len, extra ptr/len.
 		const uint64_t components = call[3];
+		const bool x86 = call.pointer_width() == 4;
 		const auto fill = [&](uint64_t pointer_at, uint64_t length_at, const std::u16string &value) {
-			const uint64_t buffer = call.load<uint64_t>(components + pointer_at);
+			const uint64_t buffer = call.load_pointer(components + pointer_at);
 			const uint32_t capacity = call.load<uint32_t>(components + length_at);
 			if (buffer) {
 				if (capacity <= value.size()) {
@@ -703,17 +734,19 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 				}
 				call.put_wide(buffer, value, capacity);
 			} else if (value.empty()) {
-				call.store<uint64_t>(components + pointer_at, 0);
+				call.store_pointer(components + pointer_at, 0);
 			} else {
-				call.store<uint64_t>(components + pointer_at, call[0] + (url.size() - (url.size() - url.find(value))) * 2);
+				call.store_pointer(components + pointer_at, call[0] + (url.size() - (url.size() - url.find(value))) * 2);
 			}
 			call.store<uint32_t>(components + length_at, uint32_t(value.size()));
 			return true;
 		};
-		if (!fill(8, 16, scheme) || !fill(24, 32, host) || !fill(48, 56, user) || !fill(64, 72, password) || !fill(80, 88, path) || !fill(96, 104, extra))
+		if (!fill(x86 ? 4 : 8, x86 ? 8 : 16, scheme) || !fill(x86 ? 16 : 24, x86 ? 20 : 32, host) ||
+			!fill(x86 ? 28 : 40, x86 ? 32 : 48, user) || !fill(x86 ? 36 : 56, x86 ? 40 : 64, password) ||
+			!fill(x86 ? 44 : 72, x86 ? 48 : 80, path) || !fill(x86 ? 52 : 88, x86 ? 56 : 96, extra))
 			return;
-		call.store<uint32_t>(components + 20, scheme == u"https" ? 2 : scheme == u"http" ? 3 : scheme == u"ftp" ? 1 : 0);
-		call.store<uint32_t>(components + 40, port & 0xffff);
+		call.store<uint32_t>(components + (x86 ? 12 : 20), scheme == u"https" ? 4 : scheme == u"http" ? 3 : scheme == u"ftp" ? 1 : 0);
+		call.store<uint16_t>(components + (x86 ? 24 : 36), uint16_t(port));
 		call.ret(1);
 	});
 #endif
@@ -797,6 +830,26 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("CoInitialize", 1, [initialize](ApiCall &call) { initialize(call, 2); });
 	registry.add("CoInitializeEx", 2, [initialize](ApiCall &call) { initialize(call, call.u32(1)); });
 	registry.add("OleInitialize", 1, [initialize](ApiCall &call) { initialize(call, 2); });
+	// Usage cookies keep the MTA alive independently of the apartments individual threads join.
+	registry.add("CoIncrementMTAUsage", 1, [com](ApiCall &call) {
+		if (!call[0]) {
+			call.ret(e_invalidarg);
+			return;
+		}
+		const auto cookie = com->next_cookie++;
+		com->mta_cookies.insert(cookie);
+		++com->mta_threads;
+		call.store_pointer(call[0], cookie);
+		call.ret(s_ok);
+	});
+	registry.add("CoDecrementMTAUsage", 1, [com](ApiCall &call) {
+		if (!com->mta_cookies.erase(call[0])) {
+			call.ret(e_invalidarg);
+			return;
+		}
+		--com->mta_threads;
+		call.ret(s_ok);
+	});
 	// CoInitializeSecurity sets the process's COM security once: the first call succeeds and any later one is too late, as on Windows.
 	registry.add("CoInitializeSecurity", 9, [](ApiCall &call) {
 		static std::atomic<bool> done{false};
@@ -889,16 +942,6 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// No activation is ever handed to a filter, so registering one succeeds and it is never consulted.
 	registry.add("CoRegisterActivationFilter", 1, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
-	// The multithreaded apartment stays alive while a usage cookie is out; the cookie names nothing beyond itself.
-	registry.add("CoIncrementMTAUsage", 1, [](ApiCall &call) {
-		if (!call[0]) {
-			call.ret(0x80070057U);
-			return;
-		}
-		call.store_pointer(call[0], 1);
-		call.ret(s_ok);
-	});
-	registry.add("CoDecrementMTAUsage", 1, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
 	// The lock keeps an object alive for clients in other processes. Nothing here hands an object outside the process, so its own references
 	// are all that keep it, and locking or unlocking leaves it as it is.
 	registry.add("CoLockObjectExternal", 3, [](ApiCall &call) { call.ret(call[0] ? s_ok : 0x80070057U); });
@@ -957,7 +1000,17 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 	// answer is to try again at once (OLEUI_BZ_RETRYNOW).
 	for (const char *name : {"OleUIBusyW", "OleUIBusyA"})
 		registry.add(name, 1, [](ApiCall &call) { call.ret(118); });
-	registry.add("CoCreateInstance", 5, [](ApiCall &call) {
+	registry.add("CoCreateInstance", 5, [&context](ApiCall &call) {
+#ifdef __APPLE__
+		if (raven_darwin::create_audio_instance(call)) return;
+		if (context.modules.all().contains("raven-shell.dll")) {
+			const auto target = context.modules.resolve({"raven-shell.dll", "CoCreateInstance", 0, false, 0});
+			if (target) {
+				const std::array<uint64_t,5> arguments{call[0],call[1],call[2],call[3],call[4]};
+				call.ret(context.call(target, arguments).value); return;
+			}
+		}
+#endif
 		if (std::getenv("RAVEN_TRACE_API")) {
 			const auto bytes = call.read(call[0], 16);
 			std::fprintf(stderr, "com class");
@@ -1779,6 +1832,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(1);
 	});
 	// Display scaling: contexts are the small negative values of the Windows API; there is one display scale, so the setting is only remembered.
+#ifndef __APPLE__
 	auto dpi_context = std::make_shared<int64_t>(-1);
 	registry.add("IsValidDpiAwarenessContext", 1, [](ApiCall &call) {
 		const auto value = int64_t(call[0]);
@@ -1795,6 +1849,7 @@ void register_platform_api(ApiRegistry &registry, KernelContext &context)
 		call.ret(uint64_t(previous));
 	});
 	registry.add("GetThreadDpiAwarenessContext", 0, [dpi_context](ApiCall &call) { call.ret(uint64_t(*dpi_context)); });
+#endif
 	// Windows of another scale are never hosted, so the hosting behavior is only remembered: 0 is DPI_HOSTING_BEHAVIOR_DEFAULT.
 	auto hosting = std::make_shared<int32_t>(0);
 	registry.add("SetThreadDpiHostingBehavior", 1, [hosting](ApiCall &call) {

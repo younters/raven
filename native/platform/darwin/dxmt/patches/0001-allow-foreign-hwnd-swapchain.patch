@@ -1,0 +1,20 @@
+From: Raven macOS integration
+Upstream: 3Shain/dxmt 589adb780354b461645b29999cefaf533594ee99 (v0.80)
+Issue: https://github.com/3Shain/dxmt/issues/141
+Reason: Raven can present IOSurfaces to the process that owns a foreign HWND.
+
+diff --git a/src/d3d11/d3d11_swapchain.cpp b/src/d3d11/d3d11_swapchain.cpp
+--- a/src/d3d11/d3d11_swapchain.cpp
++++ b/src/d3d11/d3d11_swapchain.cpp
+@@ -1096,11 +1096,4 @@ CreateSwapChain(
+     return DXGI_ERROR_INVALID_CALL;
+   InitReturnPtr(ppSwapChain);
+ 
+-  DWORD window_process_id;
+-  GetWindowThreadProcessId(hWnd, &window_process_id);
+-  if (GetProcessId(GetCurrentProcess()) != window_process_id) {
+-    ERR("CreateSwapChain: cross-process swapchain not supported yet");
+-    return E_FAIL;
+-  }
+-
+   Com<IMTLDXGIDevice> layer_factory;
