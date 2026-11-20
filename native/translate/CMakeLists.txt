@@ -24,6 +24,8 @@ target_compile_options(raven_translate PRIVATE -Wall -Wextra -Wpedantic -Wconver
 # The PE parser is OS-neutral; LoadedImage is not (memfd, 4 KiB pages), so only the parser comes along.
 add_library(raven_translate_pe STATIC ${RAVEN_NATIVE_DIR}/pe/pe.cpp ${RAVEN_NATIVE_DIR}/pe/resources.cpp)
 target_include_directories(raven_translate_pe PUBLIC ${RAVEN_NATIVE_DIR})
+include(${RAVEN_NATIVE_DIR}/peparse/build.cmake)
+target_link_libraries(raven_translate_pe PUBLIC raven_peparse)
 add_library(raven_translate_test_process STATIC test_process.cpp)
 target_link_libraries(raven_translate_test_process PUBLIC raven_translate raven_translate_pe)
 
