@@ -868,6 +868,7 @@ bool NativeThreads::hand_over()
 	return false;
 }
 
+#if defined(__linux__)
 // The nanoseconds a task has run on a processor, from the scheduler's own count; zero when it cannot be read (the task is gone).
 static uint64_t run_time(const char *path)
 {
@@ -932,6 +933,12 @@ static bool runnable(pid_t host, pid_t task)
 	}
 	return false;
 }
+
+#else
+// The scheduler has no /proc counters on this host. Use the existing wall-clock fallback.
+static uint64_t thread_run_time(pid_t, pid_t) { return 0; }
+static bool runnable(pid_t, pid_t) { return false; }
+#endif
 
 bool NativeThreads::hand_over_to(uint32_t object)
 {
