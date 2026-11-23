@@ -178,7 +178,8 @@ bool NativeX86System::dispatch(std::string_view name)
 {
 	if (name == "GetThreadContext" || name == "SetThreadContext") return false;
 	// Semaphore state and cross-process transfers use the same implementation in both widths.
-	if (name == "CreateSemaphoreA" || name == "CreateSemaphoreW" || name == "ReleaseSemaphore") return false;
+	if (name == "CreateSemaphoreA" || name == "CreateSemaphoreW" || name == "ReleaseSemaphore" || name == "NtQuerySemaphore")
+		return false;
 #ifdef __APPLE__
 	// Darwin handlers supply DPI and keyed-mutex behavior before the legacy fallback.
 	if (name=="SetProcessDPIAware" || darwin_keyed_mutex_api(name)) return false;
