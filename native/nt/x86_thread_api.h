@@ -37,7 +37,6 @@ private:
 #endif
 	// The debug data every section points at: callers that force it write the section's name there.
 	uint64_t section_debug = 0;
-	uint32_t wait(uint64_t handle, uint32_t milliseconds);
 #ifdef __APPLE__
 	uint32_t section_word_at(uint64_t address);
 	int32_t add_lock_count(uint64_t address, int32_t delta);

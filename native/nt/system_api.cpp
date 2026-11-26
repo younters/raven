@@ -6,6 +6,8 @@
 #include "kernel_context.h"
 #include "processors.h"
 #include "actctx.h"
+#include "apiset.h"
+#include "msix.h"
 #include "text.h"
 #include "x86_compat_api.h"
 #include "unwind.h"
@@ -13,16 +15,22 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include "clock_calibration.h"
 #include <cpuid.h>
+#include <x86intrin.h>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <map>
 #include <set>
 #include <mutex>
 #include <optional>
 #include <span>
+#include <sstream>
 #include <thread>
 #include <sched.h>
 #include <tuple>
@@ -39,6 +47,36 @@ namespace raven {
 namespace {
 
 constexpr uint64_t current_process = UINT64_MAX, current_thread = UINT64_MAX - 1;
+
+void trace_profile_registry_call(ApiCall &call)
+{
+	std::ostringstream line;
+	line << "profapi: GetAppContainerRegistryHandleFromName";
+	for (size_t index = 0; index < 5; ++index) {
+		const auto address = call[index];
+		line << " arg" << std::dec << index << "=0x" << std::hex << address;
+		if (address < 0x10000 || address >= 0x800000000000ULL || address % 2)
+			continue;
+		std::u16string candidate;
+		try {
+			for (size_t offset = 0; offset < 96; ++offset) {
+				const auto unit = call.load<char16_t>(address + offset * sizeof(char16_t));
+				if (!unit) {
+					if (!candidate.empty())
+						line << " wide=" << std::quoted(to_utf8(candidate));
+					break;
+				}
+				if (unit < 0x20 || (unit >= 0x7f && unit <= 0x9f) || unit == 0x2028 || unit == 0x2029)
+					break;
+				candidate.push_back(unit);
+			}
+		} catch (const ApiFault &) {
+			// A raw argument need not point to readable memory.
+		}
+	}
+	line << " hr=0x80004001\n";
+	std::fputs(line.str().c_str(), stderr);
+}
 
 // Civil date from days since 1970-01-01 (proleptic Gregorian), after Howard Hinnant's public-domain algorithm.
 struct Civil {
@@ -346,6 +384,35 @@ uint64_t counter_ticks()
 	return uint64_t(now.tv_sec) * 10000000ULL + uint64_t(now.tv_nsec) / 100;
 }
 
+// The closest of a few readings of the clock, each between two of the counter: the counter is the one before, so a count that goes on
+// from the sample is never behind the clock's.
+ClockSample clock_sample()
+{
+	ClockSample best{};
+	uint64_t closest = UINT64_MAX;
+	for (int reading = 0; reading < 8; ++reading) {
+		timespec now{};
+		const uint64_t before = __rdtsc();
+		::clock_gettime(CLOCK_MONOTONIC, &now);
+		const uint64_t after = __rdtsc();
+		if (after - before < closest) {
+			closest = after - before;
+			best = {before, uint64_t(now.tv_sec) * 1000000000ULL + uint64_t(now.tv_nsec), 0};
+		}
+	}
+	timespec awake{}, all{};
+	::clock_gettime(CLOCK_MONOTONIC, &awake);
+	::clock_gettime(CLOCK_BOOTTIME, &all);
+	best.slept = uint64_t((int64_t(all.tv_sec) - awake.tv_sec) * 1000000000LL + (int64_t(all.tv_nsec) - awake.tv_nsec));
+	return best;
+}
+
+const ClockSample &clock_origin()
+{
+	static const ClockSample origin = clock_sample();
+	return origin;
+}
+
 // The local time at the start of the current second and the performance counter span of that second, for a GetLocalTime the
 // guest answers itself: the counter where the second starts and ends, then the SYSTEMTIME with no milliseconds.
 std::array<uint64_t, 4> local_second()
@@ -376,6 +443,9 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	auto &paths = context.paths;
 	auto &modules = context.modules;
 
+	registry.add("IsApiSetImplemented", 1, [](ApiCall &call) {
+		call.ret(call[0] && apiset_implemented(call.narrow(call[0], 256)));
+	});
 	registry.add("GetSystemTimeAsFileTime", 1, [](ApiCall &call) { call.store<uint64_t>(call[0], now_ticks()); });
 	registry.add("GetSystemTimePreciseAsFileTime", 1, [](ApiCall &call) { call.store<uint64_t>(call[0], now_ticks()); });
 	registry.add("GetSystemTime", 1, [](ApiCall &call) { call.write(call[0], system_time(now_ticks())); });
@@ -395,8 +465,8 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			call.store<uint64_t>(call[0], 10000000ULL);
 			call.ret(1);
 		});
-	registry.add("GetTickCount64", 0, [](ApiCall &call) { call.ret(counter_ticks() / 10000); });
-	registry.add("GetTickCount", 0, [](ApiCall &call) { call.ret(uint32_t(counter_ticks() / 10000)); });
+	registry.add("GetTickCount64", 0, [](ApiCall &call) { call.ret(shared_tick_count()); });
+	registry.add("GetTickCount", 0, [](ApiCall &call) { call.ret(uint32_t(shared_tick_count())); });
 	// winmm timers: the host clock already has millisecond resolution, so periods are accepted and change nothing.
 	registry.add("timeGetTime", 0, [](ApiCall &call) { call.ret(uint32_t(counter_ticks() / 10000)); });
 	// XInput: no game controller is connected. Each query answers ERROR_DEVICE_NOT_CONNECTED for the four controller slots and
@@ -900,6 +970,18 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 			call.store<uint32_t>(call[2], 0);
 		call.ret(0);
 	});
+	// No process runs inside an AppContainer, whose objects live under a directory of their own: the path of that directory is empty,
+	// as Windows answers it for a process outside one, whatever the token and SID.
+	registry.add("RtlGetAppContainerNamedObjectPath", 4, [](ApiCall &call) {
+		if (!call[3]) {
+			call.ret(0xc000000dU);
+			return;
+		}
+		call.store<uint32_t>(call[3], 0);
+		call.store_pointer(call[3] + call.pointer_width(), 0);
+		call.ret(0);
+	});
+	registry.add("GetAppContainerNamedObjectPath", 5, [](ApiCall &call) { call.fail(4250); });
 	// The licensing policy store holds no values: every query answers SL_E_VALUE_NOT_FOUND.
 	const auto policy_value = [](ApiCall &call) { call.ret(call[0] ? 0xc004f012U : 0x80070057U); };
 	registry.add("SLGetWindowsInformation", 4, policy_value);
@@ -1400,10 +1482,12 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("GetSystemPreferredUILanguages", 4, preferred_languages);
 	registry.add("GetProcessPreferredUILanguages", 4, preferred_languages);
 	// The list stays the one language the runtime speaks; a program asking for another finds that out from the getters.
-	registry.add("SetThreadPreferredUILanguages", 3, [](ApiCall &call) {
+	const auto set_languages = [](ApiCall &call) {
 		if (call[2]) call.store<uint32_t>(call[2], 1);
 		call.ret(1);
-	});
+	};
+	registry.add("SetThreadPreferredUILanguages", 3, set_languages);
+	registry.add("SetProcessPreferredUILanguages", 3, set_languages);
 	// Power: always on mains power, no battery, nothing to suspend.
 	registry.add("GetSystemPowerStatus", 1, [](ApiCall &call) {
 		if (!call[0]) {
@@ -1431,6 +1515,16 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 	});
 	registry.add("RegisterSuspendResumeNotification", 2, [](ApiCall &call) { call.ret(1); });
 	registry.add("UnregisterSuspendResumeNotification", 1, [](ApiCall &call) { call.ret(1); });
+	// The same registration as powrprof offers it: the handle goes to the caller's variable, and the result is an error code.
+	registry.add("PowerRegisterSuspendResumeNotification", 3, [](ApiCall &call) {
+		if (!call[1] || !call[2]) {
+			call.ret(87);
+			return;
+		}
+		call.store_pointer(call[2], 1);
+		call.ret(0);
+	});
+	registry.add("PowerUnregisterSuspendResumeNotification", 1, [](ApiCall &call) { call.ret(0); });
 	// Giving pages back changes nothing the program can see here.
 	registry.add("DiscardVirtualMemory", 2, [](ApiCall &call) { call.ret(0); });
 	// The display is 96 dpi and every process counts as aware of it (IsProcessDPIAware): the awareness a process asks for is kept and
@@ -1469,32 +1563,14 @@ void register_system_api(ApiRegistry &registry, KernelContext &context)
 		call.write(call[0], bytes);
 		call.ret(1);
 	});
-	// Windows 10 Pro (PRODUCT_PROFESSIONAL), whatever version the program asks about.
-	// A program in the prefix runs outside any app package: the package queries answer APPMODEL_ERROR_NO_PACKAGE, with no length.
-	for (const char *name : {"GetCurrentPackageFullName", "GetCurrentPackageFamilyName", "GetCurrentPackageId", "GetCurrentPackagePath",
-			"GetCurrentApplicationUserModelId"})
-		registry.add(name, 2, [](ApiCall &call) {
-			if (call[0])
-				call.store<uint32_t>(call[0], 0);
-			call.ret(15700);
-		});
-	// The same for any process, which is never packaged either: the length follows the process handle.
-	for (const char *name : {"GetPackageFullName", "GetPackageFamilyName", "GetApplicationUserModelId"})
-		registry.add(name, 3, [](ApiCall &call) {
-			if (call[1])
-				call.store<uint32_t>(call[1], 0);
-			call.ret(15700);
-		});
-	// No app package is installed: a family has no packages, and the counts say so.
-	registry.add("GetPackagesByPackageFamily", 5, [](ApiCall &call) {
-		if (!call[0] || !call[1] || !call[3]) {
-			call.ret(87);
-			return;
-		}
-		call.store<uint32_t>(call[1], 0);
-		call.store<uint32_t>(call[3], 0);
-		call.ret(0);
+	register_msix_api(registry, context);
+	registry.add("GetAppContainerRegistryHandleFromName", 5, [](ApiCall &call) {
+		const char *trace = std::getenv("RAVEN_TRACE_PROFAPI");
+		if (trace && std::string_view(trace) == "1")
+			trace_profile_registry_call(call);
+		call.ret(0x80004001U); // E_NOTIMPL
 	});
+	// Windows 10 Pro (PRODUCT_PROFESSIONAL), whatever version the program asks about.
 	registry.add("GetProductInfo", 5, [](ApiCall &call) {
 		if (!call[4]) {
 			call.fail(87);

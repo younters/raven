@@ -120,6 +120,13 @@ std::optional<ActivationContexts::Assembly> ActivationContexts::parse(std::strin
 	const auto text = manifest_text(bytes);
 	Assembly root;
 	bool identified = false, in_dependency = false, in_file = false, assembly = false;
+	struct Namespace {
+		size_t depth;
+		std::string attribute, value;
+	};
+	std::vector<Namespace> namespaces;
+	size_t depth = 0;
+	std::optional<size_t> file_depth;
 	size_t at = 0;
 	while ((at = text.find('<', at)) != text.npos) {
 		if (text.compare(at, 4, "<!--") == 0) {
@@ -143,9 +150,9 @@ std::optional<ActivationContexts::Assembly> ActivationContexts::parse(std::strin
 		while (name_end < tag.size() && tag[name_end] != ' ' && tag[name_end] != '\t' && tag[name_end] != '\r' && tag[name_end] != '\n' &&
 			tag[name_end] != '/')
 			++name_end;
-		auto element = lowered(tag.substr(0, name_end));
-		if (const auto colon = element.find(':'); colon != element.npos)
-			element = element.substr(colon + 1);
+		const auto qualified = lowered(tag.substr(0, name_end));
+		const auto colon = qualified.find(':');
+		const auto element = qualified.substr(colon == qualified.npos ? 0 : colon + 1);
 		// Attributes are name="value" or name='value'.
 		std::map<std::string, std::string> attributes;
 		for (size_t scan = name_end; scan < tag.size();) {
@@ -168,12 +175,33 @@ std::optional<ActivationContexts::Assembly> ActivationContexts::parse(std::strin
 			attributes[key] = std::string(tag.substr(open + 1, close - open - 1));
 			scan = close + 1;
 		}
+		if (!closing)
+			for (const auto &[name, value] : attributes)
+				if (name == "xmlns" || name.starts_with("xmlns:"))
+					namespaces.push_back({depth, name, value});
+		if (element == "activatableclass" && !closing && !in_dependency && file_depth && depth == *file_depth + 1) {
+			const auto key = colon == qualified.npos ? "xmlns" : "xmlns:" + qualified.substr(0, colon);
+			const auto ns = std::find_if(namespaces.rbegin(), namespaces.rend(), [&](const auto &entry) { return entry.attribute == key; });
+			const auto found = attributes.find("name");
+			if (ns != namespaces.rend() && ns->value == "urn:schemas-microsoft-com:winrt.v1" &&
+				found != attributes.end() && !found->second.empty() && !root.files.empty())
+				root.winrt_classes.try_emplace(found->second, root.files.back());
+		}
+		if (closing && depth)
+			--depth;
+		if (closing || self_closing) {
+			while (!namespaces.empty() && namespaces.back().depth >= depth)
+				namespaces.pop_back();
+		} else {
+			++depth;
+		}
 		if (element == "assembly" && !closing)
 			assembly = true;
 		if (element == "dependentassembly")
 			in_dependency = !closing && !self_closing;
 		else if (element == "file") {
 			in_file = !closing && !self_closing;
+			file_depth = in_file && attributes.contains("name") ? std::optional(depth - 1) : std::nullopt;
 			if (!closing && attributes.contains("name"))
 				root.files.push_back(attributes["name"]);
 		} else if (element == "assemblyidentity" && !closing) {
@@ -442,6 +470,29 @@ std::optional<uint32_t> ActivationContexts::library_roster(uint64_t handle, std:
 	return std::nullopt;
 }
 
+std::optional<std::u16string> ActivationContexts::winrt_library(uint64_t handle, std::string_view name) const
+{
+	const auto found = contexts.find(handle);
+	if (!kernel || found == contexts.end())
+		return std::nullopt;
+	const auto search = [&](const auto &self, const Assembly &assembly, const std::u16string &folder) -> std::optional<std::u16string> {
+		if (const auto entry = assembly.winrt_classes.find(name); entry != assembly.winrt_classes.end()) {
+			const auto &file = entry->second;
+			if (file.empty() || file.find_first_of(":\\/") != file.npos || file == "." || file == "..")
+				return std::u16string();
+			return folder + u"\\" + from_utf8(file);
+		}
+		for (const auto &dependency : assembly.dependencies)
+			if (auto path = self(self, dependency, kernel->paths.dos(folder_of(dependency))))
+				return path;
+		return std::nullopt;
+	};
+	const auto &source = found->second.source;
+	const auto slash = source.find_last_of(u"\\/");
+	const auto folder = slash == source.npos ? kernel->paths.dos(application) : source.substr(0, slash);
+	return search(search, found->second.root, folder);
+}
+
 void ActivationContexts::set_compatibility_layer(std::u16string_view layers)
 {
 	// The layers are names separated by spaces, after an optional "~" or "!"; the first that names a version of Windows decides.
@@ -506,14 +557,17 @@ void ActivationContexts::release(uint64_t handle)
 uint64_t ActivationContexts::current(uint32_t thread) const
 {
 	if (const auto found = stacks.find(thread); found != stacks.end() && !found->second.empty())
-		return found->second.back().first;
+		return found->second.back().handle;
 	return process_default;
 }
 
-uint64_t ActivationContexts::activate(uint32_t thread, uint64_t handle)
+uint64_t ActivationContexts::activate(uint32_t thread, uint64_t handle, uint64_t caller_frame)
 {
 	const auto cookie = next_cookie++;
-	stacks[thread].emplace_back(handle, cookie);
+	stacks[thread].push_back({handle, cookie, caller_frame});
+	if (caller_frame)
+		if (auto *active = find(handle))
+			++active->references;
 	publish(thread);
 	return cookie;
 }
@@ -548,12 +602,40 @@ void ActivationContexts::publish(uint32_t thread)
 bool ActivationContexts::deactivate(uint32_t thread, uint64_t cookie)
 {
 	auto &stack = stacks[thread];
-	const auto found = std::find_if(stack.begin(), stack.end(), [&](const auto &frame) { return frame.second == cookie; });
+	const auto found = std::find_if(stack.begin(), stack.end(), [&](const auto &frame) { return frame.cookie == cookie; });
 	if (found == stack.end())
 		return false;
+	for (auto frame = found; frame != stack.end(); ++frame)
+		if (frame->caller_frame)
+			release(frame->handle);
 	stack.erase(found, stack.end());
 	publish(thread);
 	return true;
+}
+
+uint64_t ActivationContexts::current_caller_frame(uint32_t thread) const
+{
+	const auto found = stacks.find(thread);
+	return found == stacks.end() || found->second.empty() ? 0 : found->second.back().caller_frame;
+}
+
+void ActivationContexts::deactivate_caller_frame(uint32_t thread, uint64_t caller_frame)
+{
+	const auto found = stacks.find(thread);
+	if (found == stacks.end() || found->second.empty() || found->second.back().caller_frame != caller_frame)
+		return;
+	deactivate(thread, found->second.back().cookie);
+}
+
+void ActivationContexts::clear_thread(uint32_t thread)
+{
+	if (const auto found = stacks.find(thread); found != stacks.end()) {
+		for (const auto &frame : found->second)
+			if (frame.caller_frame)
+				release(frame.handle);
+		stacks.erase(found);
+		publish(thread);
+	}
 }
 
 std::optional<std::string> ActivationContexts::registered_name(uint32_t thread, std::string_view name) const
@@ -561,7 +643,7 @@ std::optional<std::string> ActivationContexts::registered_name(uint32_t thread, 
 	const auto found = stacks.find(thread);
 	if (found == stacks.end() || found->second.empty())
 		return std::nullopt;
-	const auto context = contexts.find(found->second.back().first);
+	const auto context = contexts.find(found->second.back().handle);
 	if (context == contexts.end())
 		return std::nullopt;
 	const auto &root = context->second.root;
@@ -596,7 +678,22 @@ void register_actctx_api(ApiRegistry &registry, KernelContext &context)
 {
 	auto &contexts = activation_contexts();
 	contexts.attach(context);
+	context.threads.add_end_listener([&contexts](uint32_t thread) { contexts.clear_thread(thread); });
 	const auto thread = [&context] { return context.threads.current_id(); };
+	registry.add("RavenWinRTClassLibrary", 3, [&contexts, thread](ApiCall &call) {
+		if (!call[0])
+			return;
+		const auto path = contexts.winrt_library(contexts.current(thread()), to_utf8(call.wide(call[0], 512)));
+		if (!path)
+			return;
+		if (path->empty()) {
+			call.ret(UINT32_MAX);
+			return;
+		}
+		if (call[1])
+			call.put_wide(call[1], *path, call.u32(2));
+		call.ret(path->size() + 1);
+	});
 	// CreateActCtxW(ACTCTXW): a manifest file, or a manifest resource of a module named by path or handle. CreateActCtxA takes the same
 	// structure with its source path in the ANSI code page.
 	const auto create = [&context, &contexts](ApiCall &call, bool ansi) {
@@ -674,7 +771,9 @@ void register_actctx_api(ApiRegistry &registry, KernelContext &context)
 		if (auto *found = contexts.find(call[0]))
 			++found->references;
 	});
-	registry.add("ReleaseActCtx", 1, [&contexts](ApiCall &call) { contexts.release(call[0]); });
+	const auto release = [&contexts](ApiCall &call) { contexts.release(call[0]); };
+	registry.add("ReleaseActCtx", 1, release);
+	registry.add("RtlReleaseActivationContext", 1, release);
 	registry.add("ZombifyActCtx", 1, [](ApiCall &call) { call.ret(1); });
 	registry.add("ActivateActCtx", 2, [&contexts, thread](ApiCall &call) {
 		if (call[0] && call[0] != UINT64_MAX && !contexts.find(call[0])) {
@@ -693,6 +792,29 @@ void register_actctx_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(1);
 	});
+	const bool x86 = context.process.mode() == NativeMode::x86;
+	// On x86 these exports take their two words in ECX and EDX and pop no stack arguments.
+	registry.add("RtlActivateActivationContextUnsafeFast", x86 ? 0 : 2, [&contexts, thread, x86](ApiCall &call) {
+		uint64_t frame, handle;
+		if (x86) {
+			const auto registers = call.process.general_registers();
+			frame = uint32_t(registers.rcx);
+			handle = uint32_t(registers.rdx);
+		} else {
+			frame = call[0];
+			handle = call[1];
+		}
+		const auto width = call.pointer_width();
+		const auto record = frame + 2 * width;
+		call.store_pointer(record, contexts.current_caller_frame(thread()));
+		call.store_pointer(record + width, handle);
+		call.store<uint32_t>(record + 2 * width, 0);
+		contexts.activate(thread(), handle, record);
+	});
+	registry.add("RtlDeactivateActivationContextUnsafeFast", x86 ? 0 : 1, [&contexts, thread, x86](ApiCall &call) {
+		const auto frame = x86 ? uint64_t(uint32_t(call.process.general_registers().rcx)) : call[0];
+		contexts.deactivate_caller_frame(thread(), frame + 2 * call.pointer_width());
+	});
 	registry.add("GetCurrentActCtx", 1, [&contexts, thread](ApiCall &call) {
 		if (!call[0]) {
 			call.fail(87);
@@ -704,8 +826,18 @@ void register_actctx_api(ApiRegistry &registry, KernelContext &context)
 		call.store_pointer(call[0], handle);
 		call.ret(1);
 	});
+	const auto write_basic_context = [](ApiCall &call, uint64_t handle, uint64_t buffer, uint64_t capacity, uint64_t length) {
+		const size_t width = call.pointer_width(), needed = width * 2;
+		if (length)
+			call.store_pointer(length, needed);
+		if (!buffer || capacity < needed)
+			return false;
+		call.store_pointer(buffer, handle);
+		call.store_pointer(buffer + width, 0);
+		return true;
+	};
 	// QueryActCtxW answers the basic information: the context and its flags. The detailed forms report that there is nothing to describe.
-	registry.add("QueryActCtxW", 7, [&contexts, thread](ApiCall &call) {
+	registry.add("QueryActCtxW", 7, [&contexts, thread, write_basic_context](ApiCall &call) {
 		const uint32_t flags = call.u32(0), information = call.u32(3);
 		uint64_t handle = call[1];
 		if (flags & 4)
@@ -717,16 +849,25 @@ void register_actctx_api(ApiRegistry &registry, KernelContext &context)
 			call.fail(87);
 			return;
 		}
-		const size_t width = call.pointer_width(), needed = width * 2;
-		if (call[6])
-			call.store_pointer(call[6], needed);
-		if (!call[4] || call[5] < needed) {
+		if (!write_basic_context(call, handle, call[4], call[5], call[6])) {
 			call.fail(122);
 			return;
 		}
-		call.store_pointer(call[4], handle);
-		call.store_pointer(call[4] + width, 0);
 		call.ret(1);
+	});
+	registry.add("RtlQueryInformationActiveActivationContext", 4, [&contexts, thread, write_basic_context](ApiCall &call) {
+		if (call.u32(0) != 1) {
+			call.ret(0xc0000002U);
+			return;
+		}
+		const auto handle = contexts.current(thread());
+		if (!write_basic_context(call, handle, call[1], call[2], call[3])) {
+			call.ret(0xc0000023U);
+			return;
+		}
+		if (auto *found = contexts.find(handle))
+			++found->references;
+		call.ret(0);
 	});
 	// FindActCtxSectionStringW answers the library redirection section: a library an assembly of the context in effect declares, with the
 	// context and the assembly's place in it. The other sections have no entries.

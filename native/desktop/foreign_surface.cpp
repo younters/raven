@@ -1,6 +1,7 @@
 #include "foreign_surface.h"
 
 #include "shared_pixels.h"
+#include "nt/desktop_lock.h"
 #include "nt/host_names.h"
 #include "nt/prefix.h"
 #include "nt/shared_file.h"
@@ -17,12 +18,17 @@
 #include <sstream>
 #include <vector>
 #include <mutex>
+#include <pthread.h>
 #include <signal.h>
 #include <string>
+#include <string_view>
+#include <thread>
 
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <poll.h>
 #include <sys/inotify.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/file.h>
 #include <unistd.h>
@@ -51,6 +57,19 @@ const std::filesystem::path &window_directory()
 	return directory;
 }
 
+// The records of the windows themselves (.window, .traits) live in a directory of their own inside it: a watch of the directory sees
+// only what the processes send and post each other and the pixels they draw, not each window a process makes, moves or retitles.
+const std::filesystem::path &window_records()
+{
+	static const std::filesystem::path directory = [] {
+		auto made = window_directory() / "windows";
+		std::error_code error;
+		std::filesystem::create_directories(made, error);
+		return made;
+	}();
+	return directory;
+}
+
 std::string window_name(uint64_t window)
 {
 	char text[17];
@@ -68,27 +87,31 @@ uint64_t window_handle_base()
 }
 
 // Removes what processes that ended without withdrawing their windows left: a window whose owner is gone, and pixels without a window.
-static void sweep_windows(const std::filesystem::path &directory)
+static void sweep_windows(const std::filesystem::path &directory, const std::filesystem::path &records)
 {
 	std::error_code error;
 	std::vector<std::filesystem::path> stale;
+	for (const auto &entry : std::filesystem::directory_iterator(records, error)) {
+		const auto path = entry.path();
+		if (path.extension() != ".window")
+			continue;
+		std::ifstream input(path);
+		long owner = 0;
+		if ((input >> owner) && owner > 0 && !(::kill(pid_t(owner), 0) != 0 && errno == ESRCH))
+			continue;
+		stale.push_back(path);
+		stale.push_back(std::filesystem::path(path).replace_extension(".traits"));
+		stale.push_back(directory / path.filename().replace_extension(".pixels"));
+	}
 	for (const auto &entry : std::filesystem::directory_iterator(directory, error)) {
 		const auto path = entry.path();
-		if (path.extension() == ".window") {
-			std::ifstream input(path);
-			long owner = 0;
-			if ((input >> owner) && owner > 0 && !(::kill(pid_t(owner), 0) != 0 && errno == ESRCH))
-				continue;
-			stale.push_back(path);
-			stale.push_back(std::filesystem::path(path).replace_extension(".pixels"));
-			stale.push_back(std::filesystem::path(path).replace_extension(".traits"));
-		} else if (path.extension() == ".pixels" && !std::filesystem::exists(std::filesystem::path(path).replace_extension(".window"), error)) {
+		const auto record = records / (path.filename().string().substr(0, 8) + ".window");
+		if (path.extension() == ".pixels" && !std::filesystem::exists(record, error)) {
 			stale.push_back(path);
 		} else if (path.extension() == ".post" || path.extension() == ".posting" || path.extension() == ".send" || path.extension() == ".sending" ||
 			path.extension() == ".reply" || path.extension() == ".replying") {
 			// Messages for a window no longer there, or half written by a poster that ended.
-			const auto window = path.filename().string().substr(0, 8);
-			if (!std::filesystem::exists(directory / (window + ".window"), error))
+			if (!std::filesystem::exists(record, error))
 				stale.push_back(path);
 		}
 	}
@@ -96,15 +119,35 @@ static void sweep_windows(const std::filesystem::path &directory)
 		std::filesystem::remove(path, error);
 }
 
+// How many times the window directory was written while the desktop lock was held whole, told at the end with RAVEN_TRACE_DESKTOP_FILES:
+// every thread that draws or changes a window of its own would wait for the disk.
+namespace {
+struct LockedWrites {
+	std::atomic<uint64_t> count{0};
+	void note()
+	{
+		if (desktop_lock().held_whole())
+			count.fetch_add(1, std::memory_order_relaxed);
+	}
+	~LockedWrites()
+	{
+		if (std::getenv("RAVEN_TRACE_DESKTOP_FILES"))
+			std::fprintf(stderr, "desktop: window files written under the desktop lock %llu times\n", (unsigned long long)count.load());
+	}
+};
+LockedWrites locked_writes;
+}
+
 void publish_window(uint64_t window, uint32_t width, uint32_t height, uint32_t thread, uint64_t parent)
 {
+	locked_writes.note();
 	// The windows of the runtime's control panel and file dialog are not shown to other programs: none can find them, send them a message
 	// or draw into them.
 	if (sandbox().trusted())
 		return;
-	const auto directory = window_directory();
+	const auto &directory = window_records();
 	static std::once_flag swept;
-	std::call_once(swept, [&] { sweep_windows(directory); });
+	std::call_once(swept, [&] { sweep_windows(window_directory(), directory); });
 	const auto final_path = directory / (window_name(window) + ".window");
 	const auto temporary = directory / (window_name(window) + ".window." + std::to_string(::getpid()));
 	{
@@ -117,19 +160,20 @@ void publish_window(uint64_t window, uint32_t width, uint32_t height, uint32_t t
 
 void withdraw_window(uint64_t window)
 {
-	const auto directory = window_directory();
+	locked_writes.note();
 	std::error_code error;
-	std::filesystem::remove(directory / (window_name(window) + ".window"), error);
-	std::filesystem::remove(directory / (window_name(window) + ".pixels"), error);
-	std::filesystem::remove(directory / (window_name(window) + ".update"), error);
-	std::filesystem::remove(directory / (window_name(window) + ".traits"), error);
+	std::filesystem::remove(window_records() / (window_name(window) + ".window"), error);
+	std::filesystem::remove(window_directory() / (window_name(window) + ".pixels"), error);
+	std::filesystem::remove(window_records() / (window_name(window) + ".update"), error);
+	std::filesystem::remove(window_records() / (window_name(window) + ".traits"), error);
 }
 
 void publish_window_traits(uint64_t window, const ForeignWindowTraits &traits)
 {
+	locked_writes.note();
 	if (sandbox().trusted())
 		return;
-	const auto directory = window_directory();
+	const auto &directory = window_records();
 	const auto final_path = directory / (window_name(window) + ".traits");
 	const auto temporary = directory / (window_name(window) + ".traits." + std::to_string(::getpid()));
 	{
@@ -148,7 +192,7 @@ struct ForeignRecord {
 
 static std::optional<ForeignRecord> foreign_record(uint64_t window)
 {
-	std::ifstream input(window_directory() / (window_name(window) + ".window"));
+	std::ifstream input(window_records() / (window_name(window) + ".window"));
 	ForeignRecord record;
 	if (!(input >> record.owner >> record.width >> record.height) || record.owner <= 0 || record.owner == ::getpid())
 		return std::nullopt;
@@ -246,7 +290,7 @@ std::optional<ForeignWindowTraits> foreign_window_traits(uint64_t window)
 {
 	if (!foreign_record(window))
 		return std::nullopt;
-	std::ifstream input(window_directory() / (window_name(window) + ".traits"));
+	std::ifstream input(window_records() / (window_name(window) + ".traits"));
 	ForeignWindowTraits traits;
 	std::string first;
 	if (!std::getline(input, first))
@@ -295,8 +339,8 @@ void take_foreign_messages(const std::function<bool(uint64_t)> &owned, const std
 	for (const auto &path : posted) {
 		const auto name = path.filename().string();
 		char *end = nullptr;
-		const auto window = std::strtoull(name.substr(0, 8).c_str(), &end, 16);
-		if (name.size() < 9 || name[8] != '.' || !end || *end || !owned(window))
+		const auto window = std::strtoull(name.c_str(), &end, 16);
+		if (name.size() < 9 || name[8] != '.' || end != name.c_str() + 8 || !owned(window))
 			continue;
 		std::ifstream input(path);
 		uint32_t message = 0;
@@ -307,6 +351,22 @@ void take_foreign_messages(const std::function<bool(uint64_t)> &owned, const std
 		if (read)
 			use(window, message, wparam, lparam);
 	}
+}
+
+std::vector<std::pair<uint64_t, uint32_t>> foreign_messages_waiting(const std::function<bool(uint64_t)> &owned)
+{
+	std::vector<std::pair<uint64_t, uint32_t>> waiting;
+	std::error_code error;
+	for (const auto &entry : std::filesystem::directory_iterator(window_directory(), error)) {
+		const auto extension = entry.path().extension();
+		const auto name = entry.path().filename().string();
+		char *end = nullptr;
+		const auto window = std::strtoull(name.c_str(), &end, 16);
+		if ((extension != ".send" && extension != ".post") || name.size() < 9 || name[8] != '.' || end != name.c_str() + 8 || !owned(window))
+			continue;
+		waiting.emplace_back(window, extension == ".send" ? 0x40U : 0x108U);
+	}
+	return waiting;
 }
 
 std::optional<uint64_t> send_foreign_message(uint64_t window, uint32_t message, uint64_t wparam, uint64_t lparam, const std::vector<uint8_t> &data,
@@ -363,8 +423,8 @@ void take_foreign_sends(const std::function<bool(uint64_t)> &owned,
 	for (const auto &path : sent) {
 		const auto name = path.filename().string();
 		char *end = nullptr;
-		const auto window = std::strtoull(name.substr(0, 8).c_str(), &end, 16);
-		if (name.size() < 9 || name[8] != '.' || !end || *end || !owned(window))
+		const auto window = std::strtoull(name.c_str(), &end, 16);
+		if (name.size() < 9 || name[8] != '.' || end != name.c_str() + 8 || !owned(window))
 			continue;
 		std::ifstream input(path, std::ios::binary);
 		uint32_t message = 0;
@@ -397,7 +457,7 @@ std::vector<uint64_t> foreign_windows()
 {
 	std::vector<uint64_t> found;
 	std::error_code error;
-	for (const auto &entry : std::filesystem::directory_iterator(window_directory(), error)) {
+	for (const auto &entry : std::filesystem::directory_iterator(window_records(), error)) {
 		const auto path = entry.path();
 		if (path.extension() != ".window")
 			continue;
@@ -450,8 +510,7 @@ std::shared_ptr<ForeignSurface> ForeignSurface::open_for_drawing(uint64_t window
 	} catch (...) {
 		return nullptr;
 	}
-	surface->header[1] = width;
-	surface->header[2] = height;
+	// The size in the header stays that of the frame the pixels hold until publish_frame: the owner may take that frame again.
 	surface->header[0] = surface_magic;
 	return surface;
 }
@@ -473,8 +532,116 @@ void ForeignSurface::publish_frame()
 	std::atomic_ref<uint32_t>(header[3]).fetch_add(1, std::memory_order_release);
 }
 
+// The changes of the windows directory counted so far, and whether a host thread counts them (see foreign_frames_stamp): not yet, being
+// started, yes, or it cannot. The count is odd while the thread reads the kernel's events.
+static std::atomic<uint64_t> foreign_changes{2};
+
+// Whether the kernel's events tell of a change the stamp stands for: a message posted or sent, a reply, a frame drawn. That a window
+// appears, goes, or changes its traits is news to no reader of the stamp: its records are written in a directory of their own, which
+// the watch does not see, or a program's own windows would bring events each time one opens or closes, and every thread of it would
+// take the desktop whole at its next look at its queue while the watch had not read them yet.
+static bool foreign_news(const char *events, size_t size)
+{
+	for (size_t at = 0; at + sizeof(inotify_event) <= size;) {
+		const auto *event = reinterpret_cast<const inotify_event *>(events + at);
+		at += sizeof(inotify_event) + event->len;
+		if (event->mask & IN_Q_OVERFLOW || !event->len)
+			return true;
+		// Every file there is a message or pixels; the directory of the window records is made once.
+		if (std::string_view(event->name) != "windows")
+			return true;
+	}
+	return false;
+}
+enum class ForeignWatch { none, starting, running, unavailable };
+static std::atomic<ForeignWatch> foreign_watch{ForeignWatch::none};
+static std::atomic<int> foreign_watch_descriptor{-1};
+// What the watch thread calls after it counted a change, set once for the process; one it replaces stays, as the thread may be calling it.
+static std::atomic<std::function<void()> *> foreign_nudge{nullptr};
+
+void set_foreign_nudge(std::function<void()> nudge)
+{
+	foreign_nudge.store(new std::function<void()>(std::move(nudge)), std::memory_order_release);
+}
+
+static bool watching_foreign_changes()
+{
+	auto state = foreign_watch.load(std::memory_order_acquire);
+	if (state != ForeignWatch::none)
+		return state == ForeignWatch::running;
+	if (!foreign_watch.compare_exchange_strong(state, ForeignWatch::starting, std::memory_order_acq_rel))
+		return state == ForeignWatch::running;
+	// A child the runtime forks without a new program keeps the watch's descriptor but not its thread: it starts its own.
+	static const bool forks_handled = [] {
+		return ::pthread_atfork(nullptr, nullptr, [] {
+			if (const int descriptor = foreign_watch_descriptor.exchange(-1); descriptor >= 0)
+				::close(descriptor);
+			// A fork while the parent's thread read events leaves the count odd: the child's starts even and new.
+			foreign_changes.store((foreign_changes.load(std::memory_order_relaxed) | 1) + 1, std::memory_order_relaxed);
+			foreign_watch.store(ForeignWatch::none, std::memory_order_release);
+		}) == 0;
+	}();
+	const int watch = forks_handled ? ::inotify_init1(IN_CLOEXEC) : -1;
+	if (watch < 0 || ::inotify_add_watch(watch, window_directory().c_str(), IN_CREATE | IN_MOVED_TO | IN_MOVED_FROM | IN_DELETE) < 0) {
+		if (watch >= 0)
+			::close(watch);
+		foreign_watch.store(ForeignWatch::unavailable, std::memory_order_release);
+		return false;
+	}
+	foreign_watch_descriptor.store(watch, std::memory_order_release);
+	foreign_watch.store(ForeignWatch::running, std::memory_order_release);
+	try {
+		std::thread([watch] {
+			alignas(inotify_event) char events[4096];
+			for (;;) {
+				pollfd ready{watch, POLLIN, 0};
+				if (::poll(&ready, 1, -1) < 0) {
+					if (errno == EINTR)
+						continue;
+					break;
+				}
+				foreign_changes.fetch_add(1, std::memory_order_release);
+				const auto taken = ::read(watch, events, sizeof events);
+				// Events that are no news leave the count as it was, so the stamp is the same once the thread read them.
+				const bool news = taken <= 0 || foreign_news(events, size_t(taken));
+				if (news)
+					foreign_changes.fetch_add(1, std::memory_order_release);
+				else
+					foreign_changes.fetch_sub(1, std::memory_order_release);
+				if (taken < 0 && errno == EINTR)
+					continue;
+				if (taken <= 0)
+					break;
+				if (!news)
+					continue;
+				// A thread waiting for its messages looks at them again at once, not at its next look up to 20 ms later.
+				if (const auto *nudge = foreign_nudge.load(std::memory_order_acquire))
+					(*nudge)();
+			}
+			// A watch that fails leaves the stamp to the directory's time, as when it could not be had.
+			foreign_watch.store(ForeignWatch::unavailable, std::memory_order_release);
+		}).detach();
+	} catch (const std::system_error &) {
+		foreign_watch.store(ForeignWatch::unavailable, std::memory_order_release);
+		return false;
+	}
+	return true;
+}
+
 uint64_t foreign_frames_stamp()
 {
+	// The directory changes when a window of another program appears or goes, or one of them is sent or posted a message. Programs
+	// poll their queues thousands of times a second and each poll asks for this: a host thread of its own waits for the changes and
+	// counts them, so a poll reads a number instead of asking the file system, which it does only while the watch cannot be had.
+	// The thread counts a change only after it woke, so events the kernel holds and the thread is still reading give a new number at each
+	// call: a message another process posted is seen as soon as its post returned.
+	if (watching_foreign_changes()) {
+		int pending = 0;
+		::ioctl(foreign_watch_descriptor.load(std::memory_order_acquire), FIONREAD, &pending);
+		const auto count = foreign_changes.load(std::memory_order_acquire);
+		static std::atomic<uint64_t> unsettled{0};
+		return pending > 0 || count & 1 ? 1ULL << 63 | unsettled.fetch_add(1, std::memory_order_relaxed) : count;
+	}
 	struct stat status{};
 	if (::stat(window_directory().c_str(), &status) != 0)
 		return 0;
@@ -484,8 +651,10 @@ uint64_t foreign_frames_stamp()
 int foreign_frames_descriptor()
 {
 	static const int descriptor = [] {
+		// A window of another process that appears or goes wakes the thread as its pixels do.
 		const int watch = ::inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
-		if (watch >= 0 && ::inotify_add_watch(watch, window_directory().c_str(), IN_CREATE | IN_MOVED_TO | IN_DELETE) < 0) {
+		if (watch >= 0 && (::inotify_add_watch(watch, window_directory().c_str(), IN_CREATE | IN_MOVED_TO | IN_DELETE) < 0 ||
+			::inotify_add_watch(watch, window_records().c_str(), IN_CREATE | IN_MOVED_TO | IN_DELETE) < 0)) {
 			::close(watch);
 			return -1;
 		}
@@ -498,6 +667,7 @@ void drain_foreign_frames_descriptor()
 {
 	alignas(inotify_event) char events[4096];
 	const int descriptor = foreign_frames_descriptor();
+	// A thread woken by the change sees it in the stamp at once: the watch still holds the change or counts it (foreign_frames_stamp).
 	while (descriptor >= 0 && ::read(descriptor, events, sizeof events) > 0) {}
 }
 

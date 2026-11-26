@@ -9,8 +9,10 @@
 #include "completion_port.h"
 #include "pipe.h"
 #include "threads.h"
+#include "unload_trace.h"
 #include <array>
 #include <optional>
+#include <span>
 #include <string>
 #include "pe/module_set.h"
 
@@ -49,6 +51,9 @@ struct KernelContext {
 	// Wakes the threads that wait on an address (WakeByAddressSingle with all false, WakeByAddressAll with it true) from a host thread
 	// that does not hold the turn, and tells whether one woke; the waiters are looked at again (set by the synchronization handlers).
 	std::function<bool(uint64_t, bool)> wake_address_beside;
+	// RtlWaitOnAddress from a host thread that does not hold the turn: the address, the bytes it is compared with and the NT time-out
+	// (none for ever). True when the value differs or a wake came, false on the time-out, nothing when the wait has to go the usual way.
+	std::function<std::optional<bool>(uint64_t, std::span<const uint8_t>, std::optional<int64_t>)> wait_address_beside;
 	// Delivers a CPU fault to the guest's handlers; never returns normally (it redirects or ends the process).
 	std::function<void(const NativeResult &)> raise_fault;
 	// At an API call made inside callbacks: ends those the guest has left without returning, and makes the call again at the nesting
@@ -60,6 +65,8 @@ struct KernelContext {
 	std::function<uint32_t(uint32_t,uint32_t,bool)> queue_status;
 	// After a poll of a thread's queue found nothing: lets the guest answer the next polls itself for a moment.
 	std::function<void(uint32_t)> queue_quiet;
+	// Shows waiting frames on the calling thread. Returns when to look again.
+	std::function<std::chrono::steady_clock::time_point()> present_frames;
 	// Takes a reference on the loaded module at this base, or pins it for the life of the process (GetModuleHandleEx).
 	std::function<void(uint64_t, bool)> reference_module;
 	// The loaded module a guest string names, by name or by path, as GetModuleHandle finds it (zero, with the last error set, if none).
@@ -74,12 +81,19 @@ struct KernelContext {
 	// Named pipes served by this process and the pipe operations that have not finished.
 	std::shared_ptr<PipeState> pipes = std::make_shared<PipeState>();
 	std::shared_ptr<AccessToken> process_token = std::make_shared<AccessToken>();
+	// The libraries the process unloaded last (RtlGetUnloadEventTraceEx).
+	std::shared_ptr<UnloadTrace> unloads = std::make_shared<UnloadTrace>();
 };
+
+// Guest processes share one interactive session.
+inline constexpr uint32_t native_session_id = 1;
 
 // Windows FILETIME ticks are 100 ns units since 1601-01-01.
 inline constexpr uint64_t filetime_epoch_offset = 11644473600ULL * 10000000ULL;
 // The performance counter in 100 ns units: the host's monotonic clock, as QueryPerformanceCounter reports it.
 uint64_t counter_ticks();
+// GetTickCount64: the tick count of the shared user data page, in milliseconds (see environment.cpp).
+uint64_t shared_tick_count();
 // The counter span of the current local second and its SYSTEMTIME, as the guest's GetLocalTime reads them.
 std::array<uint64_t, 4> local_second();
 
@@ -111,6 +125,7 @@ void register_security_api(ApiRegistry &registry, KernelContext &context);
 void register_schannel_api(ApiRegistry &registry, KernelContext &context);
 void register_child_process_api(ApiRegistry &registry, KernelContext &context);
 void register_winsock_api(ApiRegistry &registry, KernelContext &context);
+void register_alpc_api(ApiRegistry &registry, KernelContext &context);
 // WinINet's synchronous HTTP client over host sockets and the host's OpenSSL.
 void register_wininet_api(ApiRegistry &registry, KernelContext &context);
 // SetFileCompletionNotificationModes for a socket handle or an AFD endpoint; false when the handle is neither.
@@ -154,7 +169,7 @@ void register_canvas_service(ApiRegistry &registry, KernelContext &context);
 // Starts the program an application name or command line names, looked up the way Windows does; null with the Windows error otherwise.
 std::shared_ptr<class ProcessObject> start_program(KernelContext &context, const std::u16string &application, const std::u16string &line,
 	const std::u16string &directory, const int (&standard)[3], const std::u16string &environment, int *gate, uint32_t &error,
-	std::vector<InheritedHandle> inherited = {}, int process_token_descriptor = -1);
+	std::vector<InheritedHandle> inherited = {}, std::u16string_view app_user_model_id = {}, int process_token_descriptor = -1);
 // Puts a child process into a job; false with the Windows error otherwise.
 bool assign_to_job(KernelContext &context, uint64_t job, const std::shared_ptr<class ProcessObject> &process, uint32_t &error);
 // Runs the user APCs queued to the current thread, oldest first, as an alertable wait does before it ends with WAIT_IO_COMPLETION; true

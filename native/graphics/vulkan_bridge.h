@@ -4,12 +4,17 @@
 #include "desktop/presentation.h"
 #include "pe/module_set.h"
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <mutex>
 #include <set>
+#include <shared_mutex>
 #include <unordered_map>
+#include <utility>
 #include <vulkan/vulkan.h>
 
 namespace raven {
@@ -24,6 +29,8 @@ std::span<const std::string_view> vulkan_hand_names();
 std::span<const std::string_view> vulkan_generated_names();
 bool vulkan_generated_is_device(std::string_view name);
 
+class Marshal;
+
 class VulkanBridge {
 public:
 	VulkanBridge(NativeProcess &process, const ModuleSet &modules) : process(process), modules(modules) {}
@@ -31,7 +38,15 @@ public:
 	VulkanBridge(const VulkanBridge &) = delete;
 	VulkanBridge &operator=(const VulkanBridge &) = delete;
 	static std::span<const std::string_view> exports();
+	// A call in the runtime's turn: it holds the bridge's tables alone.
 	bool dispatch(std::string_view name);
+	// A call a guest thread makes beside the turn: recording (vkCmd*, and beginning, ending and resetting a command buffer or its pool),
+	// submitting, presenting, acquiring an image and the waits on fences and semaphores. It only reads the tables, which it shares with the other threads that call at
+	// once; the program keeps each command buffer, pool and queue to one thread at a time, as Vulkan asks of it, and the guest's view of
+	// mapped memory has a lock of its own (see coherence). A wait blocks the calling thread alone, and gives up when `called_away` says the
+	// thread is wanted elsewhere: it throws, and the call goes the usual way.
+	bool dispatch_beside(std::string_view name);
+	void set_called_away(std::function<bool()> check) { called_away = std::move(check); }
 	// The host display and surface over a local window. Foreign windows present through shared pixels instead.
 	struct SurfaceSource {
 		std::function<std::optional<HostSurface>(uint64_t window)> create;
@@ -47,20 +62,34 @@ public:
 
 	friend class Marshal;
 	// Brings the guest's view of mapped memory and the driver's in line before and after work the driver does.
-	void synchronize_to_device(uint64_t device) { shadow_to_device(device); }
-	void synchronize_from_device(uint64_t device) { shadow_from_device(device, cached_memory); }
+	void synchronize_to_device(uint64_t device)
+	{
+		const std::lock_guard hold(coherence);
+		shadow_to_device(device);
+		// Work the device runs can write any of its memory.
+		for (auto &[token, memory] : memories)
+			if (memory.device == device)
+				memory.fresh = false;
+	}
+	void synchronize_from_device(uint64_t device)
+	{
+		const std::lock_guard hold(coherence);
+		shadow_from_device(device, cached_memory);
+	}
 	// Reading a timeline semaphore makes the work behind a new value visible; the same value again brings nothing the last read did not.
 	void synchronize_after_counter(uint64_t device, uint64_t semaphore, uint64_t value)
 	{
+		const std::lock_guard hold(coherence);
 		const auto [seen, fresh] = counters.try_emplace(semaphore, value);
 		if (!fresh && seen->second == value)
 			return;
 		seen->second = value;
 		shadow_from_device(device, cached_memory);
 	}
-	// How a guest thread waits while the others run: `park` returns once the condition holds, and `wake` may be called from any host
-	// thread to have the scheduler look at the conditions again.
-	void set_blocking(std::function<void(std::function<bool()>)> park_thread, std::function<void()> wake_scheduler)
+	// How a guest thread waits while the others run: `park` returns true once the condition holds, or false once the wake time, when
+	// there is one, has passed; `wake` may be called from any host thread to have the scheduler look at the conditions again.
+	using Park = std::function<bool(std::function<bool()>, std::optional<std::chrono::steady_clock::time_point>)>;
+	void set_blocking(Park park_thread, std::function<void()> wake_scheduler)
 	{
 		park = std::move(park_thread);
 		wake = std::move(wake_scheduler);
@@ -75,7 +104,45 @@ public:
 private:
 	NativeProcess &process;
 	const ModuleSet &modules;
-	std::function<void(std::function<bool()>)> park;
+	// The tables of handles below. A thread that parks for the driver gives its hold up meanwhile, as the turn's other calls run then
+	// (see TablesRelease); the entry points a device has looked up are kept under a lock of their own, as recording calls look them up
+	// while they share the tables.
+	std::shared_mutex tables;
+	static inline thread_local unsigned tables_held = 0;
+	// Whether the calling thread shares the tables, as a call beside the turn does.
+	static inline thread_local bool tables_shared = false;
+	// Gives up the calling thread's hold of the tables, sole or shared, over a scope, however deep, and takes it back after.
+	struct TablesRelease {
+		VulkanBridge &bridge;
+		const unsigned held;
+		const bool shared;
+		explicit TablesRelease(VulkanBridge &owner) : bridge(owner), held(std::exchange(tables_held, 0u)), shared(std::exchange(tables_shared, false))
+		{
+			if (held)
+				bridge.tables.unlock();
+			if (shared)
+				bridge.tables.unlock_shared();
+		}
+		~TablesRelease()
+		{
+			if (held)
+				bridge.tables.lock();
+			if (shared)
+				bridge.tables.lock_shared();
+			tables_held = held;
+			tables_shared = shared;
+		}
+		TablesRelease(const TablesRelease &) = delete;
+		TablesRelease &operator=(const TablesRelease &) = delete;
+	};
+	std::mutex procedures_lock;
+	// The shadows of mapped memory and the counters last read, which threads that submit or wait beside the turn bring in line at once.
+	std::mutex coherence;
+	// Set on a host thread while it answers a call beside the turn: its driver calls run there, without the scheduler.
+	static inline thread_local bool beside_call = false;
+	std::function<bool()> called_away;
+	bool dispatch_tables(std::string_view name);
+	Park park;
 	std::function<void()> wake;
 	struct Workers;
 	std::shared_ptr<Workers> workers;
@@ -85,6 +152,9 @@ private:
 	struct Device {
 		VkDevice handle; uint64_t physical;
 		std::map<std::string, PFN_vkVoidFunction, std::less<>> procedures;
+		// The family of the first queue the device was made with, for work the bridge does on the device before the program has
+		// asked for a queue.
+		uint32_t family = 0;
 	};
 	std::map<uint64_t, Device> devices;
 	// The maps a handle is translated through are hashed: every recorded command looks its handles up.
@@ -101,6 +171,8 @@ private:
 		bool coherent = false;
 		// Host-cached memory reads back cheaply; the other host-visible kinds are write-combined, where every byte read is slow.
 		bool cached = false;
+		// No submit of its device and no mapping has written it since it was allocated, so its contents are undefined.
+		bool fresh = true;
 		std::vector<uint8_t> snapshot;
 		// The guest's shadow is a memfd the host maps as well, so comparing it with the driver's mapping never goes through the debugger
 		// interface: `view` is the host's window on the same bytes as the guest address `shadow`.
@@ -130,16 +202,47 @@ private:
 	std::map<uint64_t, uint64_t> surface_windows;
 	// The instance token each of those surfaces was created from.
 	std::map<uint64_t, uint64_t> surface_instances;
+	// Surfaces over windows another process owns. These and the hidden ones below have no host surface: the bridge answers their
+	// surface and swapchain commands.
 	std::set<uint64_t> foreign_surfaces;
 	// Surfaces over windows whose top-level window was hidden when they were made: they present nowhere, as on Windows, until the
 	// window is shown and they are lost, so the program makes them again over what the host shows.
 	std::set<uint64_t> hidden_surfaces;
+	bool own_surface(uint64_t surface) const { return foreign_surfaces.contains(surface) || hidden_surfaces.contains(surface); }
 	bool hidden_surface_lost(uint64_t surface) const;
 	struct ForeignSwapchain;
 	std::map<uint64_t, std::shared_ptr<ForeignSwapchain>> foreign_swapchains;
-	VkResult prepare_foreign_swapchain(uint64_t token,uint64_t device,VkSwapchainKHR swapchain,
-		const VkSwapchainCreateInfoKHR &info,uint64_t window);
-	std::optional<VkResult> present_foreign(uint64_t queue,const VkPresentInfoKHR &info);
+	bool dispatch_own(std::string_view name);
+	static VkSurfaceCapabilitiesKHR own_surface_capabilities();
+	// Presentation is the bridge's own work or goes through a host window, so a family can present when it can draw.
+	bool queue_family_draws(uint64_t physical,uint32_t family) const;
+	VkResult create_own_swapchain(uint64_t device,const VkSwapchainCreateInfoKHR &info,uint64_t window,bool foreign,uint64_t &token);
+	// vkAcquireNextImageKHR and vkAcquireNextImage2KHR on such a swapchain: the program's tokens, and where the index goes.
+	VkResult acquire_own_image(Marshal &marshal,uint64_t device,uint64_t swapchain,uint64_t timeout,uint64_t semaphore,uint64_t fence,
+		uint64_t index);
+	// The memory of an image of such a swapchain, which an image the program binds over it takes; nothing for another swapchain.
+	std::optional<VkDeviceMemory> own_image_memory(uint64_t swapchain,uint32_t index) const;
+	// `tokens` are the program's handles of the swapchains in `info`.
+	std::optional<VkResult> present_foreign(uint64_t queue,const VkPresentInfoKHR &info,const std::vector<uint64_t> &tokens);
+	// What threads that call at once share of a host queue. The bridge signals an image it hands out through a queue, which a program
+	// keeps apart neither from its presents on that queue nor from its submits there from other threads: the acquire waits until no
+	// present is in flight, and its submission, the program's and the presents hold `submission`. Entries are made under
+	// queue_uses_lock and never removed, so a thread that counts a present down keeps its own.
+	struct QueueUse {
+		std::atomic<uint32_t> presents{0};
+		std::mutex submission;
+	};
+	std::unordered_map<VkQueue, std::unique_ptr<QueueUse>> queue_uses;
+	std::mutex queue_uses_lock;
+public:
+	QueueUse &queue_use(VkQueue queue);
+private:
+	// The images the program holds in the bridge's own swapchains and the presents in flight change under `images_lock`; an acquire
+	// that waits for them beside the turn waits on `images_changed`, one in the turn through the scheduler.
+	std::mutex images_lock;
+	std::condition_variable images_changed;
+	void images_moved();
+	VkResult detached_present(VkQueue queue,const std::function<VkResult()> &work);
 	void release_foreign_swapchains(uint64_t device);
 	// A swapchain's surface token and the extent it was created with; a surface whose window changed size makes it out of date.
 	struct Swapchain { uint64_t surface; uint32_t width, height; };

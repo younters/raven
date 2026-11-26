@@ -3,6 +3,7 @@
 #include "child_process.h"
 #include "sandbox.h"
 #include "kernel_context.h"
+#include "msix.h"
 #include "registry.h"
 #include "text.h"
 
@@ -658,6 +659,24 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context, NativeReg
 		const std::u16string &parameters, const std::u16string &directory, std::shared_ptr<ProcessObject> &started) -> uint64_t {
 		if (!equal_fold(operation, u"open") && !equal_fold(operation, u"edit") && !equal_fold(operation, u"explore") && !equal_fold(operation, u"runas"))
 			return 31;
+		// ShellExecute takes one pair of quotes off the target: Chromium quotes every address.
+		if (target.size() >= 2 && target.front() == u'"' && target.back() == u'"')
+			target = target.substr(1, target.size() - 2);
+		constexpr std::u16string_view apps_folder = u"shell:AppsFolder\\";
+		if (target.size() >= apps_folder.size() && equal_fold(std::u16string_view(target).substr(0, apps_folder.size()), apps_folder)) {
+			if (!equal_fold(operation, u"open"))
+				return 31;
+			const auto app = find_msix_application(paths.native_prefix(), std::u16string_view(target).substr(apps_folder.size()));
+			if (!app)
+				return 2;
+			uint32_t error = 0;
+			const int standard[3] = {0, 1, 2};
+			const auto line = u"\"" + app->image + u"\"" + (parameters.empty() ? u"" : u" " + parameters);
+			const auto environment = context.environment_block ? context.environment_block() : std::u16string();
+			started = start_program(context, app->image, line, directory.empty() ? app->directory : directory, standard, environment,
+				nullptr, error, {}, app->aumid);
+			return started ? 42 : error == 193 ? 11 : error;
+		}
 		// Who opens a document or an address: the choice the person made for its kind in the control panel; otherwise the program of the
 		// prefix registered for it, before any Linux program.
 		const auto open_with = [&](const std::u16string &kind, const std::u16string &argument) -> std::optional<uint64_t> {
@@ -735,6 +754,24 @@ void register_shell_api(ApiRegistry &registry, KernelContext &context, NativeReg
 		std::shared_ptr<ProcessObject> started;
 		call.ret(open_target(call[1] ? call.wide(call[1]) : std::u16string(u"open"), call[2] ? call.wide(call[2]) : std::u16string(),
 			call[3] ? call.wide(call[3]) : std::u16string(), call[4] ? call.wide(call[4]) : std::u16string(), started));
+	});
+	// ShellExec_RunDLL(window, instance, address, show): rundll32 shell32.dll,ShellExec_RunDLL SCHEME://... opens the address with the
+	// program the prefix registered for its scheme, as ShellExecute does. The desktop's entry for a kind of address the prefix takes runs it
+	// (Sandbox::publish_links), so the address comes from outside the sandbox: anything but a whole SCHEME:// address is refused, as a
+	// "scheme:" with no "//" would be opened as a path and a blank or a quote would break out of the registered command's "%1".
+	// shortcut: only addresses, no files or parameters; open them too if a program of the prefix calls it so.
+	registry.add("ShellExec_RunDLLW", 4, [open_target](ApiCall &call) {
+		const auto target = call[2] ? call.wide(call[2]) : std::u16string();
+		const auto scheme = target.find(u"://");
+		const auto scheme_character = [](char16_t c) { return (c >= u'a' && c <= u'z') || (c >= u'A' && c <= u'Z') || (c >= u'0' && c <= u'9') ||
+			c == u'+' || c == u'-' || c == u'.'; };
+		if (scheme == target.npos || scheme < 2 || !std::all_of(target.begin(), target.begin() + std::ptrdiff_t(scheme), scheme_character) ||
+			std::any_of(target.begin(), target.end(), [](char16_t c) { return c <= u' ' || c == u'"' || c == 0x7f; })) {
+			sandbox().refuse(to_utf8(target), "open-address");
+			return;
+		}
+		std::shared_ptr<ProcessObject> started;
+		open_target(u"open", target, {}, {}, started);
 	});
 	// SHELLEXECUTEINFOW: the pointers sit after the size, mask and window, each as wide as the program's.
 	registry.add("ShellExecuteExW", 1, [open_target, &context](ApiCall &call) {

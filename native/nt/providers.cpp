@@ -1,4 +1,5 @@
 #include "providers.h"
+#include "desktop_lock.h"
 #include "child_process.h"
 #include "handle_channel.h"
 #include "warm_host.h"
@@ -19,7 +20,9 @@
 #include "apiset.h"
 #include "text.h"
 #include "kernel_context.h"
+#include "clock_calibration.h"
 #include "event.h"
+#include "guest_events.h"
 #include "kernel_waits.h"
 #include "event_pulse.h"
 #include "actctx.h"
@@ -32,6 +35,7 @@
 #include "desktop/api.h"
 #include "desktop/windows.h"
 #include "cpu/served_queue.h"
+#include "cpu/preludes.h"
 #include "cpu/served_stub.h"
 #include "cpu/call_cycles.h"
 #ifdef __APPLE__
@@ -275,6 +279,16 @@ const std::vector<FastStub> &fast_stubs()
 
 // Calls that only read and write guest memory: their stubs leave the arguments in a block the runtime shares with the guest and spin until
 // the answer is there, so the guest never stops for them.
+// The Vulkan calls besides vkCmd* that a guest thread makes beside the turn.
+static bool queue_beside_api(std::string_view name)
+{
+	static constexpr std::array<std::string_view, 19> calls{"vkBeginCommandBuffer", "vkEndCommandBuffer", "vkResetCommandBuffer",
+		"vkResetCommandPool", "vkQueueSubmit", "vkQueueSubmit2", "vkQueueSubmit2KHR", "vkWaitSemaphores", "vkWaitSemaphoresKHR",
+		"vkWaitForFences", "vkGetFenceStatus", "vkResetFences", "vkGetSemaphoreCounterValue", "vkGetSemaphoreCounterValueKHR",
+		"vkSignalSemaphore", "vkSignalSemaphoreKHR", "vkQueuePresentKHR", "vkAcquireNextImageKHR", "vkAcquireNextImage2KHR"};
+	return std::find(calls.begin(), calls.end(), name) != calls.end();
+}
+
 static bool served_api(std::string_view module, std::string_view name)
 {
 	if (module == "user32.dll")
@@ -289,10 +303,11 @@ static bool served_api(std::string_view module, std::string_view name)
 	// Reading a socket's recorded events polls the host sockets and never blocks.
 	if (module == "ws2_32.dll")
 		return name == "WSAEnumNetworkEvents";
-	// Waking marks the sleepers; they run when the scheduler next picks a thread.
+	// Waking marks the sleepers; they run when the scheduler next picks a thread. A wait on an address the guest's waker changes and
+	// wakes is answered beside the turn as well.
 	if (module == "ntdll.dll")
 		return name == "RtlWakeConditionVariable" || name == "RtlWakeAllConditionVariable" || name == "RtlWakeAddressSingle" ||
-			name == "RtlWakeAddressAll";
+			name == "RtlWakeAddressAll" || name == "RtlWaitOnAddress";
 #ifdef RAVEN_OPENGL
 	if (module == "opengl32.dll")
 		return OpenGLBridge::served_api(name);
@@ -305,16 +320,116 @@ static bool served_api(std::string_view module, std::string_view name)
 		"vkQueueSubmit2", "vkQueueSubmit2KHR", "vkResetCommandBuffer", "vkResetCommandPool", "vkResetDescriptorPool", "vkResetFences",
 		"vkSignalSemaphore", "vkSignalSemaphoreKHR", "vkUpdateDescriptorSetWithTemplate", "vkUpdateDescriptorSetWithTemplateKHR",
 		"vkUpdateDescriptorSets"};
-	return name.starts_with("vkCmd") || std::find(recording.begin(), recording.end(), name) != recording.end();
+	return name.starts_with("vkCmd") || queue_beside_api(name) || std::find(recording.begin(), recording.end(), name) != recording.end();
 }
 
 // Calls of subsystems that keep their own lock: with a host thread for each guest thread they are answered beside the turn, by the
 // handler the usual way runs, unless they need the turn after all (see ApiCall::alone). The registry, the transfers of plain files
-// under each file's lock (see read_beside), and VirtualQuery under the memory accounting's lock.
+// under each file's lock (see read_beside), VirtualQuery, VirtualAlloc, VirtualFree and VirtualProtect under the memory accounting's
+// lock (see NativeMemory::serve_alone), and the events made and the handles closed under the handle table's lock (see
+// NativeObjects::close_alone).
+// Window data and properties a thread changes beside the turn under the desktop lock (see DesktopLock): changes that send no message and
+// start no drawing. SetWindowLongPtr is answered beside the turn for the user data, the identifier and the extra bytes; the indexes that
+// notify the window go the usual way.
+static bool desktop_beside_api(std::string_view name)
+{
+	static constexpr std::array<std::string_view, 14> names{"SetPropW", "SetPropA", "RemovePropW", "RemovePropA", "SetWindowLongPtrW",
+		"SetWindowLongPtrA", "SetWindowLongW", "SetWindowLongA", "InvalidateRect", "ValidateRect", "GetDC", "GetWindowDC", "ReleaseDC",
+		"PeekMessageW"};
+	return std::find(names.begin(), names.end(), name) != names.end();
+}
+
+// Drawing into a context and reading its pixels, under the desktop lock like the window data above: the handlers of the desktop's registry,
+// which touch only the contexts and the objects selected into them, and mark the window behind a window's context as drawn. Guest memory a
+// handler reads or writes it reaches directly, as any call beside the turn (see ApiCall::alone).
+static bool gdi_beside_api(std::string_view name)
+{
+	static constexpr std::array<std::string_view, 24> names{"PatBlt", "BitBlt", "StretchBlt", "FillRect", "FrameRect", "GetPixel", "Rectangle",
+		"Ellipse", "RoundRect", "Polygon", "Polyline", "PolylineTo", "PolyPolyline", "LineTo", "FillRgn", "FrameRgn", "GradientFill", "GdiAlphaBlend",
+		"AlphaBlend", "StretchDIBits", "SetDIBits", "GetDIBits", "SaveDC", "RestoreDC"};
+	return std::find(names.begin(), names.end(), name) != names.end();
+}
+
+// The objects a drawing call beside the turn works on when it may run under the shared desktop lock (see DesktopLock): the memory
+// contexts it names and the bitmaps selected into them, and the bitmap GetDIBits and SetDIBits name. None when it may not: a call that
+// moves the current position or saves and restores a context's state changes what other calls read, and a window's context, a foreign
+// one or the screen's reaches the window's surface and its damage, which the desktop keeps whole. An unknown handle goes the usual way
+// as well, which answers it.
+static std::optional<std::vector<uint64_t>> drawing_objects(std::string_view name, std::span<const uint64_t> words, const DesktopObjects &objects,
+	uint64_t screen)
+{
+	static constexpr std::array<std::string_view, 14> one{"PatBlt", "FillRect", "FrameRect", "GetPixel", "Rectangle", "Ellipse", "RoundRect",
+		"Polygon", "Polyline", "PolyPolyline", "FillRgn", "FrameRgn", "GradientFill", "StretchDIBits"};
+	static constexpr std::array<std::string_view, 4> two{"BitBlt", "StretchBlt", "GdiAlphaBlend", "AlphaBlend"};
+	static constexpr std::array<std::string_view, 2> bitmaps{"SetDIBits", "GetDIBits"};
+	const auto listed = [name](const auto &names) { return std::find(names.begin(), names.end(), name) != names.end(); };
+	const bool by_bitmap = listed(bitmaps);
+	const size_t contexts = listed(one) || by_bitmap ? 1 : listed(two) ? 2 : 0;
+	if (!contexts || words.size() < (contexts == 2 ? 6 : by_bitmap ? 2 : 1))
+		return std::nullopt;
+	std::vector<uint64_t> handles;
+	for (const size_t index : {size_t(0), size_t(5)}) {
+		if (index && contexts < 2)
+			break;
+		// A transfer without a source names none.
+		if (index && !words[index])
+			continue;
+		const auto *dc = objects.dc(words[index]);
+		if (!dc || dc->window || dc->foreign || dc->leased || words[index] == screen)
+			return std::nullopt;
+		handles.push_back(words[index]);
+		handles.push_back(dc->bitmap);
+	}
+	if (by_bitmap)
+		handles.push_back(words[1]);
+	return handles;
+}
+
+// A call on one window of the process's that may run under the shared desktop lock, with the stripes of the window and of the context
+// it takes or releases: its user data and extra bytes, and its properties, which nothing else reads from the window's record; its
+// update region, whose owner the call tells; a context of its own surface, taken and released. None for any other index, which may
+// send the window messages or change what other windows show, and for a window the process does not have.
+struct WindowCall {
+	uint64_t window = 0;
+	// The context ReleaseDC gives back; GetDC's is its result.
+	uint64_t context = 0;
+	bool takes_context = false;
+};
+
+static std::optional<WindowCall> window_call(std::string_view name, std::span<const uint64_t> words, const DesktopObjects &objects)
+{
+	static constexpr std::array<std::string_view, 4> longs{"SetWindowLongPtrW", "SetWindowLongPtrA", "SetWindowLongW", "SetWindowLongA"};
+	static constexpr std::array<std::string_view, 6> own{"SetPropW", "SetPropA", "RemovePropW", "RemovePropA", "InvalidateRect", "ValidateRect"};
+	const auto listed = [name](const auto &names) { return std::find(names.begin(), names.end(), name) != names.end(); };
+	if (words.empty() || !words[0] || !objects.window(words[0]))
+		return std::nullopt;
+	if (listed(own))
+		return WindowCall{words[0]};
+	if (name == "GetDC" || name == "GetWindowDC")
+		return WindowCall{words[0], 0, true};
+	if (name == "ReleaseDC" && words.size() >= 2)
+		return WindowCall{words[0], words[1]};
+	if (const int32_t index = words.size() >= 2 ? int32_t(uint32_t(words[1])) : 0; listed(longs) && (index == -21 || index >= 0))
+		return WindowCall{words[0]};
+	return std::nullopt;
+}
+
 static bool beside_api(std::string_view module, std::string_view name)
 {
-	static constexpr std::array<std::string_view, 7> files{"ReadFile", "WriteFile", "SetFilePointer", "SetFilePointerEx", "GetFileSize",
-		"GetFileSizeEx", "VirtualQuery"};
+	// The state of an event is under the object's own lock.
+	if (module == "ntdll.dll" && name == "NtQueryEvent")
+		return true;
+	if (module == "user32.dll")
+		return desktop_beside_api(name) || name == "FillRect" || name == "FrameRect";
+	if (module == "gdi32.dll" || module == "msimg32.dll")
+		return gdi_beside_api(name);
+	// Recording into a command buffer, submitting it and waiting for the work, which only read the Vulkan bridge's tables (see
+	// VulkanBridge::dispatch_beside).
+	if (module == "vulkan-1.dll")
+		return name.starts_with("vkCmd") || queue_beside_api(name);
+	static constexpr std::array<std::string_view, 13> files{"ReadFile", "WriteFile", "SetFilePointer", "SetFilePointerEx", "GetFileSize",
+		"GetFileSizeEx", "VirtualQuery", "VirtualAlloc", "VirtualFree", "VirtualProtect", "CreateEventW", "CloseHandle",
+		"GetFileAttributesW"};
 	if ((module == "kernel32.dll" || module == "kernelbase.dll") && std::find(files.begin(), files.end(), name) != files.end())
 		return true;
 	if (module != "advapi32.dll" && module != "kernelbase.dll")
@@ -340,8 +455,8 @@ static bool call_stubs()
 // on their breakpoint rather than wait in their stub for the host thread.
 static bool changes_context(std::string_view name)
 {
-	static constexpr std::array<std::string_view, 9> calls{"RaiseException", "RtlRaiseException", "NtRaiseException", "RtlRaiseStatus",
-		"RtlUnwind", "RtlUnwindEx", "RtlRestoreContext", "NtContinue", "RcConsolidateFrames"};
+	static constexpr std::array<std::string_view, 10> calls{"RaiseException", "RtlRaiseException", "NtRaiseException", "RtlRaiseStatus",
+		"RtlUnwind", "RtlUnwindEx", "RtlRestoreContext", "NtContinue", "RcConsolidateFrames", "DebugBreak"};
 	return std::find(calls.begin(), calls.end(), name) != calls.end();
 }
 
@@ -374,124 +489,90 @@ static std::vector<uint8_t> served_stub_code(int32_t to_pointer, bool asked = fa
 	return code;
 }
 
-static unsigned queued_arguments(std::string_view module, std::string_view name)
+// The calls a renderer makes by the thousand that the guest puts in its thread's ring instead of stopping (see the queued preludes of
+// preludes.S): how many arguments each records, and its prelude, with where the field for its served stub's address ends.
+struct QueuedCall {
+	std::string_view name;
+	unsigned arguments;
+	const uint8_t *code, *stub, *end;
+};
+
+static const QueuedCall *queued_call(std::string_view module, std::string_view name)
 {
 #ifdef RAVEN_OPENGL
+	// Only context-local state: shared texture and program changes still flush every producer synchronously.
+	static const QueuedCall opengl[]{
+		{"glColor4f", 4, raven_prelude_queued_gl4, raven_prelude_queued_gl4_stub, raven_prelude_queued_gl4_end},
+		{"glColor4ub", 4, raven_prelude_queued_gl4, raven_prelude_queued_gl4_stub, raven_prelude_queued_gl4_end},
+		{"glRotatef", 4, raven_prelude_queued_gl4, raven_prelude_queued_gl4_stub, raven_prelude_queued_gl4_end},
+		{"glDrawElements", 4, raven_prelude_queued_gl_draw_elements, raven_prelude_queued_gl_draw_elements_stub, raven_prelude_queued_gl_draw_elements_end},
+		{"glVertex3f", 3, raven_prelude_queued_gl3, raven_prelude_queued_gl3_stub, raven_prelude_queued_gl3_end},
+		{"glTranslatef", 3, raven_prelude_queued_gl3, raven_prelude_queued_gl3_stub, raven_prelude_queued_gl3_end},
+		{"glScalef", 3, raven_prelude_queued_gl3, raven_prelude_queued_gl3_stub, raven_prelude_queued_gl3_end},
+		{"glTexCoord2f", 2, raven_prelude_queued_gl2, raven_prelude_queued_gl2_stub, raven_prelude_queued_gl2_end},
+		{"glBindBuffer", 2, raven_prelude_queued_gl_bind_buffer, raven_prelude_queued_gl_bind_buffer_stub, raven_prelude_queued_gl_bind_buffer_end},
+		{"glActiveTexture", 1, raven_prelude_queued_gl1, raven_prelude_queued_gl1_stub, raven_prelude_queued_gl1_end},
+		{"glUseProgram", 1, raven_prelude_queued_gl1, raven_prelude_queued_gl1_stub, raven_prelude_queued_gl1_end},
+		{"glEnable", 1, raven_prelude_queued_gl1, raven_prelude_queued_gl1_stub, raven_prelude_queued_gl1_end},
+		{"glDisable", 1, raven_prelude_queued_gl1, raven_prelude_queued_gl1_stub, raven_prelude_queued_gl1_end},
+	};
 	if (module == "opengl32.dll") {
-		if (!std::getenv("RAVEN_QUEUED_OPENGL")) return 0;
-		// Only context-local state: shared texture and program changes still flush every producer synchronously.
-		if (name == "glColor4f" || name == "glColor4ub" || name == "glRotatef" || name == "glDrawElements") return 4;
-		if (name == "glVertex3f" || name == "glTranslatef" || name == "glScalef") return 3;
-		if (name == "glTexCoord2f" || name == "glBindBuffer") return 2;
-		if (name == "glActiveTexture" || name == "glUseProgram" || name == "glEnable" || name == "glDisable") return 1;
-		return 0;
+		if (!std::getenv("RAVEN_QUEUED_OPENGL"))
+			return nullptr;
+		for (const auto &call : opengl)
+			if (call.name == name)
+				return &call;
+		return nullptr;
 	}
 #endif
+	static const QueuedCall vulkan[]{
+		{"vkCmdBindDescriptorSets", 8, raven_prelude_queued_vk_descriptors, raven_prelude_queued_vk_descriptors_stub, raven_prelude_queued_vk_descriptors_end},
+		{"vkCmdBindVertexBuffers", 5, raven_prelude_queued_vk_vertices, raven_prelude_queued_vk_vertices_stub, raven_prelude_queued_vk_vertices_end},
+		{"vkCmdDrawIndexed", 6, raven_prelude_queued_vk6, raven_prelude_queued_vk6_stub, raven_prelude_queued_vk6_end},
+		{"vkCmdDraw", 5, raven_prelude_queued_vk5, raven_prelude_queued_vk5_stub, raven_prelude_queued_vk5_end},
+		{"vkCmdDrawIndirect", 5, raven_prelude_queued_vk5, raven_prelude_queued_vk5_stub, raven_prelude_queued_vk5_end},
+		{"vkCmdDrawIndexedIndirect", 5, raven_prelude_queued_vk5, raven_prelude_queued_vk5_stub, raven_prelude_queued_vk5_end},
+		{"vkCmdBindIndexBuffer", 4, raven_prelude_queued_vk4, raven_prelude_queued_vk4_stub, raven_prelude_queued_vk4_end},
+		{"vkCmdDispatch", 4, raven_prelude_queued_vk4, raven_prelude_queued_vk4_stub, raven_prelude_queued_vk4_end},
+		{"vkCmdBindPipeline", 3, raven_prelude_queued_vk3, raven_prelude_queued_vk3_stub, raven_prelude_queued_vk3_end},
+		{"vkCmdSetStencilReference", 3, raven_prelude_queued_vk3, raven_prelude_queued_vk3_stub, raven_prelude_queued_vk3_end},
+	};
 	if (module != "vulkan-1.dll")
-		return 0;
-	if (name == "vkCmdBindDescriptorSets") return 8;
-	if (name == "vkCmdBindVertexBuffers") return 5;
-	if (name == "vkCmdDrawIndexed") return 6;
-	if (name == "vkCmdDraw" || name == "vkCmdDrawIndirect" || name == "vkCmdDrawIndexedIndirect") return 5;
-	if (name == "vkCmdBindIndexBuffer" || name == "vkCmdDispatch") return 4;
-	if (name == "vkCmdBindPipeline" || name == "vkCmdSetStencilReference") return 3;
-	return 0;
+		return nullptr;
+	for (const auto &call : vulkan)
+		if (call.name == name)
+			return &call;
+	return nullptr;
+}
+
+static unsigned queued_arguments(std::string_view module, std::string_view name)
+{
+	const auto *call = queued_call(module, name);
+	return call ? call->arguments : 0;
 }
 
 static constexpr size_t queued_prelude_size = 384;
 
-static std::vector<uint8_t> queued_prelude(int32_t to_served, unsigned arguments, std::string_view name)
+static std::vector<uint8_t> queued_prelude(int32_t to_served, const QueuedCall &call)
 {
 	static_assert(ServedQueue::head * 8 == 0x80 && ServedQueue::tail * 8 == 0x88 && ServedQueue::enabled * 8 == 0x90 &&
-		ServedQueue::records * 8 == 0x100 && ServedQueue::gl_elements * 8 == 0x98 && ServedQueue::words == 16 && ServedQueue::capacity == 16);
-	// Read the thread's ring, or use the synchronous stub when disabled, full or the copied arrays would exceed a record.
-	std::vector<uint8_t> code{
-		0x66, 0x90, 0x65, 0x4c, 0x8b, 0x14, 0x25, 0xf0, 0x1f, 0, 0, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0, 0, 0, 0,
-		0x49, 0x83, 0xba, 0x90, 0, 0, 0, 1, 0x0f, 0x85, 0, 0, 0, 0,
-		0x49, 0x8b, 0x82, 0x80, 0, 0, 0, 0x49, 0x89, 0xc3, 0x4d, 0x2b, 0x9a, 0x88, 0, 0, 0,
-		0x49, 0x83, 0xfb, 0x10, 0x0f, 0x83, 0, 0, 0, 0,
-		0x49, 0x89, 0xc3, 0x41, 0x83, 0xe3, 0x0f, 0x49, 0xc1, 0xe3, 7, 0x4d, 0x01, 0xd3,
-		0x49, 0x89, 0x8b, 0x08, 1, 0, 0, 0x49, 0x89, 0x93, 0x10, 1, 0, 0,
-		0x4d, 0x89, 0x83, 0x18, 1, 0, 0, 0x4d, 0x89, 0x8b, 0x20, 1, 0, 0};
-	std::vector<size_t> fallback{16, 30, 57};
-	if (name == "glDrawElements") {
-		const uint8_t bound[]{0x49, 0x83, 0xba, 0x98, 0, 0, 0, 1, 0x0f, 0x85, 0, 0, 0, 0};
-		fallback.push_back(code.size() + 10);
-		code.insert(code.end(), std::begin(bound), std::end(bound));
-	} else if (name == "glBindBuffer") {
-		// Element-buffer changes publish the capability before another draw can enter the ring.
-		const uint8_t elements[]{0x81, 0xf9, 0x93, 0x88, 0, 0, 0x0f, 0x84, 0, 0, 0, 0};
-		fallback.push_back(code.size() + 8);
-		code.insert(code.end(), std::begin(elements), std::end(elements));
-	}
-	const bool descriptors = name == "vkCmdBindDescriptorSets", vertices = name == "vkCmdBindVertexBuffers";
-	if (descriptors) {
-		for (const uint8_t at : {uint8_t(40), uint8_t(56)}) {
-			const uint8_t bound[]{0x83, 0x7c, 0x24, at, 4, 0x0f, 0x87, 0, 0, 0, 0};
-			fallback.push_back(code.size() + 7);
-			code.insert(code.end(), std::begin(bound), std::end(bound));
-		}
-	} else if (vertices) {
-		const uint8_t bound[]{0x41, 0x83, 0xf8, 4, 0x0f, 0x87, 0, 0, 0, 0};
-		fallback.push_back(code.size() + 6);
-		code.insert(code.end(), std::begin(bound), std::end(bound));
-	}
-	for (unsigned index = 4; index < arguments; ++index) {
-		const uint8_t word[]{0x48, 0x8b, 0x4c, 0x24, uint8_t(40 + (index - 4) * 8),
-			0x49, 0x89, 0x8b, uint8_t(8 + index * 8), 1, 0, 0};
-		code.insert(code.end(), std::begin(word), std::end(word));
-	}
-	if (name.starts_with("gl")) {
-		// Copy the low XMM words before the caller can reuse them. Vulkan's array payload uses these words instead.
-		for (unsigned index = 0; index < 4; ++index) {
-			const uint8_t word[]{0x66, 0x49, 0x0f, 0x7e, uint8_t(0x83 + index * 8), uint8_t(0x48 + index * 8), 1, 0, 0};
-			code.insert(code.end(), std::begin(word), std::end(word));
-		}
-	}
-	if (descriptors || vertices) {
-		// Preserve Windows' nonvolatile copy registers; the published pointers name the record, never the caller's scratch arrays.
-		code.insert(code.end(), {0x56, 0x57});
-		const auto copy = [&](unsigned pointer, unsigned count, unsigned payload, bool wide) {
-			const auto displacement = [&](unsigned value) {
-				const uint32_t at = 0x100 + value;
-				const auto *bytes = reinterpret_cast<const uint8_t *>(&at);
-				code.insert(code.end(), bytes, bytes + 4);
-			};
-			code.insert(code.end(), {0x49, 0x8b, 0xb3}); displacement((pointer + 1) * 8);
-			code.insert(code.end(), {0x49, 0x8d, 0xbb}); displacement(payload);
-			code.insert(code.end(), {0x49, 0x89, 0xbb}); displacement((pointer + 1) * 8);
-			code.insert(code.end(), {0x41, 0x8b, 0x8b}); displacement((count + 1) * 8);
-			code.push_back(0xf3);
-			if (wide) code.push_back(0x48);
-			code.push_back(0xa5);
-		};
-		if (descriptors) { copy(5, 4, 80, true); copy(7, 6, 112, false); }
-		else { copy(3, 2, 64, true); copy(4, 2, 96, true); }
-		code.insert(code.end(), {0x5f, 0x5e});
-	}
-	const size_t stub_pointer = code.size() + 3;
-	const uint8_t publish[]{0x48, 0x8d, 0x0d, 0, 0, 0, 0, 0x49, 0x89, 0x8b, 0, 1, 0, 0,
-		0x49, 0xff, 0x82, 0x80, 0, 0, 0, 0xc3};
-	code.insert(code.end(), std::begin(publish), std::end(publish));
-	if (code.size() > queued_prelude_size - 5)
-		throw std::runtime_error("queued command prelude exceeds its slot");
-	code.resize(queued_prelude_size, 0x90);
-	const auto relative = [&](size_t at, int32_t target) {
-		const int32_t displacement = target - int32_t(at + 4);
-		std::memcpy(code.data() + at, &displacement, 4);
+		ServedQueue::records * 8 == 0x100 && ServedQueue::gl_elements * 8 == 0x98 && ServedQueue::words == 16 && ServedQueue::capacity == 16,
+		"the queued preludes' offsets are written into their code");
+	auto code = prelude_code(call.code, call.end);
+	if (code.size() != queued_prelude_size)
+		throw std::logic_error("a queued prelude does not fill its slot");
+	// The address of the served stub, which the record names, and the jump to it a full or disabled ring takes.
+	const auto relative = [&](size_t end) {
+		const int32_t displacement = to_served - int32_t(end);
+		std::memcpy(code.data() + end - 4, &displacement, 4);
 	};
-	for (const size_t at : fallback)
-		relative(at, queued_prelude_size - 5);
-	relative(stub_pointer, to_served);
-	code[queued_prelude_size - 5] = 0xe9;
-	relative(queued_prelude_size - 4, to_served);
+	relative(size_t(call.stub - call.code));
+	relative(queued_prelude_size);
 	return code;
 }
 
 // The performance counter is read in the guest once the runtime has published how the processor's time stamp counter relates to it: the
-// stub exported for it is a prelude that computes the count from RDTSC and falls back to its served stub until then. The calibration sits
-// in the served block: the counter value at the base, the count at the base, and the multiplier, a 32.32 fixed-point count per tick of
-// the time stamp counter, written last.
+// stub exported for it is a prelude that computes the count from RDTSC and falls back to its served stub until then (see ClockCalibration).
 static bool guest_clock_api(std::string_view module, std::string_view name)
 {
 	// The unbiased interrupt time counts the same monotonic clock in the same 100 ns units as the performance counter.
@@ -499,25 +580,17 @@ static bool guest_clock_api(std::string_view module, std::string_view name)
 		(name == "QueryPerformanceCounter" || name == "QueryUnbiasedInterruptTime" || name == "QueryUnbiasedInterruptTimePrecise");
 }
 
-static constexpr size_t clock_prelude_size = 96, clock_calibration = 0x800;
+static constexpr size_t clock_prelude_size = 96;
 
 static std::vector<uint8_t> clock_prelude(int32_t to_pointer, int32_t to_served)
 {
-	std::vector<uint8_t> code{
-		// mov r10, [pointer]; test r10, r10; jz served
-		0x4c, 0x8b, 0x15, 0, 0, 0, 0, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0, 0, 0, 0,
-		// mov r11, [r10 + multiplier]; test r11, r11; jz served
-		0x4d, 0x8b, 0x9a, 0x10, 0x08, 0, 0, 0x4d, 0x85, 0xdb, 0x0f, 0x84, 0, 0, 0, 0,
-		// rdtsc; shl rdx, 32; or rax, rdx; sub rax, [r10 + base counter]; mul r11; shrd rax, rdx, 32; add rax, [r10 + base count]
-		0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0, 0x49, 0x2b, 0x82, 0x00, 0x08, 0, 0, 0x49, 0xf7, 0xe3, 0x48, 0x0f, 0xac, 0xd0, 0x20,
-		0x49, 0x03, 0x82, 0x08, 0x08, 0, 0,
-		// mov [rcx], rax; mov eax, 1; ret
-		0x48, 0x89, 0x01, 0xb8, 1, 0, 0, 0, 0xc3};
+	auto code = prelude_code(raven_prelude_clock, raven_prelude_clock_end);
 	const int32_t displacement = to_pointer - 7;
 	std::memcpy(code.data() + 3, &displacement, 4);
-	for (const size_t jump : {size_t(12), size_t(28)}) {
-		const int32_t relative = to_served - int32_t(jump + 4);
-		std::memcpy(code.data() + jump, &relative, 4);
+	for (const uint8_t *end : {raven_prelude_clock_served, raven_prelude_clock_served_again}) {
+		const auto at = size_t(end - raven_prelude_clock);
+		const int32_t relative = to_served - int32_t(at);
+		std::memcpy(code.data() + at - 4, &relative, 4);
 	}
 	return code;
 }
@@ -555,33 +628,23 @@ static constexpr size_t commit_prelude_size = 384;
 static constexpr size_t commit_prelude_size = 192;
 #endif
 
+// Where the jump to the breakpoint begins in each prelude (see preludes.S).
 static size_t commit_jump(GuestMemoryApi kind)
 {
 #ifdef __APPLE__
 	return commit_guest_jump(kind == GuestMemoryApi::decommit);
 #else
-	return kind == GuestMemoryApi::commit ? 37 : 31;
+	return kind == GuestMemoryApi::commit ? size_t(raven_prelude_commit_trap - raven_prelude_commit) - 5 :
+		size_t(raven_prelude_decommit_trap - raven_prelude_decommit) - 5;
 #endif
 }
 
-// mov r10,[pointer]; test r10,r10; jz slow; test rcx,rcx; jz slow; test rdx,rdx; jz slow; cmp r8d,MEM_DECOMMIT; je main; slow: jmp trap;
-// restore: mov r8d,MEM_DECOMMIT; jmp slow; main: cmp rdx,256 KiB; ja slow; rax = first page, r11 = end page; look through the open
-// ranges for one holding [rax, r11), take a log slot with lock xadd, zero the pages with rep stosb (keeping rdi), store the range with
-// its low bit set and return TRUE; a full log or no range goes back to restore.
 static std::vector<uint8_t> decommit_prelude(int32_t to_pointer, int32_t to_trap)
 {
 #ifdef __APPLE__
 	return commit_guest_prelude(to_pointer, to_trap, true);
 #else
-	std::vector<uint8_t> code{0x4c, 0x8b, 0x15, 0, 0, 0, 0, 0x4d, 0x85, 0xd2, 0x74, 0x13, 0x48, 0x85, 0xc9, 0x74, 0x0e, 0x48, 0x85, 0xd2,
-		0x74, 0x09, 0x41, 0x81, 0xf8, 0x00, 0x40, 0x00, 0x00, 0x74, 0x0d, 0xe9, 0, 0, 0, 0, 0x41, 0xb8, 0x00, 0x40, 0x00, 0x00,
-		0xeb, 0xf3, 0x48, 0x81, 0xfa, 0x00, 0x00, 0x04, 0x00, 0x77, 0xea, 0x48, 0x89, 0xc8, 0x48, 0x25, 0x00, 0xf0, 0xff, 0xff, 0x4c,
-		0x8d, 0x9c, 0x11, 0xff, 0x0f, 0x00, 0x00, 0x49, 0x81, 0xe3, 0x00, 0xf0, 0xff, 0xff, 0x45, 0x8b, 0x82, 0x00, 0x0a, 0x00, 0x00,
-		0x4d, 0x8d, 0x8a, 0x08, 0x0a, 0x00, 0x00, 0x45, 0x85, 0xc0, 0x74, 0xc4, 0x49, 0x3b, 0x01, 0x72, 0x4b, 0x4d, 0x3b, 0x59, 0x08,
-		0x77, 0x45, 0x41, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xf0, 0x45, 0x0f, 0xc1, 0x82, 0x10, 0x0d, 0x00, 0x00, 0x41, 0x83, 0xf8, 0x20,
-		0x73, 0xa4, 0x49, 0xc1, 0xe0, 0x04, 0x57, 0x48, 0x89, 0xc7, 0x49, 0x89, 0xc1, 0x4c, 0x89, 0xd9, 0x48, 0x29, 0xc1, 0x31, 0xc0,
-		0xf3, 0xaa, 0x5f, 0x49, 0x83, 0xc9, 0x01, 0x4f, 0x89, 0x8c, 0x02, 0x18, 0x0d, 0x00, 0x00, 0x4f, 0x89, 0x9c, 0x02, 0x20, 0x0d,
-		0x00, 0x00, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x49, 0x83, 0xc1, 0x10, 0x41, 0xff, 0xc8, 0xeb, 0xa2};
+	auto code = prelude_code(raven_prelude_decommit, raven_prelude_decommit_end);
 	const int32_t displacement = to_pointer - 7;
 	std::memcpy(code.data() + 3, &displacement, 4);
 	const int32_t relative = to_trap - int32_t(commit_jump(GuestMemoryApi::decommit) + 5);
@@ -609,62 +672,28 @@ static const std::vector<GuestPrelude> &string_preludes()
 	// letters and then, on a tie, with the lower case letter first. CompareStringEx and CompareStringW: the same order for two ASCII
 	// strings, counted or terminated, the case ignored for the flags the runtime ignores it for (the CLR compares names this way by the
 	// thousand while Paint.NET draws). GetThreadLocale and SetThreadLocale: the runtime's constant answers, US English and success.
-	static const std::vector<uint8_t> compare = {0x4d, 0x85, 0xc0, 0x0f, 0x84, 0xd1, 0x00, 0x00, 0x00, 0x4c, 0x8b, 0x54, 0x24, 0x28, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0xc3, 0x00, 0x00, 0x00, 0x44,
-		0x8b, 0x5c, 0x24, 0x30, 0x45, 0x89, 0xc9, 0x45, 0x85, 0xc9, 0x79, 0x10, 0x45, 0x31, 0xc9, 0x66, 0x43, 0x83, 0x3c, 0x48, 0x00, 0x74, 0x05, 0x49,
-		0xff, 0xc1, 0xeb, 0xf3, 0x45, 0x85, 0xdb, 0x79, 0x10, 0x45, 0x31, 0xdb, 0x66, 0x43, 0x83, 0x3c, 0x5a, 0x00, 0x74, 0x05, 0x49, 0xff, 0xc3, 0xeb,
-		0xf3, 0x53, 0x56, 0x31, 0xc9, 0x4c, 0x39, 0xc9, 0x74, 0x3f, 0x4c, 0x39, 0xd9, 0x74, 0x3a, 0x41, 0x0f, 0xb7, 0x04, 0x48, 0x41, 0x0f, 0xb7, 0x1c,
-		0x4a, 0x3d, 0x80, 0x00, 0x00, 0x00, 0x73, 0x70, 0x81, 0xfb, 0x80, 0x00, 0x00, 0x00, 0x73, 0x68, 0x8d, 0x70, 0x9f, 0x83, 0xfe, 0x19, 0x77, 0x03,
-		0x83, 0xe8, 0x20, 0x8d, 0x73, 0x9f, 0x83, 0xfe, 0x19, 0x77, 0x03, 0x83, 0xeb, 0x20, 0x39, 0xd8, 0x72, 0x38, 0x77, 0x3d, 0x48, 0xff, 0xc1, 0xeb,
-		0xbc, 0x4d, 0x39, 0xd9, 0x72, 0x2c, 0x77, 0x31, 0xf7, 0xc2, 0x11, 0x00, 0x00, 0x10, 0x75, 0x30, 0x31, 0xc9, 0x4c, 0x39, 0xc9, 0x74, 0x29, 0x41,
-		0x0f, 0xb7, 0x04, 0x48, 0x41, 0x0f, 0xb7, 0x1c, 0x4a, 0x39, 0xd8, 0x75, 0x05, 0x48, 0xff, 0xc1, 0xeb, 0xe8, 0x8d, 0x70, 0xbf, 0x83, 0xfe, 0x19,
-		0x76, 0x07, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xeb, 0x0c, 0xb8, 0x03, 0x00, 0x00, 0x00, 0xeb, 0x05, 0xb8, 0x02, 0x00, 0x00, 0x00, 0x5e, 0x5b, 0xc3,
-		0x5e, 0x5b, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> compare = prelude_code(raven_prelude_string_compare, raven_prelude_string_compare_end);
 	static const std::vector<GuestPrelude> preludes = {
-		{"lstrlenW", {0x48, 0x85, 0xc9, 0x74, 0x16, 0x48, 0x89, 0xc8, 0x66, 0x83, 0x38, 0x00, 0x74, 0x06, 0x48, 0x83, 0xc0, 0x02, 0xeb, 0xf4, 0x48, 0x29, 0xc8, 0x48,
-			0xd1, 0xe8, 0xc3, 0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"lstrlenA", {0x48, 0x85, 0xc9, 0x74, 0x11, 0x48, 0x89, 0xc8, 0x80, 0x38, 0x00, 0x74, 0x05, 0x48, 0xff, 0xc0, 0xeb, 0xf6, 0x48, 0x29, 0xc8, 0xc3, 0x31, 0xc0,
-			0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"lstrcpynW", {0x48, 0x85, 0xc9, 0x74, 0x36, 0x48, 0x85, 0xd2, 0x74, 0x31, 0x45, 0x85, 0xc0, 0x7e, 0x2c, 0x48, 0x89, 0xc8, 0x45, 0x8d, 0x48, 0xff, 0x45, 0x85,
-			0xc9, 0x74, 0x1a, 0x44, 0x0f, 0xb7, 0x12, 0x45, 0x85, 0xd2, 0x74, 0x11, 0x66, 0x44, 0x89, 0x11, 0x48, 0x83, 0xc1, 0x02, 0x48, 0x83, 0xc2, 0x02,
-			0x41, 0xff, 0xc9, 0xeb, 0xe1, 0x66, 0xc7, 0x01, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"lstrcpynA", {0x48, 0x85, 0xc9, 0x74, 0x31, 0x48, 0x85, 0xd2, 0x74, 0x2c, 0x45, 0x85, 0xc0, 0x7e, 0x27, 0x48, 0x89, 0xc8, 0x45, 0x8d, 0x48, 0xff, 0x45, 0x85,
-			0xc9, 0x74, 0x17, 0x44, 0x0f, 0xb6, 0x12, 0x45, 0x85, 0xd2, 0x74, 0x0e, 0x44, 0x88, 0x11, 0x48, 0xff, 0xc1, 0x48, 0xff, 0xc2, 0x41, 0xff, 0xc9,
-			0xeb, 0xe4, 0xc6, 0x01, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"lstrcmpW", {0x48, 0x85, 0xc9, 0x0f, 0x84, 0x81, 0x00, 0x00, 0x00, 0x48, 0x85, 0xd2, 0x74, 0x7c, 0x45, 0x31, 0xc0, 0x42, 0x0f, 0xb7, 0x04, 0x41, 0x46, 0x0f,
-			0xb7, 0x0c, 0x42, 0x3d, 0x80, 0x00, 0x00, 0x00, 0x73, 0x68, 0x41, 0x81, 0xf9, 0x80, 0x00, 0x00, 0x00, 0x73, 0x5f, 0x44, 0x8d, 0x50, 0x9f, 0x41,
-			0x83, 0xfa, 0x19, 0x77, 0x03, 0x83, 0xe8, 0x20, 0x45, 0x8d, 0x51, 0x9f, 0x41, 0x83, 0xfa, 0x19, 0x77, 0x04, 0x41, 0x83, 0xe9, 0x20, 0x44, 0x39,
-			0xc8, 0x72, 0x30, 0x77, 0x34, 0x85, 0xc0, 0x74, 0x05, 0x49, 0xff, 0xc0, 0xeb, 0xbb, 0x45, 0x31, 0xc0, 0x42, 0x0f, 0xb7, 0x04, 0x41, 0x46, 0x0f,
-			0xb7, 0x0c, 0x42, 0x44, 0x39, 0xc8, 0x75, 0x09, 0x85, 0xc0, 0x74, 0x1b, 0x49, 0xff, 0xc0, 0xeb, 0xe8, 0x44, 0x8d, 0x50, 0xbf, 0x41, 0x83, 0xfa,
-			0x19, 0x76, 0x06, 0xb8, 0xff, 0xff, 0xff, 0xff, 0xc3, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"MultiByteToWideChar", {0x81, 0xf9, 0xe9, 0xfd, 0x00, 0x00, 0x75, 0x0e, 0xf7, 0xc2, 0xf7, 0xff, 0xff, 0xff, 0x0f, 0x85, 0x88, 0x00, 0x00, 0x00, 0xeb, 0x14, 0x85, 0xc9,
-			0x74, 0x08, 0x81, 0xf9, 0xe4, 0x04, 0x00, 0x00, 0x75, 0x7a, 0xf7, 0xc2, 0xf6, 0xff, 0xff, 0xff, 0x75, 0x72, 0x4d, 0x85, 0xc0, 0x74, 0x6d, 0x44,
-			0x89, 0xc8, 0x83, 0xf8, 0xff, 0x75, 0x17, 0x4d, 0x89, 0xc2, 0x41, 0x80, 0x3a, 0x00, 0x74, 0x05, 0x49, 0xff, 0xc2, 0xeb, 0xf5, 0x4d, 0x29, 0xc2,
-			0x41, 0x8d, 0x42, 0x01, 0xeb, 0x04, 0x85, 0xc0, 0x7e, 0x4a, 0x45, 0x31, 0xd2, 0x41, 0x39, 0xc2, 0x73, 0x0c, 0x43, 0xf6, 0x04, 0x10, 0x80, 0x75,
-			0x3b, 0x41, 0xff, 0xc2, 0xeb, 0xef, 0x4c, 0x8b, 0x5c, 0x24, 0x28, 0x44, 0x8b, 0x54, 0x24, 0x30, 0x45, 0x85, 0xd2, 0x74, 0x26, 0x4d, 0x85, 0xdb,
-			0x74, 0x22, 0x4d, 0x39, 0xc3, 0x74, 0x1d, 0x41, 0x39, 0xc2, 0x7c, 0x18, 0x45, 0x31, 0xd2, 0x41, 0x39, 0xc2, 0x73, 0x0f, 0x43, 0x0f, 0xb6, 0x14,
-			0x10, 0x66, 0x43, 0x89, 0x14, 0x53, 0x41, 0xff, 0xc2, 0xeb, 0xec, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"WideCharToMultiByte", {0x85, 0xc9, 0x74, 0x2c, 0x81, 0xf9, 0xe4, 0x04, 0x00, 0x00, 0x74, 0x24, 0x81, 0xf9, 0xe9, 0xfd, 0x00, 0x00, 0x0f, 0x85, 0xa4, 0x00, 0x00, 0x00,
-			0x48, 0x83, 0x7c, 0x24, 0x38, 0x00, 0x0f, 0x85, 0x98, 0x00, 0x00, 0x00, 0x48, 0x83, 0x7c, 0x24, 0x40, 0x00, 0x0f, 0x85, 0x8c, 0x00, 0x00, 0x00,
-			0x85, 0xd2, 0x0f, 0x85, 0x84, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xc0, 0x74, 0x7f, 0x44, 0x89, 0xc8, 0x83, 0xf8, 0xff, 0x75, 0x1c, 0x4d, 0x89, 0xc2,
-			0x66, 0x41, 0x83, 0x3a, 0x00, 0x74, 0x06, 0x49, 0x83, 0xc2, 0x02, 0xeb, 0xf3, 0x4d, 0x29, 0xc2, 0x49, 0xd1, 0xea, 0x41, 0x8d, 0x42, 0x01, 0xeb,
-			0x04, 0x85, 0xc0, 0x7e, 0x57, 0x45, 0x31, 0xd2, 0x41, 0x39, 0xc2, 0x73, 0x0e, 0x66, 0x43, 0x81, 0x3c, 0x50, 0x80, 0x00, 0x73, 0x46, 0x41, 0xff,
-			0xc2, 0xeb, 0xed, 0x4c, 0x8b, 0x5c, 0x24, 0x28, 0x44, 0x8b, 0x54, 0x24, 0x30, 0x45, 0x85, 0xd2, 0x74, 0x20, 0x4d, 0x85, 0xdb, 0x74, 0x2d, 0x41,
-			0x39, 0xc2, 0x7c, 0x28, 0x45, 0x31, 0xd2, 0x41, 0x39, 0xc2, 0x73, 0x0e, 0x43, 0x0f, 0xb7, 0x14, 0x50, 0x43, 0x88, 0x14, 0x13, 0x41, 0xff, 0xc2,
-			0xeb, 0xed, 0x4c, 0x8b, 0x5c, 0x24, 0x40, 0x4d, 0x85, 0xdb, 0x74, 0x07, 0x41, 0xc7, 0x03, 0x00, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00,
-			0x00}},
+		{"lstrlenW", prelude_code(raven_prelude_string_lstrlen_w, raven_prelude_string_lstrlen_w_end)},
+		{"lstrlenA", prelude_code(raven_prelude_string_lstrlen_a, raven_prelude_string_lstrlen_a_end)},
+		{"lstrcpynW", prelude_code(raven_prelude_string_lstrcpyn_w, raven_prelude_string_lstrcpyn_w_end)},
+		{"lstrcpynA", prelude_code(raven_prelude_string_lstrcpyn_a, raven_prelude_string_lstrcpyn_a_end)},
+		{"lstrcmpW", prelude_code(raven_prelude_string_lstrcmp_w, raven_prelude_string_lstrcmp_w_end)},
+		{"MultiByteToWideChar", prelude_code(raven_prelude_string_multi_byte_to_wide_char, raven_prelude_string_multi_byte_to_wide_char_end)},
+		{"WideCharToMultiByte", prelude_code(raven_prelude_string_wide_char_to_multi_byte, raven_prelude_string_wide_char_to_multi_byte_end)},
 		{"CompareStringEx", compare},
 		{"CompareStringW", compare},
-		{"GetThreadLocale", {0xb8, 0x09, 0x04, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
+		{"GetThreadLocale", prelude_code(raven_prelude_string_get_thread_locale, raven_prelude_string_get_thread_locale_end)},
 		// The ANSI code page is Windows-1252 and every default language and locale US English, as the served forms answer.
-		{"GetACP", {0xb8, 0xe4, 0x04, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"GetUserDefaultLCID", {0xb8, 0x09, 0x04, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"GetSystemDefaultLCID", {0xb8, 0x09, 0x04, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"GetUserDefaultLangID", {0xb8, 0x09, 0x04, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"GetSystemDefaultLangID", {0xb8, 0x09, 0x04, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"GetUserDefaultUILanguage", {0xb8, 0x09, 0x04, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"GetSystemDefaultUILanguage", {0xb8, 0x09, 0x04, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"GetThreadUILanguage", {0xb8, 0x09, 0x04, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
-		{"SetThreadLocale", {0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00}},
+		{"GetACP", prelude_code(raven_prelude_string_get_a_c_p, raven_prelude_string_get_a_c_p_end)},
+		{"GetUserDefaultLCID", prelude_code(raven_prelude_string_get_thread_locale, raven_prelude_string_get_thread_locale_end)},
+		{"GetSystemDefaultLCID", prelude_code(raven_prelude_string_get_thread_locale, raven_prelude_string_get_thread_locale_end)},
+		{"GetUserDefaultLangID", prelude_code(raven_prelude_string_get_thread_locale, raven_prelude_string_get_thread_locale_end)},
+		{"GetSystemDefaultLangID", prelude_code(raven_prelude_string_get_thread_locale, raven_prelude_string_get_thread_locale_end)},
+		{"GetUserDefaultUILanguage", prelude_code(raven_prelude_string_get_thread_locale, raven_prelude_string_get_thread_locale_end)},
+		{"GetSystemDefaultUILanguage", prelude_code(raven_prelude_string_get_thread_locale, raven_prelude_string_get_thread_locale_end)},
+		{"GetThreadUILanguage", prelude_code(raven_prelude_string_get_thread_locale, raven_prelude_string_get_thread_locale_end)},
+		{"SetThreadLocale", prelude_code(raven_prelude_string_set_thread_locale, raven_prelude_string_set_thread_locale_end)},
 	};
 	return preludes;
 }
@@ -679,17 +708,12 @@ static const GuestPrelude *string_prelude(std::string_view module, std::string_v
 	return nullptr;
 }
 
-// Services the guest answers from what the runtime publishes in the served block. The millisecond clocks are the performance counter
-// divided by 10000, read from the time stamp counter once the runtime has published its calibration, as QueryPerformanceCounter is.
-// Each loads the block pointer first, as the served stubs do, and ends in a jump to the export's breakpoint.
+// Services the guest answers from what the runtime publishes in the served block or the shared user data page. The millisecond clocks
+// read the page's tick count, as Windows does. Each starts as the others do, with the block pointer's place, and ends in a jump to the
+// export's breakpoint.
 static const std::vector<uint8_t> &tick_prelude()
 {
-	// mov r10,[pointer]; test r10,r10; jz slow; mov r11,[r10+multiplier]; test r11,r11; jz slow; rdtsc; the count as in the clock
-	// prelude; xor edx,edx; mov ecx,10000; div rcx; ret; slow: jmp breakpoint
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x36, 0x4d, 0x8b, 0x9a, 0x10, 0x08, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x2a,
-		0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0, 0x49, 0x2b, 0x82, 0x00, 0x08, 0x00, 0x00, 0x49, 0xf7, 0xe3, 0x48, 0x0f, 0xac, 0xd0, 0x20,
-		0x49, 0x03, 0x82, 0x08, 0x08, 0x00, 0x00, 0x31, 0xd2, 0xb9, 0x10, 0x27, 0x00, 0x00, 0x48, 0xf7, 0xf1, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_tick, raven_prelude_tick_end);
 	return code;
 }
 
@@ -701,40 +725,19 @@ static constexpr size_t screen_caps = 0x400, screen_dc = 0x600, screen_dc_state 
 
 static const std::vector<uint8_t> &screen_get_dc_prelude()
 {
-	// mov r10,[pointer]; test r10,r10; jz slow; test rcx,rcx; jnz slow; xor eax,eax; mov r11d,1; lock cmpxchg [r10+state],r11d; jne slow;
-	// mov rax,[r10+context]; test rax,rax; jz undo; ret; undo: mov dword [r10+state],0; slow: jmp breakpoint
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x30, 0x48, 0x85, 0xc9, 0x75, 0x2b, 0x31, 0xc0, 0x41, 0xbb, 0x01, 0x00, 0x00,
-		0x00, 0xf0, 0x45, 0x0f, 0xb1, 0x9a, 0x08, 0x06, 0x00, 0x00, 0x75, 0x18, 0x49, 0x8b, 0x82, 0x00, 0x06, 0x00, 0x00, 0x48, 0x85, 0xc0, 0x74, 0x01,
-		0xc3, 0x41, 0xc7, 0x82, 0x08, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_screen_get_dc, raven_prelude_screen_get_dc_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &screen_release_dc_prelude()
 {
-	// mov r10,[pointer]; test r10,r10; jz slow; test rcx,rcx; jnz slow; test rdx,rdx; jz slow; cmp rdx,[r10+context]; jne slow;
-	// mov eax,1; xor r11d,r11d; lock cmpxchg [r10+state],r11d; jne slow; ret; slow: jmp breakpoint
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x27, 0x48, 0x85, 0xc9, 0x75, 0x22, 0x48, 0x85, 0xd2, 0x74, 0x1d, 0x49, 0x3b,
-		0x92, 0x00, 0x06, 0x00, 0x00, 0x75, 0x14, 0xb8, 0x01, 0x00, 0x00, 0x00, 0x45, 0x31, 0xdb, 0xf0, 0x45, 0x0f, 0xb1, 0x9a, 0x08, 0x06, 0x00, 0x00,
-		0x75, 0x01, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_screen_release_dc, raven_prelude_screen_release_dc_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &screen_device_caps_prelude()
 {
-	// mov r10,[pointer]; test r10,r10; jz slow; test rcx,rcx; jz slow; cmp edx,127; ja slow; the screen's context answers from the
-	// caps table; another context answers when the attribute table holds its slot (see dc_text_color_prelude) and the index does not
-	// depend on its bitmap: TECHNOLOGY 1 (DT_RASDISPLAY, a memory context's too), LOGPIXELSX and LOGPIXELSY 96, PLANES 1, SHADEBLENDCAPS
-	// 0, as device_caps answers them; anything else: jmp breakpoint. GDI+ asks these thousands of times while it paints. The slot's
-	// window flag that TECHNOLOGY once read is left unreached (mov eax,[rax+0x18]; ret).
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x6f, 0x48, 0x85, 0xc9, 0x74, 0x6a, 0x83, 0xfa, 0x7f, 0x77, 0x65, 0x49, 0x3b,
-		0x8a, 0x00, 0x06, 0x00, 0x00, 0x74, 0x51, 0x4d, 0x8b, 0x9a, 0x48, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x50, 0x89, 0xc8, 0x25, 0xff, 0x03,
-		0x00, 0x00, 0xc1, 0xe0, 0x05, 0x49, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x48, 0x3b, 0x08, 0x75, 0x39, 0x83, 0xfa, 0x02, 0x74, 0x20, 0x83,
-		0xfa, 0x58, 0x74, 0x15, 0x83, 0xfa, 0x5a, 0x74, 0x10, 0x83, 0xfa, 0x0e, 0x74, 0x11, 0x83, 0xfa, 0x78, 0x74, 0x12, 0xeb, 0x1e, 0x8b, 0x40, 0x18,
-		0xc3, 0xb8, 0x60, 0x00, 0x00, 0x00, 0xc3, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x31, 0xc0, 0xc3, 0x89, 0xd0, 0x41, 0x8b, 0x84, 0x82, 0x00, 0x04,
-		0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_screen_device_caps, raven_prelude_screen_device_caps_end);
 #ifdef __APPLE__
 	static const auto scaled = raven_darwin::screen_caps_prelude(code);
 	return scaled;
@@ -752,45 +755,25 @@ static constexpr size_t window_table = 0x700;
 
 static const std::vector<uint8_t> &window_long_ptr_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0x82, 0x00, 0x00, 0x00, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0x00, 0x00, 0x4d,
-		0x85, 0xdb, 0x74, 0x76, 0x48, 0x85, 0xc9, 0x74, 0x71, 0x89, 0xc8, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x49, 0x01, 0xc3, 0x49, 0x3b,
-		0x0b, 0x75, 0x5f, 0x85, 0xd2, 0x78, 0x15, 0x89, 0xd0, 0x4c, 0x8d, 0x50, 0x08, 0x45, 0x3b, 0x53, 0x50, 0x77, 0x4f, 0x49, 0x8b, 0x84, 0x03, 0xa0,
-		0x00, 0x00, 0x00, 0xc3, 0x83, 0xfa, 0xeb, 0x75, 0x05, 0x49, 0x8b, 0x43, 0x08, 0xc3, 0x83, 0xfa, 0xfc, 0x75, 0x05, 0x49, 0x8b, 0x43, 0x10, 0xc3,
-		0x83, 0xfa, 0xfa, 0x75, 0x05, 0x49, 0x8b, 0x43, 0x18, 0xc3, 0x83, 0xfa, 0xf8, 0x75, 0x05, 0x49, 0x8b, 0x43, 0x20, 0xc3, 0x83, 0xfa, 0xf4, 0x75,
-		0x05, 0x49, 0x8b, 0x43, 0x28, 0xc3, 0x83, 0xfa, 0xf0, 0x75, 0x05, 0x41, 0x8b, 0x43, 0x30, 0xc3, 0x83, 0xfa, 0xec, 0x75, 0x05, 0x41, 0x8b, 0x43,
-		0x34, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_long_ptr, raven_prelude_window_long_ptr_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &window_long_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x64, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x58,
-		0x48, 0x85, 0xc9, 0x74, 0x53, 0x89, 0xc8, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x49, 0x01, 0xc3, 0x49, 0x3b, 0x0b, 0x75, 0x41, 0x85,
-		0xd2, 0x78, 0x15, 0x89, 0xd0, 0x4c, 0x8d, 0x50, 0x04, 0x45, 0x3b, 0x53, 0x50, 0x77, 0x31, 0x41, 0x8b, 0x84, 0x03, 0xa0, 0x00, 0x00, 0x00, 0xc3,
-		0x83, 0xfa, 0xeb, 0x75, 0x05, 0x41, 0x8b, 0x43, 0x08, 0xc3, 0x83, 0xfa, 0xf4, 0x75, 0x05, 0x41, 0x8b, 0x43, 0x28, 0xc3, 0x83, 0xfa, 0xf0, 0x75,
-		0x05, 0x41, 0x8b, 0x43, 0x30, 0xc3, 0x83, 0xfa, 0xec, 0x75, 0x05, 0x41, 0x8b, 0x43, 0x34, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_long, raven_prelude_window_long_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &window_property_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x52, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x46,
-		0x48, 0x85, 0xc9, 0x74, 0x41, 0x89, 0xc8, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x49, 0x01, 0xc3, 0x49, 0x3b, 0x0b, 0x75, 0x2f, 0x48,
-		0x81, 0xfa, 0xff, 0xff, 0x00, 0x00, 0x77, 0x26, 0x41, 0x8b, 0x43, 0x54, 0x83, 0xf8, 0x04, 0x77, 0x1d, 0x4d, 0x8d, 0x53, 0x60, 0x85, 0xc0, 0x74,
-		0x0d, 0x49, 0x3b, 0x12, 0x74, 0x0b, 0x49, 0x83, 0xc2, 0x10, 0xff, 0xc8, 0xeb, 0xef, 0x31, 0xc0, 0xc3, 0x49, 0x8b, 0x42, 0x08, 0xc3, 0xe9, 0x00,
-		0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_property, raven_prelude_window_property_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &window_exists_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x29, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x1d,
-		0x48, 0x85, 0xc9, 0x74, 0x18, 0x89, 0xc8, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x49, 0x01, 0xc3, 0x49, 0x3b, 0x0b, 0x75, 0x06, 0xb8,
-		0x01, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_exists, raven_prelude_window_exists_end);
 	return code;
 }
 
@@ -798,31 +781,19 @@ static const std::vector<uint8_t> &window_exists_prelude()
 // thread the runtime has to say, goes to the runtime.
 static const std::vector<uint8_t> &window_thread_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x3e, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x32,
-		0x48, 0x85, 0xc9, 0x74, 0x2d, 0x89, 0xc8, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x49, 0x01, 0xc3, 0x49, 0x3b, 0x0b, 0x75, 0x1b, 0x41,
-		0x8b, 0x83, 0xf0, 0x00, 0x00, 0x00, 0x85, 0xc0, 0x74, 0x10, 0x48, 0x85, 0xd2, 0x74, 0x0a, 0x45, 0x8b, 0x93, 0xf4, 0x00, 0x00, 0x00, 0x44, 0x89,
-		0x12, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_thread, raven_prelude_window_thread_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &window_client_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x3d, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x31,
-		0x48, 0x85, 0xc9, 0x74, 0x2c, 0x89, 0xc8, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x49, 0x01, 0xc3, 0x49, 0x3b, 0x0b, 0x75, 0x1a, 0x48,
-		0x85, 0xd2, 0x74, 0x15, 0x48, 0xc7, 0x02, 0x00, 0x00, 0x00, 0x00, 0x49, 0x8b, 0x43, 0x38, 0x48, 0x89, 0x42, 0x08, 0xb8, 0x01, 0x00, 0x00, 0x00,
-		0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_client, raven_prelude_window_client_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &window_outer_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x3d, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x31,
-		0x48, 0x85, 0xc9, 0x74, 0x2c, 0x89, 0xc8, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x49, 0x01, 0xc3, 0x49, 0x3b, 0x0b, 0x75, 0x1a, 0x48,
-		0x85, 0xd2, 0x74, 0x15, 0x49, 0x8b, 0x43, 0x40, 0x48, 0x89, 0x02, 0x49, 0x8b, 0x43, 0x48, 0x48, 0x89, 0x42, 0x08, 0xb8, 0x01, 0x00, 0x00, 0x00,
-		0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_outer, raven_prelude_window_outer_end);
 	return code;
 }
 
@@ -833,15 +804,7 @@ static constexpr size_t locale_pointer = 0x708;
 
 static const std::vector<uint8_t> &locale_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0x94, 0x00, 0x00, 0x00, 0x4d, 0x8b, 0x9a, 0x08, 0x07, 0x00, 0x00, 0x4d,
-		0x85, 0xdb, 0x0f, 0x84, 0x84, 0x00, 0x00, 0x00, 0x89, 0xd0, 0x25, 0xff, 0xff, 0xff, 0x5f, 0x3d, 0x80, 0x00, 0x00, 0x00, 0x72, 0x0f, 0x2d, 0x00,
-		0x10, 0x00, 0x00, 0x83, 0xf8, 0x10, 0x73, 0x6c, 0x05, 0x80, 0x00, 0x00, 0x00, 0x45, 0x0f, 0xb7, 0x14, 0xc3, 0x41, 0x81, 0xfa, 0xff, 0xff, 0x00,
-		0x00, 0x74, 0x59, 0xf7, 0xc2, 0x00, 0x00, 0x00, 0x20, 0x75, 0x38, 0x41, 0x0f, 0xb7, 0x44, 0xc3, 0x02, 0xff, 0xc0, 0x45, 0x85, 0xc9, 0x74, 0x2a,
-		0x78, 0x42, 0x41, 0x39, 0xc1, 0x72, 0x3d, 0x4d, 0x85, 0xc0, 0x74, 0x38, 0x4f, 0x8d, 0x94, 0x53, 0x80, 0x04, 0x00, 0x00, 0x89, 0xc1, 0x66, 0x41,
-		0x8b, 0x12, 0x66, 0x41, 0x89, 0x10, 0x49, 0x83, 0xc2, 0x02, 0x49, 0x83, 0xc0, 0x02, 0xff, 0xc9, 0x75, 0xec, 0xc3, 0x41, 0x83, 0xf9, 0x02, 0x7c,
-		0x13, 0x4d, 0x85, 0xc0, 0x74, 0x0e, 0x41, 0x8b, 0x44, 0xc3, 0x04, 0x41, 0x89, 0x00, 0xb8, 0x02, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00,
-		0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_locale, raven_prelude_locale_end);
 	return code;
 }
 
@@ -853,17 +816,7 @@ static const std::vector<uint8_t> &nt_commit_prelude()
 #ifdef __APPLE__
 	return commit_guest_nt_prelude(false);
 #else
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0xce, 0x00, 0x00, 0x00, 0x48, 0x83, 0xf9, 0xff, 0x0f, 0x85, 0xc4, 0x00,
-		0x00, 0x00, 0x4d, 0x85, 0xc0, 0x0f, 0x85, 0xbb, 0x00, 0x00, 0x00, 0x48, 0x85, 0xd2, 0x0f, 0x84, 0xb2, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xc9, 0x0f,
-		0x84, 0xa9, 0x00, 0x00, 0x00, 0x81, 0x7c, 0x24, 0x28, 0x00, 0x10, 0x00, 0x00, 0x0f, 0x85, 0x9b, 0x00, 0x00, 0x00, 0x83, 0x7c, 0x24, 0x30, 0x04,
-		0x0f, 0x85, 0x90, 0x00, 0x00, 0x00, 0x48, 0x8b, 0x02, 0x48, 0x85, 0xc0, 0x0f, 0x84, 0x84, 0x00, 0x00, 0x00, 0x4d, 0x8b, 0x19, 0x4d, 0x85, 0xdb,
-		0x74, 0x7c, 0x4e, 0x8d, 0x9c, 0x18, 0xff, 0x0f, 0x00, 0x00, 0x49, 0x81, 0xe3, 0x00, 0xf0, 0xff, 0xff, 0x48, 0x25, 0x00, 0xf0, 0xff, 0xff, 0x49,
-		0x39, 0xc3, 0x76, 0x62, 0x41, 0x8b, 0x8a, 0x00, 0x0a, 0x00, 0x00, 0x4d, 0x8d, 0x82, 0x08, 0x0a, 0x00, 0x00, 0x85, 0xc9, 0x74, 0x46, 0x49, 0x3b,
-		0x00, 0x72, 0x39, 0x4d, 0x3b, 0x58, 0x08, 0x77, 0x33, 0xb9, 0x01, 0x00, 0x00, 0x00, 0xf0, 0x41, 0x0f, 0xc1, 0x8a, 0x10, 0x0d, 0x00, 0x00, 0x83,
-		0xf9, 0x20, 0x73, 0x28, 0x48, 0xc1, 0xe1, 0x04, 0x49, 0x89, 0x84, 0x0a, 0x18, 0x0d, 0x00, 0x00, 0x4d, 0x89, 0x9c, 0x0a, 0x20, 0x0d, 0x00, 0x00,
-		0x48, 0x89, 0x02, 0x49, 0x29, 0xc3, 0x4d, 0x89, 0x19, 0x31, 0xc0, 0xc3, 0x49, 0x83, 0xc0, 0x10, 0xff, 0xc9, 0xeb, 0xb6, 0x48, 0xc7, 0xc1, 0xff,
-		0xff, 0xff, 0xff, 0x45, 0x31, 0xc0, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_nt_commit, raven_prelude_nt_commit_end);
 	static_assert(NativeMemory::commit_windows == 0xa00 && NativeMemory::commit_log == 0xd10 && NativeMemory::commit_log_count == 32,
 		"the commit preludes' offsets are written into their code");
 	return code;
@@ -877,18 +830,7 @@ static const std::vector<uint8_t> &nt_decommit_prelude()
 #ifdef __APPLE__
 	return commit_guest_nt_prelude(true);
 #else
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0xe5, 0x00, 0x00, 0x00, 0x48, 0x83, 0xf9, 0xff, 0x0f, 0x85, 0xdb, 0x00,
-		0x00, 0x00, 0x48, 0x85, 0xd2, 0x0f, 0x84, 0xd2, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xc0, 0x0f, 0x84, 0xc9, 0x00, 0x00, 0x00, 0x41, 0x81, 0xf9, 0x00,
-		0x40, 0x00, 0x00, 0x0f, 0x85, 0xbc, 0x00, 0x00, 0x00, 0x48, 0x8b, 0x02, 0x48, 0x85, 0xc0, 0x0f, 0x84, 0xb0, 0x00, 0x00, 0x00, 0x4d, 0x8b, 0x18,
-		0x4d, 0x85, 0xdb, 0x0f, 0x84, 0xa4, 0x00, 0x00, 0x00, 0x49, 0x81, 0xfb, 0x00, 0x00, 0x04, 0x00, 0x0f, 0x87, 0x97, 0x00, 0x00, 0x00, 0x4e, 0x8d,
-		0x9c, 0x18, 0xff, 0x0f, 0x00, 0x00, 0x49, 0x81, 0xe3, 0x00, 0xf0, 0xff, 0xff, 0x48, 0x25, 0x00, 0xf0, 0xff, 0xff, 0x49, 0x39, 0xc3, 0x76, 0x7d,
-		0x41, 0x8b, 0x8a, 0x00, 0x0a, 0x00, 0x00, 0x4d, 0x8d, 0x8a, 0x08, 0x0a, 0x00, 0x00, 0x85, 0xc9, 0x74, 0x5e, 0x49, 0x3b, 0x01, 0x72, 0x51, 0x4d,
-		0x3b, 0x59, 0x08, 0x77, 0x4b, 0xb9, 0x01, 0x00, 0x00, 0x00, 0xf0, 0x41, 0x0f, 0xc1, 0x8a, 0x10, 0x0d, 0x00, 0x00, 0x83, 0xf9, 0x20, 0x73, 0x40,
-		0x48, 0xc1, 0xe1, 0x04, 0x49, 0x89, 0xc9, 0x57, 0x50, 0x48, 0x89, 0xc7, 0x4c, 0x89, 0xd9, 0x48, 0x29, 0xc1, 0x31, 0xc0, 0xf3, 0xaa, 0x58, 0x5f,
-		0x48, 0x8d, 0x48, 0x01, 0x4b, 0x89, 0x8c, 0x0a, 0x18, 0x0d, 0x00, 0x00, 0x4f, 0x89, 0x9c, 0x0a, 0x20, 0x0d, 0x00, 0x00, 0x48, 0x89, 0x02, 0x49,
-		0x29, 0xc3, 0x4d, 0x89, 0x18, 0x31, 0xc0, 0xc3, 0x49, 0x83, 0xc1, 0x10, 0xff, 0xc9, 0xeb, 0x9e, 0x48, 0xc7, 0xc1, 0xff, 0xff, 0xff, 0xff, 0x41,
-		0xb9, 0x00, 0x40, 0x00, 0x00, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_nt_decommit, raven_prelude_nt_decommit_end);
 	return code;
 #endif
 }
@@ -899,29 +841,21 @@ static constexpr size_t focus_published = 0x710, focus_window = 0x718;
 
 static const std::vector<uint8_t> &window_child_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x5f, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x53,
-		0x31, 0xc0, 0x48, 0x85, 0xc9, 0x74, 0x4b, 0x48, 0x85, 0xd2, 0x74, 0x46, 0x48, 0x39, 0xd1, 0x74, 0x41, 0x41, 0xb8, 0x40, 0x00, 0x00, 0x00, 0x49,
-		0x89, 0xd1, 0x44, 0x89, 0xc8, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x4c, 0x01, 0xd8, 0x4c, 0x3b, 0x08, 0x75, 0x15, 0x4c, 0x8b, 0x48,
-		0x58, 0x31, 0xc0, 0x4d, 0x85, 0xc9, 0x74, 0x1a, 0x49, 0x39, 0xc9, 0x74, 0x10, 0x41, 0xff, 0xc8, 0x75, 0xd8, 0x41, 0xb8, 0x00, 0x00, 0x00, 0x00,
-		0x45, 0x31, 0xc9, 0xeb, 0x06, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_child, raven_prelude_window_child_end);
 	return code;
 }
 
 #ifndef __APPLE__
 static const std::vector<uint8_t> &window_dpi_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0xb8, 0x60, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_dpi, raven_prelude_window_dpi_end);
 	return code;
 }
 #endif
 
 static const std::vector<uint8_t> &focus_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x12, 0x49, 0x83, 0xba, 0x10, 0x07, 0x00, 0x00, 0x00, 0x74, 0x08, 0x49, 0x8b,
-		0x82, 0x18, 0x07, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_focus, raven_prelude_focus_end);
 	return code;
 }
 
@@ -931,9 +865,7 @@ static constexpr size_t foreground_window = 0x798, cursor_position = 0x7a0;
 
 static const std::vector<uint8_t> &foreground_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x12, 0x49, 0x83, 0xba, 0x10, 0x07, 0x00, 0x00, 0x00, 0x74, 0x08, 0x49, 0x8b,
-		0x82, 0x98, 0x07, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_foreground, raven_prelude_foreground_end);
 	static_assert(foreground_window == 0x798, "the foreground prelude's offset is written into its code");
 	return code;
 }
@@ -942,19 +874,13 @@ static const std::vector<uint8_t> &foreground_prelude()
 // moving and the plain button messages. Everything else goes to the runtime.
 static const std::vector<uint8_t> &default_procedure_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x49, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x3d,
-		0x89, 0xc8, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x49, 0x3b, 0x0c, 0x03, 0x75, 0x2d, 0x81, 0xfa, 0x00, 0xc0, 0x00, 0x00, 0x72, 0x0b,
-		0x81, 0xfa, 0xff, 0xff, 0x00, 0x00, 0x77, 0x1d, 0x31, 0xc0, 0xc3, 0x8d, 0x82, 0x00, 0xfe, 0xff, 0xff, 0x83, 0xf8, 0x08, 0x77, 0x0f, 0x41, 0xbb,
-		0x97, 0x01, 0x00, 0x00, 0x41, 0x0f, 0xa3, 0xc3, 0x73, 0x03, 0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_default_procedure, raven_prelude_default_procedure_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &cursor_position_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x1f, 0x49, 0x83, 0xba, 0x10, 0x07, 0x00, 0x00, 0x00, 0x74, 0x15, 0x48, 0x85,
-		0xc9, 0x74, 0x10, 0x49, 0x8b, 0x82, 0xa0, 0x07, 0x00, 0x00, 0x48, 0x89, 0x01, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_cursor_position, raven_prelude_cursor_position_end);
 	static_assert(cursor_position == 0x7a0, "the pointer position prelude's offset is written into its code");
 	return code;
 }
@@ -965,30 +891,19 @@ static constexpr size_t menu_pointer = 0x720;
 
 static const std::vector<uint8_t> &menu_count_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x27, 0x4d, 0x8b, 0x9a, 0x20, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x1b,
-		0x48, 0x85, 0xc9, 0x74, 0x16, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x04, 0x4c, 0x01, 0xd8, 0x48, 0x3b, 0x08, 0x75, 0x04, 0x8b,
-		0x40, 0x0c, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_menu_count, raven_prelude_menu_count_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &menu_submenu_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x3e, 0x4d, 0x8b, 0x9a, 0x20, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x32,
-		0x48, 0x85, 0xc9, 0x74, 0x2d, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x04, 0x4c, 0x01, 0xd8, 0x48, 0x3b, 0x08, 0x75, 0x1b, 0x3b,
-		0x50, 0x0c, 0x73, 0x13, 0x44, 0x8b, 0x50, 0x08, 0x4d, 0x01, 0xda, 0x89, 0xd0, 0x48, 0xc1, 0xe0, 0x05, 0x49, 0x8b, 0x44, 0x02, 0x10, 0xc3, 0x31,
-		0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_menu_submenu, raven_prelude_menu_submenu_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &menu_id_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x4a, 0x4d, 0x8b, 0x9a, 0x20, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x3e,
-		0x48, 0x85, 0xc9, 0x74, 0x39, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x04, 0x4c, 0x01, 0xd8, 0x48, 0x3b, 0x08, 0x75, 0x27, 0x3b,
-		0x50, 0x0c, 0x73, 0x1c, 0x44, 0x8b, 0x50, 0x08, 0x4d, 0x01, 0xda, 0x89, 0xd0, 0x48, 0xc1, 0xe0, 0x05, 0x49, 0x01, 0xc2, 0x49, 0x83, 0x7a, 0x10,
-		0x00, 0x75, 0x05, 0x41, 0x8b, 0x42, 0x08, 0xc3, 0xb8, 0xff, 0xff, 0xff, 0xff, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_menu_id, raven_prelude_menu_id_end);
 	return code;
 }
 
@@ -997,43 +912,13 @@ static const std::vector<uint8_t> &menu_id_prelude()
 // a tree deeper than the stack allows goes to the runtime.
 static const std::vector<uint8_t> &menu_state_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0x41, 0x01, 0x00, 0x00, 0x4d, 0x8b, 0x9a, 0x20, 0x07, 0x00, 0x00, 0x4d,
-		0x85, 0xdb, 0x0f, 0x84, 0x31, 0x01, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x0f, 0x84, 0x28, 0x01, 0x00, 0x00, 0x41, 0xf7, 0xc0, 0x00, 0x04, 0x00, 0x00,
-		0x74, 0x2d, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x04, 0x4c, 0x01, 0xd8, 0x48, 0x3b, 0x08, 0x0f, 0x85, 0x09, 0x01, 0x00, 0x00,
-		0x3b, 0x50, 0x0c, 0x73, 0x74, 0x44, 0x8b, 0x50, 0x08, 0x4d, 0x01, 0xda, 0x89, 0xd0, 0x48, 0xc1, 0xe0, 0x05, 0x49, 0x01, 0xc2, 0xeb, 0x1f, 0x55,
-		0x48, 0x89, 0xe5, 0x51, 0x52, 0xe8, 0x5d, 0x00, 0x00, 0x00, 0x48, 0x8b, 0x4d, 0xf8, 0x48, 0x8b, 0x55, 0xf0, 0x48, 0x89, 0xec, 0x5d, 0x48, 0x85,
-		0xc0, 0x74, 0x46, 0x49, 0x89, 0xc2, 0x41, 0x8b, 0x02, 0x25, 0x64, 0x09, 0x00, 0x00, 0x41, 0x0b, 0x42, 0x04, 0x49, 0x83, 0x7a, 0x10, 0x00, 0x74,
-		0x2f, 0x4d, 0x8b, 0x4a, 0x10, 0x45, 0x89, 0xca, 0x41, 0x81, 0xe2, 0xff, 0x03, 0x00, 0x00, 0x41, 0xc1, 0xe2, 0x04, 0x4d, 0x01, 0xda, 0x4d, 0x3b,
-		0x0a, 0x0f, 0x85, 0xa2, 0x00, 0x00, 0x00, 0x0f, 0xb6, 0xc0, 0x83, 0xc8, 0x10, 0x45, 0x8b, 0x4a, 0x0c, 0x41, 0xc1, 0xe1, 0x08, 0x44, 0x09, 0xc8,
-		0xc3, 0xb8, 0xff, 0xff, 0xff, 0xff, 0xc3, 0x48, 0x89, 0xe8, 0x48, 0x29, 0xe0, 0x48, 0x3d, 0x00, 0x10, 0x00, 0x00, 0x77, 0x70, 0x89, 0xc8, 0x25,
-		0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x04, 0x4c, 0x01, 0xd8, 0x48, 0x3b, 0x08, 0x75, 0x5e, 0x44, 0x8b, 0x50, 0x08, 0x4d, 0x01, 0xda, 0x8b, 0x40,
-		0x0c, 0x41, 0x52, 0x50, 0x85, 0xc0, 0x74, 0x1d, 0x49, 0x83, 0x7a, 0x10, 0x00, 0x75, 0x0e, 0x41, 0x3b, 0x52, 0x08, 0x75, 0x08, 0x4c, 0x89, 0xd0,
-		0x48, 0x83, 0xc4, 0x10, 0xc3, 0x49, 0x83, 0xc2, 0x20, 0xff, 0xc8, 0xeb, 0xdf, 0x58, 0x41, 0x5a, 0x85, 0xc0, 0x74, 0x21, 0x49, 0x8b, 0x4a, 0x10,
-		0x48, 0x85, 0xc9, 0x74, 0x10, 0x41, 0x52, 0x50, 0xe8, 0x9a, 0xff, 0xff, 0xff, 0x48, 0x85, 0xc0, 0x75, 0x0e, 0x58, 0x41, 0x5a, 0x49, 0x83, 0xc2,
-		0x20, 0xff, 0xc8, 0xeb, 0xdb, 0x31, 0xc0, 0xc3, 0x48, 0x83, 0xc4, 0x10, 0xc3, 0x48, 0x8b, 0x4d, 0xf8, 0x48, 0x8b, 0x55, 0xf0, 0x48, 0x89, 0xec,
-		0x5d, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_menu_state, raven_prelude_menu_state_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &menu_string_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0x3f, 0x01, 0x00, 0x00, 0x4d, 0x8b, 0x9a, 0x20, 0x07, 0x00, 0x00, 0x4d,
-		0x85, 0xdb, 0x0f, 0x84, 0x2f, 0x01, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x0f, 0x84, 0x26, 0x01, 0x00, 0x00, 0x45, 0x85, 0xc9, 0x0f, 0x88, 0x1d, 0x01,
-		0x00, 0x00, 0xf7, 0x44, 0x24, 0x28, 0x00, 0x04, 0x00, 0x00, 0x74, 0x2d, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x04, 0x4c, 0x01,
-		0xd8, 0x48, 0x3b, 0x08, 0x0f, 0x85, 0xfd, 0x00, 0x00, 0x00, 0x3b, 0x50, 0x0c, 0x73, 0x6b, 0x44, 0x8b, 0x50, 0x08, 0x4d, 0x01, 0xda, 0x89, 0xd0,
-		0x48, 0xc1, 0xe0, 0x05, 0x49, 0x01, 0xc2, 0xeb, 0x1f, 0x55, 0x48, 0x89, 0xe5, 0x51, 0x52, 0xe8, 0x51, 0x00, 0x00, 0x00, 0x48, 0x8b, 0x4d, 0xf8,
-		0x48, 0x8b, 0x55, 0xf0, 0x48, 0x89, 0xec, 0x5d, 0x48, 0x85, 0xc0, 0x74, 0x3d, 0x49, 0x89, 0xc2, 0x41, 0x8b, 0x42, 0x0c, 0x45, 0x85, 0xc9, 0x74,
-		0x30, 0x4d, 0x85, 0xc0, 0x74, 0x2b, 0x41, 0x8d, 0x49, 0xff, 0x39, 0xc8, 0x0f, 0x47, 0xc1, 0x45, 0x8b, 0x52, 0x18, 0x4d, 0x01, 0xda, 0x31, 0xc9,
-		0x39, 0xc1, 0x74, 0x0e, 0x66, 0x41, 0x8b, 0x14, 0x4a, 0x66, 0x41, 0x89, 0x14, 0x48, 0xff, 0xc1, 0xeb, 0xee, 0x66, 0x41, 0xc7, 0x04, 0x48, 0x00,
-		0x00, 0xc3, 0x31, 0xc0, 0xc3, 0x48, 0x89, 0xe8, 0x48, 0x29, 0xe0, 0x48, 0x3d, 0x00, 0x10, 0x00, 0x00, 0x77, 0x70, 0x89, 0xc8, 0x25, 0xff, 0x03,
-		0x00, 0x00, 0xc1, 0xe0, 0x04, 0x4c, 0x01, 0xd8, 0x48, 0x3b, 0x08, 0x75, 0x5e, 0x44, 0x8b, 0x50, 0x08, 0x4d, 0x01, 0xda, 0x8b, 0x40, 0x0c, 0x41,
-		0x52, 0x50, 0x85, 0xc0, 0x74, 0x1d, 0x49, 0x83, 0x7a, 0x10, 0x00, 0x75, 0x0e, 0x41, 0x3b, 0x52, 0x08, 0x75, 0x08, 0x4c, 0x89, 0xd0, 0x48, 0x83,
-		0xc4, 0x10, 0xc3, 0x49, 0x83, 0xc2, 0x20, 0xff, 0xc8, 0xeb, 0xdf, 0x58, 0x41, 0x5a, 0x85, 0xc0, 0x74, 0x21, 0x49, 0x8b, 0x4a, 0x10, 0x48, 0x85,
-		0xc9, 0x74, 0x10, 0x41, 0x52, 0x50, 0xe8, 0x9a, 0xff, 0xff, 0xff, 0x48, 0x85, 0xc0, 0x75, 0x0e, 0x58, 0x41, 0x5a, 0x49, 0x83, 0xc2, 0x20, 0xff,
-		0xc8, 0xeb, 0xdb, 0x31, 0xc0, 0xc3, 0x48, 0x83, 0xc4, 0x10, 0xc3, 0x48, 0x8b, 0x4d, 0xf8, 0x48, 0x8b, 0x55, 0xf0, 0x48, 0x89, 0xec, 0x5d, 0xe9,
-		0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_menu_string, raven_prelude_menu_string_end);
 	return code;
 }
 
@@ -1043,12 +928,7 @@ static constexpr size_t bitmap_pointer = 0x728;
 
 static const std::vector<uint8_t> &bitmap_object_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x64, 0x4d, 0x8b, 0x9a, 0x28, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x58,
-		0x48, 0x85, 0xc9, 0x74, 0x53, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0x6b, 0xc0, 0x30, 0x49, 0x01, 0xc3, 0x49, 0x3b, 0x0b, 0x75, 0x41, 0xb8,
-		0x20, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xc0, 0x74, 0x33, 0x83, 0xfa, 0x20, 0x7c, 0x2f, 0x41, 0xf7, 0x43, 0x08, 0x01, 0x00, 0x00, 0x00, 0x74, 0x05,
-		0x83, 0xfa, 0x68, 0x7d, 0x23, 0x4d, 0x8b, 0x53, 0x10, 0x4d, 0x89, 0x10, 0x4d, 0x8b, 0x53, 0x18, 0x4d, 0x89, 0x50, 0x08, 0x4d, 0x8b, 0x53, 0x20,
-		0x4d, 0x89, 0x50, 0x10, 0x4d, 0x8b, 0x53, 0x28, 0x4d, 0x89, 0x50, 0x18, 0xc3, 0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_bitmap_object, raven_prelude_bitmap_object_end);
 	return code;
 }
 
@@ -1058,45 +938,31 @@ static const std::vector<uint8_t> &bitmap_object_prelude()
 // without themes. A null pointer goes to the runtime.
 static const std::vector<uint8_t> &muldiv_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x45, 0x85, 0xc0, 0x74, 0x48, 0x48, 0x63, 0xc1, 0x4c, 0x63, 0xda, 0x49, 0x0f, 0xaf, 0xc3, 0x4d, 0x63,
-		0xd8, 0x4d, 0x89, 0xd9, 0x49, 0xf7, 0xd9, 0x4d, 0x0f, 0x48, 0xcb, 0x49, 0x89, 0xc2, 0x49, 0xf7, 0xda, 0x4c, 0x0f, 0x48, 0xd0, 0x4c, 0x31, 0xd8,
-		0x49, 0x89, 0xc3, 0x4c, 0x89, 0xc8, 0x48, 0xd1, 0xe8, 0x4c, 0x01, 0xd0, 0x31, 0xd2, 0x49, 0xf7, 0xf1, 0x4d, 0x85, 0xdb, 0x79, 0x03, 0x48, 0xf7,
-		0xd8, 0x4c, 0x63, 0xd0, 0x49, 0x39, 0xc2, 0x75, 0x03, 0x89, 0xc0, 0xc3, 0xb8, 0xff, 0xff, 0xff, 0xff, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_muldiv, raven_prelude_muldiv_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &offset_rect_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x74, 0x13, 0x01, 0x11, 0x01, 0x51, 0x08, 0x44, 0x01, 0x41, 0x04, 0x44, 0x01, 0x41,
-		0x0c, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_offset_rect, raven_prelude_offset_rect_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &set_rect_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x74, 0x17, 0x89, 0x11, 0x44, 0x89, 0x41, 0x04, 0x44, 0x89, 0x49, 0x08, 0x8b, 0x44,
-		0x24, 0x28, 0x89, 0x41, 0x0c, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_set_rect, raven_prelude_set_rect_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &intersect_rect_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x74, 0x62, 0x48, 0x85, 0xd2, 0x74, 0x5d, 0x4d, 0x85, 0xc0, 0x74, 0x58, 0x44, 0x8b,
-		0x0a, 0x45, 0x3b, 0x08, 0x45, 0x0f, 0x4c, 0x08, 0x44, 0x8b, 0x52, 0x04, 0x45, 0x3b, 0x50, 0x04, 0x45, 0x0f, 0x4c, 0x50, 0x04, 0x44, 0x8b, 0x5a,
-		0x08, 0x45, 0x3b, 0x58, 0x08, 0x45, 0x0f, 0x4f, 0x58, 0x08, 0x8b, 0x42, 0x0c, 0x41, 0x3b, 0x40, 0x0c, 0x41, 0x0f, 0x4f, 0x40, 0x0c, 0x45, 0x39,
-		0xcb, 0x7e, 0x19, 0x44, 0x39, 0xd0, 0x7e, 0x14, 0x44, 0x89, 0x09, 0x44, 0x89, 0x51, 0x04, 0x44, 0x89, 0x59, 0x08, 0x89, 0x41, 0x0c, 0xb8, 0x01,
-		0x00, 0x00, 0x00, 0xc3, 0x31, 0xc0, 0x48, 0x89, 0x01, 0x48, 0x89, 0x41, 0x08, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_intersect_rect, raven_prelude_intersect_rect_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &window_theme_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_theme, raven_prelude_window_theme_end);
 	return code;
 }
 
@@ -1114,23 +980,15 @@ static constexpr size_t theme_state = 0x790;
 
 static const std::vector<uint8_t> &theme_state_prelude(bool properties)
 {
-	static const std::vector<uint8_t> state{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x0e, 0x41, 0x8b, 0x82, 0x90, 0x07, 0x00, 0x00, 0x85, 0xc0, 0x74, 0x03,
-		0xff, 0xc8, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
-	static const std::vector<uint8_t> flags{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x11, 0x41, 0x8b, 0x82, 0x90, 0x07, 0x00, 0x00, 0x85, 0xc0, 0x74, 0x06,
-		0xff, 0xc8, 0x6b, 0xc0, 0x07, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> state = prelude_code(raven_prelude_theme_state, raven_prelude_theme_state_end);
+	static const std::vector<uint8_t> flags = prelude_code(raven_prelude_theme_flags, raven_prelude_theme_flags_end);
 	static_assert(theme_state == 0x790, "the theme state preludes' offset is written into their code");
 	return properties ? flags : state;
 }
 
 static const std::vector<uint8_t> &file_name_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x74, 0x42, 0x48, 0x89, 0xc8, 0x49, 0x89, 0xca, 0x45, 0x0f, 0xb7, 0x1a, 0x45, 0x85,
-		0xdb, 0x74, 0x32, 0x41, 0x83, 0xfb, 0x5c, 0x74, 0x0c, 0x41, 0x83, 0xfb, 0x2f, 0x74, 0x06, 0x41, 0x83, 0xfb, 0x3a, 0x75, 0x1a, 0x45, 0x0f, 0xb7,
-		0x4a, 0x02, 0x45, 0x85, 0xc9, 0x74, 0x10, 0x41, 0x83, 0xf9, 0x5c, 0x74, 0x0a, 0x41, 0x83, 0xf9, 0x2f, 0x74, 0x04, 0x49, 0x8d, 0x42, 0x02, 0x49,
-		0x83, 0xc2, 0x02, 0xeb, 0xc5, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_file_name, raven_prelude_file_name_end);
 	return code;
 }
 
@@ -1138,9 +996,62 @@ static const std::vector<uint8_t> &file_name_prelude()
 // register and jumps to it, so the procedure returns to the caller. A null procedure goes to the runtime.
 static const std::vector<uint8_t> &call_procedure_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x74, 0x13, 0x48, 0x89, 0xc8, 0x48, 0x89, 0xd1, 0x4c, 0x89, 0xc2, 0x4d, 0x89, 0xc8, 0x4c, 0x8b, 0x4c, 0x24, 0x28, 0xff, 0xe0, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_call_procedure, raven_prelude_call_procedure_end);
 	return code;
+}
+
+// SendMessageW to a window of the calling thread calls its procedure with the same four arguments, as the runtime does: the guest jumps
+// to it, so the procedure returns to the caller. The record (window_table) must name the window, the calling thread as its own and a
+// procedure, all read while the count of changes (NativeWindows::table_version) is even and the same before and after; otherwise, and
+// for a window of another thread or process, the runtime sends it. It checks the count itself, as it cannot come back to an answer
+// wrapper, so it runs while other threads run as well (self_checked_api):
+//   mov r10,[pointer]; test r10,r10; jz slow; mov r11,[r10+0x700]; test r11,r11; jz slow; test rcx,rcx; jz slow
+//   push rsi; push rdi; push 128; try: mov rax,[r10+0x7b0]; test al,1; jnz busy; mov esi,ecx; and esi,0x1ff; shl esi,8; add rsi,r11
+//   cmp rcx,[rsi]; jne moved; mov edi,gs:[0x48]; test edi,edi; jz fail; cmp edi,[rsi+0xf0]; jne moved; mov rdi,[rsi+0x10]
+//   test rdi,rdi; jz moved; cmp rax,[r10+0x7b0]; jne busy; mov r11,rdi; add rsp,8; pop rdi; pop rsi; jmp r11
+//   moved: cmp rax,[r10+0x7b0]; je fail; busy: pause; dec dword [rsp]; jnz try; fail: add rsp,8; pop rdi; pop rsi; slow: jmp stub
+static const std::vector<uint8_t> &own_thread_send_prelude()
+{
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_own_thread_send, raven_prelude_own_thread_send_end);
+	static_assert(NativeWindows::table_version == 0x7b0 && NativeWindows::window_owner == 0xf0 && NativeWindows::window_records == 512 &&
+		NativeWindows::window_record == 256, "the send prelude's offsets are written into its code");
+	return code;
+}
+
+// The preludes that check the count of changes themselves and so run while other threads run, without an answer wrapper.
+// SetEvent and ResetEvent, which the guest makes itself for an event the runtime lets it work (guest_events.h). Their pointer, the guest
+// events table, is the fifth of the module's pointers, which stays zero where the guest works no event.
+static bool guest_event_api(std::string_view module, std::string_view name)
+{
+	return (module == "kernel32.dll" || module == "kernelbase.dll") && (name == "SetEvent" || name == "ResetEvent");
+}
+
+static const std::vector<uint8_t> &event_set_prelude()
+{
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_event_set, raven_prelude_event_set_end);
+	return code;
+}
+
+static const std::vector<uint8_t> &event_reset_prelude()
+{
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_event_reset, raven_prelude_event_reset_end);
+	return code;
+}
+
+// The window of an event prelude placed at `start` (see NativeProcess::GuestWindow), from the labels of its code.
+static NativeProcess::GuestWindow event_window(uint64_t start, bool set)
+{
+	const auto at = [base = set ? raven_prelude_event_set : raven_prelude_event_reset](const uint8_t *label) { return uint32_t(label - base); };
+	if (set)
+		return {start, at(raven_prelude_event_set_opened), at(raven_prelude_event_set_saved), at(raven_prelude_event_set_called),
+			at(raven_prelude_event_set_returned), at(raven_prelude_event_set_closed), at(raven_prelude_event_set_left)};
+	return {start, at(raven_prelude_event_reset_opened), at(raven_prelude_event_reset_saved), at(raven_prelude_event_reset_called),
+		at(raven_prelude_event_reset_returned), at(raven_prelude_event_reset_closed), at(raven_prelude_event_reset_left)};
+}
+
+static bool self_checked_api(std::string_view module, std::string_view name)
+{
+	return module == "user32.dll" && name == "SendMessageW";
 }
 
 // GetSystemMetrics and GetSysColor, which do not change while the process runs, read from the table the runtime writes once (see
@@ -1149,17 +1060,13 @@ static constexpr size_t system_pointer = 0x730;
 
 static const std::vector<uint8_t> &system_metrics_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x1b, 0x4d, 0x8b, 0x9a, 0x30, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x0f,
-		0x81, 0xf9, 0x80, 0x00, 0x00, 0x00, 0x73, 0x07, 0x89, 0xc8, 0x41, 0x8b, 0x04, 0x83, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_system_metrics, raven_prelude_system_metrics_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &system_colors_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x1c, 0x4d, 0x8b, 0x9a, 0x30, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x10,
-		0x83, 0xf9, 0x40, 0x73, 0x0b, 0x89, 0xc8, 0x41, 0x8b, 0x84, 0x83, 0x00, 0x02, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_system_colors, raven_prelude_system_colors_end);
 	return code;
 }
 
@@ -1169,37 +1076,25 @@ static const std::vector<uint8_t> &system_colors_prelude()
 // publishes at 0x738), and GetDesktopWindow once the desktop window exists (its handle at 0x740).
 static const std::vector<uint8_t> &translate_message_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x74, 0x10, 0x8b, 0x41, 0x08, 0x2d, 0x00, 0x01, 0x00, 0x00, 0x83, 0xf8, 0x09, 0x76,
-		0x03, 0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_translate_message, raven_prelude_translate_message_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &message_filter_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x12, 0x41, 0x8b, 0x82, 0x38, 0x07, 0x00, 0x00, 0xa8, 0x01, 0x74, 0x07, 0xa8,
-		0x02, 0x75, 0x03, 0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_message_filter, raven_prelude_message_filter_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &desktop_window_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x0d, 0x49, 0x8b, 0x82, 0x40, 0x07, 0x00, 0x00, 0x48, 0x85, 0xc0, 0x74, 0x01,
-		0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_desktop_window, raven_prelude_desktop_window_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &accelerator_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x6f, 0x4d, 0x85, 0xc0, 0x74, 0x6a, 0x41, 0x8b, 0x40, 0x08, 0x3d, 0x00, 0x01,
-		0x00, 0x00, 0x74, 0x5f, 0x3d, 0x02, 0x01, 0x00, 0x00, 0x74, 0x58, 0x3d, 0x04, 0x01, 0x00, 0x00, 0x74, 0x51, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0x00,
-		0x00, 0x4d, 0x85, 0xdb, 0x74, 0x45, 0x48, 0x85, 0xc9, 0x74, 0x40, 0x89, 0xc8, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x49, 0x3b, 0x0c,
-		0x03, 0x75, 0x30, 0x4d, 0x8b, 0x9a, 0x30, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x24, 0x48, 0x85, 0xd2, 0x74, 0x1f, 0x41, 0x8b, 0x83, 0x00,
-		0x04, 0x00, 0x00, 0x83, 0xf8, 0x40, 0x77, 0x13, 0x85, 0xc0, 0x74, 0x0f, 0xff, 0xc8, 0x49, 0x3b, 0x94, 0xc3, 0x08, 0x04, 0x00, 0x00, 0x75, 0xf0,
-		0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_accelerator, raven_prelude_accelerator_end);
 	return code;
 }
 
@@ -1210,44 +1105,25 @@ static constexpr size_t dc_pointer = 0x748;
 
 static const std::vector<uint8_t> &dc_text_color_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x57, 0x4d, 0x8b, 0x9a, 0x48, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x4b,
-		0x48, 0x85, 0xc9, 0x74, 0x46, 0x49, 0x3b, 0x8a, 0x00, 0x06, 0x00, 0x00, 0x74, 0x3d, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x05,
-		0x49, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x48, 0x3b, 0x08, 0x75, 0x26, 0xf7, 0xc2, 0x00, 0x00, 0x00, 0xff, 0x75, 0x1e, 0x49, 0x89, 0xc2,
-		0x41, 0x8b, 0x03, 0x83, 0xf8, 0x40, 0x73, 0x13, 0x49, 0x89, 0x4c, 0xc3, 0x08, 0xff, 0xc0, 0x41, 0x89, 0x03, 0x41, 0x8b, 0x42, 0x08, 0x41, 0x89,
-		0x52, 0x08, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_dc_text_color, raven_prelude_dc_text_color_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &dc_background_color_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x57, 0x4d, 0x8b, 0x9a, 0x48, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x4b,
-		0x48, 0x85, 0xc9, 0x74, 0x46, 0x49, 0x3b, 0x8a, 0x00, 0x06, 0x00, 0x00, 0x74, 0x3d, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x05,
-		0x49, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x48, 0x3b, 0x08, 0x75, 0x26, 0xf7, 0xc2, 0x00, 0x00, 0x00, 0xff, 0x75, 0x1e, 0x49, 0x89, 0xc2,
-		0x41, 0x8b, 0x03, 0x83, 0xf8, 0x40, 0x73, 0x13, 0x49, 0x89, 0x4c, 0xc3, 0x08, 0xff, 0xc0, 0x41, 0x89, 0x03, 0x41, 0x8b, 0x42, 0x0c, 0x41, 0x89,
-		0x52, 0x0c, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_dc_background_color, raven_prelude_dc_background_color_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &dc_background_mode_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x59, 0x4d, 0x8b, 0x9a, 0x48, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x4d,
-		0x48, 0x85, 0xc9, 0x74, 0x48, 0x49, 0x3b, 0x8a, 0x00, 0x06, 0x00, 0x00, 0x74, 0x3f, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x05,
-		0x49, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x48, 0x3b, 0x08, 0x75, 0x28, 0x83, 0xfa, 0x01, 0x74, 0x05, 0x83, 0xfa, 0x02, 0x75, 0x1e, 0x49,
-		0x89, 0xc2, 0x41, 0x8b, 0x03, 0x83, 0xf8, 0x40, 0x73, 0x13, 0x49, 0x89, 0x4c, 0xc3, 0x08, 0xff, 0xc0, 0x41, 0x89, 0x03, 0x41, 0x8b, 0x42, 0x10,
-		0x41, 0x89, 0x52, 0x10, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_dc_background_mode, raven_prelude_dc_background_mode_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &dc_text_align_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x4f, 0x4d, 0x8b, 0x9a, 0x48, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x43,
-		0x48, 0x85, 0xc9, 0x74, 0x3e, 0x49, 0x3b, 0x8a, 0x00, 0x06, 0x00, 0x00, 0x74, 0x35, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x05,
-		0x49, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x48, 0x3b, 0x08, 0x75, 0x1e, 0x49, 0x89, 0xc2, 0x41, 0x8b, 0x03, 0x83, 0xf8, 0x40, 0x73, 0x13,
-		0x49, 0x89, 0x4c, 0xc3, 0x08, 0xff, 0xc0, 0x41, 0x89, 0x03, 0x41, 0x8b, 0x42, 0x14, 0x41, 0x89, 0x52, 0x14, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_dc_text_align, raven_prelude_dc_text_align_end);
 	return code;
 }
 
@@ -1256,61 +1132,37 @@ static const std::vector<uint8_t> &dc_text_align_prelude()
 // published screen context, no points, more than 64 of them or such an origin goes to the runtime.
 static const std::vector<uint8_t> &dc_to_device_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x6e, 0x4d, 0x8b, 0x9a, 0x48, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x62,
-		0x48, 0x85, 0xc9, 0x74, 0x5d, 0x49, 0x3b, 0x8a, 0x00, 0x06, 0x00, 0x00, 0x74, 0x54, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x05,
-		0x49, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x48, 0x3b, 0x08, 0x75, 0x3d, 0x48, 0x85, 0xd2, 0x74, 0x38, 0x45, 0x85, 0xc0, 0x7e, 0x33, 0x41,
-		0x83, 0xf8, 0x40, 0x77, 0x2d, 0x44, 0x8b, 0x58, 0x1c, 0x41, 0x81, 0xfb, 0x00, 0x80, 0x00, 0x80, 0x74, 0x20, 0x45, 0x0f, 0xbf, 0xd3, 0x41, 0xc1,
-		0xfb, 0x10, 0x44, 0x89, 0xc0, 0x44, 0x01, 0x12, 0x44, 0x01, 0x5a, 0x04, 0x48, 0x83, 0xc2, 0x08, 0xff, 0xc8, 0x75, 0xf1, 0xb8, 0x01, 0x00, 0x00,
-		0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_dc_to_device, raven_prelude_dc_to_device_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &dc_to_logical_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x6e, 0x4d, 0x8b, 0x9a, 0x48, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x62,
-		0x48, 0x85, 0xc9, 0x74, 0x5d, 0x49, 0x3b, 0x8a, 0x00, 0x06, 0x00, 0x00, 0x74, 0x54, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x05,
-		0x49, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x48, 0x3b, 0x08, 0x75, 0x3d, 0x48, 0x85, 0xd2, 0x74, 0x38, 0x45, 0x85, 0xc0, 0x7e, 0x33, 0x41,
-		0x83, 0xf8, 0x40, 0x77, 0x2d, 0x44, 0x8b, 0x58, 0x1c, 0x41, 0x81, 0xfb, 0x00, 0x80, 0x00, 0x80, 0x74, 0x20, 0x45, 0x0f, 0xbf, 0xd3, 0x41, 0xc1,
-		0xfb, 0x10, 0x44, 0x89, 0xc0, 0x44, 0x29, 0x12, 0x44, 0x29, 0x5a, 0x04, 0x48, 0x83, 0xc2, 0x08, 0xff, 0xc8, 0x75, 0xf1, 0xb8, 0x01, 0x00, 0x00,
-		0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_dc_to_logical, raven_prelude_dc_to_logical_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &dc_get_text_color_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x35, 0x4d, 0x8b, 0x9a, 0x48, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x29,
-		0x48, 0x85, 0xc9, 0x74, 0x24, 0x49, 0x3b, 0x8a, 0x00, 0x06, 0x00, 0x00, 0x74, 0x1b, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x05,
-		0x49, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x48, 0x3b, 0x08, 0x75, 0x04, 0x8b, 0x40, 0x08, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_dc_get_text_color, raven_prelude_dc_get_text_color_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &dc_get_background_color_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x35, 0x4d, 0x8b, 0x9a, 0x48, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x29,
-		0x48, 0x85, 0xc9, 0x74, 0x24, 0x49, 0x3b, 0x8a, 0x00, 0x06, 0x00, 0x00, 0x74, 0x1b, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x05,
-		0x49, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x48, 0x3b, 0x08, 0x75, 0x04, 0x8b, 0x40, 0x0c, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_dc_get_background_color, raven_prelude_dc_get_background_color_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &dc_get_background_mode_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x35, 0x4d, 0x8b, 0x9a, 0x48, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x29,
-		0x48, 0x85, 0xc9, 0x74, 0x24, 0x49, 0x3b, 0x8a, 0x00, 0x06, 0x00, 0x00, 0x74, 0x1b, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x05,
-		0x49, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x48, 0x3b, 0x08, 0x75, 0x04, 0x8b, 0x40, 0x10, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_dc_get_background_mode, raven_prelude_dc_get_background_mode_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &dc_get_text_align_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x35, 0x4d, 0x8b, 0x9a, 0x48, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x29,
-		0x48, 0x85, 0xc9, 0x74, 0x24, 0x49, 0x3b, 0x8a, 0x00, 0x06, 0x00, 0x00, 0x74, 0x1b, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x05,
-		0x49, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x48, 0x3b, 0x08, 0x75, 0x04, 0x8b, 0x40, 0x14, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_dc_get_text_align, raven_prelude_dc_get_text_align_end);
 	return code;
 }
 
@@ -1320,36 +1172,19 @@ static constexpr size_t deferred_pointer = 0x750, icons_pointer = 0x758;
 
 static const std::vector<uint8_t> &destroy_icon_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x5e, 0x4d, 0x8b, 0x9a, 0x58, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x52,
-		0x48, 0x85, 0xc9, 0x74, 0x4d, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0x4d, 0x8d, 0x04, 0xc3, 0x49, 0x3b, 0x08, 0x75, 0x3d, 0x4d, 0x8b, 0x9a,
-		0x50, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x31, 0x41, 0x8b, 0x03, 0x3d, 0xff, 0x00, 0x00, 0x00, 0x73, 0x27, 0x41, 0x89, 0xc1, 0x49, 0xc1,
-		0xe1, 0x04, 0x4b, 0x89, 0x4c, 0x0b, 0x10, 0x4b, 0xc7, 0x44, 0x0b, 0x18, 0x01, 0x00, 0x00, 0x00, 0xff, 0xc0, 0x41, 0x89, 0x03, 0x49, 0xc7, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_destroy_icon, raven_prelude_destroy_icon_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &delete_dc_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x6f, 0x4d, 0x8b, 0x9a, 0x48, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x63,
-		0x48, 0x85, 0xc9, 0x74, 0x5e, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0xc1, 0xe0, 0x05, 0x4d, 0x8d, 0x84, 0x03, 0x00, 0x10, 0x00, 0x00, 0x49,
-		0x3b, 0x08, 0x75, 0x47, 0x41, 0xf7, 0x40, 0x18, 0x01, 0x00, 0x00, 0x00, 0x75, 0x3d, 0x4d, 0x8b, 0x9a, 0x50, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb,
-		0x74, 0x31, 0x41, 0x8b, 0x03, 0x3d, 0xff, 0x00, 0x00, 0x00, 0x73, 0x27, 0x41, 0x89, 0xc1, 0x49, 0xc1, 0xe1, 0x04, 0x4b, 0x89, 0x4c, 0x0b, 0x10,
-		0x4b, 0xc7, 0x44, 0x0b, 0x18, 0x02, 0x00, 0x00, 0x00, 0xff, 0xc0, 0x41, 0x89, 0x03, 0x49, 0xc7, 0x00, 0x00, 0x00, 0x00, 0x00, 0xb8, 0x01, 0x00,
-		0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_delete_dc, raven_prelude_delete_dc_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &delete_object_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x6b, 0x4d, 0x8b, 0x9a, 0x28, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x5f,
-		0x48, 0x85, 0xc9, 0x74, 0x5a, 0x89, 0xc8, 0x25, 0xff, 0x03, 0x00, 0x00, 0x6b, 0xc0, 0x30, 0x4d, 0x8d, 0x04, 0x03, 0x49, 0x3b, 0x08, 0x75, 0x47,
-		0x41, 0xf7, 0x40, 0x08, 0x02, 0x00, 0x00, 0x00, 0x74, 0x3d, 0x4d, 0x8b, 0x9a, 0x50, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x31, 0x41, 0x8b,
-		0x03, 0x3d, 0xff, 0x00, 0x00, 0x00, 0x73, 0x27, 0x41, 0x89, 0xc1, 0x49, 0xc1, 0xe1, 0x04, 0x4b, 0x89, 0x4c, 0x0b, 0x10, 0x4b, 0xc7, 0x44, 0x0b,
-		0x18, 0x03, 0x00, 0x00, 0x00, 0xff, 0xc0, 0x41, 0x89, 0x03, 0x49, 0xc7, 0x00, 0x00, 0x00, 0x00, 0x00, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xe9,
-		0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_delete_object, raven_prelude_delete_object_end);
 	return code;
 }
 
@@ -1358,60 +1193,35 @@ static const std::vector<uint8_t> &delete_object_prelude()
 // unknown flags are served.
 static const std::vector<uint8_t> &init_once_begin_prelude()
 {
-	static const std::vector<uint8_t> code{
-		// lea r11,[rip+block]; test edx,-4; jnz slow; mov rax,[rcx]; test rax,rax; jz claim; test al,1; jnz slow; test al,2; jz slow
-		0x4c, 0x8d, 0x1d, 0, 0, 0, 0, 0xf7, 0xc2, 0xfc, 0xff, 0xff, 0xff, 0x75, 0x44, 0x48, 0x8b, 0x01, 0x48, 0x85, 0xc0, 0x74, 0x21,
-		0xa8, 0x01, 0x75, 0x38, 0xa8, 0x02, 0x74, 0x34,
-		// mov dword [r8],0; test r9,r9; jz one; and rax,-4; mov [r9],rax; one: mov eax,1; ret
-		0x41, 0xc7, 0x00, 0, 0, 0, 0, 0x4d, 0x85, 0xc9, 0x74, 0x07, 0x48, 0x83, 0xe0, 0xfc, 0x49, 0x89, 0x01, 0xb8, 1, 0, 0, 0, 0xc3,
-		// claim: test dl,1; jnz slow; mov r10d,1; lock cmpxchg [rcx],r10; jnz slow; mov dword [r8],1; jmp one
-		0xf6, 0xc2, 0x01, 0x75, 0x16, 0x41, 0xba, 1, 0, 0, 0, 0xf0, 0x4c, 0x0f, 0xb1, 0x11, 0x75, 0x09, 0x41, 0xc7, 0x00, 1, 0, 0, 0,
-		0xeb, 0xdf,
-		// slow: jmp trap
-		0xe9, 0, 0, 0, 0};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_init_once_begin, raven_prelude_init_once_begin_end);
 	return code;
 }
 
 // A rectangle is empty when it has no width or no height; a missing one is served.
 static const std::vector<uint8_t> &is_rect_empty_prelude()
 {
-	static const std::vector<uint8_t> code{
-		// lea r11,[rip+block]; test rcx,rcx; jz slow; mov eax,[rcx]; cmp eax,[rcx+8]; jge empty; mov eax,[rcx+4]; cmp eax,[rcx+12]; jge empty;
-		// xor eax,eax; ret; empty: mov eax,1; ret; slow: jmp trap
-		0x4c, 0x8d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x74, 0x18, 0x8b, 0x01, 0x3b, 0x41, 0x08, 0x7d, 0x0b, 0x8b, 0x41, 0x04, 0x3b, 0x41,
-		0x0c, 0x7d, 0x03, 0x31, 0xc0, 0xc3, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_is_rect_empty, raven_prelude_is_rect_empty_end);
 	return code;
 }
 
 // SetRectEmpty clears the sixteen bytes; a missing rectangle is served.
 static const std::vector<uint8_t> &set_rect_empty_prelude()
 {
-	static const std::vector<uint8_t> code{
-		// lea r11,[rip+block]; test rcx,rcx; jz slow; xor eax,eax; mov [rcx],rax; mov [rcx+8],rax; mov eax,1; ret; slow: jmp trap
-		0x4c, 0x8d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x74, 0x0f, 0x31, 0xc0, 0x48, 0x89, 0x01, 0x48, 0x89, 0x41, 0x08, 0xb8, 0x01, 0x00,
-		0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_set_rect_empty, raven_prelude_set_rect_empty_end);
 	return code;
 }
 
 // CopyRect moves the sixteen bytes; a missing rectangle is served.
 static const std::vector<uint8_t> &copy_rect_prelude()
 {
-	static const std::vector<uint8_t> code{
-		// lea r11,[rip+block]; test rcx,rcx; jz slow; test rdx,rdx; jz slow; mov rax,[rdx]; mov r10,[rdx+8]; mov [rcx],rax; mov [rcx+8],r10;
-		// mov eax,1; ret; slow: jmp trap
-		0x4c, 0x8d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x74, 0x19, 0x48, 0x85, 0xd2, 0x74, 0x14, 0x48, 0x8b, 0x02, 0x4c, 0x8b, 0x52, 0x08,
-		0x48, 0x89, 0x01, 0x4c, 0x89, 0x51, 0x08, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_copy_rect, raven_prelude_copy_rect_end);
 	return code;
 }
 
 // InflateRect moves each pair of sides apart by the amounts given; a missing rectangle is served.
 static const std::vector<uint8_t> &inflate_rect_prelude()
 {
-	static const std::vector<uint8_t> code{
-		// lea r11,[rip+block]; test rcx,rcx; jz slow; sub [rcx],edx; add [rcx+8],edx; sub [rcx+4],r8d; add [rcx+12],r8d; mov eax,1; ret;
-		// slow: jmp trap
-		0x4c, 0x8d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x74, 0x13, 0x29, 0x11, 0x01, 0x51, 0x08, 0x44, 0x29, 0x41, 0x04, 0x44, 0x01, 0x41,
-		0x0c, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_inflate_rect, raven_prelude_inflate_rect_end);
 	return code;
 }
 
@@ -1420,29 +1230,14 @@ static const std::vector<uint8_t> &inflate_rect_prelude()
 // is served.
 static const std::vector<uint8_t> &union_rect_prelude()
 {
-	static const std::vector<uint8_t> code{
-		// lea r11,[rip+block]; the three pointers tested, slow when one is missing; a empty: b, or zeros when b is empty too; b empty: a;
-		// else the lesser left and top and the greater right and bottom in eax, r9d, r10d, r11d, stored; mov eax,1; ret; slow: jmp trap
-		0x4c, 0x8d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x0f, 0x84, 0xbd, 0x00, 0x00, 0x00, 0x48, 0x85, 0xd2, 0x0f, 0x84, 0xb4, 0x00, 0x00,
-		0x00, 0x4d, 0x85, 0xc0, 0x0f, 0x84, 0xab, 0x00, 0x00, 0x00, 0x8b, 0x02, 0x3b, 0x42, 0x08, 0x7d, 0x5f, 0x8b, 0x42, 0x04, 0x3b, 0x42, 0x0c, 0x7d,
-		0x57, 0x41, 0x8b, 0x00, 0x41, 0x3b, 0x40, 0x08, 0x7d, 0x75, 0x41, 0x8b, 0x40, 0x04, 0x41, 0x3b, 0x40, 0x0c, 0x7d, 0x6b, 0x8b, 0x02, 0x41, 0x3b,
-		0x00, 0x41, 0x0f, 0x4f, 0x00, 0x44, 0x8b, 0x4a, 0x04, 0x45, 0x3b, 0x48, 0x04, 0x45, 0x0f, 0x4f, 0x48, 0x04, 0x44, 0x8b, 0x52, 0x08, 0x45, 0x3b,
-		0x50, 0x08, 0x45, 0x0f, 0x4c, 0x50, 0x08, 0x44, 0x8b, 0x5a, 0x0c, 0x45, 0x3b, 0x58, 0x0c, 0x45, 0x0f, 0x4c, 0x58, 0x0c, 0x89, 0x01, 0x44, 0x89,
-		0x49, 0x04, 0x44, 0x89, 0x51, 0x08, 0x44, 0x89, 0x59, 0x0c, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x41, 0x8b, 0x00, 0x41, 0x3b, 0x40, 0x08, 0x7d,
-		0x32, 0x41, 0x8b, 0x40, 0x04, 0x41, 0x3b, 0x40, 0x0c, 0x7d, 0x28, 0x49, 0x8b, 0x00, 0x4d, 0x8b, 0x48, 0x08, 0x48, 0x89, 0x01, 0x4c, 0x89, 0x49,
-		0x08, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x48, 0x8b, 0x02, 0x4c, 0x8b, 0x4a, 0x08, 0x48, 0x89, 0x01, 0x4c, 0x89, 0x49, 0x08, 0xb8, 0x01, 0x00,
-		0x00, 0x00, 0xc3, 0x31, 0xc0, 0x48, 0x89, 0x01, 0x48, 0x89, 0x41, 0x08, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_union_rect, raven_prelude_union_rect_end);
 	return code;
 }
 
 // Two rectangles are equal when their sixteen bytes are; a missing one is served.
 static const std::vector<uint8_t> &equal_rect_prelude()
 {
-	static const std::vector<uint8_t> code{
-		// lea r11,[rip+block]; test rcx,rcx; jz slow; test rdx,rdx; jz slow; mov rax,[rcx]; mov r10,[rcx+8]; xor rax,[rdx];
-		// xor r10,[rdx+8]; or rax,r10; sete al; movzx eax,al; ret; slow: jmp trap
-		0x4c, 0x8d, 0x1d, 0, 0, 0, 0, 0x48, 0x85, 0xc9, 0x74, 0x1d, 0x48, 0x85, 0xd2, 0x74, 0x18, 0x48, 0x8b, 0x01, 0x4c, 0x8b, 0x51, 0x08,
-		0x48, 0x33, 0x02, 0x4c, 0x33, 0x52, 0x08, 0x4c, 0x09, 0xd0, 0x0f, 0x94, 0xc0, 0x0f, 0xb6, 0xc0, 0xc3, 0xe9, 0, 0, 0, 0};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_equal_rect, raven_prelude_equal_rect_end);
 	return code;
 }
 
@@ -1453,17 +1248,7 @@ static constexpr size_t local_second_at = 0x840;
 
 static const std::vector<uint8_t> &local_time_prelude()
 {
-	// mov r10,[pointer]; test r10,r10; jz slow; mov r11,[r10+multiplier]; test r11,r11; jz slow; mov r8,[r10+end]; test r8,r8; jz slow;
-	// mov r9,rcx; the counter as in the clock prelude; mov rcx,[r10+start]; cmp rax,rcx; jb restore; cmp rax,r8; jae restore;
-	// sub rax,rcx; xor edx,edx; mov ecx,10000; div rcx; copy the 16 bytes of the time to [r9]; mov [r9+14],ax; cmp r8,[r10+end];
-	// jne restore; ret; restore: mov rcx,r9; slow: jmp breakpoint
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x7f, 0x4d, 0x8b, 0x9a, 0x10, 0x08, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x73,
-		0x4d, 0x8b, 0x82, 0x48, 0x08, 0x00, 0x00, 0x4d, 0x85, 0xc0, 0x74, 0x67, 0x49, 0x89, 0xc9, 0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0,
-		0x49, 0x2b, 0x82, 0x00, 0x08, 0x00, 0x00, 0x49, 0xf7, 0xe3, 0x48, 0x0f, 0xac, 0xd0, 0x20, 0x49, 0x03, 0x82, 0x08, 0x08, 0x00, 0x00, 0x49, 0x8b,
-		0x8a, 0x40, 0x08, 0x00, 0x00, 0x48, 0x39, 0xc8, 0x72, 0x36, 0x4c, 0x39, 0xc0, 0x73, 0x31, 0x48, 0x29, 0xc8, 0x31, 0xd2, 0xb9, 0x10, 0x27, 0x00,
-		0x00, 0x48, 0xf7, 0xf1, 0x49, 0x8b, 0x92, 0x50, 0x08, 0x00, 0x00, 0x49, 0x89, 0x11, 0x49, 0x8b, 0x92, 0x58, 0x08, 0x00, 0x00, 0x49, 0x89, 0x51,
-		0x08, 0x66, 0x41, 0x89, 0x41, 0x0e, 0x4d, 0x3b, 0x82, 0x48, 0x08, 0x00, 0x00, 0x75, 0x01, 0xc3, 0x4c, 0x89, 0xc9, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_local_time, raven_prelude_local_time_end);
 	static_assert(local_second_at == 0x840, "the local time prelude's offsets are written into its code");
 	return code;
 }
@@ -1472,7 +1257,7 @@ static const std::vector<uint8_t> &local_time_prelude()
 static const std::vector<uint8_t> &monitor_prelude()
 {
 	// lea r11,[rip+block]; mov eax,1; ret; jmp trap
-	static const std::vector<uint8_t> code{0x4c, 0x8d, 0x1d, 0, 0, 0, 0, 0xb8, 1, 0, 0, 0, 0xc3, 0xe9, 0, 0, 0, 0};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_monitor, raven_prelude_monitor_end);
 	return code;
 }
 
@@ -1480,7 +1265,7 @@ static const std::vector<uint8_t> &monitor_prelude()
 static const std::vector<uint8_t> &window_dpi_context_prelude()
 {
 	// lea r11,[rip+block]; mov rax,-2; ret; jmp trap
-	static const std::vector<uint8_t> code{0x4c, 0x8d, 0x1d, 0, 0, 0, 0, 0x48, 0xc7, 0xc0, 0xfe, 0xff, 0xff, 0xff, 0xc3, 0xe9, 0, 0, 0, 0};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_dpi_context, raven_prelude_window_dpi_context_end);
 	return code;
 }
 
@@ -1488,32 +1273,14 @@ static const std::vector<uint8_t> &window_dpi_context_prelude()
 // parents; a handle missing from the table is served.
 static const std::vector<uint8_t> &window_visible_prelude()
 {
-	static const std::vector<uint8_t> code{
-		// mov r10,[rip+block]; test r10,r10; jz slow; mov r11,[r10+0x700]; test r11,r11; jz slow; mov r9d,64
-		0x4c, 0x8b, 0x15, 0, 0, 0, 0, 0x4d, 0x85, 0xd2, 0x74, 0x4d, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0, 0, 0x4d, 0x85, 0xdb, 0x74, 0x41,
-		0x41, 0xb9, 0x40, 0, 0, 0,
-		// next: test rcx,rcx; jz slow; mov eax,ecx; and eax,0x1ff; shl eax,8; lea r8,[r11+rax]; cmp rcx,[r8]; jne slow
-		0x48, 0x85, 0xc9, 0x74, 0x36, 0x89, 0xc8, 0x25, 0xff, 0x01, 0, 0, 0xc1, 0xe0, 0x08, 0x4d, 0x8d, 0x04, 0x03, 0x49, 0x3b, 0x08, 0x75, 0x23,
-		// test dword [r8+0x30],WS_VISIBLE; jz no; mov rcx,[r8+0x58]; test rcx,rcx; jz yes; dec r9d; jnz next; jmp slow
-		0x41, 0xf7, 0x40, 0x30, 0, 0, 0, 0x10, 0x74, 0x16, 0x49, 0x8b, 0x48, 0x58, 0x48, 0x85, 0xc9, 0x74, 0x07, 0x41, 0xff, 0xc9, 0x75, 0xd0,
-		0xeb, 0x09,
-		// yes: mov eax,1; ret; no: xor eax,eax; ret; slow: jmp trap
-		0xb8, 1, 0, 0, 0, 0xc3, 0x31, 0xc0, 0xc3, 0xe9, 0, 0, 0, 0};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_visible, raven_prelude_window_visible_end);
 	return code;
 }
 
 // A window in the shared table is minimized when its style carries WS_MINIMIZE; a handle missing from the table is served.
 static const std::vector<uint8_t> &window_iconic_prelude()
 {
-	static const std::vector<uint8_t> code{
-		// mov r10,[rip+block]; test r10,r10; jz slow; mov r11,[r10+0x700]; test r11,r11; jz slow; test rcx,rcx; jz slow
-		0x4c, 0x8b, 0x15, 0, 0, 0, 0, 0x4d, 0x85, 0xd2, 0x74, 0x2e, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0, 0, 0x4d, 0x85, 0xdb, 0x74, 0x22,
-		0x48, 0x85, 0xc9, 0x74, 0x1d,
-		// mov eax,ecx; and eax,0x1ff; shl eax,8; add r11,rax; cmp rcx,[r11]; jne slow; mov eax,[r11+0x30]; shr eax,29; and eax,1; ret
-		0x89, 0xc8, 0x25, 0xff, 0x01, 0, 0, 0xc1, 0xe0, 0x08, 0x49, 0x01, 0xc3, 0x49, 0x3b, 0x0b, 0x75, 0x0b, 0x41, 0x8b, 0x43, 0x30,
-		0xc1, 0xe8, 0x1d, 0x83, 0xe0, 0x01, 0xc3,
-		// slow: jmp trap
-		0xe9, 0, 0, 0, 0};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_iconic, raven_prelude_window_iconic_end);
 	return code;
 }
 
@@ -1524,19 +1291,14 @@ static constexpr size_t dpi_context_at = 0x760;
 
 static const std::vector<uint8_t> &dpi_set_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x21, 0x48, 0x8d, 0x41, 0x05, 0x48, 0x83, 0xf8, 0x04, 0x77, 0x17, 0x48, 0x89,
-		0xc8, 0x49, 0x87, 0x82, 0x60, 0x07, 0x00, 0x00, 0x48, 0x85, 0xc0, 0x75, 0x07, 0x48, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff, 0xc3, 0xe9, 0x00, 0x00,
-		0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_dpi_set, raven_prelude_dpi_set_end);
 	static_assert(dpi_context_at == 0x760, "the DPI context preludes' offset is written into their code");
 	return code;
 }
 
 static const std::vector<uint8_t> &dpi_get_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x14, 0x49, 0x8b, 0x82, 0x60, 0x07, 0x00, 0x00, 0x48, 0x85, 0xc0, 0x75, 0x07,
-		0x48, 0xc7, 0xc0, 0xff, 0xff, 0xff, 0xff, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_dpi_get, raven_prelude_dpi_get_end);
 	static_assert(dpi_context_at == 0x760, "the DPI context preludes' offset is written into their code");
 	return code;
 }
@@ -1544,33 +1306,27 @@ static const std::vector<uint8_t> &dpi_get_prelude()
 // Every thread has the US English keyboard layout, and no program has a WinEvent hook: constants the served forms answer.
 static const std::vector<uint8_t> &keyboard_layout_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0xb8, 0x09, 0x04, 0x09, 0x04, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_keyboard_layout, raven_prelude_keyboard_layout_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &win_event_hook_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_win_event_hook, raven_prelude_win_event_hook_end);
 	return code;
 }
 
 // QueryDepthSList reads the depth the runtime keeps in the low word of the header's second quadword (see InitializeSListHead).
 static const std::vector<uint8_t> &slist_depth_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x74, 0x05, 0x0f, 0xb7, 0x41, 0x08, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_slist_depth, raven_prelude_slist_depth_end);
 	return code;
 }
 
 // PtInRect: a point is inside when it is at or right of and below the top left corner and left of and above the bottom right one.
 static const std::vector<uint8_t> &point_in_rect_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x74, 0x24, 0x49, 0x89, 0xd0, 0x49, 0xc1, 0xe8, 0x20, 0x31, 0xc0, 0x3b, 0x11, 0x7c,
-		0x16, 0x3b, 0x51, 0x08, 0x7d, 0x11, 0x44, 0x3b, 0x41, 0x04, 0x7c, 0x0b, 0x44, 0x3b, 0x41, 0x0c, 0x7d, 0x05, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3,
-		0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_point_in_rect, raven_prelude_point_in_rect_end);
 	return code;
 }
 
@@ -1578,16 +1334,7 @@ static const std::vector<uint8_t> &point_in_rect_prelude()
 // fewer characters; the table after the code pairs each byte of the GUID with the character it starts at.
 static const std::vector<uint8_t> &guid_text_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x48, 0x85, 0xc9, 0x0f, 0x84, 0xb6, 0x00, 0x00, 0x00, 0x48, 0x85, 0xd2, 0x0f, 0x84, 0xad, 0x00, 0x00,
-		0x00, 0x41, 0x83, 0xf8, 0x27, 0x0f, 0x82, 0x80, 0x00, 0x00, 0x00, 0x53, 0x4c, 0x8d, 0x0d, 0x7b, 0x00, 0x00, 0x00, 0x66, 0xc7, 0x02, 0x7b, 0x00,
-		0x66, 0xc7, 0x42, 0x4a, 0x7d, 0x00, 0x66, 0xc7, 0x42, 0x4c, 0x00, 0x00, 0x66, 0xc7, 0x42, 0x12, 0x2d, 0x00, 0x66, 0xc7, 0x42, 0x1c, 0x2d, 0x00,
-		0x66, 0xc7, 0x42, 0x26, 0x2d, 0x00, 0x66, 0xc7, 0x42, 0x30, 0x2d, 0x00, 0x45, 0x31, 0xd2, 0x43, 0x0f, 0xb6, 0x04, 0x51, 0x43, 0x0f, 0xb6, 0x5c,
-		0x51, 0x01, 0x0f, 0xb6, 0x04, 0x01, 0x41, 0x89, 0xc3, 0xc1, 0xe8, 0x04, 0x41, 0x83, 0xe3, 0x0f, 0x83, 0xf8, 0x0a, 0x72, 0x03, 0x83, 0xc0, 0x07,
-		0x83, 0xc0, 0x30, 0x41, 0x83, 0xfb, 0x0a, 0x72, 0x04, 0x41, 0x83, 0xc3, 0x07, 0x41, 0x83, 0xc3, 0x30, 0x66, 0x89, 0x04, 0x5a, 0x66, 0x44, 0x89,
-		0x5c, 0x5a, 0x02, 0x41, 0xff, 0xc2, 0x41, 0x83, 0xfa, 0x10, 0x72, 0xbb, 0x5b, 0xb8, 0x27, 0x00, 0x00, 0x00, 0xc3, 0x31, 0xc0, 0xc3, 0x03, 0x01,
-		0x02, 0x03, 0x01, 0x05, 0x00, 0x07, 0x05, 0x0a, 0x04, 0x0c, 0x07, 0x0f, 0x06, 0x11, 0x08, 0x14, 0x09, 0x16, 0x0a, 0x19, 0x0b, 0x1b, 0x0c, 0x1d,
-		0x0d, 0x1f, 0x0e, 0x21, 0x0f, 0x23, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_guid_text, raven_prelude_guid_text_end);
 	return code;
 }
 
@@ -1599,17 +1346,7 @@ static constexpr size_t region_pointer = 0x768;
 
 static const std::vector<uint8_t> &rect_in_region_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0xcc, 0x00, 0x00, 0x00, 0x4d, 0x8b, 0x9a, 0x68, 0x07, 0x00, 0x00, 0x4d,
-		0x85, 0xdb, 0x0f, 0x84, 0xbc, 0x00, 0x00, 0x00, 0x48, 0x85, 0xd2, 0x0f, 0x84, 0xb3, 0x00, 0x00, 0x00, 0x0f, 0xb6, 0xc1, 0xc1, 0xe0, 0x08, 0x49,
-		0x01, 0xc3, 0x49, 0x3b, 0x0b, 0x0f, 0x85, 0xa1, 0x00, 0x00, 0x00, 0x45, 0x8b, 0x4b, 0x08, 0x41, 0x83, 0xf9, 0x0e, 0x0f, 0x87, 0x93, 0x00, 0x00,
-		0x00, 0x8b, 0x02, 0x05, 0x00, 0x00, 0x00, 0x04, 0x3d, 0x00, 0x00, 0x00, 0x08, 0x0f, 0x83, 0x81, 0x00, 0x00, 0x00, 0x8b, 0x42, 0x04, 0x05, 0x00,
-		0x00, 0x00, 0x04, 0x3d, 0x00, 0x00, 0x00, 0x08, 0x73, 0x72, 0x8b, 0x42, 0x08, 0x05, 0x00, 0x00, 0x00, 0x04, 0x3d, 0x00, 0x00, 0x00, 0x08, 0x73,
-		0x63, 0x8b, 0x42, 0x0c, 0x05, 0x00, 0x00, 0x00, 0x04, 0x3d, 0x00, 0x00, 0x00, 0x08, 0x73, 0x54, 0x8b, 0x02, 0x44, 0x8b, 0x42, 0x08, 0x8b, 0x4a,
-		0x04, 0x8b, 0x52, 0x0c, 0x44, 0x39, 0xc0, 0x7e, 0x02, 0x41, 0x90, 0x39, 0xd1, 0x7e, 0x02, 0x87, 0xd1, 0x44, 0x39, 0xc0, 0x74, 0x33, 0x39, 0xd1,
-		0x74, 0x2f, 0x4d, 0x8d, 0x53, 0x20, 0x45, 0x85, 0xc9, 0x74, 0x26, 0x41, 0x3b, 0x42, 0x08, 0x7d, 0x17, 0x45, 0x3b, 0x02, 0x7e, 0x12, 0x41, 0x3b,
-		0x4a, 0x0c, 0x7d, 0x0c, 0x41, 0x3b, 0x52, 0x04, 0x7e, 0x06, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x49, 0x83, 0xc2, 0x10, 0x41, 0xff, 0xc9, 0xeb,
-		0xd5, 0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_rect_in_region, raven_prelude_rect_in_region_end);
 	static_assert(region_pointer == 0x768 && NativeWindows::region_record == 256 && NativeWindows::region_rectangles == 14,
 		"the region preludes' offsets are written into their code");
 	return code;
@@ -1617,21 +1354,13 @@ static const std::vector<uint8_t> &rect_in_region_prelude()
 
 static const std::vector<uint8_t> &point_in_region_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x56, 0x4d, 0x8b, 0x9a, 0x68, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x4a,
-		0x0f, 0xb6, 0xc1, 0xc1, 0xe0, 0x08, 0x49, 0x01, 0xc3, 0x49, 0x3b, 0x0b, 0x75, 0x3c, 0x45, 0x8b, 0x4b, 0x08, 0x41, 0x83, 0xf9, 0x0e, 0x77, 0x32,
-		0x4d, 0x8d, 0x53, 0x20, 0x45, 0x85, 0xc9, 0x74, 0x26, 0x41, 0x3b, 0x12, 0x7c, 0x18, 0x41, 0x3b, 0x52, 0x08, 0x7d, 0x12, 0x45, 0x3b, 0x42, 0x04,
-		0x7c, 0x0c, 0x45, 0x3b, 0x42, 0x0c, 0x7d, 0x06, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x49, 0x83, 0xc2, 0x10, 0x41, 0xff, 0xc9, 0xeb, 0xd5, 0x31,
-		0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_point_in_region, raven_prelude_point_in_region_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &region_box_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x33, 0x4d, 0x8b, 0x9a, 0x68, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x27,
-		0x48, 0x85, 0xd2, 0x74, 0x22, 0x0f, 0xb6, 0xc1, 0xc1, 0xe0, 0x08, 0x49, 0x01, 0xc3, 0x49, 0x3b, 0x0b, 0x75, 0x14, 0x49, 0x8b, 0x43, 0x10, 0x48,
-		0x89, 0x02, 0x49, 0x8b, 0x43, 0x18, 0x48, 0x89, 0x42, 0x08, 0x41, 0x8b, 0x43, 0x0c, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_region_box, raven_prelude_region_box_end);
 	return code;
 }
 
@@ -1643,11 +1372,7 @@ static constexpr size_t quiet_pointer = 0x770;
 
 static const std::vector<uint8_t> &quiet_peek_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x46, 0x4d, 0x8b, 0x92, 0x70, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x3a,
-		0x65, 0x8b, 0x04, 0x25, 0x48, 0x00, 0x00, 0x00, 0x41, 0x89, 0xc3, 0x41, 0x83, 0xe3, 0x3f, 0x41, 0xc1, 0xe3, 0x04, 0x4d, 0x01, 0xd3, 0x41, 0x3b,
-		0x03, 0x75, 0x1f, 0x41, 0x83, 0x7b, 0x04, 0x00, 0x75, 0x18, 0x49, 0x89, 0xd2, 0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09, 0xd0, 0x4c, 0x89,
-		0xd2, 0x49, 0x3b, 0x43, 0x08, 0x73, 0x03, 0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_quiet_peek, raven_prelude_quiet_peek_end);
 	static_assert(quiet_pointer == 0x770 && NativeWindows::quiet_slots == 64 && NativeWindows::quiet_slot == 16 &&
 		NativeWindows::quiet_slots * NativeWindows::quiet_slot <= 4096,
 		"the quiet preludes' offsets are written into their code");
@@ -1656,21 +1381,13 @@ static const std::vector<uint8_t> &quiet_peek_prelude()
 
 static const std::vector<uint8_t> &quiet_input_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x49, 0x4d, 0x8b, 0x92, 0x70, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x3d,
-		0x65, 0x8b, 0x04, 0x25, 0x48, 0x00, 0x00, 0x00, 0x41, 0x89, 0xc3, 0x41, 0x83, 0xe3, 0x3f, 0x41, 0xc1, 0xe3, 0x04, 0x4d, 0x01, 0xd3, 0x41, 0x3b,
-		0x03, 0x75, 0x22, 0x41, 0xf7, 0x43, 0x04, 0x05, 0x00, 0x00, 0x00, 0x75, 0x18, 0x49, 0x89, 0xd2, 0x0f, 0x31, 0x48, 0xc1, 0xe2, 0x20, 0x48, 0x09,
-		0xd0, 0x4c, 0x89, 0xd2, 0x49, 0x3b, 0x43, 0x08, 0x73, 0x03, 0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_quiet_input, raven_prelude_quiet_input_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &quiet_status_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x4d, 0x4d, 0x8b, 0x92, 0x70, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x41,
-		0x65, 0x8b, 0x04, 0x25, 0x48, 0x00, 0x00, 0x00, 0x41, 0x89, 0xc3, 0x41, 0x83, 0xe3, 0x3f, 0x41, 0xc1, 0xe3, 0x04, 0x4d, 0x01, 0xd3, 0x41, 0x3b,
-		0x03, 0x75, 0x26, 0xf7, 0xc1, 0x00, 0xe2, 0xff, 0xff, 0x75, 0x1e, 0x41, 0x85, 0x4b, 0x04, 0x75, 0x18, 0x49, 0x89, 0xd2, 0x0f, 0x31, 0x48, 0xc1,
-		0xe2, 0x20, 0x48, 0x09, 0xd0, 0x4c, 0x89, 0xd2, 0x49, 0x3b, 0x43, 0x08, 0x73, 0x03, 0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_quiet_status, raven_prelude_quiet_status_end);
 	return code;
 }
 
@@ -1684,22 +1401,14 @@ static constexpr size_t key_pointer = 0x788;
 
 static const std::vector<uint8_t> &key_state_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x26, 0x4d, 0x8b, 0x9a, 0x88, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x1a,
-		0x0f, 0xb6, 0xc1, 0x41, 0x0f, 0xb6, 0x04, 0x03, 0x89, 0xc2, 0x83, 0xe2, 0x01, 0xa8, 0x80, 0x74, 0x06, 0x81, 0xca, 0x80, 0xff, 0x00, 0x00, 0x89,
-		0xd0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_key_state, raven_prelude_key_state_end);
 	static_assert(key_pointer == 0x788, "the key state prelude's offset is written into its code");
 	return code;
 }
 
 static const std::vector<uint8_t> &context_activate_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x57, 0x4d, 0x8b, 0x92, 0x80, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x4b,
-		0x65, 0x8b, 0x04, 0x25, 0x48, 0x00, 0x00, 0x00, 0x41, 0x89, 0xc3, 0x41, 0xc1, 0xeb, 0x02, 0x41, 0x83, 0xe3, 0x3f, 0x41, 0xc1, 0xe3, 0x04, 0x4d,
-		0x01, 0xd3, 0x41, 0x3b, 0x03, 0x75, 0x2c, 0x4d, 0x8b, 0x53, 0x08, 0x41, 0x3b, 0x03, 0x75, 0x23, 0x4c, 0x39, 0xd1, 0x75, 0x1e, 0x48, 0x83, 0xf9,
-		0xff, 0x74, 0x18, 0x48, 0x85, 0xd2, 0x74, 0x0d, 0x48, 0xb8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x76, 0x52, 0x48, 0x89, 0x02, 0xb8, 0x01, 0x00,
-		0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_context_activate, raven_prelude_context_activate_end);
 	static_assert(current_context_pointer == 0x780 && ActivationContexts::current_slots == 64 && ActivationContexts::current_slot == 16 &&
 		ActivationContexts::current_cookie == 0x5276, "the activation preludes' offsets and cookie are written into their code");
 	return code;
@@ -1707,9 +1416,7 @@ static const std::vector<uint8_t> &context_activate_prelude()
 
 static const std::vector<uint8_t> &context_deactivate_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x48, 0x89, 0xd0, 0x48, 0xc1, 0xe8, 0x30, 0x3d, 0x76, 0x52, 0x00, 0x00, 0x75, 0x06, 0xb8, 0x01, 0x00,
-		0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_context_deactivate, raven_prelude_context_deactivate_end);
 	return code;
 }
 
@@ -1717,12 +1424,7 @@ static const std::vector<uint8_t> &context_deactivate_prelude()
 // without a record, an owner without one or another ancestor kind goes to the runtime.
 static const std::vector<uint8_t> &window_parent_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x57, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x4b,
-		0x48, 0x85, 0xc9, 0x74, 0x46, 0x89, 0xc8, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x4c, 0x01, 0xd8, 0x48, 0x39, 0x08, 0x75, 0x34, 0x48,
-		0x8b, 0x50, 0x58, 0x48, 0x85, 0xd2, 0x75, 0x24, 0xf7, 0x40, 0x30, 0x00, 0x00, 0x00, 0x80, 0x74, 0x1f, 0x48, 0x8b, 0x50, 0x20, 0x48, 0x85, 0xd2,
-		0x74, 0x16, 0x89, 0xd0, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x4c, 0x01, 0xd8, 0x48, 0x39, 0x10, 0x75, 0x07, 0x48, 0x89, 0xd0, 0xc3,
-		0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_parent, raven_prelude_window_parent_end);
 	static_assert(window_table == 0x700 && NativeWindows::window_records == 512 && NativeWindows::window_record == 256,
 		"the window preludes' offsets are written into their code");
 	return code;
@@ -1730,13 +1432,7 @@ static const std::vector<uint8_t> &window_parent_prelude()
 
 static const std::vector<uint8_t> &window_ancestor_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x6d, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x61,
-		0x48, 0x85, 0xc9, 0x74, 0x5c, 0x8d, 0x42, 0xff, 0x83, 0xf8, 0x02, 0x77, 0x54, 0x49, 0x89, 0xc8, 0x41, 0xb9, 0x40, 0x00, 0x00, 0x00, 0x44, 0x89,
-		0xc0, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x4c, 0x01, 0xd8, 0x4c, 0x39, 0x00, 0x75, 0x38, 0x4c, 0x8b, 0x50, 0x58, 0x83, 0xfa, 0x01,
-		0x75, 0x04, 0x4c, 0x89, 0xd0, 0xc3, 0x4d, 0x85, 0xd2, 0x74, 0x0a, 0x4d, 0x89, 0xd0, 0x41, 0xff, 0xc9, 0x75, 0xd3, 0xeb, 0x1c, 0x83, 0xfa, 0x03,
-		0x75, 0x13, 0x4c, 0x8b, 0x50, 0x20, 0x4d, 0x85, 0xd2, 0x74, 0x0a, 0x4d, 0x89, 0xd0, 0x41, 0xff, 0xc9, 0x75, 0xbb, 0xeb, 0x04, 0x4c, 0x89, 0xc0,
-		0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_window_ancestor, raven_prelude_window_ancestor_end);
 	return code;
 }
 
@@ -1744,14 +1440,7 @@ static const std::vector<uint8_t> &window_ancestor_prelude()
 // a window without a record, more points or a null array goes to the runtime.
 static const std::vector<uint8_t> &map_points_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x0f, 0x84, 0x91, 0x00, 0x00, 0x00, 0x4d, 0x8b, 0x9a, 0x00, 0x07, 0x00, 0x00, 0x4d,
-		0x85, 0xdb, 0x0f, 0x84, 0x81, 0x00, 0x00, 0x00, 0x41, 0x83, 0xf9, 0x40, 0x77, 0x7b, 0x53, 0x56, 0x31, 0xdb, 0x31, 0xf6, 0x48, 0x85, 0xc9, 0x74,
-		0x1e, 0x89, 0xc8, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x4c, 0x01, 0xd8, 0x48, 0x39, 0x08, 0x75, 0x5c, 0x8b, 0x98, 0xf8, 0x00, 0x00,
-		0x00, 0x8b, 0xb0, 0xfc, 0x00, 0x00, 0x00, 0x48, 0x85, 0xd2, 0x74, 0x1e, 0x89, 0xd0, 0x25, 0xff, 0x01, 0x00, 0x00, 0xc1, 0xe0, 0x08, 0x4c, 0x01,
-		0xd8, 0x48, 0x39, 0x10, 0x75, 0x39, 0x2b, 0x98, 0xf8, 0x00, 0x00, 0x00, 0x2b, 0xb0, 0xfc, 0x00, 0x00, 0x00, 0x45, 0x85, 0xc9, 0x74, 0x1a, 0x4d,
-		0x85, 0xc0, 0x74, 0x23, 0x44, 0x89, 0xc8, 0x4d, 0x89, 0xc2, 0x41, 0x01, 0x1a, 0x41, 0x01, 0x72, 0x04, 0x49, 0x83, 0xc2, 0x08, 0xff, 0xc8, 0x75,
-		0xf1, 0x0f, 0xb7, 0xc3, 0x0f, 0xb7, 0xf6, 0xc1, 0xe6, 0x10, 0x09, 0xf0, 0x5e, 0x5b, 0xc3, 0x5e, 0x5b, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_map_points, raven_prelude_map_points_end);
 	static_assert(NativeWindows::window_origin == 248 && NativeWindows::window_extra_bytes <= NativeWindows::window_origin - 160,
 		"the point mapping prelude's offsets are written into its code");
 	return code;
@@ -1760,11 +1449,7 @@ static const std::vector<uint8_t> &map_points_prelude()
 // LocaleNameToLCID for the one locale there is, by its name or none, without flags; any other name goes to the runtime.
 static const std::vector<uint8_t> &locale_number_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x4c, 0x85, 0xd2, 0x75, 0x48, 0x48, 0x85, 0xc9, 0x74, 0x3d, 0x0f, 0xb7, 0x01,
-		0x83, 0xc8, 0x20, 0x83, 0xf8, 0x65, 0x75, 0x38, 0x0f, 0xb7, 0x41, 0x02, 0x83, 0xc8, 0x20, 0x83, 0xf8, 0x6e, 0x75, 0x2c, 0x66, 0x83, 0x79, 0x04,
-		0x2d, 0x75, 0x25, 0x0f, 0xb7, 0x41, 0x06, 0x83, 0xc8, 0x20, 0x83, 0xf8, 0x75, 0x75, 0x19, 0x0f, 0xb7, 0x41, 0x08, 0x83, 0xc8, 0x20, 0x83, 0xf8,
-		0x73, 0x75, 0x0d, 0x66, 0x83, 0x79, 0x0a, 0x00, 0x75, 0x06, 0xb8, 0x09, 0x04, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_locale_number, raven_prelude_locale_number_end);
 	return code;
 }
 
@@ -1792,24 +1477,19 @@ static const std::vector<uint8_t> &locale_names_prelude()
 // with a low bit set), a null module or a null handle goes to the runtime.
 static const std::vector<uint8_t> &resource_load_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x15, 0x48, 0x85, 0xc9, 0x74, 0x10, 0xf6, 0xc1, 0x03, 0x75, 0x0b, 0x48, 0x85,
-		0xd2, 0x74, 0x06, 0x8b, 0x02, 0x48, 0x01, 0xc8, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_resource_load, raven_prelude_resource_load_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &resource_size_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x09, 0x48, 0x85, 0xd2, 0x74, 0x04, 0x8b, 0x42, 0x04, 0xc3, 0xe9, 0x00, 0x00,
-		0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_resource_size, raven_prelude_resource_size_end);
 	return code;
 }
 
 static const std::vector<uint8_t> &resource_lock_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x48, 0x89, 0xc8, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_resource_lock, raven_prelude_resource_lock_end);
 	return code;
 }
 
@@ -1818,12 +1498,7 @@ static const std::vector<uint8_t> &resource_lock_prelude()
 // to the runtime, which runs it.
 static const std::vector<uint8_t> &next_hook_prelude()
 {
-	static const std::vector<uint8_t> code{
-		0x4c, 0x8b, 0x15, 0x00, 0x00, 0x00, 0x00, 0x4d, 0x85, 0xd2, 0x74, 0x5e, 0x4d, 0x8b, 0x9a, 0x70, 0x07, 0x00, 0x00, 0x4d, 0x85, 0xdb, 0x74, 0x52,
-		0x49, 0x81, 0xc3, 0x00, 0x04, 0x00, 0x00, 0x41, 0x8b, 0x03, 0x83, 0xf8, 0x40, 0x77, 0x43, 0x49, 0x83, 0xc3, 0x10, 0x85, 0xc0, 0x74, 0x3b, 0x49,
-		0x39, 0x0b, 0x74, 0x08, 0x49, 0x83, 0xc3, 0x10, 0xff, 0xc8, 0xeb, 0xef, 0x45, 0x8b, 0x53, 0x08, 0xff, 0xc8, 0x74, 0x23, 0x49, 0x83, 0xc3, 0x10,
-		0x45, 0x39, 0x53, 0x08, 0x75, 0xf2, 0x41, 0x83, 0x7b, 0x0c, 0x00, 0x74, 0x15, 0x50, 0x65, 0x8b, 0x04, 0x25, 0x48, 0x00, 0x00, 0x00, 0x41, 0x39,
-		0x43, 0x0c, 0x58, 0x74, 0x05, 0xeb, 0xd9, 0x31, 0xc0, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_next_hook, raven_prelude_next_hook_end);
 	static_assert(quiet_pointer == 0x770 && NativeWindows::hook_table_at == 1024 && NativeWindows::hook_entries == 64 &&
 		NativeWindows::hook_entry == 16 && NativeWindows::hook_table_at + 16 + NativeWindows::hook_entries * NativeWindows::hook_entry <= 4096,
 		"the hook prelude's offsets are written into its code");
@@ -1834,7 +1509,7 @@ static const std::vector<uint8_t> &next_hook_prelude()
 // draws, and each would stop the program to print nothing.
 static const std::vector<uint8_t> &silent_trace_prelude()
 {
-	static const std::vector<uint8_t> code{0x4c, 0x8d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0xc3, 0xe9, 0x00, 0x00, 0x00, 0x00};
+	static const std::vector<uint8_t> code = prelude_code(raven_prelude_silent_trace, raven_prelude_silent_trace_end);
 	return code;
 }
 
@@ -1906,6 +1581,8 @@ static const std::vector<uint8_t> *block_prelude(std::string_view module, std::s
 		add({"ntdll.dll"}, {"NtAllocateVirtualMemory", "ZwAllocateVirtualMemory"}, nt_commit_prelude);
 		add({"ntdll.dll"}, {"NtFreeVirtualMemory", "ZwFreeVirtualMemory"}, nt_decommit_prelude);
 		add({"kernel32.dll", "kernelbase.dll"}, {"MulDiv"}, muldiv_prelude);
+		add({"kernel32.dll", "kernelbase.dll"}, {"SetEvent"}, event_set_prelude);
+		add({"kernel32.dll", "kernelbase.dll"}, {"ResetEvent"}, event_reset_prelude);
 		add({"shlwapi.dll", "kernelbase.dll"}, {"PathFindFileNameW"}, file_name_prelude);
 		add({"user32.dll"}, {"TranslateMessage"}, translate_message_prelude);
 		add({"user32.dll"}, {"CallMsgFilterW"}, message_filter_prelude);
@@ -1914,6 +1591,9 @@ static const std::vector<uint8_t> *block_prelude(std::string_view module, std::s
 		add({"user32.dll"}, {"GetSystemMetrics"}, system_metrics_prelude);
 		add({"user32.dll"}, {"GetSysColor"}, system_colors_prelude);
 		add({"user32.dll"}, {"CallWindowProcW", "CallWindowProcA"}, call_procedure_prelude);
+		// RAVEN_TRACE_MSG follows every message the runtime delivers, those to the thread's own windows too.
+		if (!std::getenv("RAVEN_TRACE_MSG"))
+			add({"user32.dll"}, {"SendMessageW"}, own_thread_send_prelude);
 		add({"user32.dll"}, {"OffsetRect"}, offset_rect_prelude);
 		add({"user32.dll"}, {"SetRect"}, set_rect_prelude);
 		add({"user32.dll"}, {"IntersectRect"}, intersect_rect_prelude);
@@ -1975,42 +1655,49 @@ static bool answered_api(std::string_view module, std::string_view name)
 		"GetWindowRect", "GetWindowLongPtrW", "GetWindowLongPtrA", "GetWindowLongW", "GetWindowLongA", "GetParent", "IsWindowVisible",
 		"IsIconic", "IsChild", "GetKeyState", "GetSystemMetrics", "GetSysColor", "GetForegroundWindow", "GetCursorPos", "GetDesktopWindow",
 		"MapWindowPoints", "GetDpiForWindow", "OffsetRect", "IntersectRect", "EqualRect", "IsRectEmpty", "SetRectEmpty",
-		"CopyRect", "InflateRect", "UnionRect", "PtInRect"};
-	static const std::unordered_set<std::string_view> gdi{"LPtoDP", "DPtoLP", "GetTextColor", "GetBkColor", "GetBkMode", "GetTextAlign"};
+		"CopyRect", "InflateRect", "UnionRect", "PtInRect", "GetAncestor", "GetPropW", "GetFocus", "GetMenuItemCount", "GetSubMenu",
+		"GetMenuItemID"};
+	// GetMenuState is left out: it searches a menu tree on the guest's stack, and the wrapper's way to give up expects the stack it left.
+	static const std::unordered_set<std::string_view> gdi{"LPtoDP", "DPtoLP", "GetTextColor", "GetBkColor", "GetBkMode", "GetTextAlign",
+		"RectInRegion", "GetRgnBox", "PtInRegion", "GetObjectW", "GetObjectA"};
 	static const std::unordered_set<std::string_view> theme{"IsThemeActive", "IsAppThemed", "IsCompositionActive", "GetThemeAppProperties"};
 	return (module == "user32.dll" && user.contains(name)) || (module == "gdi32.dll" && gdi.contains(name)) ||
 		(module == "uxtheme.dll" && theme.contains(name));
 }
 
-// The wrapper: mov r11,[pointer]; test r11,r11; jz slow; mov r11,[r11+0x7b0]; test r11b,1; jnz slow; push r9; push r8; push rdx;
-// push rcx; push r11; call answer; mov r11,[pointer]; mov r11,[r11+0x7b0]; cmp r11,[rsp]; jne again; add rsp,40; ret;
-// again: add rsp,8; pop rcx; pop rdx; pop r8; pop r9; slow: jmp stub; then where the answer itself gives up, with the wrapper's
-// return address and the five words still on the stack: add rsp,48; jmp stub.
-static constexpr size_t answer_wrapper_size = 87, answer_wrapper_slot = 128, answer_gives_up = 78;
+// The wrapper: mov r11,[pointer]; test r11,r11; jz slow; mov r10,r11; mov eax,128; try: mov r11,[r10+0x7b0]; test r11b,1; jnz busy;
+// push rax; push r10; push r9; push r8; push rdx; push rcx; push r11; call answer; mov r11,[rsp+40]; mov r11,[r11+0x7b0];
+// cmp r11,[rsp]; jne again; add rsp,56; ret; again: add rsp,8; pop rcx; pop rdx; pop r8; pop r9; pop r10; pop rax; busy: pause;
+// dec eax; jnz try; slow: jmp stub; then where the answer itself gives up, with the wrapper's return address and the seven words still
+// on the stack: add rsp,16; pop rcx; pop rdx; pop r8; pop r9; add rsp,16; jmp stub.
+// The room each wrapper of an answered call takes (see raven_answer_wrapper in gates.S).
+static constexpr size_t answer_wrapper_slot = 128;
 
 static std::vector<uint8_t> answer_wrapper(int32_t to_pointer, int32_t to_answer, int32_t to_stub)
 {
-	std::vector<uint8_t> code{0x4c, 0x8b, 0x1d, 0, 0, 0, 0, 0x4d, 0x85, 0xdb, 0x74, 0x3d, 0x4d, 0x8b, 0x9b, 0xb0, 0x07, 0x00, 0x00, 0x41,
-		0xf6, 0xc3, 0x01, 0x75, 0x30, 0x41, 0x51, 0x41, 0x50, 0x52, 0x51, 0x41, 0x53, 0xe8, 0, 0, 0, 0, 0x4c, 0x8b, 0x1d, 0, 0, 0, 0, 0x4d,
-		0x8b, 0x9b, 0xb0, 0x07, 0x00, 0x00, 0x4c, 0x3b, 0x1c, 0x24, 0x75, 0x05, 0x48, 0x83, 0xc4, 0x28, 0xc3, 0x48, 0x83, 0xc4, 0x08, 0x59,
-		0x5a, 0x41, 0x58, 0x41, 0x59, 0xe9, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x30, 0xe9, 0, 0, 0, 0};
-	static_assert(NativeWindows::table_version == 0x7b0, "the answer wrapper's offset is written into its code");
-	const auto put = [&](size_t at, int32_t target) {
-		const int32_t relative = target - int32_t(at + 4);
-		std::memcpy(code.data() + at, &relative, 4);
+	const auto bytes = served_stub::answer_wrapper();
+	if (bytes.size() > answer_wrapper_slot)
+		throw std::logic_error("the answer wrapper outgrew its slot");
+	std::vector<uint8_t> code(bytes.begin(), bytes.end());
+	static_assert(NativeWindows::table_version == 0x7b0, "the answer wrapper reads the tables' version at this offset (gates.S)");
+	// Each field ends at its label; a target is relative to the wrapper's start, as the field's own end is.
+	const auto put = [&](size_t end, int32_t target) {
+		const int32_t relative = target - int32_t(end);
+		std::memcpy(code.data() + end - 4, &relative, 4);
 	};
-	put(3, to_pointer);
-	put(41, to_pointer);
-	put(34, to_answer);
-	put(74, to_stub);
-	put(83, to_stub);
+	put(served_stub::answer_pointer(), to_pointer);
+	put(served_stub::answer_call(), to_answer);
+	put(served_stub::answer_stub(), to_stub);
+	put(served_stub::answer_end(), to_stub);
 	return code;
 }
 
 static bool answer_wrapper_at(std::span<const uint8_t> image, uint32_t rva)
 {
-	return size_t(rva) + answer_wrapper_size <= image.size() && image[rva] == 0x4c && image[rva + 1] == 0x8b && image[rva + 2] == 0x1d &&
-		image[rva + 33] == 0xe8 && image[rva + 73] == 0xe9 && image[rva + 82] == 0xe9;
+	const auto bytes = served_stub::answer_wrapper();
+	return size_t(rva) + bytes.size() <= image.size() && std::equal(bytes.begin(), bytes.begin() + 3, image.begin() + rva) &&
+		image[rva + served_stub::answer_call() - 5] == 0xe8 && image[rva + served_stub::answer_stub() - 5] == 0xe9 &&
+		image[rva + served_stub::answer_end() - 5] == 0xe9;
 }
 
 static size_t string_prelude_slot(const GuestPrelude &prelude)
@@ -2023,18 +1710,7 @@ static std::vector<uint8_t> commit_prelude(int32_t to_pointer, int32_t to_trap)
 #ifdef __APPLE__
 	return commit_guest_prelude(to_pointer, to_trap, false);
 #else
-	// mov r10,[pointer]; test r10,r10; jz slow; test rcx,rcx; jz slow; test rdx,rdx; jz slow; cmp r8d,MEM_COMMIT; jne slow;
-	// cmp r9d,PAGE_READWRITE; je main; slow: jmp trap; restore: mov r8d,MEM_COMMIT; mov r9d,PAGE_READWRITE; jmp slow;
-	// main: rax = first page, r11 = end page; jbe slow; look through the open ranges at commit_windows for one holding [rax, r11),
-	// take a log slot with lock xadd at commit_log, store the range there and return rax; a full log or no range goes back to restore.
-	std::vector<uint8_t> code{0x4c, 0x8b, 0x15, 0, 0, 0, 0, 0x4d, 0x85, 0xd2, 0x74, 0x19, 0x48, 0x85, 0xc9, 0x74, 0x14, 0x48, 0x85, 0xd2,
-		0x74, 0x0f, 0x41, 0x81, 0xf8, 0x00, 0x10, 0x00, 0x00, 0x75, 0x06, 0x41, 0x83, 0xf9, 0x04, 0x74, 0x13, 0xe9, 0, 0, 0, 0, 0x41,
-		0xb8, 0x00, 0x10, 0x00, 0x00, 0x41, 0xb9, 0x04, 0x00, 0x00, 0x00, 0xeb, 0xed, 0x48, 0x89, 0xc8, 0x48, 0x25, 0x00, 0xf0, 0xff,
-		0xff, 0x4c, 0x8d, 0x9c, 0x11, 0xff, 0x0f, 0x00, 0x00, 0x49, 0x81, 0xe3, 0x00, 0xf0, 0xff, 0xff, 0x49, 0x39, 0xc3, 0x76, 0xd0,
-		0x45, 0x8b, 0x82, 0x00, 0x0a, 0x00, 0x00, 0x4d, 0x8d, 0x8a, 0x08, 0x0a, 0x00, 0x00, 0x45, 0x85, 0xc0, 0x74, 0xc2, 0x49, 0x3b,
-		0x01, 0x72, 0x30, 0x4d, 0x3b, 0x59, 0x08, 0x77, 0x2a, 0x41, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xf0, 0x45, 0x0f, 0xc1, 0x82, 0x10,
-		0x0d, 0x00, 0x00, 0x41, 0x83, 0xf8, 0x20, 0x73, 0xa2, 0x49, 0xc1, 0xe0, 0x04, 0x4b, 0x89, 0x84, 0x02, 0x18, 0x0d, 0x00, 0x00,
-		0x4f, 0x89, 0x9c, 0x02, 0x20, 0x0d, 0x00, 0x00, 0xc3, 0x49, 0x83, 0xc1, 0x10, 0x41, 0xff, 0xc8, 0xeb, 0xbd};
+	auto code = prelude_code(raven_prelude_commit, raven_prelude_commit_end);
 	static_assert(NativeMemory::commit_windows == 0xa00 && NativeMemory::commit_log == 0xd10 && NativeMemory::commit_window_count == 48 &&
 		NativeMemory::commit_log_count == 32, "the commit prelude's offsets are written into its code");
 	const int32_t displacement = to_pointer - 7;
@@ -2053,6 +1729,18 @@ static bool plain_hookable_slot(std::span<const uint8_t> image, size_t rva)
 	return rva + 15 < image.size() && image[rva + 14] == 0xcc && image[rva] == 0x90;
 }
 
+// The block prelude in front of an export, when its code is there: a provider built without guest-side paths keeps a plain or served
+// stub under the same name. The prelude's code is compared past its pointer and before its jump, which differ per export.
+static const std::vector<uint8_t> *placed_block_prelude(std::span<const uint8_t> image, std::string_view module, std::string_view name,
+	uint32_t rva)
+{
+	const auto *prelude = block_prelude(module, name);
+	if (!prelude || prelude->size() < 12 || rva > image.size() || image.size() - rva < prelude->size() ||
+		!std::equal(prelude->begin() + 7, prelude->end() - 4, image.begin() + rva + 7))
+		return nullptr;
+	return prelude;
+}
+
 static uint32_t served_stub_rva(std::span<const uint8_t> image, std::string_view module, std::string_view name, uint32_t rva)
 {
 	if (queued_arguments(module, name) && rva <= image.size() && image.size() - rva >= queued_prelude_size &&
@@ -2069,10 +1757,10 @@ static uint32_t served_stub_rva(std::span<const uint8_t> image, std::string_view
 		return rva;
 	if (answer_wrapper_at(image, rva)) {
 		int32_t relative = 0;
-		std::memcpy(&relative, image.data() + rva + 74, 4);
-		return uint32_t(int64_t(rva) + 78 + relative);
+		std::memcpy(&relative, image.data() + rva + served_stub::answer_stub() - 4, 4);
+		return uint32_t(int64_t(rva) + served_stub::answer_stub() + relative);
 	}
-	if (const auto *prelude = block_prelude(module, name)) {
+	if (const auto *prelude = placed_block_prelude(image, module, name, rva)) {
 		int32_t relative = 0;
 		std::memcpy(&relative, image.data() + rva + prelude->size() - 4, 4);
 		return uint32_t(int64_t(rva) + prelude->size() + relative);
@@ -2094,15 +1782,81 @@ static uint32_t served_stub_rva(std::span<const uint8_t> image, std::string_view
 	return uint32_t(int64_t(rva) + 16 + relative);
 }
 
+// The page of NT services, in the low area KUSER_SHARED_DATA opens: the flag the exports test, then an entry for each service, whose
+// address is the service's number (see raven_nt_syscall). It is the guest's to read and run.
+constexpr uint64_t service_page = 0x7ffe1000;
+constexpr size_t service_entry_size = 16;
+// The room of a service's export: its 24 bytes, and from service_stub on the stub its entry leads to.
+constexpr size_t service_stub = 32, service_room = (service_stub + served_stub_size + 63) & ~size_t(63);
+
+static const std::vector<std::string_view> &nt_services()
+{
+	static const auto services = [] {
+		std::vector<std::string_view> names;
+		for (const auto name : system_export_names("ntdll.dll"))
+			if (name.starts_with("Nt"))
+				names.push_back(name);
+		return names;
+	}();
+	return services;
+}
+
 static uint32_t nt_service_number(std::string_view module, std::string_view name)
 {
 	if (module != "ntdll.dll" || (!name.starts_with("Nt") && !name.starts_with("Zw")))
 		return 0;
 	const std::string canonical = "Nt" + std::string(name.substr(2));
-	const auto names = system_export_names("ntdll.dll");
+	const auto &names = nt_services();
 	const auto found = std::lower_bound(names.begin(), names.end(), canonical);
 	// Use the complete name table so a copied service keeps its identity across different process import graphs.
-	return found != names.end() && *found == canonical ? 0x10000 + uint32_t(found - names.begin()) : 0;
+	return found != names.end() && *found == canonical ? uint32_t(service_page + (1 + size_t(found - names.begin())) * service_entry_size) : 0;
+}
+
+// Maps the page before any guest code runs. An entry leads to the stub given for its number, and without one makes the system call;
+// the flag is set only where some entry has a stub. With RAVEN_CYCLES the flag is set and the system calls go through the timed routine
+// after the entries, which stamps them (see raven_service_timed): it gives the address after that routine's system call, or 0.
+static uint64_t map_service_page(NativeProcess &process, const std::map<uint32_t, uint64_t> &stubs)
+{
+	const size_t entries = (1 + nt_services().size()) * service_entry_size;
+	const bool timed = CallCycles::instance().enabled();
+	const size_t timed_size = size_t(raven_service_timed_end - raven_service_timed), landing_at = entries + timed_size;
+	const size_t used = timed ? landing_at + size_t(raven_service_landing_end - raven_service_landing) : entries;
+	std::vector<uint8_t> page((used + 4095) & ~size_t(4095), 0xcc);
+	page[0] = timed || !stubs.empty();
+	for (size_t at = service_entry_size; at < entries; at += service_entry_size) {
+		if (const auto stub = stubs.find(uint32_t(service_page + at)); stub != stubs.end()) {
+			const auto jump = std::copy(raven_service_stubbed, raven_service_stubbed_end, page.begin() + ptrdiff_t(at));
+			std::memcpy(&*jump, &stub->second, 8);
+		} else if (timed) {
+			page[at] = 0xe9;
+			const int32_t displacement = int32_t(entries) - int32_t(at + 5);
+			std::memcpy(&page[at + 1], &displacement, 4);
+		} else {
+			std::copy(raven_service_trapped, raven_service_trapped_end, page.begin() + ptrdiff_t(at));
+		}
+	}
+	if (timed) {
+		std::copy(raven_service_timed, raven_service_timed_end, page.begin() + ptrdiff_t(entries));
+		std::copy(raven_service_landing, raven_service_landing_end, page.begin() + ptrdiff_t(landing_at));
+		process.set_service_landing(service_page + landing_at);
+	}
+	const int descriptor = memfd_create("raven-services", MFD_CLOEXEC);
+	if (descriptor < 0 || ftruncate(descriptor, off_t(page.size())) != 0) {
+		if (descriptor >= 0)
+			close(descriptor);
+		throw std::runtime_error("cannot create the page of NT services");
+	}
+	try {
+		process.map_shared(descriptor, page.size(), 0, service_page);
+	} catch (...) {
+		close(descriptor);
+		throw;
+	}
+	close(descriptor);
+	process.write_memory(service_page, page);
+	process.protect_memory(service_page, page.size(), PROT_READ | PROT_EXEC);
+	// The routine ends in its system call and a return.
+	return timed ? service_page + entries + timed_size - 1 : 0;
 }
 
 uint64_t api_trap_address(const PEModule &provider, std::string_view module, std::string_view name, uint32_t address)
@@ -2285,11 +2039,13 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 	size_t served_count = 0;
 	// The calls the host threads answer have stubs of the same kind, after the served ones; a system service keeps its own entry.
 	const bool calls = fast_paths && !x86 && call_stubs();
-	size_t call_count = 0;
+	size_t call_count = 0, service_count = 0;
 	if (!x86)
 		for (const auto symbol : exports) {
+			const bool service = nt_service_number(name, symbol);
 			served_count += served_api(name, symbol);
-			call_count += calls && !served_api(name, symbol) && !nt_service_number(name, symbol);
+			service_count += service;
+			call_count += calls && !served_api(name, symbol) && !service;
 		}
 	size_t clock_count = 0;
 	if (!x86)
@@ -2308,7 +2064,8 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 				block_size += ((prelude->size() + 63) & ~size_t(63)) + (call_stubs() && answered_api(name, exports[index]) ? answer_wrapper_slot : 0);
 	// The block pointer of the served stubs and the block preludes, then the stubs, then the clock preludes, then the commit preludes.
 	const size_t served_start = fast_start + fast_count * 64;
-	const size_t clock_start = served_start + (served_count || call_count || block_size ? 64 + (served_count + call_count) * served_stub_size : 0);
+	const bool served_area = served_count || call_count || block_size || (calls && service_count);
+	const size_t clock_start = served_start + (served_area ? 64 + (served_count + call_count) * served_stub_size : 0);
 	const size_t commit_start = clock_start + clock_count * clock_prelude_size;
 	const size_t strings_start = commit_start + commit_count * commit_prelude_size;
 	size_t strings_size = 0;
@@ -2323,7 +2080,9 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 		for (const auto symbol : exports)
 			queued_count += queued_arguments(name, symbol) != 0;
 	const size_t queued_start = blocks_start + block_size;
-	const size_t end = queued_start + queued_count * queued_prelude_size;
+	const size_t queued_end = queued_start + queued_count * queued_prelude_size;
+	const size_t services_start = service_count ? (queued_end + 63) & ~size_t(63) : queued_end;
+	const size_t end = services_start + service_count * service_room;
 	std::vector<uint8_t> bytes((end + 511) & ~size_t(511));
 	const auto rva = [](size_t offset) { return 0x1000 + offset - 0x200; };
 	const auto put = [&](size_t offset, uint64_t value, size_t width = 4) {
@@ -2376,7 +2135,7 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 	text(module_name, name);
 	size_t cursor = module_name + name.size() + 1;
 	size_t fast_next = 0, served_next = 0, clock_next = 0, commit_next = 0, strings_next = strings_start, blocks_next = blocks_start;
-	size_t queued_next = queued_start;
+	size_t queued_next = queued_start, services_next = services_start;
 	for (size_t index = 0; index < exports.size(); ++index) {
 		size_t code = 0x200 + index * 16;
 		const uint32_t service = x86 ? 0 : nt_service_number(name, exports[index]);
@@ -2389,9 +2148,16 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 			bytes[code + 15] = 0xc3;
 		}
 		if (service) {
-			const std::array<uint8_t, 11> entry{0x4c, 0x8b, 0xd1, 0xb8, 0, 0, 0, 0, 0x0f, 0x05, 0xc3};
-			std::copy(entry.begin(), entry.end(), bytes.begin() + ptrdiff_t(code));
-			put(code + 4, service);
+			code = services_next;
+			services_next += service_room;
+			std::copy(raven_nt_syscall, raven_nt_syscall_end, bytes.begin() + ptrdiff_t(code));
+			put(code + size_t(raven_nt_syscall_service - raven_nt_syscall) - 4, service);
+			put(code + size_t(raven_nt_syscall_flag - raven_nt_syscall) - 4, service_page);
+			if (calls) {
+				const size_t stub = code + service_stub;
+				const auto served = served_stub_code(int32_t(served_start + 16) - int32_t(stub), true);
+				std::copy(served.begin(), served.end(), bytes.begin() + ptrdiff_t(stub));
+			}
 		}
 		if (!x86 && served_api(name, exports[index])) {
 			code = served_start + 64 + served_next++ * served_stub_size;
@@ -2421,9 +2187,9 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 			const size_t answer = code, wrapper = blocks_next;
 			if (wrapped)
 				blocks_next += answer_wrapper_slot;
-			const int32_t displacement = int32_t(served_start + (wrapped ? 24 : 0)) - int32_t(code) - 7;
+			const int32_t displacement = int32_t(served_start + (wrapped ? 24 : guest_event_api(name, exports[index]) ? 32 : 0)) - int32_t(code) - 7;
 			std::memcpy(bytes_of.data() + 3, &displacement, 4);
-			const int32_t relative = int32_t(wrapped ? wrapper + answer_gives_up : trap) - int32_t(code + bytes_of.size());
+			const int32_t relative = int32_t(wrapped ? wrapper + served_stub::answer_gives_up() : trap) - int32_t(code + bytes_of.size());
 			std::memcpy(bytes_of.data() + bytes_of.size() - 4, &relative, 4);
 			std::copy(bytes_of.begin(), bytes_of.end(), bytes.begin() + ptrdiff_t(code));
 			if (wrapped) {
@@ -2458,11 +2224,11 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 					bytes[code + 0x30] = 0xcc;
 					bytes[code + 0x31] = 0xc3;
 				}
-		if (queued && queued_arguments(name, exports[index])) {
+		if (const auto *call = queued ? queued_call(name, exports[index]) : nullptr) {
 			const size_t served = code;
 			code = queued_next;
 			queued_next += queued_prelude_size;
-			const auto prelude = queued_prelude(int32_t(served) - int32_t(code), queued_arguments(name, exports[index]), exports[index]);
+			const auto prelude = queued_prelude(int32_t(served) - int32_t(code), *call);
 			std::copy(prelude.begin(), prelude.end(), bytes.begin() + ptrdiff_t(code));
 		}
 		const auto data = std::find(data_exports.begin(), data_exports.end(), exports[index]);
@@ -2483,7 +2249,13 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
 struct WindowCallScope {
 	NativeWindows &windows;
 	explicit WindowCallScope(NativeWindows &windows) : windows(windows) { windows.api_entered(); }
-	~WindowCallScope() { windows.api_left(); }
+	// What the call touched is published under the desktop lock, which a call that reaches no window, as a kernel call, did not take:
+	// other threads change their windows beside the turn meanwhile.
+	~WindowCallScope()
+	{
+		const DesktopScope desktop_scope;
+		windows.api_left();
+	}
 	WindowCallScope(const WindowCallScope &) = delete;
 	WindowCallScope &operator=(const WindowCallScope &) = delete;
 };
@@ -2574,6 +2346,58 @@ void write_native_api_inventory(const ModuleSet &modules, std::initializer_list<
 		}
 }
 
+// Starts the events the guest sets and resets itself (guest_events.h) where it can: with the agent's kernel gate, the kernel's ntsync
+// objects, a host thread for each guest thread and more than one processor (on one, the thread a set wakes runs before the setter goes
+// on, which the runtime arranges: see NativeThreads::hand_over_to). The table's address goes where the event preludes read it, among
+// `places`, which are cleared when the process ends. RAVEN_GUEST_EVENTS=0 leaves every set to the runtime.
+static void start_guest_events([[maybe_unused]] NativeProcess &process, [[maybe_unused]] ModuleSet &modules, [[maybe_unused]] std::vector<uint8_t *> &places)
+{
+#ifndef __APPLE__
+	const char *const wanted = std::getenv("RAVEN_GUEST_EVENTS");
+	if ((wanted && std::string_view(wanted) == "0") || !process.parallel() || !process.kernel_gate() || !raven_waits_kernel(kernel_waits()) ||
+		NativeThreads::one_processor())
+		return;
+	std::vector<NativeProcess::GuestWindow> windows;
+	std::vector<uint8_t *> pointers;
+	for (const auto &[module_key, module] : modules.all()) {
+		if (!module->runtime_api)
+			continue;
+		const std::string_view module_name = module_key.starts_with("system32-") ? std::string_view(module_key).substr(9) : std::string_view(module_key);
+		for (const auto &symbol : module->exports)
+			if (symbol.address && !symbol.names.empty() && symbol.forwarder.empty() && guest_event_api(module_name, symbol.names.at(0)) &&
+				placed_block_prelude(module->loaded.data(), module_name, symbol.names.at(0), symbol.address)) {
+				auto image = module->loaded.data();
+				int32_t displacement = 0;
+				std::memcpy(&displacement, image.data() + symbol.address + 3, 4);
+				pointers.push_back(image.data() + symbol.address + 7 + displacement);
+				windows.push_back(event_window(module->loaded.base() + symbol.address, symbol.names.at(0) == "SetEvent"));
+			}
+	}
+	if (windows.empty())
+		return;
+	const int file = memfd_create("raven-guest-events", MFD_CLOEXEC);
+	if (file < 0 || ftruncate(file, off_t(GuestEvents::size)) != 0)
+		throw std::runtime_error("cannot create the guest events table");
+	auto *const table = static_cast<uint8_t *>(mmap(nullptr, GuestEvents::size, PROT_READ | PROT_WRITE, MAP_SHARED, file, 0));
+	if (table == MAP_FAILED)
+		throw std::runtime_error("cannot map the guest events table");
+	const uint64_t guest = process.map_shared(file, GuestEvents::size);
+	close(file);
+	const uint64_t gate = process.kernel_gate();
+	std::memcpy(table + GuestEvents::gate, &gate, 8);
+	NativeProcess::set_guest_windows(std::move(windows), gate, [table, guest](uint64_t slot) {
+		if (slot >= guest + GuestEvents::header && slot < guest + GuestEvents::size)
+			std::atomic_ref(*reinterpret_cast<uint32_t *>(table + (slot - guest) + GuestEvents::slot_users)).fetch_sub(1, std::memory_order_acq_rel);
+	});
+	GuestEvents::activate(std::make_unique<GuestEvents>(table, [&process](int descriptor) { return process.hand_descriptor(descriptor); },
+		[&process](int descriptor) { process.drop_descriptor(descriptor); }));
+	for (auto *const pointer : pointers) {
+		std::memcpy(pointer, &guest, 8);
+		places.push_back(pointer);
+	}
+#endif
+}
+
 NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	const std::string &bootstrap, std::chrono::milliseconds timeout,
 	std::function<std::optional<ModuleBytes>(std::string_view)> source,
@@ -2645,6 +2469,14 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	// Natives that the shared API registry implements.
 	for (const auto name : {"NtSetInformationThread", "NtQuerySemaphore", "ZwQuerySemaphore", "NtOpenThreadToken", "NtOpenThreadTokenEx", "NtOpenThread", "NtOpenProcess", "NtOpenProcessToken", "NtOpenProcessTokenEx", "NtCompareTokens", "NtQueryInformationProcess", "NtReadVirtualMemory", "NtWriteVirtualMemory", "NtQuerySection", "NtFlushInstructionCache", "RtlAddGrowableFunctionTable", "RtlGrowFunctionTable", "RtlDeleteGrowableFunctionTable",
 		"NtWriteFile", "NtQueryDirectoryFile", "ZwQueryDirectoryFile", "RtlNtStatusToDosError", "NtQueryObject", "NtMapViewOfSection", "NtUnmapViewOfSection",
+		"NtPowerInformation", "ZwPowerInformation",
+		"NtCreateIoCompletion", "NtAllocateReserveObject", "NtSetIoCompletionEx", "NtRemoveIoCompletionEx", "NtCreateWaitCompletionPacket",
+		"NtAssociateWaitCompletionPacket", "NtCancelWaitCompletionPacket",
+		"AlpcGetHeaderSize", "AlpcGetMessageAttribute", "AlpcInitializeMessageAttribute", "NtAlpcCreatePort",
+		"NtAlpcAcceptConnectPort", "NtAlpcConnectPort", "NtAlpcDisconnectPort", "NtAlpcSendWaitReceivePort", "NtAlpcImpersonateClientOfPort",
+		"NtAlpcQueryInformation",
+		"RtlQueryInformationActiveActivationContext", "RtlReleaseActivationContext",
+		"RtlActivateActivationContextUnsafeFast", "RtlDeactivateActivationContextUnsafeFast",
 		"RtlAcquireSRWLockExclusive", "RtlAcquireSRWLockShared", "RtlWakeConditionVariable", "RtlWakeAllConditionVariable", "RtlWaitOnAddress",
 		"RtlWakeAddressSingle", "RtlWakeAddressAll",
 		// The system timer's resolution, which games request at startup.
@@ -2664,6 +2496,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"RtlReleaseSRWLockExclusive", "RtlReleaseSRWLockShared",
 		// What an open file and its volume are, which paint.net's file system layer looks up at run time.
 		"NtQueryInformationFile", "NtQueryVolumeInformationFile",
+		// What libuv, the event loop of Node.js and Electron, looks up when it starts and does not run without.
+		"NtDeviceIoControlFile", "NtSetInformationFile",
 		// What the runtime's own components import from ntdll, which they need whether a program loads them at start or later.
 		"DbgPrint", "NtCancelIoFileEx", "NtDeviceIoControlFile", "NtOpenDirectoryObject", "NtQueryDirectoryObject",
 		"RtlDosPathNameToNtPathName_U_WithStatus", "NtCancelIoFile", "NtCreateSection", "NtFsControlFile", "NtReadFile", "RtlCreateUnicodeStringFromAsciiz", "RtlFreeHeap",
@@ -2673,6 +2507,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"RtlFormatCurrentUserKeyPath", "RtlGetLastNtStatus",
 		// What a browser installer looks up about the machine it runs on.
 		"RtlGetDeviceFamilyInfoEnum", "RtlConvertDeviceFamilyInfoToString",
+		// What the core messaging runtime of the Windows App SDK asks before it names its objects.
+		"RtlGetAppContainerNamedObjectPath",
 		// The unwinding of 64-bit frames, which libraries built with their own exception handling import.
 		"RtlCaptureContext", "RtlLookupFunctionEntry", "RtlPcToFileHeader", "RtlVirtualUnwind", "RtlUnwindEx",
 		// What the .NET runtime imports from ntdll: the function tables of the code it compiles, and the restoring of a context.
@@ -2690,6 +2526,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		"NtCreateKeyedEvent", "NtOpenKeyedEvent",
 		// Looked up by diagnostics code that records where a call came from.
 		"RtlCaptureStackBackTrace",
+		// The libraries unloaded last, which Steam's interface library imports from ntdll.
+		"RtlGetUnloadEventTrace", "RtlGetUnloadEventTraceEx",
 		// What the virtualization layer of Click-to-Run Office imports from ntdll: more of the registry and the objects, counted strings,
 		// file name expressions, and the generic tables, which the guest RTL holds.
 		"NtDuplicateObject", "NtEnumerateKey", "NtEnumerateValueKey", "NtFlushKey", "NtNotifyChangeKey", "NtNotifyChangeMultipleKeys",
@@ -2864,7 +2702,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				{"kernel32.dll", "raven-rtl.dll", "raven-rtl."}, {"kernelbase.dll", "raven-rtl.dll", "raven-rtl."},
 				// The generic AVL tables, critical sections, SRW locks, frame unwinding and the growth of code generators' function tables
 				// of ntdll; its heap stays with the host, which calls the guest RTL itself.
-				{"ntdll.dll", "raven-rtl.dll", "raven-rtl."}};
+				{"ntdll.dll", "raven-rtl.dll", "raven-rtl."},
+				// COM's task allocator hands out the blocks of the process heap, which the guest RTL holds.
+				{"ole32.dll", "raven-rtl.dll", "raven-rtl."}, {"combase.dll", "raven-rtl.dll", "raven-rtl."}};
 			for (const auto &overlay_rule : overlays) {
 				if (name != overlay_rule.library)
 					continue;
@@ -2873,7 +2713,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				if (overlay == modules.all().end() || overlay->second->runtime_api)
 					continue;
 				for (auto &symbol : provider->exports)
-					if (!symbol.names.empty() && !host_device_export(name, symbol.names.at(0)) && (!nt_only || symbol.names.at(0).find("GenericTable") != std::string::npos || symbol.names.at(0).find("CriticalSection") != std::string::npos || symbol.names.at(0).find("SRWLock") != std::string::npos || symbol.names.at(0) == "RtlVirtualUnwind" || symbol.names.at(0) == "RtlGrowFunctionTable") && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
+					if (!symbol.names.empty() && !host_device_export(name, symbol.names.at(0)) && (!nt_only || symbol.names.at(0).find("GenericTable") != std::string::npos || symbol.names.at(0).find("CriticalSection") != std::string::npos || symbol.names.at(0).find("SRWLock") != std::string::npos || symbol.names.at(0).find("ConditionVariable") != std::string::npos || symbol.names.at(0) == "RtlVirtualUnwind" || symbol.names.at(0) == "RtlGrowFunctionTable") && std::any_of(overlay->second->exports.begin(), overlay->second->exports.end(), [&](const auto &candidate) {
 							return candidate.forwarder.empty() && std::find(candidate.names.begin(), candidate.names.end(), symbol.names.at(0)) != candidate.names.end();
 						}))
 						symbol.forwarder = overlay_rule.prefix + symbol.names.at(0);
@@ -2920,6 +2760,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 					if (image.runtime_api) {
 						if (const uint32_t number = nt_service_number("ntdll.dll", name)) {
 							generated_services.emplace(number, "Nt" + name.substr(2));
+							// The breakpoint of the stub behind the service: a call the host thread does not answer in the block stops there.
+							if (call_stubs() && stub_at(image.loaded.data(), uint32_t(symbol.address + service_stub)))
+								traps.emplace(image.loaded.base() + symbol.address + service_stub + served_trap, "Nt" + name.substr(2));
 							continue;
 						}
 						traps.emplace(api_trap_address(image,"ntdll.dll",name,symbol.address),name.starts_with("Zw") ? "Nt"+name.substr(2) : name);
@@ -2947,6 +2790,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			traps.emplace(api_trap_address(*modules.all().at("vulkan-1.dll"), "vulkan-1.dll", symbol.names.at(0), symbol.address),
 				symbol.names.at(0));
 #endif
+	const auto import_probes = add_import_probes(modules, false);
 	alias_api_sets(modules);
 	modules.bind_imports();
 	auto order = initialization_order(modules, entry);
@@ -2979,6 +2823,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			api_traps.emplace_hint(api_traps.end(), address, NativeProcess::ApiTrap{0, offset + 1 < bytes->size() && (*bytes)[offset + 1] == 0xc3});
 		}
 	}
+	for (const auto &[address, name] : import_probes)
+		api_traps.emplace(address, NativeProcess::ApiTrap{0, false});
 	// Stubs of exports forwarded to a component keep their breakpoint; trapping them lets callers that read the export table directly
 	// reach the component's implementation with their own stack frame intact.
 	std::unordered_map<uint64_t, uint64_t> forwarded_traps;
@@ -3093,9 +2939,12 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	desktop.set_updated([&](uint64_t window,const DesktopRect *area) { windows.drawing(window,area); });
 #ifdef RAVEN_VULKAN
 	VulkanBridge vulkan(process, modules);
-	vulkan.set_surface_source({[&windows](uint64_t window) { return windows.host_surface(window,true); },
-		[&windows](uint64_t window) { windows.release_host_surface(window); },
-		[&windows](uint64_t window) { return windows.client_size(window); }, [&windows](uint64_t window) { return windows.shown(window); },
+	// The bridge asks for a window's surface from calls served beside the turn and from its present threads too: each takes the desktop
+	// lock.
+	vulkan.set_surface_source({[&windows](uint64_t window) { const DesktopScope desktop_scope; return windows.host_surface(window,true); },
+		[&windows](uint64_t window) { const DesktopScope desktop_scope; windows.release_host_surface(window); },
+		[&windows](uint64_t window) { const DesktopScope desktop_scope; return windows.client_size(window); },
+		[&windows](uint64_t window) { const DesktopScope desktop_scope; return windows.shown(window); },
 		windows.host_platform()});
 #endif
 	const auto remaining = [&] { return std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()); };
@@ -3104,6 +2953,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	NativeThreads *threads_ptr=nullptr;
 	auto last_service=std::chrono::steady_clock::now();
 	const auto invoke = [&](uint64_t address, std::span<const uint64_t> arguments) {
+		// The guest code runs without the desktop lock, as Windows leaves USER over a callback; the calls it makes take it again.
+		const DesktopRelease desktop_release;
 		auto budget = remaining();
 		if (budget.count() <= 0)
 			return NativeResult{NativeStop::timeout, 0, address, 0};
@@ -3208,6 +3059,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 					service_name = &generated->second;
 				else
 					return result;
+				CallCycles::instance().name_service(result.value, *service_name);
 				process.enter_nt_service(result.instruction, uint32_t(result.value));
 			}
 			if (!service_name)
@@ -3223,8 +3075,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 					continue;
 				}
 			const auto found = traps.find(result.value);
-			if (!service_name && found == traps.end())
+			if (!service_name && found == traps.end()) {
+				trace_import_probe(import_probes, modules, process, result.value, false);
 				return result;
+			}
 			const auto &api_name = service_name ? *service_name : found->second;
 			// Any call may post, send or draw, and the guest then asks the runtime again at its next poll of the queue, but for the polls
 			// themselves and calls that leave every queue as it is: waits (a message that arrives meanwhile clears the slot), waitable
@@ -3236,8 +3090,6 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				"GetActiveWindow", "GetKeyState", "GetAsyncKeyState", "GetCapture", "GetFocus", "GetCursorPos", "ReleaseMutex",
 				"EventProviderEnabled", "GetSystemTimeAsFileTime", "GetSystemTimePreciseAsFileTime", "GetProcAddress", "FindResourceW",
 				"GetCurrentInputMessageSource", "GetWindowThreadProcessId", "GetClassNameW", "GetClassLongPtrW", "GetClassLongW"};
-			if (!keep_quiet.contains(api_name))
-				windows.wake(environment.thread_id());
 			// A waiting thread's condition is looked at again after any call but those that end no wait, which say so here: they ask for
 			// state, draw, or work on memory, and they are most of what a program calls.
 			static const std::unordered_set<std::string_view> inert{"GetWindowThreadProcessId", "GetKeyState", "GetAsyncKeyState", "LPtoDP",
@@ -3259,6 +3111,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				"IsProcessorFeaturePresent", "RavenCanvasPixels", "RavenCanvasCreate", "RavenCanvasSize", "RavenCanvasBounds",
 				"RavenCanvasBatch", "GetKeyboardState", "GetQueueStatus", "GetInputState", "GetMessageTime", "GetMessagePos",
 				"GetDoubleClickTime", "GetMonitorInfoW", "MonitorFromWindow", "MonitorFromPoint", "MonitorFromRect"};
+			// Nor do the calls that read state or draw, nor changes of a window's own data and properties or taking its contexts: they put
+			// nothing in a queue, and a window they leave needing paint wakes its thread itself (see NativeWindows::set_tell).
+			if (!keep_quiet.contains(api_name) && !inert.contains(api_name) &&
+				!window_call(api_name, process.api_arguments(2), std::as_const(desktop_objects)))
+				windows.wake(environment.thread_id());
 			if (threads_ptr && (inert.contains(api_name) || api_name.starts_with("vkCmd") || api_name.starts_with("gl")))
 				threads_ptr->quiet_call();
 			// ntdll's RtlExitUserProcess is the ExitProcess of programs that do without kernel32.
@@ -3274,9 +3131,19 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				if (trace_time)
 					std::cerr << "t=" << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() << ' ';
 				std::cerr << "api " << api_name << '(' << std::hex;
-				// RAVEN_TRACE_ARGS widens the argument list shown (the default is the four register arguments).
+				// RAVEN_TRACE_ARGS widens the argument list shown (the default is the four register arguments), up to what the call takes
+				// where that is known. A call near the top of its stack has no more there to read: it shows its register arguments.
 				const char *width = std::getenv("RAVEN_TRACE_ARGS");
-				for (const auto value : process.api_arguments(width ? std::clamp(std::atoi(width), 1, 12) : 4))
+				size_t shown = width ? size_t(std::clamp(std::atoi(width), 1, 12)) : 4;
+				if (const auto known = api_registry.find(api_name))
+					shown = std::min<size_t>(shown, std::max<uint32_t>(known->first, 4));
+				std::vector<uint64_t> arguments;
+				try {
+					arguments = process.api_arguments(shown);
+				} catch (const std::runtime_error &) {
+					arguments = process.api_arguments(4);
+				}
+				for (const auto value : arguments)
 					std::cerr << ' ' << value;
 				std::cerr << std::dec << " )";
 				if (std::getenv("RAVEN_TRACE_STRINGS"))
@@ -3328,9 +3195,18 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			}
 			bool dispatched;
 			api_in_progress = api_name.c_str();
-			windows.apply_dc_log();
-			windows.take_deferred([&desktop](uint32_t operation, uint64_t handle) { desktop.apply_deferred(operation, handle); });
-			windows.screen_dc_use(api_name);
+			// A Vulkan call takes the desktop lock itself where it reaches a window (see set_surface_source): it waits for the device
+			// and for the bridge's own threads, which take the lock too, so it neither holds the lock nor takes it for the desktop's
+			// bookkeeping, which the next call that reaches the desktop does.
+			// A wait, a thread or a synchronization object is the kernel's alone: holding the desktop through it would keep the threads
+			// that draw beside the turn waiting (see ApiRegistry::set_kernel).
+			// A call that reaches no window or drawing is answered without the desktop lock, as one beside the turn is: the process's
+			// own state (its environment, modules, resources, memory, objects and heaps) and the runtime's registry, whose handlers reach
+			// the desktop only through the kernel's hooks, which take the lock themselves (see ApiRegistry::set_desktop).
+			const bool graphics_call = api_name.starts_with("vk"), kernel_call = api_registry.kernel(api_name);
+			const bool own_first = !graphics_call && !kernel_call && !desktop_api.has(api_name);
+			const bool own_call = own_first && api_registry.has(api_name) && !api_registry.desktop(api_name);
+			std::optional<DesktopScope> desktop_scope;
 			const auto profile_start = RuntimeProfile::instance().enabled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 			static const bool trace_failures = std::getenv("RAVEN_TRACE_FAIL");
 			const auto error_before = trace_failures ? environment.last_error() : 0;
@@ -3338,18 +3214,36 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			try {
 				if (kernel_ptr && kernel_ptr->leave_abandoned_callbacks && process.callback_depth() > 0)
 					kernel_ptr->leave_abandoned_callbacks();
-				const WindowCallScope window_scope(windows);
-				// The generalized desktop services come first so that they replace the older narrow ones.
+				std::optional<WindowCallScope> window_scope;
+				const auto own_state = [&] {
+					return environment.dispatch(api_name) || module_api.dispatch(api_name) || resources.dispatch(api_name) || memory.dispatch(api_name) ||
+						object_api.dispatch(api_name) || heap.dispatch(api_name);
+				};
+				dispatched = own_first && (own_state() || (own_call && api_registry.dispatch(process, environment, api_name)));
+				if (!dispatched) {
+					if (!graphics_call && !kernel_call) {
+						desktop_scope.emplace();
+						CallCycles::instance().took_desktop();
+						windows.apply_dc_log();
+						windows.take_deferred([&desktop](uint32_t operation, uint64_t handle) { desktop.apply_deferred(operation, handle); });
+						windows.screen_dc_use(api_name);
+					}
+					if (!graphics_call)
+						window_scope.emplace(windows);
+					// The generalized desktop services come first so that they replace the older narrow ones; what the process's own state
+					// answers was asked already when the desktop's services do not know the call.
 #ifdef __APPLE__
-				if (darwin_unix_calls.dispatch(api_name))
-					dispatched = true;
-				else
+					if (darwin_unix_calls.dispatch(api_name))
+						dispatched = true;
+					else
 #endif
-				dispatched = desktop_api.dispatch(process, environment, api_name) || environment.dispatch(api_name) || module_api.dispatch(api_name) || resources.dispatch(api_name) || memory.dispatch(api_name) || object_api.dispatch(api_name) || heap.dispatch(api_name) || desktop.dispatch(api_name) || windows.dispatch(api_name) || api_registry.dispatch(process, environment, api_name)
+					dispatched = desktop_api.dispatch(process, environment, api_name) || (!own_first && own_state()) || desktop.dispatch(api_name) ||
+						windows.dispatch(api_name) || (!own_call && api_registry.dispatch(process, environment, api_name))
 #ifdef RAVEN_VULKAN
-					|| vulkan.dispatch(api_name)
+						|| vulkan.dispatch(api_name)
 #endif
-					;
+						;
+				}
 			} catch (const ExecutionRedirected &redirected) {
 				if (redirected.level!=level) throw;
 				budget=remaining();
@@ -3358,6 +3252,9 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				result=process.resume(budget);
 				continue;
 			}
+			// A surface released through the desktop's other handlers is unmapped as the call ends too (see NativeWindows::finish_call).
+			if (desktop_scope)
+				windows.finish_call();
 			// Calls that stopped the guest are counted apart from served ones: a stop costs far more than the call.
 			if (RuntimeProfile::instance().enabled() && profile_start != std::chrono::steady_clock::time_point{})
 				RuntimeProfile::instance().api((process.call_waiting() ? "(call) " : "(stop) ") + api_name, std::chrono::steady_clock::now() - profile_start);
@@ -3506,21 +3403,31 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	if (launch->process_token_fd >= 0)
 		kernel.process_token = std::make_shared<AccessToken>(launch->process_token_fd);
 	threads.set_watched([reactor = kernel.reactor](std::vector<pollfd> &descriptors) { reactor->watch(descriptors); });
+	kernel.reactor->set_watch_added([&threads](int descriptor, short events) { threads.watch_added(descriptor, events); });
 	windows.set_global_allocator([&allocator](uint64_t size) { return allocator.allocate(size,true); });
 	windows.set_global_data([&allocator](uint64_t handle) { return allocator.data(handle); });
-	kernel.queue_status=[&windows](uint32_t thread,uint32_t mask,bool clear) { return windows.queue_status(thread,mask,clear); };
-	kernel.queue_quiet=[&windows](uint32_t thread) { windows.mark_quiet(thread); };
+	// The scheduler looks at a waiting thread's condition after the thread gave the desktop lock up with the runtime: what looks at the
+	// windows' queues takes it again.
+	kernel.queue_status=[&windows](uint32_t thread,uint32_t mask,bool clear) {
+		const DesktopScope desktop_scope;
+		return windows.queue_status(thread,mask,clear);
+	};
+	kernel.queue_quiet=[&windows](uint32_t thread) { const DesktopScope desktop_scope; windows.mark_quiet(thread); };
+	kernel.present_frames=[&windows] { const DesktopScope desktop_scope; return windows.present_frames(); };
+	// Another process's message wakes a waiting thread when it lands, not at its next look.
+	set_foreign_nudge(threads.remote_nudge());
 	windows.set_block([&threads](std::function<bool()> ready) {
 		HostWait waiting;
-		threads.block(std::move(ready), std::nullopt, false, false, true);
+		threads.block([ready = std::move(ready)] { const DesktopScope desktop_scope; return ready(); }, std::nullopt, false, false, true);
 	});
 	windows.set_tell([&threads](uint32_t thread) { threads.tell(thread); });
-	threads.add_end_listener([&windows](uint32_t thread) { windows.thread_ended(thread); });
+	threads.add_end_listener([&windows](uint32_t thread) { const DesktopScope desktop_scope; windows.thread_ended(thread); });
 #ifdef RAVEN_VULKAN
-	vulkan.set_blocking([&threads](std::function<bool()> ready) {
+	vulkan.set_blocking([&threads](std::function<bool()> ready, std::optional<std::chrono::steady_clock::time_point> wake) {
 		HostWait waiting;
-		threads.block(std::move(ready), std::nullopt);
+		return threads.block(std::move(ready), wake);
 	}, [&threads] { threads.nudge(); });
+	vulkan.set_called_away([] { return NativeThreads::called_away_beside(); });
 #endif
 	// The block the served stubs of every runtime provider share, and which stub serves which name.
 	const int served_file = memfd_create("raven-served-calls", MFD_CLOEXEC);
@@ -3579,15 +3486,17 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			}
 #endif
 			// The clock and the tick counts only read calibration; their pointers are safe while other threads run.
-			const auto *prelude = symbol.address && !symbol.names.empty() && symbol.forwarder.empty() ? block_prelude(module_name, symbol.names.at(0)) : nullptr;
-			if (symbol.address && !symbol.names.empty() && symbol.forwarder.empty() &&
+			const auto *prelude = symbol.address && !symbol.names.empty() && symbol.forwarder.empty() ?
+				placed_block_prelude(module->loaded.data(), module_name, symbol.names.at(0), symbol.address) : nullptr;
+			if (symbol.address && !symbol.names.empty() && symbol.forwarder.empty() && !guest_event_api(module_name, symbol.names.at(0)) &&
 #ifdef __APPLE__
 				(guest_clock_api(module_name, symbol.names.at(0)) || prelude == &tick_prelude() ||
 					(!process.parallel() && !(bypass_commits && guest_locked_commit_api(module_name, symbol.names.at(0))) && prelude) ||
 #else
 				(guest_clock_api(module_name, symbol.names.at(0)) || prelude == &tick_prelude() || (!process.parallel() && prelude) ||
 #endif
-					(process.parallel() && answer_wrapper_at(module->loaded.data(), symbol.address))) &&
+					(process.parallel() && answer_wrapper_at(module->loaded.data(), symbol.address)) ||
+					(process.parallel() && prelude && self_checked_api(module_name, symbol.names.at(0)))) &&
 				served_stub_rva(module->loaded.data(), module_name, symbol.names.at(0), symbol.address) != symbol.address) {
 				auto image = module->loaded.data();
 				int32_t displacement = 0;
@@ -3631,12 +3540,43 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			// stopped, which only the thread's own host thread can do.
 			if (call_stubs() && process.parallel()) {
 				called_stubs.push_back(module->loaded.base() + stub);
+				if (beside_api(module_name, symbol.names.at(0)))
+					beside_names.emplace(module->loaded.base() + stub, symbol.names.at(0));
 				std::array<uint8_t, 7> previous{};
 				std::copy_n(image.data() + stub + served_tail, previous.size(), previous.begin());
 				served_pointers.tails.emplace_back(image.data() + stub + served_tail, previous);
 				std::copy(served_stub::asked_tail().begin(), served_stub::asked_tail().end(), image.data() + stub + served_tail);
 			}
 		}
+	}
+	// A service's entry leads to a stub its thread's host thread answers, as the other calls' stubs. The services that act on the
+	// thread's registers keep the system call, as their calls keep the breakpoint.
+	uint64_t timed_service_return = 0;
+	if (const auto ntdll = modules.all().find("ntdll.dll"); ntdll != modules.all().end() && ntdll->second->runtime_api) {
+		std::map<uint32_t, uint64_t> entered;
+		if (call_stubs() && process.parallel())
+			for (const auto &symbol : ntdll->second->exports) {
+				if (!symbol.address || symbol.names.empty() || !symbol.forwarder.empty())
+					continue;
+				const uint32_t number = nt_service_number("ntdll.dll", symbol.names.at(0));
+				const std::string service = number ? "Nt" + symbol.names.at(0).substr(2) : std::string();
+				auto image = ntdll->second->loaded.data();
+				const auto stub = uint32_t(symbol.address + service_stub);
+				if (!number || changes_context(service) || entered.contains(number) || !stub_at(image, stub))
+					continue;
+				std::array<uint8_t, 12> previous{};
+				std::copy_n(image.data() + stub, previous.size(), previous.begin());
+				served_pointers.entries.emplace_back(image.data() + stub, previous);
+				std::copy(served_stub::local_block().begin(), served_stub::local_block().end(), image.data() + stub);
+				const uint64_t address = ntdll->second->loaded.base() + stub;
+				entered.emplace(number, address);
+				called_stubs.push_back(address);
+				if (cycles_named)
+					stub_names.emplace(address, service);
+				if (beside_api("ntdll.dll", service))
+					beside_names.emplace(address, service);
+			}
+		timed_service_return = map_service_page(process, entered);
 	}
 	if (cycles_named) {
 		stub_names.insert(served_names.begin(), served_names.end());
@@ -3673,11 +3613,21 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				if (symbol.address && !symbol.names.empty() && symbol.forwarder.empty() && (module_name == "user32.dll" || module_name == "ntdll.dll" ||
 						(module_name == "gdi32.dll" && (symbol.names.at(0) == "RectInRegion" ||
 						symbol.names.at(0) == "PtInRegion" || symbol.names.at(0) == "GetRgnBox"))))
-					if (const auto *prelude = block_prelude(module_name, symbol.names.at(0)); prelude && prelude != &screen_release_dc_prelude() &&
+					if (const auto *prelude = placed_block_prelude(module->loaded.data(), module_name, symbol.names.at(0), symbol.address);
+						prelude && prelude != &screen_release_dc_prelude() &&
 						served_stub_rva(module->loaded.data(), module_name, symbol.names.at(0), symbol.address) != symbol.address)
 						for (uint64_t piece = 0; piece < prelude->size(); piece += served_trap)
 							served_stubs.push_back(module->loaded.base() + symbol.address + piece);
 		}
+	start_guest_events(process, modules, served_pointers.places);
+	// The guest's events leave with the process: the next one in this runtime starts without them.
+	struct GuestEventsEnd {
+		~GuestEventsEnd()
+		{
+			NativeProcess::set_guest_windows({}, 0, {});
+			GuestEvents::activate(nullptr);
+		}
+	} guest_events_end;
 #ifdef __APPLE__
 	memory.set_commit_block(bypass_commits ? nullptr : served_block);
 #else
@@ -3700,7 +3650,15 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	const uint64_t table_guest = process.map_shared(table_file, table_size);
 	close(table_file);
 	windows.set_window_table(table);
-	process.set_resume_hook([&windows] { windows.publish_windows(); });
+	// Every change to the desktop is made under its lock, and the guest's drawing log is the one thing written beside it: with neither
+	// since the last publish there is nothing to write, and a thread that only draws with Vulkan does not take the lock at all.
+	process.set_resume_hook([&windows, published = std::make_shared<std::atomic<uint64_t>>(0)] {
+		if (desktop_lock().entries() == published->load(std::memory_order_acquire) && !windows.drawing_logged())
+			return;
+		const DesktopScope desktop_scope;
+		published->store(desktop_lock().entries(), std::memory_order_release);
+		windows.publish_windows();
+	});
 	__atomic_store_n(&served_block[window_table / 8], table_guest, __ATOMIC_RELEASE);
 	// The locale table follows the window table.
 	const auto locales = locale_table();
@@ -3749,8 +3707,32 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	windows.set_key_table(table + keys_at);
 	__atomic_store_n(&served_block[key_pointer / 8], table_guest + keys_at, __ATOMIC_RELEASE);
 	process.set_call_stubs(std::move(called_stubs));
-	// Setting or resetting an event no thread waits for in the table needs nothing of the runtime: the host thread answers it outside the
-	// turn, and threads that set events of their own go side by side. The threads that wait in the runtime, and one that began to wait
+	// Reading an event's state needs nothing of the runtime either, and ntdll's export for it is a system call: that is answered beside
+	// the turn where it stopped. One made from anywhere else goes the usual way, which checks the instruction.
+	if (const auto ntdll = modules.all().find("ntdll.dll"); process.parallel() && ntdll != modules.all().end() && ntdll->second->runtime_api) {
+		const uint32_t number = nt_service_number("ntdll.dll", "NtQueryEvent");
+		const auto after_syscall = uint64_t(raven_nt_syscall_return - raven_nt_syscall);
+		std::vector<uint64_t> returns;
+		for (const auto &symbol : ntdll->second->exports)
+			if (symbol.address && symbol.forwarder.empty())
+				for (const auto &name : symbol.names)
+					if (nt_service_number("ntdll.dll", name) == number)
+						returns.push_back(ntdll->second->loaded.base() + symbol.address + after_syscall);
+		// With RAVEN_CYCLES the exports make the system call in the timed routine.
+		if (!returns.empty() && timed_service_return)
+			returns.push_back(timed_service_return);
+		if (!returns.empty()) {
+			CallCycles::instance().name_service(number, "NtQueryEvent");
+			process.set_concurrent_service([&process, &kernel_objects, number, returns](uint64_t after, uint64_t called,
+				const uint64_t *arguments) -> std::optional<uint64_t> {
+				if (called != number || std::find(returns.begin(), returns.end(), after) == returns.end())
+					return std::nullopt;
+				return NativeObjectAPI::query_alone(process, kernel_objects, arguments);
+			});
+		}
+	}
+	// Setting or resetting an event of the table needs nothing of the runtime: the host thread answers it outside the turn, and threads
+	// that set events of their own go side by side. On one processor alone a set an outside waiter awaits takes the turn to hand it over. The threads that wait in the runtime, and one that began to wait
 	// meanwhile, are looked at again as after any other change. A wait for an event of the table that is set is taken there beside the
 	// others too; one that would block, or report an error, goes the usual way.
 	enum class EventCall { reset, set, wait, wait_ex };
@@ -3764,6 +3746,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	for (const auto &[stub, name] : served_names)
 		if (name == "WakeByAddressSingle" || name == "WakeByAddressAll" || name == "RtlWakeAddressSingle" || name == "RtlWakeAddressAll")
 			address_stubs.emplace_back(stub, name.ends_with("All"));
+	// And waiting on an address: the host thread sleeps there while its guest spins in its stub, and a wake beside the turn ends it.
+	std::vector<uint64_t> address_wait_stubs;
+	for (const auto &[stub, name] : served_names)
+		if (name == "RtlWaitOnAddress")
+			address_wait_stubs.push_back(stub);
 	// Releasing a semaphore the table keeps goes beside the others too, when no previous count is asked for: the table has a lock of its
 	// own, and a release it refuses changed nothing, so the usual way answers it with the error.
 	std::vector<uint64_t> semaphore_stubs;
@@ -3780,15 +3767,34 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		if (name == "WaitForMultipleObjects" || name == "WaitForMultipleObjectsEx")
 			multiple_stubs.emplace_back(stub, name == "WaitForMultipleObjectsEx");
 	}
-	if (process.parallel() && (!event_stubs.empty() || !address_stubs.empty() || !semaphore_stubs.empty() || !mutex_stubs.empty() ||
-		!beside_names.empty()))
+	// Vulkan's recording calls beside the turn: the bridge's handler runs on the calling thread's own state, sharing the bridge's tables
+	// with the other threads that record (see VulkanBridge::dispatch_beside). A call that fails to decode goes the usual way, which
+	// reports it; the driver has not been called then.
+	std::function<std::optional<uint64_t>(const std::string &, const uint64_t *)> graphics_beside;
+#ifdef RAVEN_VULKAN
+	graphics_beside = [&process, &vulkan](const std::string &name, const uint64_t *arguments) -> std::optional<uint64_t> {
+		bool known = false;
+		try {
+			const auto result = process.serve_beside({arguments[0], arguments[1], arguments[2], arguments[3]},
+				{arguments[5], arguments[6], arguments[7], arguments[8]}, arguments[4] + 40, [&] { known = vulkan.dispatch_beside(name); });
+			return known ? std::optional<uint64_t>(result) : std::nullopt;
+		} catch (...) {
+			return std::nullopt;
+		}
+	};
+#endif
+	if (process.parallel() && (!event_stubs.empty() || !address_stubs.empty() || !address_wait_stubs.empty() || !semaphore_stubs.empty() ||
+		!mutex_stubs.empty() || !beside_names.empty()))
 		process.set_concurrent_served([&process, &environment, &api_registry, &threads, &kernel_objects, &kernel, &memory, event_stubs, address_stubs,
-			semaphore_stubs, mutex_stubs, multiple_stubs, beside_names](uint64_t stub, const uint64_t *arguments) -> std::optional<uint64_t> {
+			address_wait_stubs, semaphore_stubs, mutex_stubs, multiple_stubs, beside_names, &windows, &desktop_objects, &desktop_api, graphics_beside](uint64_t stub,
+			const uint64_t *arguments) -> std::optional<uint64_t> {
 			// A call of a subsystem with a lock of its own runs its usual handler here; the arguments past the four in registers are on the
 			// guest's stack above their home space.
 			if (const auto named = beside_names.find(stub); named != beside_names.end()) {
 				// The page record of an address, written where the guest asked; any other case (a short buffer, an address the accounting
 				// does not answer for, a buffer it cannot write) goes the usual way, which reports the error.
+				if (named->second == "VirtualAlloc" || named->second == "VirtualFree" || named->second == "VirtualProtect")
+					return memory.serve_alone(named->second, arguments);
 				if (named->second == "VirtualQuery") {
 					if (arguments[2] < 48)
 						return std::nullopt;
@@ -3801,7 +3807,13 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 					}
 					return 48;
 				}
-				const auto entry = api_registry.find(named->second);
+				if (named->second == "NtQueryEvent")
+					return NativeObjectAPI::query_alone(process, kernel_objects, arguments);
+				if (named->second.starts_with("vk"))
+					return graphics_beside ? graphics_beside(named->second, arguments) : std::nullopt;
+				// The window manager's handlers are the desktop's registry; the others are the runtime's.
+				const bool desktop_call = desktop_beside_api(named->second) || gdi_beside_api(named->second);
+				const auto entry = (desktop_call ? desktop_api : api_registry).find(named->second);
 				if (!entry)
 					return std::nullopt;
 				const uint32_t count = entry->first;
@@ -3812,6 +3824,67 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 						return std::nullopt;
 				}
 				words.resize(count);
+				// A change of the desktop's state holds its lock, and what it changed is published as the call ends, for the guest's
+				// own answers to read.
+				if (desktop_call && named->second.starts_with("SetWindowLong")) {
+					const int32_t index = int32_t(uint32_t(words[1]));
+					if (index < 0 && index != -21 && index != -12)
+						return std::nullopt;
+				}
+				// Drawing that changes nothing but the pixels of memory contexts, and calls on one window of the process's, run under the
+				// shared desktop lock with the stripes of what they work on (see drawing_objects and window_call).
+				if (desktop_call) {
+					const DesktopSharedScope shared;
+					const bool logged = windows.dc_logged() || windows.drawing_logged();
+					// A peek that needs nothing of the whole desktop leaves the other threads' calls running (see
+					// NativeWindows::peek_shared).
+					if (named->second == "PeekMessageW" && !logged) {
+						ApiCall call(process, environment, std::vector<uint64_t>(words));
+						call.alone = true;
+						try {
+							if (const auto answer = windows.peek_shared(words, [&call](uint64_t address, std::span<const uint8_t> bytes) {
+									call.write(address, bytes);
+								}))
+								return answer;
+						} catch (...) {
+							return std::nullopt;
+						}
+					}
+					auto handles = logged ? std::nullopt :
+						drawing_objects(named->second, words, std::as_const(desktop_objects), windows.published_screen_dc());
+					const auto window = logged || handles ? std::nullopt : window_call(named->second, words, std::as_const(desktop_objects));
+					if (window)
+						handles = std::vector<uint64_t>{window->window, window->context};
+					if (handles) {
+						const DesktopStripes stripes(*handles);
+						ApiCall call(process, environment, std::move(words));
+						call.alone = true;
+						try {
+							entry->second(call);
+						} catch (...) {
+							return std::nullopt;
+						}
+						// The guest answers reads of the window's data and of its contexts from their records, which show the change before the
+						// call returns.
+						if (window) {
+							windows.publish_window_alone(window->window);
+							if (window->context || (window->takes_context && call.result))
+								windows.publish_dc_alone(window->context ? window->context : call.result);
+						}
+						return call.result;
+					}
+				}
+				std::optional<DesktopScope> desktop_scope;
+				std::optional<WindowCallScope> window_scope;
+				if (desktop_call) {
+					desktop_scope.emplace();
+					CallCycles::instance().took_whole();
+					// The contexts' state the guest changed by itself comes in first, as in the turn; deferred releases wait for a stop
+					// of the guest, as for a call answered through its stub.
+					windows.apply_dc_log();
+					windows.screen_dc_use(named->second, words.empty() ? 0 : words[0]);
+					window_scope.emplace(windows);
+				}
 				ApiCall call(process, environment, std::move(words));
 				call.alone = true;
 				try {
@@ -3819,6 +3892,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				} catch (...) {
 					return std::nullopt;
 				}
+				if (desktop_scope)
+					windows.finish_call();
 				return call.result;
 			}
 			// The object of the process's table behind a handle the thread may wait on: an event, a semaphore or a mutex. 0 for any
@@ -3908,6 +3983,20 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				kernel.wake_address_beside(arguments[0], address->second);
 				return 0;
 			}
+			if (std::find(address_wait_stubs.begin(), address_wait_stubs.end(), stub) != address_wait_stubs.end()) {
+				// A size or a time-out the wait cannot read goes the usual way, which reports it.
+				const size_t size = arguments[2];
+				uint8_t expected[8];
+				int64_t timeout = 0;
+				if (!kernel.wait_address_beside || (size != 1 && size != 2 && size != 4 && size != 8) ||
+					!process.read_alone(arguments[1], expected, size) || (arguments[3] && !process.read_alone(arguments[3], &timeout, sizeof timeout)))
+					return std::nullopt;
+				const auto woken = kernel.wait_address_beside(arguments[0], std::span(expected, size),
+					arguments[3] ? std::optional<int64_t>(timeout) : std::nullopt);
+				if (!woken)
+					return std::nullopt;
+				return *woken ? 0 : 0x102;
+			}
 			const auto found = std::find_if(event_stubs.begin(), event_stubs.end(), [stub](const auto &entry) { return entry.first == stub; });
 			if (found == event_stubs.end())
 				return std::nullopt;
@@ -3924,9 +4013,14 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			const auto event = kernel_objects.event_alone(arguments[0]);
 			if (!event)
 				return std::nullopt;
-			// An event outside the table (one shared with other processes) has its waiters on its word or in the runtime.
+			if (event->offer_due()) {
+				GuestEvents::active()->left_to_turn.fetch_add(1, std::memory_order_relaxed);
+				return std::nullopt;
+			}
+			// An event outside the table (one shared with other processes) has its waiters on its word or in the runtime. One a thread
+			// waits for outside the runtime is set here too unless the process has one processor, where the turn hands over to the thread.
 			const uint32_t object = event->table_object();
-			if ((object && !threads.quiet_for(object)) || event->set_state(found->second == EventCall::set) < 0)
+			if ((object && NativeThreads::one_processor() && !threads.quiet_for(object)) || event->set_state(found->second == EventCall::set) < 0)
 				return std::nullopt;
 			threads.signaled();
 			if (threads.waiting_in_runtime() || (object && !threads.quiet_for(object)))
@@ -3939,11 +4033,20 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			throw std::runtime_error("a served call came from an unknown stub");
 		const ServedThreadScope thread_scope(environment, process.serving_teb());
 		api_in_progress = found->second.c_str();
-		// Deferred releases wait for a stop of the guest: releasing a DIB section unmaps guest memory, which a running guest cannot have
-		// done to it.
-		windows.apply_dc_log();
-		windows.screen_dc_use(found->second);
-		const WindowCallScope window_scope(windows);
+		// A Vulkan call leaves the desktop alone, as in the trap path.
+		const bool graphics_call = found->second.starts_with("vk"), kernel_call = api_registry.kernel(found->second);
+		const bool own_call = !desktop_api.has(found->second) && api_registry.has(found->second) && !api_registry.desktop(found->second);
+		std::optional<DesktopScope> desktop_scope;
+		std::optional<WindowCallScope> window_scope;
+		if (!graphics_call && !kernel_call && !own_call) {
+			desktop_scope.emplace();
+			CallCycles::instance().took_desktop();
+			// Deferred releases wait for a stop of the guest: releasing a DIB section unmaps guest memory, which a running guest cannot
+			// have done to it.
+			windows.apply_dc_log();
+			windows.screen_dc_use(found->second);
+			window_scope.emplace(windows);
+		}
 		const auto profile_start = RuntimeProfile::instance().enabled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 		const bool dispatched = desktop_api.dispatch(process, environment, found->second) || api_registry.dispatch(process, environment, found->second)
 #ifdef RAVEN_VULKAN
@@ -3955,24 +4058,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		if (RuntimeProfile::instance().enabled() && profile_start != std::chrono::steady_clock::time_point{})
 			RuntimeProfile::instance().api(found->second, std::chrono::steady_clock::now() - profile_start);
 	}, std::move(queued_stubs));
-	// The guest reads the performance counter itself once the time stamp counter is calibrated against it over 200 ms: the base is taken
-	// when published, so the guest's count goes on from the runtime's, and the multiplier is written last.
-	struct ClockCalibration {
-		uint64_t counter = __rdtsc(), ticks = counter_ticks();
-		bool published = false;
-	};
-	threads.add_service([served_block, calibration = std::make_shared<ClockCalibration>()] {
-		if (calibration->published || counter_ticks() - calibration->ticks < 2000000)
-			return;
-		const uint64_t counter = __rdtsc(), ticks = counter_ticks();
-		if (counter <= calibration->counter)
-			return;
-		uint64_t *published = served_block + clock_calibration / 8;
-		published[0] = counter;
-		published[1] = ticks;
-		const unsigned __int128 multiplier = (static_cast<unsigned __int128>(ticks - calibration->ticks) << 32) / (counter - calibration->counter);
-		__atomic_store_n(&published[2], static_cast<uint64_t>(multiplier), __ATOMIC_RELEASE);
-		calibration->published = true;
+	// The guest reads the performance counter itself from its first call (see ClockCalibration).
+	const auto calibration = std::make_shared<ClockCalibration>(clock_origin());
+	threads.add_service([served_block, calibration] {
+		if (!calibration->done())
+			calibration->publish(served_block, clock_sample());
 	});
 	// The local second the guest's GetLocalTime reads is published again once it is over: the end goes first and last, so a guest
 	// that copies while it changes sees the end move and asks the runtime.
@@ -3996,6 +4086,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_security_api(api_registry, kernel);
 	register_child_process_api(api_registry, kernel);
 	register_winsock_api(api_registry, kernel);
+	register_alpc_api(api_registry, kernel);
 #ifdef RAVEN_OPENSSL
 	register_wininet_api(api_registry, kernel);
 #endif
@@ -4013,9 +4104,11 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_shader_service(api_registry, kernel);
 	register_audio_service(api_registry, kernel);
 	register_canvas_service(api_registry, kernel);
+	api_registry.set_kernel(true);
 	register_sync_api(api_registry, kernel);
 	register_thread_api(api_registry, kernel);
 	NativeObjectAPI::register_served(api_registry, kernel.objects, kernel.threads);
+	api_registry.set_kernel(false);
 	register_text_api(api_registry, kernel);
 	register_console_api(api_registry, kernel);
 	register_memory_api(api_registry, kernel);
@@ -4028,7 +4121,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	register_actctx_api(api_registry, kernel);
 	register_version_api(api_registry, kernel);
 #ifdef RAVEN_OPENGL
+	// OpenGL draws into windows' contexts and surfaces.
+	api_registry.set_desktop(true);
 	if (opengl) opengl->register_api(api_registry, threads);
+	api_registry.set_desktop(false);
 #endif
 #ifdef __APPLE__
 	register_darwin_d3dkmt(desktop_api, kernel_objects, threads);
@@ -4430,17 +4526,28 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 									}
 								}
 						}
-					auto &dependency = acquire(symbol.module);
+					const auto acquire_import = [&](const std::string &library) -> PEModule & {
+						try {
+							return acquire(library);
+						} catch (const LoadFailure &failure) {
+							if (failure.error == 126 && (std::getenv("RAVEN_TRACE_API") || std::getenv("RAVEN_TRACE_FAIL")))
+								std::cerr << "raven: cannot load " << name << ": " << staged[index].module->name << " imports "
+									<< symbol.module << '!' << (symbol.by_ordinal ? "#" + std::to_string(symbol.ordinal) : symbol.name)
+									<< ", missing library " << library << '\n';
+							throw;
+						}
+					};
+					auto &dependency = acquire_import(symbol.module);
 					if (context)
 						entry_contexts.emplace(&dependency, context);
 					for (;;) {
 						try {
-							modules.resolve(symbol);
+							modules.resolve_import(symbol);
 							break;
 						} catch (const std::runtime_error &error) {
 							const std::string_view message = error.what();
 							if (message.starts_with("missing PE module: "))
-								acquire(std::string(message.substr(19)));
+								acquire_import(std::string(message.substr(19)));
 							else if (message.starts_with("missing PE export: ")) {
 								if (std::getenv("RAVEN_TRACE_API") || std::getenv("RAVEN_TRACE_FAIL"))
 									std::cerr << "raven: cannot load " << name << ": " << staged[index].module->name << " imports " << message << '\n';
@@ -4551,6 +4658,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			}
 		std::erase_if(attached, [&](const auto *item) { return !reachable.contains(item); });
 		for (const auto *module : released) {
+			kernel.unloads->record(process, allocator, true, module->loaded.base(), module->image.image_size,
+				module->file.empty() ? module->name : module->file.filename().string());
 			tls.remove(*module);
 			loader_data.remove(*module);
 			memory.remove_image(module->loaded.base());
@@ -4622,6 +4731,8 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 		windows.set_deadline(deadline);
 		threads.set_deadline(deadline);
 	}
+	// Only now, as a start forked ahead may have waited through a suspension for its request.
+	calibration->publish(served_block, clock_sample());
 	// Declared last, so the first thing done when the process ends.
 	struct Ending {
 		~Ending()

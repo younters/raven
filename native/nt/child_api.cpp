@@ -61,7 +61,7 @@ std::u16string first_word(std::u16string_view line)
 
 std::shared_ptr<ProcessObject> start_program(KernelContext &context, const std::u16string &application, const std::u16string &line,
 	const std::u16string &directory, const int (&standard)[3], const std::u16string &environment, int *gate, uint32_t &error,
-	std::vector<InheritedHandle> inherited, int process_token_descriptor)
+	std::vector<InheritedHandle> inherited, std::u16string_view app_user_model_id, int process_token_descriptor)
 {
 	auto &paths = context.paths;
 	// Without an application name, an unquoted command line names its program by its first blank-separated words: Windows tries the
@@ -162,6 +162,7 @@ std::shared_ptr<ProcessObject> start_program(KernelContext &context, const std::
 	launch.suspended = gate != nullptr;
 	launch.gate = gate;
 	launch.inherited = std::move(inherited);
+	launch.app_user_model_id = app_user_model_id;
 	launch.process_token_descriptor = process_token_descriptor;
 	return spawn_child(launch, error);
 }
@@ -413,7 +414,7 @@ void register_child_process_api(ApiRegistry &registry, KernelContext &context)
 		if (assigned_token)
 			assigned_token->describe(token_record);
 		const auto child = start_program(context, application, line, directory, standard, environment, call.u32(5) & create_suspended ? &gate : nullptr, error,
-			std::move(inherited), token_record.descriptor);
+			std::move(inherited), {}, token_record.descriptor);
 		if (!child) {
 			if (std::getenv("RAVEN_TRACE_API"))
 				std::fprintf(stderr, "raven: child process not started, error %u\n", error);

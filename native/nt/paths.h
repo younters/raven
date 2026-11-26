@@ -2,8 +2,13 @@
 
 #include "prefix.h"
 
+#include <sys/stat.h>
+
+#include <array>
+#include <atomic>
 #include <filesystem>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -17,7 +22,15 @@ namespace raven {
 class NativePaths {
 public:
 	explicit NativePaths(const NativePrefix &prefix);
-	const std::u16string &current() const { return directory; }
+	~NativePaths();
+	NativePaths(const NativePaths &) = delete;
+	NativePaths &operator=(const NativePaths &) = delete;
+	// lstat (or stat, when it follows a link) of a host path: one on a drive of the prefix is read from the drive's folder, held open, so
+	// the kernel walks only the path below it instead of every folder of the prefix's own path at each call.
+	int status(const std::filesystem::path &host, struct stat &result, bool follow) const;
+	// Read beside the turn as well, while the turn may change it (see resolves_alone).
+	std::u16string current() const { const std::lock_guard guard(directory_lock); return directory; }
+	const NativePrefix &native_prefix() const { return prefix; }
 	// The directory must exist; the stored form is a full path without a trailing separator (except for roots).
 	bool set_current(std::u16string_view path);
 	bool set_dll_directory(std::optional<std::u16string> path);
@@ -35,6 +48,10 @@ public:
 		bool writable = true;
 	};
 	std::optional<Resolved> resolve(std::u16string_view path) const;
+	// Whether resolve may find the path beside the turn, while the turn changes what it reads: not under the program's layer, whose
+	// records the turn changes, nor on the host drive, whose refusals the sandbox records, nor with WOW64's redirection, which the
+	// thread turns off and on.
+	bool resolves_alone(std::u16string_view path) const;
 	// Whether a host file or folder appears in the listing of its folder: everything in the prefix's drives, only what the sandbox grants
 	// or leads to on Z:.
 	bool listed(const std::filesystem::path &host) const;
@@ -103,11 +120,14 @@ public:
 private:
 	const NativePrefix &prefix;
 	std::u16string directory;
+	mutable std::mutex directory_lock;
 	std::optional<std::u16string> dll_folder;
 	bool wow64 = false, redirecting = true;
 	std::function<std::vector<std::u16string>()> package_roots;
 	std::function<std::u16string()> search_path;
 	std::optional<std::filesystem::path> drive_root(char16_t letter) const;
+	// The folder of each drive of the prefix from C: to Y:, opened at its first use (O_PATH); -1 until then.
+	mutable std::array<std::atomic<int>, 23> drive_folders;
 	std::optional<Resolved> resolve_direct(const std::u16string &path) const;
 	// The path relative to the prefix of a prefix or layer host path, and which of them it is in; empty outside both.
 	std::string layer_relative(const std::filesystem::path &host, bool &in_layer) const;

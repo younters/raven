@@ -14,9 +14,12 @@ namespace raven {
 
 // Raised by guest-memory accessors when the guest passed a pointer that cannot be read or written.
 struct ApiFault {};
-// Thrown by a call served beside the turn (ApiCall::alone) that needs what only the turn gives, such as the last error of its thread: the
-// call is then answered the usual way, from the start.
+// Thrown by a call served beside the turn (ApiCall::alone) that needs what only the turn gives, such as memory the child cannot be reached
+// at directly: the call is then answered the usual way, from the start.
 struct ApiNeedsTurn {};
+// Thrown by a handler that leaves a call to the providers after its registry, for the cases they keep: the registry then reports the
+// call as not its own.
+struct ApiDeclined {};
 
 // One guest call of a native API: argument words, the return value and bounds-checked guest memory.
 // The text a guest pointer addresses when it holds a short run of printable characters, narrow or wide; empty otherwise. For traces.
@@ -63,8 +66,8 @@ public:
 	NativeProcess &process;
 	NativeEnvironment &environment;
 	uint64_t result = 0;
-	// Served beside the turn by a host thread that does not hold it: guest memory is read and written straight from the child, and
-	// the last error, which belongs to the thread holding the turn, is not touched (see ApiNeedsTurn).
+	// Served beside the turn by a host thread that does not hold it: guest memory, and the last error in the block of the host thread's
+	// own guest thread, are read and written straight from the child (see ApiNeedsTurn).
 	bool alone = false;
 
 private:
@@ -88,13 +91,23 @@ public:
 	// Runs the handler for an API trap; false when no handler is registered under this name.
 	// For a 32-bit caller, the pseudo handles -1 and -2 arrive sign-extended, as the handlers of a 64-bit process expect them.
 	bool dispatch(NativeProcess &process, NativeEnvironment &environment, std::string_view name, bool widen_handles = false) const;
+	// The handlers added while this is set act on kernel objects alone (waits, threads, synchronization): their calls are answered
+	// without the desktop lock, which they take themselves where they reach a thread's message queue.
+	void set_kernel(bool kernel) { adding_kernel = kernel; }
+	bool kernel(std::string_view name) const;
+	// The handlers added while this is set reach windows or drawing themselves, and are answered under the desktop lock; the others reach
+	// the desktop only through the kernel's hooks, which take the lock, and are answered without it.
+	void set_desktop(bool desktop) { adding_desktop = desktop; }
+	bool desktop(std::string_view name) const;
 
 private:
 	struct Entry {
 		uint32_t arguments;
 		ApiHandler handler;
+		bool kernel = false, desktop = false;
 	};
 	std::map<std::string, Entry> entries;
+	bool adding_kernel = false, adding_desktop = false;
 };
 
 }

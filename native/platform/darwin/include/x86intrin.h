@@ -18,4 +18,12 @@ static inline uint64_t __rdtsc(void)
 	mach_timebase_info(&scale);
 	return (uint64_t)((__uint128_t)counter * scale.numer / scale.denom);
 }
+
+#ifndef __builtin_ia32_pause
+static inline void raven_darwin_pause(void)
+{
+	__asm__ volatile("yield" : : : "memory");
+}
+#define __builtin_ia32_pause() raven_darwin_pause()
+#endif
 #endif

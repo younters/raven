@@ -58,18 +58,22 @@ void store_system_time(uint8_t *page, size_t at, uint64_t value)
 	word(4).store(uint32_t(value >> 32), std::memory_order_release);
 }
 
-// The clock fields: the tick count (in ticks of 15.625 ms, the TickCountMultiplier the page declares), the interrupt time since boot
-// and the system time since 1601, both in 100-nanosecond units.
+// The tick count last written to the pages, which every way of asking for it answers.
+std::atomic<uint64_t> published_ticks{0};
+
+// The clock fields: the tick count in milliseconds (the page declares a TickCountMultiplier of one, as the pages move every
+// millisecond), the interrupt time since boot and the system time since 1601, both in 100-nanosecond units.
 void store_clocks(uint8_t *page)
 {
 	using namespace std::chrono;
 	const auto interrupt_time = uint64_t(duration_cast<nanoseconds>(steady_clock::now().time_since_epoch()).count() / 100);
 	const auto system_time = uint64_t(duration_cast<nanoseconds>(system_clock::now().time_since_epoch()).count() / 100) + 116444736000000000ULL;
-	const uint64_t ticks = interrupt_time / 156250;
+	const uint64_t ticks = std::max(interrupt_time / 10000, published_ticks.load(std::memory_order_relaxed));
 	std::atomic_ref<uint32_t>(*reinterpret_cast<uint32_t *>(page)).store(uint32_t(ticks), std::memory_order_release);
 	store_system_time(page, 0x08, interrupt_time);
 	store_system_time(page, 0x14, system_time);
 	store_system_time(page, 0x320, ticks);
+	published_ticks.store(ticks, std::memory_order_release);
 }
 
 // One thread keeps every shared user data page this host made current, so a host that runs several guest processes (the unit tests
@@ -98,6 +102,14 @@ void keep_clocks(uint8_t *page)
 
 }
 
+uint64_t shared_tick_count()
+{
+	const uint64_t ticks = published_ticks.load(std::memory_order_acquire);
+	if (ticks)
+		return ticks;
+	return uint64_t(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
 static void map_shared_user_data(NativeProcess &process)
 {
 	try {
@@ -124,7 +136,7 @@ static void map_shared_user_data(NativeProcess &process)
 	}
 	::close(descriptor);
 	const uint64_t base = shared_user_data;
-	field(process, base + 0x04, 0x0fa00000, 4);
+	field(process, base + 0x04, 0x01000000, 4);
 	store_clocks(page);
 	field(process, base + 0x2c, 0x14c, 2);
 	field(process, base + 0x2e, 0x8664, 2);
@@ -143,6 +155,20 @@ static void map_shared_user_data(NativeProcess &process)
 	keep_clocks(page);
 }
 
+// The host maps a thread block as well: most calls leave the last error there, and that takes no call into the kernel.
+static uint64_t map_thread_block(NativeProcess &process)
+{
+	const auto block = process.map_memory(8192, PROT_NONE);
+	try {
+		process.share_memory(block, 8192);
+		process.protect_memory(block, 8192, PROT_READ | PROT_WRITE);
+	} catch (...) {
+		process.unmap_memory(block);
+		throw;
+	}
+	return block;
+}
+
 NativeEnvironment::NativeEnvironment(NativeProcess &process, uint64_t image_base,
 	uint32_t process_id, uint32_t thread_id) : process(process)
 {
@@ -159,7 +185,7 @@ NativeEnvironment::NativeEnvironment(NativeProcess &process, uint64_t image_base
 	try {
 		map_shared_user_data(process);
 		process_block = process.map_memory(4096, PROT_READ | PROT_WRITE);
-		thread_block = process.map_memory(8192, PROT_READ | PROT_WRITE);
+		thread_block = map_thread_block(process);
 		// x64 NT_TIB, CLIENT_ID and the initial TEB/PEB contract fields.
 		field(process, thread_block, UINT64_MAX, 8);
 		field(process, thread_block + 0x08, stack_base, 8);
@@ -204,7 +230,7 @@ uint64_t NativeEnvironment::create_thread_block(uint64_t stack_base, uint64_t st
 	if (!thread_id)
 		throw std::runtime_error("native guest threads need a thread identity");
 	if (process.mode() == NativeMode::x86) {
-		const auto block = process.map_memory(8192, PROT_READ | PROT_WRITE);
+		const auto block = map_thread_block(process);
 		try {
 			field(process, block, UINT32_MAX, 4);
 			field(process, block + 0x04, stack_base, 4);
@@ -219,10 +245,13 @@ uint64_t NativeEnvironment::create_thread_block(uint64_t stack_base, uint64_t st
 			process.unmap_memory(block);
 			throw;
 		}
-		thread_ids[block] = thread_id;
+		{
+			std::lock_guard lock(thread_ids_lock);
+			thread_ids[block] = thread_id;
+		}
 		return block;
 	}
-	const auto teb = process.map_memory(8192, PROT_READ | PROT_WRITE);
+	const auto teb = map_thread_block(process);
 	try {
 		field(process, teb, UINT64_MAX, 8);
 		field(process, teb + 0x08, stack_base, 8);
@@ -236,15 +265,21 @@ uint64_t NativeEnvironment::create_thread_block(uint64_t stack_base, uint64_t st
 		process.unmap_memory(teb);
 		throw;
 	}
-	thread_ids[teb] = thread_id;
+	{
+		std::lock_guard lock(thread_ids_lock);
+		thread_ids[teb] = thread_id;
+	}
 	return teb;
 }
 
 void NativeEnvironment::release_thread_block(uint64_t teb)
 {
-	if (teb == thread_block)
+	if (teb == block())
 		throw std::runtime_error("the current native thread block cannot be released");
-	thread_ids.erase(teb);
+	{
+		std::lock_guard lock(thread_ids_lock);
+		thread_ids.erase(teb);
+	}
 	process.unmap_memory(teb);
 }
 
@@ -258,7 +293,7 @@ void NativeEnvironment::x86_constructor(uint64_t image_base, uint32_t process_id
 	try {
 		map_shared_user_data(process);
 		process_block = process.map_memory(4096, PROT_READ | PROT_WRITE);
-		thread_block = process.map_memory(8192, PROT_READ | PROT_WRITE);
+		thread_block = map_thread_block(process);
 		// x86 NT_TIB, CLIENT_ID and the initial TEB/PEB contract fields.
 		field(process, thread_block, UINT32_MAX, 4);
 		field(process, thread_block + 0x04, stack_base, 4);
@@ -298,20 +333,38 @@ void NativeEnvironment::require_current() const
 	if (process.mode() == NativeMode::x86)
 		return;
 	const auto serving = process.serving_teb();
-	if ((serving ? serving : process.thread_base()) != thread_block)
+	if ((serving ? serving : process.thread_base()) != block())
 		throw std::runtime_error("native environment is not the current guest thread");
+}
+
+size_t NativeEnvironment::last_error_offset() const
+{
+	return process.mode() == NativeMode::x86 ? 0x34 : 0x68;
 }
 
 uint32_t NativeEnvironment::last_error() const
 {
 	require_current();
-	return value(process, thread_block + (process.mode() == NativeMode::x86 ? 0x34 : 0x68));
+	return value(process, block() + last_error_offset());
 }
 
 void NativeEnvironment::set_last_error(uint32_t error)
 {
 	require_current();
-	field(process, thread_block + (process.mode() == NativeMode::x86 ? 0x34 : 0x68), error, 4);
+	field(process, block() + last_error_offset(), error, 4);
+}
+
+std::optional<uint32_t> NativeEnvironment::own_last_error() const
+{
+	uint32_t error = 0;
+	if (!own_block || !process.read_alone(own_block + last_error_offset(), &error, sizeof error))
+		return std::nullopt;
+	return error;
+}
+
+bool NativeEnvironment::set_own_last_error(uint32_t error)
+{
+	return own_block && process.write_alone(own_block + last_error_offset(), &error, sizeof error);
 }
 
 uint64_t NativeEnvironment::prepare_heaps()
@@ -568,7 +621,7 @@ bool NativeEnvironment::dispatch(std::string_view name)
 	else if (name == "GetLastError")
 		result = last_error();
 	else
-		result = value(process, thread_block + (process.mode() == NativeMode::x86 ? (name == "GetCurrentProcessId" ? 0x20 : 0x24) :
+		result = value(process, block() + (process.mode() == NativeMode::x86 ? (name == "GetCurrentProcessId" ? 0x20 : 0x24) :
 			(name == "GetCurrentProcessId" ? 0x40 : 0x48)));
 	process.return_api(result);
 	return true;

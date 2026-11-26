@@ -22,6 +22,8 @@ void register_image(NativeMemory &memory, const PEModule &module);
 // Ties each API set name the graph imports to the system library that implements it, once that library is in the set.
 void alias_api_sets(ModuleSet &modules);
 void forward_opengl_formats(ModuleSet &modules, PEModule &provider);
+std::optional<std::filesystem::path> graphics_component(std::string_view name, bool is_64);
+std::optional<std::filesystem::path> configured_d3d_library(std::string_view name, bool is_64);
 void load_initial_dependencies(ModuleSet &modules,
 	const std::function<std::optional<ModuleBytes>(std::string_view)> &source,
 	std::span<const std::string_view> native_modules,bool is_64=true,bool tolerate_missing=false);
@@ -43,6 +45,9 @@ private:
 };
 
 std::vector<const PEModule *> initialization_order(const ModuleSet &modules, const PEModule &entry);
+using ImportProbes = std::map<uint64_t, std::string_view>;
+ImportProbes add_import_probes(ModuleSet &modules, bool x86);
+void trace_import_probe(const ImportProbes &probes, const ModuleSet &modules, NativeProcess &process, uint64_t address, bool x86);
 uint64_t initialize_loader_data(NativeProcess &process, uint64_t peb,
 	const ModuleSet &modules, const PEModule &entry);
 

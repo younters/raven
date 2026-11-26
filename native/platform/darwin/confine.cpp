@@ -70,4 +70,26 @@ bool brokered_host(std::string_view, const std::vector<std::string> &)
 	return false;
 }
 
+int host_broker_channel()
+{
+	return -1;
+}
+
+void adopt_host_broker(int) {}
+
+bool host_brokered()
+{
+	return false;
+}
+
+bool forwarded_host(std::string_view, const std::vector<std::string> &, std::string_view)
+{
+	return false;
+}
+
+bool forwarded_address(std::string_view)
+{
+	return false;
+}
+
 }

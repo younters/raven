@@ -43,6 +43,9 @@ constexpr std::array<std::pair<std::string_view, uint16_t>, 30> wsock32_ordinals
 	{"WSASetLastError", 112}, {"WSAStartup", 115},
 }};
 constexpr std::array<std::pair<std::string_view, uint16_t>, 2> shlwapi_ordinals{{{"IUnknown_QueryService", 176}, {"IsOS", 437}}};
+constexpr std::array<std::pair<std::string_view, uint16_t>, 1> user32_ordinals{{{"IsShellManagedWindow", 2574}}};
+constexpr std::array<std::string_view, 1> profapi_exports{{"GetAppContainerRegistryHandleFromName"}};
+constexpr std::array<std::pair<std::string_view, uint16_t>, 1> profapi_ordinals{{{profapi_exports.front(), 114}}};
 // DirectSound's functions keep the numbers of its first release, which programs import them by.
 constexpr std::array<std::pair<std::string_view, uint16_t>, 12> dsound_ordinals{{
 	{"DirectSoundCreate", 1}, {"DirectSoundEnumerateA", 2}, {"DirectSoundEnumerateW", 3}, {"DllCanUnloadNow", 4}, {"DllGetClassObject", 5},
@@ -89,6 +92,8 @@ bool is_xinput(std::string_view dll)
 
 std::span<const std::string_view> system_export_names(std::string_view dll)
 {
+	if (dll == "profapi.dll")
+		return profapi_exports;
 	for (const auto &[name, exports] : libraries)
 		if (name == dll)
 			return exports;
@@ -122,6 +127,10 @@ std::span<const std::pair<std::string_view, uint16_t>> system_export_ordinals(st
 		return merged_ordinals<oleaut32_spec_ordinals, oleaut32_ordinals>();
 	if (dll == "shlwapi.dll")
 		return merged_ordinals<shlwapi_spec_ordinals, shlwapi_ordinals>();
+	if (dll == "user32.dll")
+		return user32_ordinals;
+	if (dll == "profapi.dll")
+		return profapi_ordinals;
 	if (dll == "ws2_32.dll")
 		return merged_ordinals<ws2_32_spec_ordinals, ws2_32_ordinals>();
 	if (dll == "wsock32.dll")
@@ -153,6 +162,8 @@ uint32_t system_export_words(std::string_view dll, std::string_view name)
 				return words;
 		return std::numeric_limits<uint32_t>::max();
 	}
+	if (dll == "profapi.dll" && name == profapi_exports.front())
+		return 5;
 	for (const auto &[library, table] : argument_tables) {
 		if (library != dll)
 			continue;
@@ -169,6 +180,7 @@ std::span<const std::string_view> system_library_names()
 	static const auto names = [] {
 		std::vector<std::string_view> list;
 		for (const auto &item : libraries) list.push_back(item.first);
+		list.push_back("profapi.dll");
 		for (const auto library : xinput_libraries) list.push_back(library);
 #ifdef __APPLE__
 		list.push_back("xaudio2_9.dll");

@@ -102,6 +102,17 @@ static uint64_t dispatched_call(uint64_t number)
 	return value;
 }
 
+// A call through the agent's kernel gate reaches the kernel while the selector turns the thread's own calls away. The red zone is
+// stepped over: the call pushes its return address below the stack pointer.
+static uint64_t gate_call(uint64_t number)
+{
+	uint64_t value = number;
+	selector = SYSCALL_DISPATCH_FILTER_BLOCK;
+	asm volatile("sub $128, %%rsp\n\tcall *%1\n\tadd $128, %%rsp" : "+a"(value) : "r"(agent_code + raven::agent::kernel()) : "rcx", "r11", "memory");
+	selector = SYSCALL_DISPATCH_FILTER_ALLOW;
+	return value;
+}
+
 // The runtime's side: wait for the guest's signal, check it and answer with RAX changed.
 static const raven::agent::Segments segments{0x1000, 0x2000, 0, 0};
 
@@ -258,11 +269,111 @@ static void running_task()
 	check(result == -1 && error == EINTR, "a wait for a held task that runs on did not read as cut short");
 }
 
+// One thread of a guest that ends leaves the guest's other threads in the agent's hands: only the end of the guest forgets them all.
+static void ended_thread()
+{
+	int ending_pipe[2], staying_pipe[2], go[2];
+	check(pipe(ending_pipe) == 0 && pipe(staying_pipe) == 0 && pipe(go) == 0, "no pipes for a guest of two threads");
+	const pid_t child = fork();
+	check(child >= 0, "cannot start a guest of two threads");
+	if (child == 0) {
+		const auto named = [](int pipe_end) {
+			const pid_t own = pid_t(syscall(SYS_gettid));
+			(void)!write(pipe_end, &own, sizeof own);
+		};
+		std::thread ending([&] {
+			named(ending_pipe[1]);
+			char byte;
+			(void)!read(go[0], &byte, 1);
+		});
+		std::thread staying([&] {
+			named(staying_pipe[1]);
+			pause();
+		});
+		ending.join();
+		pause();
+		_exit(0);
+	}
+	pid_t ending = 0, staying = 0;
+	check(read(ending_pipe[0], &ending, sizeof ending) == sizeof ending && read(staying_pipe[0], &staying, sizeof staying) == sizeof staying,
+		"the guest's threads were not named");
+	std::vector<uint64_t> words(1024);
+	for (const pid_t thread : {ending, staying}) {
+		raven::agent::Task task;
+		task.task = thread;
+		task.group = child;
+		task.process = child;
+		task.block = words.data() + (thread == ending ? 0 : 512);
+		raven::agent::hold(task);
+	}
+	check(write(go[1], "x", 1) == 1, "the thread to end was not told to");
+	const auto waited = [](pid_t thread, int &status) {
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+		pid_t result = -1;
+		do
+			result = raven::agent::wait(thread, &status, 0);
+		while (result == -1 && errno == EINTR && std::chrono::steady_clock::now() < deadline);
+		return result;
+	};
+	int status = 0;
+	const pid_t ended = waited(ending, status);
+	const bool kept = raven::agent::held(staying);
+	const pid_t running = raven::agent::wait(staying, &status, WNOHANG);
+	kill(child, SIGKILL);
+	waitpid(child, &status, 0);
+	raven::agent::release_group(child);
+	check(ended == ending, "the end of a guest thread was not seen");
+	check(kept && running == 0, "the end of one guest thread had the agent forget the guest's other threads");
+	check(!raven::agent::held(staying), "a thread of a guest that ended stayed registered");
+}
+
+// A held task whose stop was read already has nothing more to report until it goes on, as a traced one: a wait that does not sleep
+// finds nothing, one that sleeps comes back cut short now and then, and the task's end still reads as its end.
+static void stopped_task()
+{
+	const pid_t child = fork();
+	check(child >= 0, "cannot start a task to stop");
+	if (child == 0) {
+		pause();
+		_exit(0);
+	}
+	std::vector<uint64_t> words(512);
+	raven::agent::Task task;
+	task.task = child;
+	task.group = child;
+	task.process = child;
+	task.block = words.data();
+	raven::agent::hold(task);
+	words[raven::agent::signal] = SIGTRAP;
+	__atomic_store_n(reinterpret_cast<uint32_t *>(&words[raven::agent::state]), raven::agent::posted, __ATOMIC_RELEASE);
+	int status = 0;
+	const pid_t stop = raven::agent::wait(child, &status, 0);
+	const bool trapped = stop == child && WIFSTOPPED(status) && WSTOPSIG(status) == SIGTRAP;
+	const pid_t polled = raven::agent::wait(child, &status, WNOHANG);
+	const pid_t slept = raven::agent::wait(child, &status, 0);
+	const int error = errno;
+	kill(child, SIGKILL);
+	pid_t ended = -1;
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	do
+		ended = raven::agent::wait(child, &status, 0);
+	while (ended == -1 && errno == EINTR && std::chrono::steady_clock::now() < deadline);
+	raven::agent::release_group(child);
+	if (ended != child)
+		waitpid(child, &status, 0);
+	check(trapped, "a held task's stop did not read as its signal");
+	check(polled == 0, "a held task whose stop was read already did not read as having nothing to report");
+	check(slept == -1 && error == EINTR, "a wait for a held task whose stop was read already did not come back cut short");
+	check(ended == child && WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL, "a held task killed while stopped did not read as killed");
+}
+
 int main()
 {
 	try {
+		stopped_task();
 		reaped_task();
 		running_task();
+		ended_thread();
 		block = static_cast<uint64_t *>(mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0));
 		check(block != MAP_FAILED, "no block");
 		const auto code = raven::agent::code();
@@ -273,7 +384,7 @@ int main()
 		install(SIGTRAP);
 		install(SIGSYS);
 
-		uint64_t from_breakpoint = 0, from_call = 0, from_compat = 0, kept = 0x1122, gs_after = 0;
+		uint64_t from_breakpoint = 0, from_call = 0, from_compat = 0, kept = 0x1122, gs_after = 0, from_gate = 0, own_tid = 1;
 		uint8_t *const compat = compat_code();
 		std::string failure;
 		std::thread guest([&] {
@@ -293,6 +404,8 @@ int main()
 				check(prctl(PR_SET_SYSCALL_USER_DISPATCH, PR_SYS_DISPATCH_ON, uintptr_t(agent_code), code.size(), &selector) == 0,
 					"Syscall User Dispatch refused");
 				from_call = dispatched_call(SYS_getpid);
+				from_gate = gate_call(SYS_gettid);
+				own_tid = uint64_t(syscall(SYS_gettid));
 				prctl(PR_SET_SYSCALL_USER_DISPATCH, PR_SYS_DISPATCH_OFF, 0, 0, 0);
 			} catch (const std::exception &error) {
 				failure = error.what();
@@ -315,6 +428,7 @@ int main()
 		check(block[raven::agent::set_bases] == 0, "the handler left the segment request set");
 		check(from_compat == 0x77, "a 32-bit thread did not go on in 32-bit code with the runtime's EAX after its breakpoint");
 		check(from_call == 4242, "the turned-away call did not return the runtime's answer");
+		check(from_gate == own_tid, "a call through the kernel gate did not reach the kernel");
 		check(*state() == raven::agent::idle, "the agent left its state set");
 
 		// The service thread makes the calls the runtime leaves it, inside the guest's own process.

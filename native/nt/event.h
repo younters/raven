@@ -1,5 +1,6 @@
 #pragma once
 
+#include "guest_events.h"
 #include "objects.h"
 
 #include <vector>
@@ -23,6 +24,7 @@ public:
 	int set_state(bool signaled) override;
 	bool describe(InheritedHandle &record) const override;
 	std::u16string_view type_name() const override { return u"Event"; }
+	bool closes_beside() const override { return true; }
 	bool manual_reset() const { return type == 0; }
 	// A pulse for one waiting thread: the event looks signaled to that thread alone until its wait takes it or the pulse is revoked,
 	// so a waiter that the scheduler looks at later is still released and nobody else ever sees the event set.
@@ -37,6 +39,17 @@ public:
 	bool pulse_table_waiters();
 	// The event in the process's table, or 0 once it is shared with other processes.
 	uint32_t table_object() const;
+	// Whether the guest may set and reset the event itself (guest_events.h): it was never shared and nothing holds it back. Atomics alone,
+	// so the guest events table may ask under its own lock.
+	bool guest_may_work() const;
+	// Holds the event back from the guest while the runtime looks at a wait for it by itself, and lets it go again.
+	void hold_from_guest();
+	void give_back_to_guest();
+	// Whether the event was offered to the guest already (NativeObjects::offer_to_guest): a set answered beside the turn, which cannot
+	// hand the guest a descriptor, leaves the first one to the turn, which offers it. An event held back meanwhile is offered again once
+	// let go (give_back_to_guest).
+	bool offer_due() const { return GuestEvents::active() && !offer_tried.load(std::memory_order_acquire) && guest_may_work(); }
+	void offering() { offer_tried.store(true, std::memory_order_release); }
 	std::atomic<uint32_t> *wait_word() const override;
 
 private:
@@ -54,6 +67,9 @@ private:
 	mutable uint32_t waits_object = 0;
 	bool named_layout = false;
 	std::shared_ptr<SharedFile> storage;
+	std::atomic<uint32_t> guest_holds{0};
+	mutable std::atomic<bool> guest_gone{false};
+	std::atomic<bool> offer_tried{false};
 	bool is_set() const;
 	bool take(uint32_t thread);
 };

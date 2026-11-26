@@ -40,6 +40,16 @@ struct GuestThread {
 	// Borrowed from the live waiting frame; readiness ends scheduler and desktop sleeps.
 	std::span<const pollfd> descriptors;
 	std::array<uint64_t, 6> debug_registers{};
+	// For a wait that stands in the line of the process's table (see NativeThreads::wait_in_line): the word whoever grants it sets.
+	const std::atomic<uint32_t> *granted = nullptr;
+	// Whether the wait can end: what the table told a wait in its line, the condition otherwise.
+	bool can_go_on() const
+	{
+		if (granted)
+			return granted->load(std::memory_order_acquire) != 0;
+		const auto check = ready;
+		return check && check();
+	}
 	// The API the thread waits in and since when, for the list RAVEN_DUMP_THREADS_ON asks for.
 	const char *waiting_in = nullptr;
 	std::chrono::steady_clock::time_point waiting_since;
@@ -79,6 +89,9 @@ struct GuestThread {
 	// pause took hold. `job` is work another thread has it do on its own task, which only it may trace.
 	pthread_t host{};
 	bool hosted = false;
+	// Whether its host thread put its state into its task yet; until then the task waits in the agent's hands and the snapshot holds
+	// the context it starts from. Only its host thread reads and changes it.
+	bool loaded = false;
 	pid_t host_tid = 0;
 	// The count of signals at which the wait's condition was last found not to hold, and whether it is looked at whatever the count.
 	uint64_t seen_signals = 0;
@@ -88,6 +101,9 @@ struct GuestThread {
 	// Whether its wait ends only when another thread tells it (NativeThreads::tell) or its time runs out: the scheduler does not look at
 	// its condition. `told_holding` keeps a tell that came while it still held the runtime, for when it gives the runtime up.
 	bool told_only = false, told_holding = false;
+	// How deeply the thread held the desktop lock when it gave the runtime up, to take it back as deeply with the runtime (see
+	// DesktopLock).
+	unsigned desktop_depth = 0;
 	std::condition_variable turn;
 	bool queued = false, parked = false, paused = false;
 	int held = -2;
@@ -108,6 +124,11 @@ struct GuestThread {
 	std::atomic<uint64_t> turns{0};
 	// How many waits the thread has begun, in the runtime or outside: one that grew since a set woke it waits again.
 	std::atomic<uint64_t> waits{0};
+	// The thread's end as an object of the process's table of waits, made the first time a wait needs it (see NativeThreads::end_object)
+	// and set when the thread ends: a wait on a thread among events, mutexes and semaphores is ended by whoever ends the thread.
+	std::mutex end_lock;
+	uint32_t end_object = 0;
+	~GuestThread();
 };
 
 class ThreadObject : public KernelObject {
@@ -172,6 +193,9 @@ public:
 	void set_idle(std::function<void(std::chrono::milliseconds)> idle) { poll = std::move(idle); }
 	// Adds the descriptors whose readiness can make a waiting thread's condition true; the idle wait sleeps on them.
 	void set_watched(std::function<void(std::vector<pollfd> &)> descriptors) { watched = std::move(descriptors); }
+	// A pending operation waits for these events of this descriptor now: the administrative thread, asleep on what it gathered,
+	// gathers again.
+	void watch_added(int descriptor, short events);
 	// True while something outside the process, such as a child program, can still make a waiting thread's condition true.
 	void add_external(std::function<bool()> pending) { externals.push_back(std::move(pending)); }
 	// Runs whenever every thread waits, so work the host does for the guest (finishing started operations) can make a wait succeed.
@@ -194,6 +218,8 @@ public:
 	std::shared_ptr<GuestThread> create(uint64_t start, uint64_t parameter, uint64_t stack_size, bool suspended);
 	GuestThread &current() { return *running; }
 	std::shared_ptr<GuestThread> find(uint32_t id) const;
+	// The same for a host thread that may not hold the turn, as one serving its guest beside it.
+	std::shared_ptr<GuestThread> find_told(uint32_t id);
 	uint32_t current_id() const { return running->id; }
 	// The id of the guest thread the calling host thread serves, whether it holds the turn or not; zero on a thread that serves none.
 	static uint32_t own_id();
@@ -210,7 +236,7 @@ public:
 	void tell(GuestThread &thread);
 	void tell(uint32_t id)
 	{
-		if (const auto thread = find(id))
+		if (const auto thread = find_told(id))
 			tell(*thread);
 	}
 	// A wait for objects of the process's table that the host thread of a guest takes while its guest spins in its stub, without the
@@ -221,6 +247,12 @@ public:
 	// or nothing for the usual way. `held` and `words` go together, one word for each object.
 	std::optional<uint32_t> wait_shared_beside(const std::vector<std::shared_ptr<KernelObject>> &held,
 		const std::vector<std::atomic<uint32_t> *> &words, bool all, uint32_t milliseconds);
+	// The same for a word of the runtime's own that a waker changes from `seen` and wakes (wake_word): true when it changed, false at
+	// `until`, nothing for the usual way.
+	std::optional<bool> wait_word_beside(std::atomic<uint32_t> &word, uint32_t seen, std::optional<std::chrono::steady_clock::time_point> until);
+	// Whether the guest thread whose host thread answers a call beside the turn is wanted elsewhere meanwhile (a job, an APC, its end),
+	// so that a wait it does outside the waits above gives up and goes the usual way.
+	static bool called_away_beside();
 	// Takes what a wait on shared objects can take, or sleeps on their words until one changes, the thread is called away or `until`
 	// passes: an index, 0x102, or raven_wait_interrupted.
 	static uint32_t sleep_on_words(GuestThread &me, const std::vector<std::shared_ptr<KernelObject>> &held,
@@ -240,14 +272,27 @@ public:
 	// limit shortens it for the main thread), and is called again after the thread was called away for a job.
 	uint32_t wait_outside(const std::function<uint32_t(std::optional<std::chrono::steady_clock::time_point>)> &wait,
 		std::optional<std::chrono::steady_clock::time_point> wake);
+	// A wait on objects of the process's table where one host thread runs every guest thread: the thread stands in the table's line,
+	// and whoever grants it what it waits for tells it there, so the scheduler reads that instead of looking at the objects. Gives the
+	// wait's result, WAIT_TIMEOUT when it was not granted by `wake`, or raven_wait_unlined when it cannot wait that way: with a host
+	// thread for each guest thread (see wait_outside), on the kernel's objects, or inside another such wait of the same thread.
+	uint32_t wait_in_line(const std::vector<uint32_t> &table, bool all, bool alertable, std::optional<std::chrono::steady_clock::time_point> wake);
+	// Names the table's objects `self` goes to wait outside for, until it withdraws them. A setter reads them under the gate (see
+	// hand_over_to), so they change only there.
+	void announce(GuestThread &self, std::span<const uint32_t> objects);
+	void withdraw(GuestThread &self);
+	// The object of the process's table of waits that is set when `thread` ends.
+	static uint32_t end_object(GuestThread &thread);
 	// Queues an APC to a thread, which ends its alertable wait.
 	void queue_apc(GuestThread &thread, GuestThread::Apc apc);
 	// Ends the thread's wait outside the runtime, or the next one it begins, so that it takes its turn and looks at why.
 	static void call_away(GuestThread &thread);
 	// Tells that something may have ended a wait: an object signaled, a message posted, a thread ended.
-	void signaled() { signals.fetch_add(1, std::memory_order_relaxed); }
+	void signaled() { signals.fetch_add(1, std::memory_order_release); }
 	// Whether no thread waits outside the runtime for `object` of the process's table (or for one that shares its slot): a call answered
 	// outside the runtime's turn (see NativeProcess::serve_alone) may then change the object without handing the turn to whom it wakes.
+	// Whether the process may run on one processor alone: only there does a set let the woken thread go first (see hand_over_to).
+	static bool one_processor();
 	bool quiet_for(uint32_t object) const { return table_waited[object % table_waited.size()].load(std::memory_order_acquire) == 0; }
 	// Whether a thread waits in the runtime: one a change outside the turn may concern is looked at again after a nudge.
 	bool waiting_in_runtime() const { return waiting_threads.load(std::memory_order_acquire) != 0; }
@@ -257,10 +302,19 @@ public:
 	bool yield();
 	// Runs a thread whose wait the running one has just ended, as setting an event does; false when no waiting thread became ready.
 	bool hand_over();
-	// The same with a host thread for each guest thread: the threads waiting outside for `object` of the process's table (0 for none),
-	// which setting it may have woken, and those waiting in the runtime whose wait now holds, take their turn before the setter goes on, until each calls again, waits again or ends (a few milliseconds at
-	// most). False when no thread was waiting for it.
-	bool hand_over_to(uint32_t object);
+	// A thread that waits outside, as it stood before the object it waits for was set.
+	struct Waiter {
+		GuestThread *thread;
+		uint64_t turns, waits;
+	};
+	// The threads waiting outside for `object` of the process's table (none for 0). It is asked before the object is set: one the set
+	// wakes may have left its wait before the setter could look, and has still to run before the setter goes on.
+	std::vector<Waiter> waiting_for(uint32_t object);
+	// The same as hand_over with a host thread for each guest thread, on a process that runs on one processor: those that waited for what
+	// was set, which setting it may have woken, and those waiting in the runtime whose wait now holds, take their turn before the setter
+	// goes on, until each calls again, waits again or ends (a few milliseconds at most). False when no thread was waiting for it, or when
+	// the process has more processors, where the setter goes on beside them.
+	bool hand_over_to(const std::vector<Waiter> &waited);
 	// How many threads wait outside for objects of the process's table, so that a set nobody waits for looks no further.
 	std::atomic<int> table_waiters{0};
 	// Moves on each time a thread takes its turn, goes to wait outside or ends; a setter handing over sleeps on it instead of keeping
@@ -268,6 +322,10 @@ public:
 	std::atomic<uint32_t> moves{0};
 	std::atomic<int> handing{0};
 	void moved();
+	// How many times a setter handing over read a woken thread's processor time from /proc, told with RAVEN_TRACE_WAITS.
+	std::atomic<uint64_t> processor_times{0};
+	// How many times a host thread looked at its guest's block to the end while the guest stood stopped, told with RAVEN_TRACE_WAITS.
+	std::atomic<uint64_t> late_stops{0};
 	// The threads in block, counted on entry before they look at what they wait for (see waiting_in_runtime), and those that wait
 	// outside for each object of the table, by slot (see quiet_for).
 	std::atomic<int> waiting_threads{0};
@@ -317,6 +375,8 @@ private:
 	// Written to end the idle wait: by nudge() and by the thread that sees other processes change shared objects.
 	int wake = -1;
 	std::function<void(std::vector<pollfd> &)> watched;
+	// The descriptors the administrative thread sleeps on. It changes them in its turn only; other threads read them in theirs.
+	std::vector<pollfd> admin_sources;
 	std::vector<std::shared_ptr<GuestThread>> threads;
 	GuestThread *running = nullptr;
 	// Set while the process ends: threads leave through their frames and the deadline no longer interrupts them.
@@ -344,6 +404,10 @@ private:
 	std::atomic<unsigned> lined{0};
 	// Counts what may have ended a wait, and when every waiting thread's condition was last looked at whatever the count.
 	std::atomic<uint64_t> signals{1};
+	// How many times a waiting thread's condition was looked at, told with RAVEN_TRACE_WAITS: a wait its waker ends is never looked at.
+	std::atomic<uint64_t> condition_looks{0};
+	// Set by wait_in_line for the block it calls, whose condition is the table's word and is not counted among the looks.
+	bool lined_block = false;
 	// Whether what the thread that holds the runtime is serving still has to be counted.
 	bool told = true;
 	// When a thread that left the runtime last looked for the waits that ended (see leave).
@@ -366,6 +430,8 @@ private:
 	void enqueue(GuestThread &thread);
 	void wake_ready(GuestThread *except, bool all = false);
 	void run_job(GuestThread &me, std::unique_lock<std::mutex> &lock);
+	std::optional<uint32_t> sleep_beside(std::optional<std::chrono::steady_clock::time_point> until,
+		const std::function<uint32_t(GuestThread &, std::optional<std::chrono::steady_clock::time_point>)> &sleep);
 	void send_job(GuestThread &thread, std::function<void()> work);
 	int park(pid_t task, std::chrono::steady_clock::time_point deadline, const uint64_t *block);
 	void host_main(GuestThread &thread);

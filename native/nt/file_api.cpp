@@ -1518,6 +1518,15 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			// Zero leaves a time as it is; the change time is the host's to keep.
 			const auto bytes = call.read(call[2], 36);
 			const auto time_at = [&](size_t at) { int64_t value; std::memcpy(&value, bytes.data() + at, 8); return value; };
+			// Attributes that are zero stay too. A file the program may change takes the read-only flag as SetFileAttributesW gives it,
+			// through a handle that may write attributes; a folder keeps its permissions.
+			uint32_t attributes;
+			std::memcpy(&attributes, bytes.data() + 32, 4);
+			const bool flagged = attributes && !file->directory;
+			if (flagged && (!paths.changeable(file->path) || !(file->access & (0x100U | 0x40000000U | 0x10000000U)))) {
+				call.fail(5);
+				return;
+			}
 			timespec times[2] = {{0, UTIME_OMIT}, {0, UTIME_OMIT}};
 			const auto convert = [](int64_t value, timespec &out) {
 				if (value <= 0)
@@ -1528,6 +1537,12 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			convert(time_at(8), times[0]);
 			convert(time_at(16), times[1]);
 			if ((times[0].tv_nsec != UTIME_OMIT || times[1].tv_nsec != UTIME_OMIT) && ::futimens(file->descriptor, times)) {
+				call.fail(error_of(errno));
+				return;
+			}
+			struct stat metadata{};
+			if (flagged && (::fstat(file->descriptor, &metadata) ||
+					::fchmod(file->descriptor, attributes & attribute_readonly ? metadata.st_mode & 07555 : (metadata.st_mode & 07777) | 0200))) {
 				call.fail(error_of(errno));
 				return;
 			}
@@ -1640,6 +1655,8 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("SetCachedSigningLevel", 4, [file_of](ApiCall &call) {
 		call.fail(file_of(call[3]) ? 50 : 6);
 	});
+	// What a file is, asked by its name alone, is not offered, as on a file system without that path: the caller opens the file.
+	registry.add("GetFileInformationByName", 4, [](ApiCall &call) { call.fail(50); });
 	registry.add("GetFileInformationByHandleEx", 4, [&, resolve, missing, file_of, query_directory](ApiCall &call) {
 		// The directory classes read a directory's entries as NtQueryDirectoryFile does, in the record of the matching native class:
 		// FileIdBothDirectoryInfo (10), FileFullDirectoryInfo (14) and FileIdExtdDirectoryInfo (19), and their restarting forms.
@@ -1742,6 +1759,9 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 	registry.add("GetFileAttributesW", 1, [&, resolve, missing, file_of](ApiCall &call) {
 		call.ret(UINT32_MAX);
 		const auto name = call.wide(call[0]);
+		// Beside the turn (see beside_api) only a path found without what the turn changes.
+		if (call.alone && !paths.resolves_alone(name))
+			throw ApiNeedsTurn{};
 		const auto resolved = resolve(call, name);
 		struct stat metadata{};
 		if (!resolved)
@@ -1751,12 +1771,12 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			return;
 		}
 		struct stat own{};
-		if (!resolved->exists || ::lstat(resolved->host.c_str(), &own)) {
+		if (!resolved->exists || paths.status(resolved->host, own, false)) {
 			call.set_last_error(missing(*resolved));
 			return;
 		}
 		const bool link = S_ISLNK(own.st_mode);
-		if (!link || ::stat(resolved->host.c_str(), &metadata))
+		if (!link || paths.status(resolved->host, metadata, true))
 			metadata = own;
 		call.set_last_error(0);
 		call.ret(attributes_of(metadata, resolved->host) | (link ? attribute_reparse : 0));
@@ -2404,6 +2424,37 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		call.write(call[2], std::span<const uint8_t>(bytes.data(), written));
 		finish(written < bytes.size() ? buffer_overflow : 0, written);
 	});
+#ifndef __APPLE__
+	// NtSetInformationFile changes what SetFileInformationByHandle changes, for the classes libuv sets: FileBasicInformation,
+	// FileDispositionInformation, FileEndOfFileInformation and FileDispositionInformationEx, each with its class there and the size of
+	// its record. The result is the status, and the last error stays as it was.
+	registry.add("NtSetInformationFile", 5, [&registry](ApiCall &call) {
+		constexpr uint32_t invalid_class = 0xc0000003U, length_mismatch = 0xc0000004U;
+		struct Class { uint32_t native, win32, size; };
+		static constexpr Class classes[] = {{4, 0, 40}, {13, 4, 1}, {20, 6, 8}, {64, 21, 4}};
+		const auto known = std::find_if(std::begin(classes), std::end(classes), [&](const Class &entry) { return entry.native == call.u32(4); });
+		if (known == std::end(classes) || call.u32(3) < known->size) {
+			call.ret(known == std::end(classes) ? invalid_class : length_mismatch);
+			return;
+		}
+		const uint32_t before = call.last_error();
+		uint32_t status = 0;
+		// A record or a status block that is not the program's memory is an access violation.
+		try {
+			ApiCall inner(call.process, call.environment, {call[0], known->win32, call[2], call[3]});
+			registry.find("SetFileInformationByHandle")->second(inner);
+			status = inner.result ? 0 : status_from_error(call.last_error());
+			if (!status && call[1]) {
+				call.store_pointer(call[1], 0);
+				call.store_pointer(call[1] + call.pointer_width(), 0);
+			}
+		} catch (const ApiFault &) {
+			status = 0xc0000005U;
+		}
+		call.set_last_error(before);
+		call.ret(status);
+	});
+#endif
 	// GetTempFileName: a zero unique value picks a free name and creates the file; any other value only forms the name.
 	registry.add("GetTempFileNameW", 4, [&, resolve, missing, file_of, copy_file](ApiCall &call) {
 		const auto directory = call.wide(call[0]);
@@ -2910,8 +2961,11 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 		}
 		// The current-thread pseudo handle duplicates into a real handle to the calling thread; the current-process one into the process itself.
 		std::optional<uint32_t> narrowed = typed_rights;
-		const bool section = objects.object_as<SectionObject>(call[1]) != nullptr;
-		if (section && !(call.u32(6) & same_access)) {
+		const bool section = std::dynamic_pointer_cast<SectionObject>(source) != nullptr;
+		const auto type = source ? source->type_name() : std::u16string_view();
+		const bool scoped_access = section || type == u"IoCompletion" || type == u"IoCompletionReserve" ||
+			type == u"WaitCompletionPacket" || type == u"ALPC Port";
+		if (scoped_access && !(call.u32(6) & same_access)) {
 			// A copy cannot carry rights the original lacks; asking for them is refused.
 			const uint32_t held = objects.access_of(call[1]);
 			uint32_t wanted = call.u32(4);
@@ -2922,7 +2976,7 @@ void register_file_api(ApiRegistry &registry, KernelContext &context)
 			if (wanted & 0x10000000U) wanted = (wanted & ~0x10000000U) | 0xf001f;
 			if (wanted & 0x02000000U) wanted = held;
 			if (wanted & ~held) {
-				if (std::getenv("RAVEN_TRACE_FAIL"))
+				if (section && std::getenv("RAVEN_TRACE_FAIL"))
 					std::fprintf(stderr, "raven: section handle %llx holds %x, a copy asked for %x\n", (unsigned long long)call[1], held, wanted);
 				call.fail(5);
 				return;

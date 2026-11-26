@@ -130,18 +130,15 @@ std::optional<std::vector<uint8_t>> NativeX86Loader::read_library(const std::str
 				return read_all(component);
 			}
 		}
-		// Direct3D 10.1 is the runtime's own library over d3d10core.dll, unless the Direct3D build the runtime is given carries one.
-		if (name == "d3d10_1.dll") {
-			std::vector<std::filesystem::path> places;
-			if (const char *directory = std::getenv("RAVEN_D3D_DIRECTORY"))
-				places.push_back(std::filesystem::path(directory) / name);
-			places.push_back(std::filesystem::read_symlink("/proc/self/exe").parent_path() / "x86" / "raven-d3d10_1.dll");
-			for (const auto &place : places)
-				if (std::filesystem::exists(place)) {
-					identity = name;
-					file = place;
-					return read_all(place);
-				}
+		if (const auto component = graphics_component(name, false)) {
+			identity = name;
+			file = *component;
+			return read_all(file);
+		}
+		if (const auto configured = configured_d3d_library(name, false)) {
+			identity = name;
+			file = *configured;
+			return read_all(file);
 		}
 		return std::nullopt;
 	}
@@ -223,6 +220,9 @@ PEModule *NativeX86Loader::bring(const std::string &requested)
 		return &added;
 	}
 	std::string missing;
+	const auto record_missing = [&](const PEImport &symbol) {
+		missing += " " + symbol.module + "!" + (symbol.by_ordinal ? "#" + std::to_string(symbol.ordinal) : symbol.name);
+	};
 	// A library's own manifest names the side-by-side assemblies its imports come from, the C runtime of its compiler most often.
 	// Its context is the one in effect while it and the libraries it brings in start, which the C runtime checks it was found by.
 	const auto own = activation_contexts().module_manifest(added.image);
@@ -237,13 +237,13 @@ PEModule *NativeX86Loader::bring(const std::string &requested)
 			if (const auto folder = activation_contexts().assembly_folder(*own, dependency))
 				bring(lowered(to_utf8(paths.dos(*folder))) + "\\" + dependency);
 		if (!modules.all().contains(dependency) && !bring(dependency)) {
-			missing += " " + symbol.module + "!";
+			record_missing(symbol);
 			continue;
 		}
 		try {
-			modules.resolve(symbol);
+			modules.resolve_import(symbol);
 		} catch (const std::runtime_error &) {
-			missing += " " + symbol.module + "!" + (symbol.by_ordinal ? "#" + std::to_string(symbol.ordinal) : symbol.name);
+			record_missing(symbol);
 		}
 	}
 	importer_context = outer;

@@ -491,7 +491,7 @@ if(TARGET raven_cpu)
     # cpu/gates.S is x86-64 code the runtime copies into its guest. The arm64 host carries the same bytes: the file is assembled for
     # x86-64 Linux and its data rewritten as an arm64 object of the same labels (guest_bytes.py).
     get_target_property(_raven_cpu_sources raven_cpu SOURCES)
-    list(REMOVE_ITEM _raven_cpu_sources cpu/gates.S cpu/agent.S cpu/agent_tasks.cpp nt/warm_host.cpp)
+    list(REMOVE_ITEM _raven_cpu_sources cpu/gates.S cpu/preludes.S cpu/agent.S cpu/agent_tasks.cpp nt/warm_host.cpp)
     set_property(TARGET raven_cpu PROPERTY SOURCES ${_raven_cpu_sources})
     target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/warm_host.cpp)
     set(RAVEN_DARWIN_GATES ${CMAKE_CURRENT_BINARY_DIR}/darwin-gates.S)
@@ -500,7 +500,13 @@ if(TARGET raven_cpu)
             -o ${CMAKE_CURRENT_BINARY_DIR}/gates-x86_64.o
         COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/guest_bytes.py ${CMAKE_CURRENT_BINARY_DIR}/gates-x86_64.o ${RAVEN_DARWIN_GATES}
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cpu/gates.S ${RAVEN_DARWIN_DIR}/guest_bytes.py VERBATIM)
-    target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_GATES})
+    set(RAVEN_DARWIN_PRELUDES ${CMAKE_CURRENT_BINARY_DIR}/darwin-preludes.S)
+    add_custom_command(OUTPUT ${RAVEN_DARWIN_PRELUDES}
+        COMMAND ${CMAKE_C_COMPILER} -target x86_64-unknown-linux-gnu -c ${CMAKE_CURRENT_SOURCE_DIR}/cpu/preludes.S
+            -o ${CMAKE_CURRENT_BINARY_DIR}/preludes-x86_64.o
+        COMMAND ${Python3_EXECUTABLE} ${RAVEN_DARWIN_DIR}/guest_bytes.py ${CMAKE_CURRENT_BINARY_DIR}/preludes-x86_64.o ${RAVEN_DARWIN_PRELUDES}
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cpu/preludes.S ${RAVEN_DARWIN_DIR}/guest_bytes.py VERBATIM)
+    target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_GATES} ${RAVEN_DARWIN_PRELUDES})
     enable_language(OBJCXX)
     target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/print.mm ${RAVEN_DARWIN_DIR}/print_api.cpp ${RAVEN_DARWIN_DIR}/loader_api.cpp)
     set_source_files_properties(${RAVEN_DARWIN_DIR}/print.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-Wall;-Wextra")

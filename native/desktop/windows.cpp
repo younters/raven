@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include "windows.h"
 #include "nt/actctx.h"
+#include "nt/desktop_lock.h"
 #include "nt/text.h"
 #include "nt/shared_file.h"
 #include "nt/sandbox.h"
@@ -146,6 +147,34 @@ void NativeWindows::refresh_screen()
 	}
 }
 
+void NativeWindows::prepare_surface(uint64_t handle)
+{
+	if (!desktop_lock().held_whole()) return;
+	// A child draws on its root's surface.
+	const auto *window=std::as_const(objects).window(handle);
+	if (window && window->parent) {
+		handle=objects.window_root(handle);
+		window=std::as_const(objects).window(handle);
+	}
+	if (!window || window->dc || window->parent || spare_surfaces.contains(handle)) return;
+	const auto width=std::max<int64_t>(int64_t(window->outer.right)-window->outer.left,1),height=std::max<int64_t>(int64_t(window->outer.bottom)-window->outer.top,1);
+	if (width>8192 || height>8192 || uint64_t(width)*uint64_t(height)>16*1024*1024) return;
+	const auto size=(size_t(width)*size_t(height)*4+4095)&~size_t(4095);
+	std::shared_ptr<SharedPixels> shared;
+	uint64_t address=0;
+	try {
+		const DesktopRelease release;
+		shared=std::make_shared<SharedPixels>(size);
+		address=process.map_shared(shared->descriptor(),size);
+	} catch (...) {
+		return;
+	}
+	// Another thread may have given the window its surface, or destroyed it, meanwhile.
+	window=std::as_const(objects).window(handle);
+	if (!window || window->dc || spare_surfaces.contains(handle)) { released_surfaces.push_back(address); return; }
+	spare_surfaces[handle]={shared,address,size};
+}
+
 uint64_t NativeWindows::surface_dc(uint64_t handle)
 {
 	if (const auto *known=std::as_const(objects).window(handle); known && known->dc) return known->dc;
@@ -167,13 +196,14 @@ uint64_t NativeWindows::surface_dc(uint64_t handle)
 	const auto size=(size_t(width)*size_t(height)*4+4095)&~size_t(4095);
 	std::shared_ptr<SharedPixels> shared;
 	uint64_t address=0;
-	// A window given another size keeps what it showed, from its corner, until it paints: Windows leaves the old pixels there too, and
-	// a program that takes a while over its new layout does not show an empty window meanwhile.
+	// A window given another size keeps what its client area showed until it paints: Windows leaves the old pixels there too, and a
+	// program that takes a while over its new layout does not show an empty window meanwhile.
 	std::vector<uint8_t> before;
 	uint32_t before_width=0,before_height=0;
+	DesktopRect kept{};
 	if (const auto spare=spare_surfaces.find(handle); spare!=spare_surfaces.end() && spare->second.width && spare->second.height &&
 		size_t(spare->second.width)*spare->second.height*4<=spare->second.pixels->size()) {
-		before_width=spare->second.width; before_height=spare->second.height;
+		before_width=spare->second.width; before_height=spare->second.height; kept=spare->second.client;
 		before.assign(spare->second.pixels->data(),spare->second.pixels->data()+size_t(before_width)*before_height*4);
 	}
 	// Only at the same width: what draws into a surface from the guest knows it by its address, rows and all, so a narrower surface at
@@ -193,16 +223,23 @@ uint64_t NativeWindows::surface_dc(uint64_t handle)
 		address=process.map_shared(shared->descriptor(),size);
 	}
 	// What nothing has drawn on yet shows the window's background, not black: a program that takes seconds over its first paint, or
-	// over controls that a graphics driver draws, shows them as empty panels while they load. The pixels of a surface the window had
-	// before are laid out for another size; only what is kept from its corner stays.
+	// over controls that a graphics driver draws, shows them as empty panels while they load.
 	{
 		const uint32_t pixel=unpainted_pixel(*window);
 		auto *words=reinterpret_cast<uint32_t *>(shared->data());
 		std::fill(words,words+std::min(size,shared->size())/4,pixel);
 	}
-	for (uint32_t row=0;row<std::min<uint32_t>(before_height,uint32_t(height));++row)
-		std::memcpy(shared->data()+size_t(row)*size_t(width)*4,before.data()+size_t(row)*before_width*4,
-			size_t(std::min<uint32_t>(before_width,uint32_t(width)))*4);
+	// The old client area moves to where the client area lies now. The frame and what was drawn beside the client area are not kept: at
+	// the old edges they would lie inside a larger window, and presenting draws the frame again.
+	const int64_t client_left=int64_t(window->x)-window->outer.left,client_top=int64_t(window->y)-window->outer.top;
+	const int64_t shift_x=client_left-kept.left,shift_y=client_top-kept.top;
+	const int64_t left=std::max<int64_t>({kept.left,0,std::max<int64_t>(client_left,0)-shift_x});
+	const int64_t top=std::max<int64_t>({kept.top,0,std::max<int64_t>(client_top,0)-shift_y});
+	const int64_t right=std::min<int64_t>({kept.right,before_width,std::min<int64_t>(client_left+window->width,width)-shift_x});
+	const int64_t bottom=std::min<int64_t>({kept.bottom,before_height,std::min<int64_t>(client_top+window->height,height)-shift_y});
+	for (int64_t row=top;row<bottom && left<right;++row)
+		std::memcpy(shared->data()+(size_t(row+shift_y)*size_t(width)+size_t(left+shift_x))*4,before.data()+(size_t(row)*before_width+size_t(left))*4,
+			size_t(right-left)*4);
 	uint64_t bitmap=0,dc=0;
 	try {
 		bitmap=objects.add(DesktopBitmap{uint32_t(width),uint32_t(height),32,{},address,true,true,false,shared});
@@ -388,7 +425,8 @@ void NativeWindows::present(uint64_t handle, bool force)
 		} catch (const std::exception &) {}
 	}
 	// Host titles use replacement characters; the guest retains every UTF-16 code unit.
-	if (presentation.maximize) presentation.maximize(handle,(window->style & 0x01000000U)!=0);
+	const bool maximized=(window->style & 0x01000000U)!=0;
+	if (presentation.maximize) presentation.maximize(handle,maximized);
 	if (presentation.frame) {
 		// From the client area, which a program that draws its own caption extends over the frame.
 		const int32_t menu=window->menu ? frame_layout(*window).menu_height : 0;
@@ -397,6 +435,13 @@ void NativeWindows::present(uint64_t handle, bool force)
 	}
 	if (presentation.transient_for) presentation.transient_for(handle,owning ? owner : 0);
 	if (part && presentation.changed_within) presentation.changed_within(handle,{part->left,part->top,part->right,part->bottom});
+	if (maximized && presentation.shown_within) {
+		const auto work=objects.nonclient_metrics().work_area();
+		const auto &outer=window->outer;
+		presentation.shown_within(handle,{std::max(work.left-outer.left,0),std::max(work.top-outer.top,0),std::min(work.right,outer.right)-outer.left,
+			std::min(work.bottom,outer.bottom)-outer.top});
+	}
+	// Host titles use replacement characters; the guest retains every UTF-16 code unit.
 	presentation.present(handle,encode_utf8(window->title,true),bitmap->width,bitmap->height,pixels);
 	place_host_surface(handle);
 	place_overlays(handle,*bitmap,pixels);
@@ -665,11 +710,33 @@ void NativeWindows::collect_input(std::chrono::milliseconds budget)
 	}
 }
 
+uint32_t NativeWindows::foreign_kinds(uint32_t thread)
+{
+	// What other processes sent or posted to the thread's windows waits in the windows directory until the thread reads its queue
+	// (answer_foreign_sends, import_foreign_posts). The directory is read again only when it changed.
+	if (const auto stamp=foreign_frames_stamp(); stamp!=waiting_stamp) {
+		waiting_stamp=stamp;
+		foreign_waiting=foreign_messages_waiting([this](uint64_t window) { return std::as_const(objects).window(window)!=nullptr; });
+	}
+	uint32_t kinds=0;
+	// A window destroyed since has no thread and concerns none.
+	for (const auto &[window,waiting] : foreign_waiting)
+		if (owner(window)==thread) kinds|=waiting;
+	// The guest answers PeekMessage itself while the thread's queue was quiet (mark_quiet): such a message must reach the runtime's.
+	if (kinds) wake(thread);
+	return kinds;
+}
+
 uint32_t NativeWindows::queue_status(uint32_t thread,uint32_t mask,bool clear)
 {
-	const auto event_thread=[&](const DesktopEvent &event) { return input_thread(event); };
 	collect_input(std::chrono::milliseconds(0));
 	post_due_timers();
+	return status_bits(thread,mask,clear);
+}
+
+uint32_t NativeWindows::status_bits(uint32_t thread,uint32_t mask,bool clear)
+{
+	const auto event_thread=[&](const DesktopEvent &event) { return input_thread(event); };
 	uint32_t current=0;
 	for (const auto &message : messages)
 		if (!message.thread || message.thread==thread) current|=message.kinds;
@@ -677,21 +744,25 @@ uint32_t NativeWindows::queue_status(uint32_t thread,uint32_t mask,bool clear)
 	if (sent_for(thread)) current|=0x40;
 	probe_window_updates();
 	if (window_update_threads.contains(thread)) current|=0x40;
+	const uint32_t foreign=foreign_kinds(thread);
+	current|=foreign;
 	for (const auto &event : pending_events)
 		if (!event_thread(event) || event_thread(event)==thread) current|=event_kinds(event);
 	auto &state=queues[thread];
-	std::map<uint64_t,uint64_t> paints;
-	// Read-only: a window handed out for change would be published to the guest again.
-	for (const auto handle : std::as_const(objects).waiting_paint()) {
-		const auto *window=std::as_const(objects).window(handle);
-		if (!window || (window->thread && window->thread!=thread)) continue;
+	auto paints=objects.paint_generations(thread);
+	for (const auto &[handle,generation] : paints) {
 		current|=0x20;
-		paints[handle]=window->update_generation;
 		const auto previous=state.paints.find(handle);
-		if (previous==state.paints.end() || previous->second!=window->update_generation) state.changed|=0x20;
+		if (previous==state.paints.end() || previous->second!=generation) state.changed|=0x20;
 	}
 	state.paints=std::move(paints);
 	state.changed=(state.changed | (current & ~state.current)) & current;
+	// Another process's messages are news once for each change of the directory: a call that clears them leaves the news to the next
+	// call that keeps them (mark_quiet's), so one that came while PeekMessage took the others still wakes the wait.
+	if (foreign && state.foreign_stamp!=waiting_stamp) {
+		state.changed|=foreign;
+		if (!clear) state.foreign_stamp=waiting_stamp;
+	}
 	state.current=current;
 	const uint32_t result=((current<<16) | state.changed) & ((mask<<16) | mask);
 	if (clear) state.changed&=~mask;
@@ -705,19 +776,25 @@ void NativeWindows::mark_quiet(uint32_t thread)
 	// answers PeekMessage, not GetInputState.
 	const uint32_t holds=queue_status(thread,0xffff,false)>>16;
 	watch_input();
-	// The time stamp counter's rate, taken against the steady clock since the first poll that could be answered: until it has run a
-	// tenth of a second the guest asks the runtime every time.
-	static const uint64_t first_ticks=__rdtsc();
-	static const auto first_time=std::chrono::steady_clock::now();
+	quiet_until(thread,holds);
+}
+
+void NativeWindows::quiet_until(uint32_t thread,uint32_t holds)
+{
+	if (!quiet_table) return;
+	// The time stamp counter's rate, taken against the steady clock since the process's desktop was made: until that is two
+	// milliseconds ago the guest asks the runtime every time. The deadline lies at most 16 ms ahead, and the clock reads to a fraction
+	// of a microsecond, so the rate is already far closer than that needs; a program whose threads poll a few hundred times within its
+	// first tenth of a second has them answered in the guest from the start.
 	const uint64_t ticks=__rdtsc();
 	const auto now=std::chrono::steady_clock::now();
-	const auto elapsed=std::chrono::duration_cast<std::chrono::nanoseconds>(now-first_time).count();
-	if (elapsed<100'000'000 || ticks<=first_ticks) return;
+	const auto elapsed=std::chrono::duration_cast<std::chrono::nanoseconds>(now-made_time).count();
+	if (elapsed<2'000'000 || ticks<=made_ticks) return;
 	auto until=now+std::chrono::milliseconds(16);
 	for (const auto &timer : timers)
 		if (!timer.thread || timer.thread==thread) until=std::min(until,timer.due);
 	if (until<=now) return;
-	const double rate=double(ticks-first_ticks)/double(elapsed);
+	const double rate=double(ticks-made_ticks)/double(elapsed);
 	const uint64_t deadline=ticks+uint64_t(rate*double(std::chrono::duration_cast<std::chrono::nanoseconds>(until-now).count()));
 	auto *slot=quiet_table+(thread%quiet_slots)*quiet_slot;
 	__atomic_store_n(reinterpret_cast<uint64_t *>(slot+8),uint64_t(0),__ATOMIC_RELEASE);
@@ -752,8 +829,9 @@ void NativeWindows::publish_traits(uint64_t handle)
 	const auto *window=std::as_const(objects).window(handle);
 	if (!window || window->destroying) return;
 	const auto *definition=objects.window_class(window->class_id);
-	publish_window_traits(handle,{window->style,window->ex_style,definition ? definition->name : std::string(),window->parent,window->visible,
-		to_utf8(window->title)});
+	ForeignWindowTraits traits{window->style,window->ex_style,definition ? definition->name : std::string(),window->parent,window->visible,
+		to_utf8(window->title)};
+	directory([handle,traits=std::move(traits)] { publish_window_traits(handle,traits); });
 }
 
 uint64_t NativeWindows::foreign_dc(uint64_t handle)
@@ -874,6 +952,11 @@ void NativeWindows::show_cursor()
 void NativeWindows::flush_dirty(bool force)
 {
 	settle_focus_leave(false);
+	present_dirty(force);
+}
+
+void NativeWindows::present_dirty(bool force)
+{
 	import_foreign_frames();
 	const auto roots=std::move(dirty_roots);
 	const auto areas=std::move(dirty_areas);
@@ -893,6 +976,19 @@ void NativeWindows::flush_dirty(bool force)
 			present(root, force);
 			presenting.reset();
 		}
+}
+
+std::chrono::steady_clock::time_point NativeWindows::present_frames()
+{
+	// A frame that cannot be shown does not end the caller's wait with its error.
+	try { present_dirty(); } catch (uint32_t) {}
+	return foreign_look(std::chrono::steady_clock::now()+std::chrono::milliseconds(20));
+}
+
+std::chrono::steady_clock::time_point NativeWindows::foreign_look(std::chrono::steady_clock::time_point limit) const
+{
+	const bool drawn=std::any_of(foreign_frames.begin(),foreign_frames.end(),[](const auto &frame) { return frame.second!=0; });
+	return drawn ? std::min(limit,foreign_checked+std::chrono::milliseconds(8)) : limit;
 }
 
 void NativeWindows::release_surface(uint64_t handle)
@@ -932,9 +1028,11 @@ void NativeWindows::release_surface(uint64_t handle)
 		const auto address=record->address;
 		if (resizing && record->shared) {
 			drop_spare_surface(handle);
-			spare_surfaces[handle]={record->shared,address,record->shared->size(),record->width,record->height};
+			const int32_t left=window->x-window->outer.left,top=window->y-window->outer.top;
+			spare_surfaces[handle]={record->shared,address,record->shared->size(),record->width,record->height,
+				{left,top,left+window->width,top+window->height}};
 		} else {
-			process.unmap_memory(address);
+			released_surfaces.push_back(address);
 		}
 		objects.erase(bitmap);
 	}
@@ -945,7 +1043,7 @@ void NativeWindows::drop_spare_surface(uint64_t handle)
 {
 	const auto found=spare_surfaces.find(handle);
 	if (found==spare_surfaces.end()) return;
-	process.unmap_memory(found->second.address);
+	released_surfaces.push_back(found->second.address);
 	spare_surfaces.erase(found);
 }
 
@@ -1217,29 +1315,7 @@ void NativeWindows::serve_sent()
 
 uint64_t NativeWindows::invalid_owned(uint64_t filter,uint32_t thread) const
 {
-	const auto me=thread ? thread : environment.thread_id();
-	// The search starts after the window painted last and goes round: a window invalidated with every pointer move (a status bar
-	// showing the position) would otherwise be found first each time, and the others, the canvas the pointer draws on among them,
-	// would wait for as long as the moves go on.
-	auto handles=std::as_const(objects).waiting_paint();
-	std::stable_partition(handles.begin(),handles.end(),[&](uint64_t handle) { return handle>paint_cursor; });
-	for (const auto handle : handles) {
-		const auto *window=std::as_const(objects).window(handle);
-		if (!window || (window->thread && window->thread!=me)) continue;
-		if (filter && filter!=handle && !objects.is_child(filter,handle)) continue;
-		// Parents paint before their children, as Windows orders WM_PAINT: a child may lie under what its parent draws, and handles
-		// come back in any order once windows are destroyed and made again.
-		uint64_t chosen=handle;
-		for (auto parent=window->parent;parent && parent!=filter;) {
-			const auto *above=std::as_const(objects).window(parent);
-			if (!above) break;
-			if (above->needs_paint() && objects.window_visible(parent) && (!above->thread || above->thread==me)) chosen=parent;
-			parent=above->parent;
-		}
-		if (filter && chosen!=handle && filter!=chosen && !objects.is_child(filter,chosen)) chosen=handle;
-		return chosen;
-	}
-	return 0;
+	return objects.paint_target(filter,thread ? thread : environment.thread_id(),paint_cursor);
 }
 
 // A compositor that moves the keyboard between two windows of the program reports a leave first. The leave waits a moment, so the
@@ -1377,12 +1453,18 @@ void NativeWindows::receive(const DesktopEvent &event)
 	if (event.kind==DesktopEventKind::resize) {
 		// The host's configured size applies to resizable windows and to a requested maximization.
 		const auto *window=std::as_const(objects).window(event.window);
-		if (!window || window->parent || event.x<=0 || event.y<=0 || !(window->style & (0x40000U | 0x01000000U))) {
+		if (!window || window->parent || !(window->style & (0x40000U | 0x01000000U)) || event.x<=0 || event.y<=0) {
 			complete_resize(event);
 			return;
 		}
-		const DesktopRect outer{window->outer.left,window->outer.top,window->outer.left+event.x,window->outer.top+event.y};
-		if (outer.right-outer.left!=window->outer.right-window->outer.left || outer.bottom-outer.top!=window->outer.bottom-window->outer.top) {
+		DesktopRect outer{window->outer.left,window->outer.top,window->outer.left+event.x,window->outer.top+event.y};
+		// The size the host gives a window it shows maximized is the work area's.
+		if ((window->style & 0x01000000U) && event.wparam) {
+			objects.set_work_area(event.x,event.y);
+			outer=objects.nonclient_metrics().work_area();
+		}
+		if (outer.left!=window->outer.left || outer.top!=window->outer.top || outer.right!=window->outer.right || outer.bottom!=window->outer.bottom) {
+			// The compositor already resized the host window, so it stays and receives the next frame at the new size.
 			const bool kept=keep_host_window;
 			keep_host_window=true;
 			try { place_window(event.window,outer,0,0x14); } catch (...) { keep_host_window=kept; complete_resize(event); throw; }
@@ -1645,9 +1727,18 @@ NativeWindows::Modifiers NativeWindows::modifier_state() const
 	return Modifiers{(vk_state[0x10] & 0x80)!=0,(vk_state[0x11] & 0x80)!=0,(vk_state[0x12] & 0x80)!=0};
 }
 
-uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking)
+uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking,
+	const std::function<void(uint64_t,std::span<const uint8_t>)> *beside)
 {
-	sync_window_updates();
+	// Beside the turn no procedure of the guest can run: a retrieval that would call one, a hook, a message another thread or process
+	// sent, input to be received first or taken now, goes to the turn and is done there from the start.
+	const bool alone=beside!=nullptr;
+	if (alone && (blocking || has_hook(2) || has_hook(3) || has_hook(7))) throw ApiNeedsTurn{};
+	if (!alone) sync_window_updates();
+	const auto write=[&](uint64_t address,std::span<const uint8_t> bytes) {
+		if (alone) (*beside)(address,bytes);
+		else process.write_memory(address,bytes);
+	};
 	const auto layout=message_layout(process.mode()==NativeMode::x86);
 	// A 32-bit (HWND)-1 selects thread messages exactly like its 64-bit sign extension.
 	const auto window=process.mode()==NativeMode::x86 && args[1]==UINT32_MAX ? UINT64_MAX : args[1];
@@ -1667,10 +1758,13 @@ uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking)
 	};
 	for (;;) {
 		collect_input(std::chrono::milliseconds(0));
+		if (alone && pending_for(me)) throw ApiNeedsTurn{};
 		deliver_pending();
 		if (kinds & 0x8) import_foreign_posts();
+		if (alone && (kinds & 0x40) && foreign_frames_stamp()!=sends_stamp) throw ApiNeedsTurn{};
 		if (kinds & 0x40) answer_foreign_sends();
 		// Messages sent from other threads run before anything is retrieved, as they do while a Windows thread pumps its queue.
+		if (alone && (kinds & 0x40) && sent_for(me)) throw ApiNeedsTurn{};
 		if (kinds & 0x40) serve_sent();
 		auto found=std::find_if(messages.begin(),messages.end(),matches);
 		const auto quit=(kinds & 0x108) ? quits.find(me) : quits.end();
@@ -1681,8 +1775,11 @@ uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking)
 			put(bytes,layout.wparam,value.wparam,layout.pointer); put(bytes,layout.lparam,value.lparam,layout.pointer);
 			put(bytes,layout.time,value.time,4);
 			put(bytes,layout.x,uint32_t(value.x),4); put(bytes,layout.y,uint32_t(value.y),4);
-			process.write_memory(args[0],bytes);
-			if ((flags & 1U) && input_taken && ((value.message>=0x200 && value.message<=0x20e) || (value.message>=0x100 && value.message<=0x109)))
+			const bool input=(value.message>=0x200 && value.message<=0x20e) || (value.message>=0x100 && value.message<=0x109);
+			// Taking input tells the scheduler, which only the turn does.
+			if (alone && (flags & 1U) && input_taken && input) throw ApiNeedsTurn{};
+			write(args[0],bytes);
+			if ((flags & 1U) && input_taken && input)
 				input_taken();
 			// RAVEN_TRACE_MSG also follows what each retrieval returns, with the filter it was asked with.
 			static const char *const trace_retrieval=std::getenv("RAVEN_TRACE_MSG");
@@ -1740,7 +1837,7 @@ uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking)
 			paint_cursor=paint;
 			std::vector<uint8_t> bytes(layout.size);
 			put(bytes,0,paint,layout.pointer); put(bytes,layout.message,0x0f,4); put(bytes,layout.time,message_time(),4);
-			process.write_memory(args[0],bytes);
+			write(args[0],bytes);
 			queue_status(me,seen,true);
 			return 1;
 		}
@@ -1766,12 +1863,11 @@ uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking)
 			for (const auto &timer : timers) until=std::min(until,timer.due);
 			if (caret && caret->hidden<=0 && !caret->blank) until=std::min(until,caret->next);
 			if (scroll_drag.window) until=std::min(until,scroll_drag.next);
-			if (std::any_of(foreign_frames.begin(),foreign_frames.end(),[](const auto &frame) { return frame.second!=0; }))
-				until=std::min(until,foreign_checked+std::chrono::milliseconds(8));
+			until=foreign_look(until);
 			message_wait([&] {
 				// Collect host input without invoking a guest procedure while the scheduler checks another thread.
 				queue_status(me,0,false);
-				return pending_for(me) || ((kinds & 0x40) && sent_for(me)) ||
+				return pending_for(me) || ((kinds & 0x40) && sent_for(me)) || (foreign_kinds(me) & kinds) ||
 					((kinds & 0x108) && quits.contains(me)) || std::any_of(messages.begin(),messages.end(),matches) ||
 					((kinds & 0x20) && ((!minimum && !maximum) || (minimum<=0x0f && maximum>=0x0f)) && invalid_owned(window,me));
 			},until);
@@ -1787,6 +1883,73 @@ uint64_t NativeWindows::retrieve(std::span<const uint64_t> args,bool blocking)
 	}
 }
 
+// What makes the peek go whole: host input or events to take in, messages other processes posted or sent, messages other threads sent
+// this one, drawing to present, a timer of the thread due, a focus leaving, frames other processes draw, hooks to call; and a message
+// of input, which moves the key state. Those change only under the whole lock, which the shared one keeps away while they are read.
+std::optional<uint64_t> NativeWindows::peek_shared(std::span<const uint64_t> args,
+	const std::function<void(uint64_t,std::span<const uint8_t>)> &write)
+{
+	const auto me=environment.thread_id();
+	const auto now=std::chrono::steady_clock::now();
+	const auto stamp=foreign_frames_stamp();
+	// Without a host connection there is nothing to take in; one that cannot tell is polled.
+	if (!me || (presentation.poll && !presentation.quiet) || has_hook(2) || has_hook(3) || has_hook(7) || !pending_events.empty() ||
+		!held_input.empty() || !dirty_roots.empty() || focus_leaving || stamp!=posts_stamp || stamp!=sends_stamp || stamp!=foreign_stamp ||
+		sent_for(me) || std::any_of(foreign_frames.begin(),foreign_frames.end(),[](const auto &entry) { return entry.second!=0; }) ||
+		std::any_of(timers.begin(),timers.end(),[&](const Timer &timer) { return (!timer.thread || timer.thread==me) && timer.due<=now; }))
+		return std::nullopt;
+	const auto layout=message_layout(process.mode()==NativeMode::x86);
+	const auto window=process.mode()==NativeMode::x86 && args[1]==UINT32_MAX ? UINT64_MAX : args[1];
+	const auto minimum=uint32_t(args[2]),maximum=uint32_t(args[3]),flags=uint32_t(args[4]);
+	// A call retrieve fails is failed there.
+	if ((window && window!=UINT64_MAX && !std::as_const(objects).window(window)) ||
+		((minimum || maximum) && (minimum>maximum || maximum>0xffff)) || (flags & ~0x1dff0003U) ||
+		(presentation.poll && !presentation.quiet()))
+		return std::nullopt;
+	const auto kinds=flags>>16 ? flags>>16 : 0x1dffU;
+	const auto seen=(kinds | 8U) & ((minimum || maximum || (flags>>16)) ? ~0x100U : UINT32_MAX);
+	const std::lock_guard turn(queue_turn);
+	const auto found=std::find_if(messages.begin(),messages.end(),[&](const Message &message) {
+		return (!message.thread || message.thread==me) && (message.kinds & kinds) &&
+			(!window || (window==UINT64_MAX ? !message.window : message.window==window || objects.is_child(window,message.window))) &&
+			(message.message==0x12 || (!minimum && !maximum) || (message.message>=minimum && message.message<=maximum));
+	});
+	const auto quit=(kinds & 0x108) ? quits.find(me) : quits.end();
+	Message value{0,0,0,0,message_time(),0,0};
+	if (found!=messages.end()) {
+		const auto number=found->message;
+		if ((number>=0x100 && number<=0x109) || (number>=0x200 && number<=0x20e) || (number>=0x2a0 && number<=0x2a3)) return std::nullopt;
+		value=*found;
+	} else if (quit!=quits.end()) value=Message{0,quit->second,0,0x12,message_time(),cursor_x,cursor_y};
+	else if (const auto paint=(kinds & 0x20) && ((!minimum && !maximum) || (minimum<=0x0f && maximum>=0x0f)) ?
+		objects.paint_target(window,me,paint_cursor) : 0) {
+		value.window=paint;
+		value.message=0x0f;
+	} else {
+		status_bits(me,seen,true);
+		quiet_until(me,status_bits(me,0xffff,false)>>16);
+		return 0;
+	}
+	std::vector<uint8_t> bytes(layout.size);
+	put(bytes,0,value.window,layout.pointer); put(bytes,layout.message,value.message,4);
+	put(bytes,layout.wparam,value.wparam,layout.pointer); put(bytes,layout.lparam,value.lparam,layout.pointer);
+	put(bytes,layout.time,value.time,4);
+	put(bytes,layout.x,uint32_t(value.x),4); put(bytes,layout.y,uint32_t(value.y),4);
+	write(args[0],bytes);
+	static const char *const trace_retrieval=std::getenv("RAVEN_TRACE_MSG");
+	if (trace_retrieval)
+		fprintf(stderr,"get %llx %x filter %llx %x-%x %s shared\n",(unsigned long long)value.window,value.message,
+			(unsigned long long)window,minimum,maximum,(flags & 1U) ? "remove" : "peek");
+	if (value.message==0x0f) paint_cursor=value.window;
+	else if (flags & 1U) {
+		retrieved[me]={value.time,value.x,value.y};
+		if (found!=messages.end()) messages.erase(found);
+		else quits.erase(me);
+	}
+	status_bits(me,seen,true);
+	return 1;
+}
+
 void NativeWindows::wait_idle(std::chrono::steady_clock::time_point deadline)
 {
 	const auto now=std::chrono::steady_clock::now();
@@ -1795,8 +1958,7 @@ void NativeWindows::wait_idle(std::chrono::steady_clock::time_point deadline)
 	if (caret && caret->hidden<=0 && !caret->blank) until=std::min(until,caret->next);
 	if (scroll_drag.window) until=std::min(until,scroll_drag.next);
 	// Windows another process draws into are looked at as often as before; one starting to draw shows in the windows directory.
-	if (std::any_of(foreign_frames.begin(),foreign_frames.end(),[](const auto &frame) { return frame.second!=0; }))
-		until=std::min(until,foreign_checked+std::chrono::milliseconds(8));
+	until=foreign_look(until);
 	if (pending_for(environment.thread_id()) || !dirty_roots.empty()) until=now;
 	until=idle_until(until);
 	if (until>now) {
@@ -1804,7 +1966,11 @@ void NativeWindows::wait_idle(std::chrono::steady_clock::time_point deadline)
 		const auto handles = idle_descriptors(descriptors);
 		const auto left=std::chrono::duration_cast<std::chrono::nanoseconds>(until-now).count();
 		const timespec timeout{left/1000000000,left%1000000000};
-		::ppoll(descriptors.data(),descriptors.size(),&timeout,nullptr);
+		{
+			// Threads answered beside the turn post and send meanwhile: the desktop lock is not held over the wait.
+			const DesktopRelease desktop_release;
+			::ppoll(descriptors.data(),descriptors.size(),&timeout,nullptr);
+		}
 		idle_drain();
 		if (descriptors[1].revents & POLLIN) {
 			drain_foreign_frames_descriptor();
@@ -1998,7 +2164,7 @@ bool NativeWindows::destroy(uint64_t handle)
 	window=objects.window(handle);
 	if (!window || window->destroying) throw uint32_t(5);
 	window->destroying=true;window->visible=false;window->style&=~0x10000000U;
-	withdraw_window(handle);
+	directory([handle] { withdraw_window(handle); });
 	// The owner of a closing active window, a dialog's among them, becomes active and takes the keyboard back.
 	if (active==handle) activate(successor(handle));
 	if (focus==handle || objects.is_child(handle,focus)) set_focus(0);
@@ -2269,11 +2435,13 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 	}
 	auto x=int32_t(args[4]),y=int32_t(args[5]);
 	auto width=int32_t(args[6]),height=int32_t(args[7]);
-	// CW_USEDEFAULT (0x80000000): top-level windows get a cascading position and three quarters of the screen; children get zero.
-	if (x==INT32_MIN || y==INT32_MIN || width==INT32_MIN || height==INT32_MIN) {
+	// For a visible overlapped window at CW_USEDEFAULT, y is the initial ShowWindow command.
+	const bool default_show=x==INT32_MIN && !(effective_style & 0xc0000000U) && (effective_style & 0x10000000U);
+	const uint32_t show_command=y==INT32_MIN ? 5 : uint32_t(y);
+	if (x==INT32_MIN) { x=0; y=0; }
+	if (y==INT32_MIN) y=0;
+	if (width==INT32_MIN || height==INT32_MIN) {
 		const auto &screen=objects.nonclient_metrics();
-		if (x==INT32_MIN) x=child ? 0 : 0;
-		if (y==INT32_MIN) y=child ? 0 : 0;
 		if (width==INT32_MIN) width=child ? 0 : screen.screen_x*3/4;
 		if (height==INT32_MIN) height=child ? 0 : screen.screen_y*3/4;
 	}
@@ -2417,9 +2585,20 @@ uint64_t NativeWindows::create(std::span<const uint64_t> args)
 		}
 		if (child) parent_notify(handle,1);
 		if (!std::as_const(objects).window(handle)) return 0;
-		if (const auto *created=std::as_const(objects).window(handle)) publish_window(handle,uint32_t(std::max(created->width,0)),uint32_t(std::max(created->height,0)),created->thread,created->parent);
+		if (const auto *created=std::as_const(objects).window(handle)) {
+			const uint32_t width=uint32_t(std::max(created->width,0)),height=uint32_t(std::max(created->height,0));
+			const uint32_t thread=created->thread;
+			const uint64_t parent=created->parent;
+			// No other process can send a message to this one before it shows them its first window: the intake of sent messages starts
+			// from the directory as it is now, or the first look of each thread at its queue would need the turn to read it.
+			if (sends_stamp==UINT64_MAX) sends_stamp=foreign_frames_stamp();
+			directory([handle,width,height,thread,parent] { publish_window(handle,width,height,thread,parent); });
+		}
 		publish_traits(handle);
-		if (effective_style & 0x10000000U) {
+		if (default_show) {
+			show_window(handle,show_command);
+			if (!std::as_const(objects).window(handle)) return 0;
+		} else if (effective_style & 0x10000000U) {
 #ifdef __APPLE__
 			initialize_window_dpi(handle);
 			if (!objects.window(handle)) return 0;
@@ -2503,6 +2682,7 @@ bool NativeWindows::withdraw_screen_dc(uint64_t handle)
 void NativeWindows::set_window_table(uint8_t *table)
 {
 	window_table=table;
+	const DesktopScope desktop_scope;
 	objects.touched_windows().overflow=true;
 	publish_windows();
 }
@@ -2560,10 +2740,37 @@ void NativeWindows::publish_window_record(uint64_t handle,const DesktopWindow *w
 	put(0,handle);
 }
 
+void NativeWindows::publish_window_alone(uint64_t handle)
+{
+	if (!window_table || !screen_block)
+		return;
+	// The guest reads a record between two looks at an even count that did not change: one writer at a time keeps it odd throughout.
+	const std::lock_guard lock(publishing_alone);
+	auto *version=reinterpret_cast<uint64_t *>(screen_block+table_version);
+	__atomic_fetch_add(version,1,__ATOMIC_SEQ_CST);
+	publish_window_record(handle,std::as_const(objects).window(handle));
+	__atomic_fetch_add(version,1,__ATOMIC_SEQ_CST);
+}
+
+void NativeWindows::publish_dc_alone(uint64_t handle)
+{
+	if (!dc_table)
+		return;
+	const std::lock_guard lock(publishing_alone);
+	const auto *device=std::as_const(objects).dc(handle);
+	publish_dc(handle,device);
+	// A call of the turn that a callback interrupted may still watch a context released meanwhile.
+	if (!device)
+		std::erase_if(watched_dcs,[handle](const auto &item) { return item.first==handle; });
+}
+
 void NativeWindows::publish_windows()
 {
 	if (!window_table)
 		return;
+	// The records are read from windows that other threads change beside the turn under the lock held shared.
+	if (!desktop_lock().held_whole())
+		throw std::logic_error("the windows' records are written without the desktop lock");
 	// Nothing touched, watched or released since the last time: only the few published words can have changed.
 	uint32_t logged=0;
 	if (deferred_log) std::memcpy(&logged,deferred_log,4);
@@ -3147,7 +3354,18 @@ void NativeWindows::api_left()
 	std::erase_if(watched_dcs,outlived);
 }
 
+uint64_t NativeWindows::published_screen_dc() const
+{
+	return screen_block ? __atomic_load_n(reinterpret_cast<const uint64_t *>(screen_block+screen_dc),__ATOMIC_ACQUIRE) : 0;
+}
+
 void NativeWindows::screen_dc_use(std::string_view name)
+{
+	if (screen_block && __atomic_load_n(reinterpret_cast<uint64_t *>(screen_block+screen_dc),__ATOMIC_ACQUIRE))
+		screen_dc_use(name,process.api_arguments(1)[0]);
+}
+
+void NativeWindows::screen_dc_use(std::string_view name, uint64_t first)
 {
 	if (!screen_block)
 		return;
@@ -3155,11 +3373,40 @@ void NativeWindows::screen_dc_use(std::string_view name)
 	if (!published || name=="GetDeviceCaps" || name=="ReleaseDC")
 		return;
 	// Only the first argument: the calls that change a context take it there, and the other registers may hold anything.
-	if (process.api_arguments(1)[0]==published)
+	if (first==published)
 		__atomic_store_n(reinterpret_cast<uint32_t *>(screen_block+screen_dc_state),uint32_t(2),__ATOMIC_RELEASE);
 }
 
 bool NativeWindows::dispatch(std::string_view name)
+{
+	const bool done=dispatch_call(name);
+	finish_call();
+	return done;
+}
+
+void NativeWindows::finish_call()
+{
+	if (released_surfaces.empty() && directory_work.empty()) return;
+	const auto addresses=std::exchange(released_surfaces,{});
+	const auto work=std::exchange(directory_work,{});
+	const std::lock_guard order(directory_order);
+	const DesktopRelease release;
+	for (const auto address : addresses) process.unmap_memory(address);
+	for (const auto &item : work) item();
+}
+
+void NativeWindows::directory(std::function<void()> work)
+{
+	// Under the shared lock a call changes only objects of its own thread, and nothing waits for it to let go.
+	if (!desktop_lock().held_whole()) {
+		const std::lock_guard order(directory_order);
+		work();
+		return;
+	}
+	directory_work.push_back(std::move(work));
+}
+
+bool NativeWindows::dispatch_call(std::string_view name)
 {
 	if (tree_dispatch(name) || system_dispatch(name)) return true;
 	// A 32-bit program's window data accessors are served by the shared handlers, which apply style changes.
@@ -3396,6 +3643,7 @@ bool NativeWindows::dispatch(std::string_view name)
 			// A null window selects the screen, which is the desktop window's surface.
 			const auto target=args[0] ? args[0] : desktop_window();
 			if (!std::as_const(objects).window(target)) { result=foreign_dc(target); process.return_api(result); return true; }
+			prepare_surface(target);
 			surface_dc(target);
 			const auto *window=std::as_const(objects).window(target);
 			DesktopDC device{window->bitmap,window->bitmap,target}; device.leased=true;
@@ -3405,6 +3653,7 @@ bool NativeWindows::dispatch(std::string_view name)
 			if (!args[0] && name=="GetDC") publish_screen_dc(target);
 		}
 		else if (name=="BeginPaint") {
+			prepare_surface(args[0]);
 			auto *window=objects.window(args[0]); if (!window) throw uint32_t(1400);
 			const bool narrow=process.mode()==NativeMode::x86;
 			const size_t P=narrow ? 4 : 8;

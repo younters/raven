@@ -42,6 +42,8 @@ void hold(const Task &task);
 // Forgets every task of the thread group or of the guest's process group, which has ended.
 void release_group(pid_t group);
 bool held(pid_t task);
+// A held task's block; null for any other task.
+uint64_t *block_of(pid_t task);
 
 // ptrace(2) for any task.
 long request(enum __ptrace_request operation, pid_t task, void *address, void *data);
@@ -52,5 +54,10 @@ pid_t wait(pid_t task, int *status, int options);
 int interrupt(pid_t task);
 // Whether a held task has stopped, so wait would not block.
 bool stopped(pid_t task);
+// Whether a held task stands at a stop that was read already and nothing resumed it since: it stays there until it is resumed.
+bool stop_read(pid_t task);
+// The word a held task's handler sets to posted (agent.h) as the task stops, for a loop that looks at it many times; null for any
+// other task.
+const uint32_t *stop_word(pid_t task);
 
 }

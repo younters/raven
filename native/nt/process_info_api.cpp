@@ -580,6 +580,21 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		else
 			call.ret(made.value);
 	});
+	registry.add("ProcessIdToSessionId", 2, [open_process, &objects](ApiCall &call) {
+		if (!call[1]) {
+			call.fail(87);
+			return;
+		}
+		constexpr uint32_t process_query_information = 0x400;
+		const auto made = open_process(call.u32(0), process_query_information, false);
+		if (made.status) {
+			call.fail(made.status == 0xc000000bU ? 87 : 4);
+			return;
+		}
+		objects.close(made.value);
+		call.store<uint32_t>(call[1], native_session_id);
+		call.ret(1);
+	});
 	registry.add("NtOpenProcess", 4, [open_process, &context](ApiCall &call) {
 		try {
 			call.process.validate_write_memory(call[0], call.pointer_width());
@@ -745,6 +760,20 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		if (call[2])
 			call.store<uint64_t>(call[2], total / 2);
 		call.ret(1);
+	});
+	// RtlGetUnloadEventTraceEx(&size, &count, &ring) points at the record size, the record count and the ring of the libraries unloaded
+	// last; RtlGetUnloadEventTrace returns the ring alone.
+	registry.add("RtlGetUnloadEventTraceEx", 3, [&context](ApiCall &call) {
+		const bool wide = call.pointer_width() == 8;
+		const auto block = context.unloads->block(call.process, context.allocator, wide);
+		const uint64_t pointers[] = {block, block ? block + 4 : 0, block ? block + UnloadTrace::ring : 0};
+		for (size_t index = 0; index < 3; ++index)
+			if (call[index])
+				call.store_pointer(call[index], pointers[index]);
+	});
+	registry.add("RtlGetUnloadEventTrace", 0, [&context](ApiCall &call) {
+		const auto block = context.unloads->block(call.process, context.allocator, call.pointer_width() == 8);
+		call.ret(block ? block + UnloadTrace::ring : 0);
 	});
 	registry.add("RtlCaptureStackBackTrace", 4, [](ApiCall &call) {
 		if (call[3])
@@ -1212,8 +1241,33 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// SystemProcessInformation (class 5) lists the same processes as a Toolhelp snapshot: a SYSTEM_PROCESS_INFORMATION for each, its
 	// SYSTEM_THREAD_INFORMATION entries after it and its image name after those, linked by NextEntryOffset. A buffer too small is
-	// answered with STATUS_INFO_LENGTH_MISMATCH and the length needed. The runtime answers the other classes before this one is reached.
+	// answered with STATUS_INFO_LENGTH_MISMATCH and the length needed. SystemRecommendedSharedDataAlignment (class 58) is one ULONG, the
+	// processor's cache line. The runtime answers the other classes before this one is reached.
 	registry.add("NtQuerySystemInformation", 4, [take_snapshot](ApiCall &call) {
+		if (call.u32(0) == 58) {
+			try {
+				if (call[3])
+					call.store<uint32_t>(call[3], 4);
+				if (call.u32(2) != 4) {
+					call.ret(0xc0000004U);
+					return;
+				}
+				if (!call[1]) {
+					call.ret(0xc0000005U);
+					return;
+				}
+#ifdef _SC_LEVEL1_DCACHE_LINESIZE
+				const long line = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
+#else
+				const long line = 64;
+#endif
+				call.store<uint32_t>(call[1], line >= 16 && line <= 256 && !(line & (line - 1)) ? uint32_t(line) : 64);
+				call.ret(0);
+			} catch (const ApiFault &) {
+				call.ret(0xc0000005U);
+			}
+			return;
+		}
 		if (call.u32(0) != 5) {
 			call.ret(0xc0000003U);
 			return;
@@ -1615,12 +1669,13 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 		std::vector<uint8_t> info;
 		const auto put = [&](size_t at, uint64_t value, size_t size) { std::memcpy(info.data() + at, &value, size); };
 		// A UNICODE_STRING at the start of the record whose text follows the record.
-		const auto counted = [&](size_t record, const std::u16string &text) {
+		const auto counted = [&](size_t record, std::u16string_view text) {
 			info.assign(record + (text.size() + 1) * 2, 0);
 			put(0, text.size() * 2, 2);
 			put(2, (text.size() + 1) * 2, 2);
 			put(width, text.empty() ? 0 : call[2] + record, width);
-			std::memcpy(info.data() + record, text.data(), text.size() * 2);
+			if (!text.empty())
+				std::memcpy(info.data() + record, text.data(), text.size() * 2);
 		};
 		switch (call.u32(1)) {
 		case 0:
@@ -1631,9 +1686,10 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
 			put(12, 1, 4);
 			break;
 		case 1:
-			// A file's name is its path on its device; other objects are not named here.
 			if (const auto file = pseudo ? nullptr : objects.object_as<FileObject>(handle))
 				counted(width == 4 ? 8 : 16, NativePaths::device_path(file->dos_path));
+			else if (const auto object = pseudo ? nullptr : objects.object(handle))
+				counted(width == 4 ? 8 : 16, object->object_name());
 			else
 				counted(width == 4 ? 8 : 16, u"");
 			break;

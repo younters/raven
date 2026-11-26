@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <vector>
 #include <sys/types.h>
 #include <poll.h>
 #include <vector>
@@ -61,6 +62,8 @@ void receive_handles(NativeObjects &objects);
 // The lease owns duplicates: reaping a channel or reusing its original fd cannot redirect an installed idle callback.
 // Readiness only wakes the scheduler; receive_handles still dispatches at scheduler service points.
 std::shared_ptr<void> watch_handles(std::vector<pollfd> &descriptors);
+// The descriptors receive_handles reads; only where receive_handles may run.
+std::vector<int> handle_descriptors();
 // Process queries can reach a runtime of this prefix even when it is neither the caller's parent nor its child.
 void enable_process_requests();
 std::shared_ptr<HandleChannel> process_request_channel(pid_t pid);

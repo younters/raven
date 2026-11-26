@@ -181,9 +181,8 @@ bool NativeWindows::show_window(uint64_t handle, uint32_t command)
 			if (!is_min)
 				window->restore = window->outer;
 			window->style = (window->style & ~ws_minimize) | ws_maximize;
-			const auto frame = adjust_window_rect(objects.nonclient_metrics(), {0, 0, 0, 0}, window->style & ~ws_visible, window->menu != 0, window->ex_style);
-			(void)frame;
-			place({0, 0, screen.screen_x, screen.screen_y});
+			// The window hears of its new place as of any other: WM_WINDOWPOSCHANGED, which a program may lay its content out from.
+			place_window(handle, screen.work_area(), 0, 0x14);
 		} else if (minimize && !is_min) {
 			if (!is_max)
 				window->restore = window->outer;
@@ -535,7 +534,9 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	registry.add("FindWindowExW", 4, [this](ApiCall &call) {
 		const auto name = call[2] && call[2] > 0xffff ? call.wide(call[2], 256) : std::u16string();
 		const auto title = call[3] ? call.wide(call[3], 4096) : std::u16string();
-		const auto siblings = objects.child_windows(call[0]);
+		// Message-only windows are top-level windows here, so HWND_MESSAGE searches the top level, as the desktop window does.
+		const uint64_t parent = call[0] == UINT64_MAX - 2 || call[0] == 0xfffffffdULL || call[0] == desktop ? 0 : call[0];
+		const auto siblings = parent ? objects.child_windows(parent) : top_level_windows();
 		bool started = call[1] == 0;
 		for (auto candidate = siblings.rbegin(); candidate != siblings.rend(); ++candidate) {
 			if (!started) {
@@ -551,6 +552,13 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 			call.ret(*candidate);
 			return;
 		}
+		// The top-level windows of the prefix's other processes come after this process's own, as FindWindowW finds them.
+		// shortcut: a search that starts after another process's window finds nothing more; walk foreign_windows() if a caller needs it.
+		if (!parent && started)
+			if (const auto found = foreign_top_level(name, call[3] != 0, title)) {
+				call.ret(found);
+				return;
+			}
 		call.fail(1400);
 	});
 	registry.add("GetAncestor", 2, [this](ApiCall &call) {
@@ -685,6 +693,12 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 	});
 	// Windows here are never snapped into an arrangement.
 	registry.add("IsWindowArranged", 1, [](ApiCall &call) { call.ret(0); });
+	// The desktop does not create shell-managed frames for applications.
+	registry.add("IsShellManagedWindow", 1, [](ApiCall &call) { call.ret(0); });
+	registry.add("IsWindowInDestroy", 1, [this](ApiCall &call) {
+		const auto *window = std::as_const(objects).window(call[0]);
+		call.ret(window && window->destroying);
+	});
 	registry.add("IsIconic", 1, [this](ApiCall &call) {
 		const auto *window = std::as_const(objects).window(call[0]);
 		call.ret(window && (window->style & ws_minimize));
@@ -1341,7 +1355,8 @@ void NativeWindows::register_manager_api(ApiRegistry &registry)
 				return;
 			}
 			std::vector<uint8_t> bytes(size);
-			const int32_t values[10] = {int32_t(size), 0, 0, metrics.screen_x, metrics.screen_y, 0, 0, metrics.screen_x, metrics.screen_y, 1};
+			const auto work = metrics.work_area();
+			const int32_t values[10] = {int32_t(size), 0, 0, metrics.screen_x, metrics.screen_y, work.left, work.top, work.right, work.bottom, 1};
 			std::memcpy(bytes.data(), values, 40);
 			if (size > 40) {
 				const std::string_view device = "\\\\.\\DISPLAY1";

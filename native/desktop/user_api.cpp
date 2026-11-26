@@ -64,6 +64,66 @@ void NativeWindows::register_api(ApiRegistry &registry)
 	register_dpi_api(registry);
 #endif
 
+	// The update region of a window, from any thread: the thread that owns the window hears of it through the tell hook
+	// (DesktopObjects::invalidated), so these are answered beside the turn as well.
+	for (const bool invalidate : {true, false})
+		registry.add(invalidate ? "InvalidateRect" : "ValidateRect", invalidate ? 3 : 2, [this, invalidate](ApiCall &call) {
+			if (!call[0]) {
+				call.fail(120);
+				return;
+			}
+			const auto *window = std::as_const(objects).window(call[0]);
+			if (!window) {
+				call.fail(1400);
+				return;
+			}
+			DesktopRect rect{0, 0, window->width, window->height};
+			if (call[1]) {
+				const auto given = read_rect(call, call[1]);
+				rect = {std::max(given.left, 0), std::max(given.top, 0), std::min(given.right, window->width), std::min(given.bottom, window->height)};
+			}
+			if (!(invalidate ? objects.invalidate(call[0], rect, call[2] != 0) : objects.validate(call[0], rect))) {
+				call.fail(8);
+				return;
+			}
+			call.ret(1);
+		});
+
+	// The device context of a window that already has its surface, taken and released from any thread. The screen's, those of other
+	// processes' windows and a first surface, which maps memory into the guest, are left to the window dispatch.
+	for (const bool whole : {false, true})
+		registry.add(whole ? "GetWindowDC" : "GetDC", 1, [this, whole](ApiCall &call) {
+			const auto *window = call[0] ? std::as_const(objects).window(call[0]) : nullptr;
+			if (!window || call[0] == desktop_window() || !window->dc)
+				throw ApiDeclined{};
+			DesktopDC device{window->bitmap, window->bitmap, call[0]};
+			device.leased = true;
+			objects.configure_window_dc(call[0], device, whole);
+			const uint64_t context = objects.add(device);
+			if (!context)
+				throw uint32_t(8);
+			call.ret(context);
+		});
+	registry.add("ReleaseDC", 2, [this](ApiCall &call) {
+		if (!call[0] || call[0] == desktop_window() || !std::as_const(objects).window(call[0]))
+			throw ApiDeclined{};
+		const auto *device = objects.dc(call[1]);
+		if (!device || !device->leased || device->window != call[0])
+			throw uint32_t(1400);
+		call.ret(objects.erase(call[1]));
+	});
+
+	// A peek at the calling thread's own queue, beside the turn; in the turn, and for what retrieve leaves to it, the window dispatch.
+	registry.add("PeekMessageW", 5, [this](ApiCall &call) {
+		if (!call.alone)
+			throw ApiDeclined{};
+		const std::array<uint64_t, 5> arguments{call[0], call[1], call[2], call[3], call[4]};
+		const std::function<void(uint64_t, std::span<const uint8_t>)> write = [&call](uint64_t address, std::span<const uint8_t> bytes) {
+			call.write(address, bytes);
+		};
+		call.ret(retrieve(arguments, false, &write));
+	});
+
 	// Rectangle helpers are pure arithmetic on guest RECTs.
 	registry.add("InflateRect", 3, [](ApiCall &call) {
 		auto rect = read_rect(call, call[0]);

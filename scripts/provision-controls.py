@@ -32,6 +32,7 @@ def main():
     if x86:
         # The 32-bit C runtime component is built by the main build; the others are described here.
         wanted.discard("crt")
+        wanted.discard("uianimation")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     # The tools' temporary files go to a directory of their own, removed on exit, so none of them stays in the output.
@@ -113,8 +114,8 @@ def main():
     # The user32 component: Raven code on the public headers, with resources it generates itself.
     user_flags = ["-O2", "-w", "-fno-builtin", "-D_USER32_", "-D_WIN32_WINNT=0x600", "-DWINVER=0x600", "-DOEMRESOURCE", "-DUNICODE", "-D_UNICODE",
                   f"-ffile-prefix-map={repo}=raven", "-I" + str(own_user32)]
-    user_sources = [own_user32 / name for name in ("button.c", "chars.c", "classes.c", "combo.c", "crt.c", "dialog.c", "draw.c", "edit.c", "listbox.c",
-                                                   "mdi.c", "messagebox.c", "scrollbar.c", "static.c", "text.c")]
+    user_sources = [own_user32 / name for name in ("button.c", "chars.c", "classes.c", "combo.c", "crt.c", "dialog.c", "draw.c", "edit.c", "format.c",
+                                                   "listbox.c", "mdi.c", "messagebox.c", "scrollbar.c", "static.c", "text.c")]
 
     def compile_user(path):
         run([triple + "-gcc", "-c", *user_flags, path, "-o", objects / ("user32_" + path.stem + ".o")])
@@ -140,7 +141,7 @@ def main():
     shell_objects = [objects / "shell.o", objects / "shell_link.o", objects / "shell_com.o", objects / "shell_crt.o", objects / "shell_stream.o", objects / "shell_dialog.o",
                      objects / "shell_netaddress.o", objects / "shell_winrt.o", objects / "shell_knownfolder.o", objects / "shell_rot.o", objects / "shell_folder.o", objects / "shell_errorinfo.o",
                      objects / "shell_clipboard.o", objects / "shell_path.o", objects / "shell_request.o",
-                     objects / "shell_fileinfo.o"]
+                     objects / "shell_fileinfo.o", objects / "shell_format.o"]
     shell_flags = ["-O2", "-w", "-ffreestanding", f"-ffile-prefix-map={repo}=raven"]
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "shell.c", "-o", shell_objects[0]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "link.c", "-o", shell_objects[1]])
@@ -158,6 +159,8 @@ def main():
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "path.c", "-o", shell_objects[13]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "request.c", "-o", shell_objects[14]])
     run([triple + "-gcc", "-c", *shell_flags, shell_support / "fileinfo.c", "-o", shell_objects[15]])
+    # shlwapi's wnsprintf and its relatives share the formatter of user32's wsprintf.
+    run([triple + "-gcc", "-c", *shell_flags, "-fno-builtin", "-D_USER32_", "-DRAVEN_FORMAT_SHLWAPI", own_user32 / "format.c", "-o", shell_objects[16]])
     shell_defined = decorated(shell_objects)
     shell_names = ("GetRunningObjectTable", "CreateItemMoniker", "CoCreateInstance", "CoCreateInstanceEx", "CoGetClassObject", "CoGetTreatAsClass", "CoGetMalloc", "SHCreateItemFromParsingName", "SHGetPropertyStoreForWindow", "PropVariantClear", "SHAppBarMessage", "GetOpenFileNameW", "GetSaveFileNameW", "CommDlgExtendedError", "GetFileTitleW", "IUnknown_QueryService", "QISearch", "CLSIDFromProgID",
                    "SHCreateStreamOnFileA", "SHCreateStreamOnFileW", "SHCreateStreamOnFileEx", "SHCreateMemStream", "PropVariantCopy", "CoGetContextToken", "CoGetObjectContext", "CoGetDefaultContext", "ExtractIconExW", "ExtractIconW", "SHDefExtractIconW", "UiaGetReservedNotSupportedValue", "UiaGetReservedMixedAttributeValue", "SHGetMalloc",
@@ -167,7 +170,7 @@ def main():
                    "SHGetDesktopFolder", "SHCreateItemFromIDList", "SHCreateShellItem", "CreateFileMoniker", "SHLoadIndirectString", "SHGetPropertyStoreFromParsingName", "ILGetSize", "ILGetNext", "ILFindLastID", "ILClone", "ILCloneFirst", "ILCombine", "ILFree", "ILCreateFromPathW", "SHILCreateFromPath", "SHParseDisplayName", "SHBindToParent", "SHGetDataFromIDListW", "ILIsEqual",
                    "CreateErrorInfo", "SetErrorInfo", "GetErrorInfo", "CoWaitForMultipleHandles", "OleGetClipboard", "OleSetClipboard", "ReleaseStgMedium",
                    "CoRegisterClassObject", "CoRevokeClassObject", "CoResumeClassObjects", "CoSuspendClassObjects", "CoAddRefServerProcess", "CoReleaseServerProcess",
-                   "SHGetFileInfoW", "SHGetFileInfoA")
+                   "SHGetFileInfoW", "SHGetFileInfoA", "wnsprintfW", "wnsprintfA", "wvnsprintfW", "wvnsprintfA")
     (output / "raven-shell.def").write_text("NAME raven-shell.dll\nEXPORTS\n" + "".join(definition_line(name, shell_defined.get(name)) for name in shell_names))
     run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['shell']:#x},--no-insert-timestamp", *link_extra,
          "-o", output / "raven-shell.dll", *shell_objects, output / "raven-shell.def", "-luser32", "-lgdi32", "-ladvapi32", "-lkernel32", "-lole32", "-loleaut32", "-luuid", "-lruntimeobject", "-lshell32", "-lgcc"])
@@ -225,8 +228,10 @@ def main():
         dwrite_flags = ["-O2", "-Wall", "-Wno-unused-function", "-Wno-unused-variable", "-ffreestanding", "-fno-builtin", f"-ffile-prefix-map={repo}=raven"]
         run([triple + "-gcc", "-c", *dwrite_flags, "-I" + str(dwrite_support), dwrite_support / "dwrite.c", "-o", dwrite_objects[0]])
         run([triple + "-gcc", "-c", *dwrite_flags, dwrite_support / "crt.c", "-o", dwrite_objects[1]])
-        (output / "raven-dwrite.def").write_text("NAME raven-dwrite.dll\nEXPORTS\nDWriteCreateFactory\n")
-        run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['dwrite']:#x},--no-insert-timestamp", *link_extra,
+        factory_export = definition_line("DWriteCreateFactory", decorated(dwrite_objects)["DWriteCreateFactory"])
+        (output / "raven-dwrite.def").write_text("NAME raven-dwrite.dll\nEXPORTS\n" + factory_export)
+        image_base = 0x1fb00000 if x86 else 0x1fb000000
+        run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{image_base:#x},--no-insert-timestamp", *link_extra,
              "-o", output / "raven-dwrite.dll", *dwrite_objects, output / "raven-dwrite.def", "-L" + str(output), "-lravenhost", "-lgdi32", "-lkernel32", "-lgcc"])
     if "d2d1" in wanted:
         # The Direct2D component: Raven code on the public headers; surfaces live with the host and are drawn with Skia through ravenhost.dll,
@@ -239,10 +244,14 @@ def main():
         run([triple + "-gcc", "-c", *d2d1_flags, d2d1_support / "shader_run.c", "-o", d2d1_objects[1]])
         run([triple + "-gcc", "-c", *d2d1_flags, repo / "native/guest/raven-dwrite/crt.c", "-o", d2d1_objects[2]])
         # Office binds D2D1CreateFactory by number, as ordinal 1 of the system library.
-        (output / "raven-d2d1.def").write_text("NAME raven-d2d1.dll\nEXPORTS\nD2D1CreateFactory @1\n" + "".join(name + "\n" for name in (
-            "D2D1ComputeMaximumScaleFactor", "D2D1ConvertColorSpace", "D2D1CreateDevice", "D2D1CreateDeviceContext",
-            "D2D1InvertMatrix", "D2D1IsMatrixInvertible", "D2D1MakeRotateMatrix", "D2D1MakeSkewMatrix", "D2D1SinCos", "D2D1Tan", "D2D1Vec3Length")))
-        run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['d2d1']:#x},--no-insert-timestamp", *link_extra,
+        d2d1_exports = decorated(d2d1_objects)
+        factory_export = definition_line("D2D1CreateFactory", d2d1_exports["D2D1CreateFactory"]).rstrip() + " @1\n"
+        (output / "raven-d2d1.def").write_text("NAME raven-d2d1.dll\nEXPORTS\n" + factory_export + "".join(
+            definition_line(name, d2d1_exports[name]) for name in (
+                "D2D1ComputeMaximumScaleFactor", "D2D1ConvertColorSpace", "D2D1CreateDevice", "D2D1CreateDeviceContext",
+                "D2D1InvertMatrix", "D2D1IsMatrixInvertible", "D2D1MakeRotateMatrix", "D2D1MakeSkewMatrix", "D2D1SinCos", "D2D1Tan", "D2D1Vec3Length")))
+        image_base = 0x1fa00000 if x86 else 0x1fa000000
+        run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{image_base:#x},--no-insert-timestamp", *link_extra,
              "-o", output / "raven-d2d1.dll", *d2d1_objects, output / "raven-d2d1.def", "-L" + str(output), "-lravenhost", "-ldwrite",
              "-lwindowscodecs", "-luser32", "-lgdi32", "-lkernel32", "-lgcc"])
     if "uianimation" in wanted:

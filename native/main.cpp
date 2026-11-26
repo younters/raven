@@ -9,6 +9,7 @@
 #ifdef RAVEN_NATIVE_CPU
 #include "cpu/native_cpu.h"
 #include "nt/providers.h"
+#include "nt/loader.h"
 #include "nt/paths.h"
 #include "nt/launch.h"
 #include "nt/actctx.h"
@@ -25,6 +26,7 @@
 #ifdef __APPLE__
 #include "platform/darwin/unix_calls.h"
 #endif
+#include "nt/clock_calibration.h"
 #ifdef RAVEN_OPENGL
 #include "graphics/opengl_bridge.h"
 #endif
@@ -269,6 +271,10 @@ int main(int argc, char **argv)
 		std::fprintf(stderr, "raven: descriptor budget unchanged (errno=%d)\n", error);
 	raven_macos_startup(argc, argv);
 #endif
+#ifdef RAVEN_NATIVE_CPU
+	// The guest's clock is calibrated from here to when the guest starts.
+	raven::clock_origin();
+#endif
 	if (std::getenv("RAVEN_BACKTRACE")) {
 		std::set_terminate(show_backtrace);
 		std::signal(SIGSEGV, show_fault);
@@ -354,7 +360,7 @@ int main(int argc, char **argv)
 #endif
 	bool inherited_stdio=false;
 	// A program started by another one carries the command line and the directory its parent chose.
-	std::optional<std::string> command_line_text, directory_text;
+	std::optional<std::string> command_line_text, directory_text, app_user_model_id;
 	int environment_fd=-1,suspended_fd=-1,inherit_fd=-1,handle_channel_fd=-1,process_token_fd=-1,guest_error_fd=2;
 	bool elevated=false,noninteractive=false;
 	for (bool more=run_process;more && argc>first_file;) {
@@ -385,6 +391,7 @@ int main(int argc, char **argv)
 		else if (option=="--stdio=inherit") inherited_stdio=true;
 		else if (option.starts_with("--command-line=")) command_line_text=std::string(option.substr(15));
 		else if (option.starts_with("--directory=")) directory_text=std::string(option.substr(12));
+		else if (option.starts_with("--app-user-model-id=")) app_user_model_id=std::string(option.substr(20));
 		else if (option.starts_with("--environment-fd=")) environment_fd=std::atoi(std::string(option.substr(17)).c_str());
 		else if (option.starts_with("--suspended-fd=")) {
 			suspended_fd=std::atoi(std::string(option.substr(15)).c_str());
@@ -396,6 +403,7 @@ int main(int argc, char **argv)
 			::fcntl(process_token_fd,F_SETFD,FD_CLOEXEC);
 		}
 		else if (option.starts_with("--handle-channel-fd=")) handle_channel_fd=std::atoi(std::string(option.substr(20)).c_str());
+		else if (option.starts_with("--host-broker-fd=")) raven::adopt_host_broker(std::atoi(std::string(option.substr(17)).c_str()));
 		else if (option.starts_with("--diagnostics-fd=")) {
 			// The runtime's own messages go where the parent runtime writes its own; the program's standard error moves out of their way
 			// to a descriptor of its own, so nothing the runtime says ever lands in a pipe the program reads.
@@ -601,6 +609,9 @@ int main(int argc, char **argv)
 									std::filesystem::remove(entry.path(), error);
 							}
 						}
+						// The desktop's entries for the addresses the prefix takes from it, written again at each start: the runtime may have moved.
+						if (handle_channel_fd < 0 && !std::getenv("RAVEN_PREFIX_SETUP"))
+							raven::sandbox().publish_links();
 						// The classes the runtime's components serve are registered in the prefix, as Windows ships them registered: regsvr32 runs
 						// for each width when the components changed since the prefix last registered them. The runs themselves skip this step.
 						const char *servers[] = {"oleaut32.dll", "msxml3.dll", "windowscodecs.dll", "mlang.dll", "propsys.dll"};
@@ -874,39 +885,17 @@ int main(int argc, char **argv)
 							if (std::filesystem::exists(component))
 								return read_module(component.c_str());
 						}
-						// DirectWrite, Direct2D and Windows Animation are the runtime's own components too: the library names resolve to them.
-						if (!selected && (name=="dwrite.dll" || name=="d2d1.dll" || name=="uianimation.dll")) {
-							const auto component = component_directory /
-								(name=="dwrite.dll" ? "raven-dwrite.dll" : name=="d2d1.dll" ? "raven-d2d1.dll" : "raven-uianimation.dll");
-							if (std::filesystem::exists(component))
-								return read_module(component.c_str());
-						}
+						if (!selected)
+							if (const auto component = raven::graphics_component(name, entry->image.is_64))
+								return read_module(component->c_str());
 #ifdef __APPLE__
 						if (!selected)
 							if (auto module = raven::darwin_graphics_module(name, entry->image.is_64))
 								return module;
 #endif
-						// The Direct3D libraries a Windows installation provides come from RAVEN_D3D_DIRECTORY (one or more directories separated by
-						// colons, such as a DXVK build and a vkd3d-proton build of the program's width) or from beside the runtime.
-						if (!selected && (name=="dxgi.dll" || name=="d3d11.dll" || name=="d3d10core.dll" || name=="d3d10_1.dll" || name=="d3d9.dll" || name=="d3d8.dll" ||
-							name=="d3d12.dll" || name=="d3d12core.dll")) {
-							std::vector<std::filesystem::path> places;
-							if (const char *directories = std::getenv("RAVEN_D3D_DIRECTORY"))
-								for (std::string_view rest = directories; !rest.empty();) {
-									const auto colon = rest.find(':');
-									if (const auto part = rest.substr(0, colon); !part.empty())
-										places.emplace_back(std::string(part));
-									rest = colon == rest.npos ? std::string_view() : rest.substr(colon + 1);
-								}
-							places.emplace_back(std::filesystem::read_symlink("/proc/self/exe").parent_path());
-							for (const auto &place : places)
-								if (std::filesystem::exists(place / name))
-									return read_module((place / name).c_str());
-							// Direct3D 10.1 is the runtime's own library over the d3d10core.dll found here, when no build carries one.
-							if (name=="d3d10_1.dll")
-								if (const auto component = component_directory / "raven-d3d10_1.dll"; std::filesystem::exists(component))
-									return read_module(component.c_str());
-						}
+						if (!selected)
+							if (const auto component = raven::configured_d3d_library(name, entry->image.is_64))
+								return read_module(component->c_str());
 						// Then the system directory, where installers put the libraries programs share. The system's own libraries are the
 						// runtime's whatever files there carry their names.
 						const auto system_names = raven::system_library_names();
@@ -1118,6 +1107,7 @@ int main(int argc, char **argv)
 						launch->process_token_fd = process_token_fd;
 						if (command_line_text) launch->command_line=raven::from_utf8(*command_line_text);
 						if (directory_text) launch->directory=raven::from_utf8(*directory_text);
+						if (app_user_model_id) launch->app_user_model_id=raven::from_utf8(*app_user_model_id);
 						if (handle_channel_fd>=0) raven::set_parent_channel(handle_channel_fd);
 						if (inherit_fd>=0) {
 							// The handles the creator passed on arrive as descriptors, described in an anonymous file.

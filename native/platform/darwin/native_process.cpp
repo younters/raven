@@ -1551,11 +1551,29 @@ NativeThreadState NativeProcess::save_thread(bool snapshot_registers) const
 		saved.registers.fs = state->fs_selector;
 		saved.registers.fs_base = state->fs_base;
 	}
-	return {std::move(saved), state->callbacks, state->callback_cleanups, state->active_call, state->awaiting_api, state->awaiting_syscall,
-		state->debug_print_fault, state->pending_cleanup, state->stack_top, state->translated_words, state->translated_depth,
-		state->translated_floats, state->translated_result, parallel() ? state->child->selected : 0, state->stopped,
-		state->thread_served_guest, state->thread_served_block, state->serving, state->served_stack, in_task,
-		state->serving_queued};
+	NativeThreadState result{};
+	result.context = std::move(saved);
+	result.callbacks = state->callbacks;
+	result.callback_cleanups = state->callback_cleanups;
+	result.active_call = state->active_call;
+	result.awaiting_api = state->awaiting_api;
+	result.awaiting_syscall = state->awaiting_syscall;
+	result.debug_print_fault = state->debug_print_fault;
+	result.pending_cleanup = state->pending_cleanup;
+	result.stack_top = state->stack_top;
+	result.translated_words = state->translated_words;
+	result.translated_depth = state->translated_depth;
+	result.translated_floats = state->translated_floats;
+	result.translated_result = state->translated_result;
+	result.task = parallel() ? state->child->selected : 0;
+	result.stopped = state->stopped;
+	result.served_guest = state->thread_served_guest;
+	result.served_block = state->thread_served_block;
+	result.serving = state->serving;
+	result.served_stack = state->served_stack;
+	result.context_in_task = in_task;
+	result.serving_queued = state->serving_queued;
+	return result;
 }
 
 void NativeProcess::load_thread(const NativeThreadState &thread)
@@ -1707,13 +1725,24 @@ NativeContext NativeProcess::task_context(pid_t) { no_host_threads(); }
 void NativeProcess::set_task_registers(pid_t, const user_regs_struct &) { no_host_threads(); }
 void NativeProcess::arm_host_thread() { no_host_threads(); }
 void NativeProcess::set_task_xstate(pid_t, std::span<const uint8_t>) { no_host_threads(); }
-bool NativeProcess::serve_stopped_alone(pid_t, int, uint64_t *) { no_host_threads(); }
+bool NativeProcess::serve_stopped_alone(pid_t, int, uint64_t *, const std::function<bool()> &) { no_host_threads(); }
+bool NativeProcess::serve_service_alone(pid_t) { return false; }
 
 // Calls beside the turn are answered only by a host thread per guest thread. Here every call goes the usual way, through the turn.
 void NativeProcess::set_concurrent_served(std::function<std::optional<uint64_t>(uint64_t, const uint64_t *)>) {}
+void NativeProcess::set_concurrent_service(std::function<std::optional<uint64_t>(uint64_t, uint64_t, const uint64_t *)>) {}
+void NativeProcess::set_service_landing(uint64_t) {}
 bool NativeProcess::serve_alone(uint64_t *) { return false; }
+bool NativeProcess::memory_beside() const { return false; }
+uint64_t NativeProcess::serve_beside(std::vector<uint64_t>, std::array<uint64_t, 4>, uint64_t, const std::function<void()> &) { no_host_threads(); }
+void NativeProcess::share_memory(uint64_t, size_t) {}
 bool NativeProcess::read_alone(uint64_t, void *, size_t) const { return false; }
 bool NativeProcess::write_alone(uint64_t, const void *, size_t) { return false; }
+uint64_t NativeProcess::kernel_gate() const { return 0; }
+void NativeProcess::set_guest_windows(std::vector<GuestWindow>, uint64_t, std::function<void(uint64_t)>) {}
+void NativeProcess::settle_window(pid_t) {}
+int NativeProcess::hand_descriptor(int) { return -1; }
+void NativeProcess::drop_descriptor(int) {}
 
 void NativeProcess::set_execution_wait(std::function<void(std::function<bool()>, std::chrono::steady_clock::time_point)> wait)
 {

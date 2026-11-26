@@ -11,6 +11,8 @@
 #include <optional>
 #include <array>
 #include <map>
+#include <mutex>
+#include <atomic>
 
 namespace raven {
 
@@ -46,6 +48,7 @@ struct NativeLaunch {
 	int process_token_fd = -1;
 	// The primary thread stays suspended after its process environment and request channel exist.
 	int suspended_fd = -1;
+	std::u16string app_user_model_id;
 };
 
 // Initial x64 thread fields only. Mappings belong to the process and survive this view.
@@ -55,7 +58,8 @@ public:
 	NativeMemory *set_memory_accounting(NativeMemory *memory) { return std::exchange(memory_accounting,memory); }
 #endif
 	NativeEnvironment(NativeProcess &process, uint64_t image_base, uint32_t process_id, uint32_t thread_id);
-	uint64_t teb() const { return thread_block; }
+	// The block of the guest thread the calling host thread works for (see set_current).
+	uint64_t teb() const { return block(); }
 	uint64_t peb() const { return process_block; }
 	uint64_t x86_user_limit() const;
 	// Guest address of the ANSI command line, valid once process parameters exist.
@@ -70,11 +74,21 @@ public:
 	// Per-thread TEB for guest threads beyond the first (x64). The block is not current until set_current names it.
 	uint64_t create_thread_block(uint64_t stack_base, uint64_t stack_limit, uint32_t thread_id);
 	void release_thread_block(uint64_t teb);
-	void set_current(uint64_t teb) { thread_block = teb; }
+	// Names the guest thread the calling host thread works for from now on: each host thread has its own, so a host thread that takes
+	// the turn changes no other's. A host thread that named none works for the first thread.
+	void set_current(uint64_t teb) { current = {id, teb}; }
+	// The block of the guest thread the calling host thread serves, which it answers for beside the turn as well; 0 for a host thread
+	// that serves no guest thread of its own.
+	static void set_own(uint64_t teb) { own_block = teb; }
+	// The last error of the calling host thread's own guest thread, read and written straight in its block, without the turn; nothing
+	// when the host thread serves no guest thread or the block cannot be reached.
+	std::optional<uint32_t> own_last_error() const;
+	bool set_own_last_error(uint32_t error);
 	// The id of the guest thread whose block is current.
 	uint32_t thread_id() const
 	{
-		const auto found = thread_ids.find(thread_block);
+		std::lock_guard lock(thread_ids_lock);
+		const auto found = thread_ids.find(block());
 		return found == thread_ids.end() ? 0 : found->second;
 	}
 	static constexpr uint32_t heap_capacity = 512;
@@ -89,12 +103,25 @@ private:
 	NativeMemory *memory_accounting = nullptr;
 #endif
 	NativeProcess &process;
+	// The first thread's block, which a host thread that named no other works for.
 	uint64_t thread_block = 0;
+	struct Current {
+		uint64_t environment;
+		uint64_t block;
+	};
+	static inline thread_local Current current{};
+	static inline std::atomic<uint64_t> ids{0};
+	const uint64_t id = ++ids;
+	uint64_t block() const { return current.environment == id ? current.block : thread_block; }
+	static inline thread_local uint64_t own_block = 0;
+	size_t last_error_offset() const;
 	uint64_t process_block = 0;
 	uint64_t heap_storage = 0;
 	uint64_t command_line_ansi = 0;
 	uint32_t ansi_code_page = 0;
 	uint64_t startup_info_ansi = 0;
+	// The thread id of every block, which host threads read beside the turn as well.
+	mutable std::mutex thread_ids_lock;
 	std::map<uint64_t, uint32_t> thread_ids;
 	void require_current() const;
 	void x86_constructor(uint64_t image_base, uint32_t process_id, uint32_t thread_id);

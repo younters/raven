@@ -11,7 +11,11 @@ struct DesktopMetrics {
 	int32_t screen_x=1920,screen_y=1080;
 	uint32_t dpi=96;
 	DesktopMetrics at_dpi(uint32_t value) const;
+	// The size of the work area a maximized window fills, which the host gave the last maximized window: its panels lie outside. 0 is
+	// the screen's size.
+	int32_t work_x=0,work_y=0;
 	int32_t get(int32_t index) const;
+	DesktopRect work_area() const { return {0,0,work_x ? work_x : screen_x,work_y ? work_y : screen_y}; }
 };
 
 // What GetSystemMetrics answers for an index.

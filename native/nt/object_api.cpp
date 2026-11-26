@@ -24,11 +24,12 @@ static void put(std::span<uint8_t> bytes, size_t at, uint64_t value, size_t widt
 	for (size_t byte=0; byte<width; ++byte) bytes[at+byte]=uint8_t(value>>(byte*8));
 }
 
-// With a host thread for each guest thread, the threads that waited for the event in the process's table take their turn first.
-static void hand_over_event(NativeObjects &objects, NativeThreads &threads, uint64_t handle)
+// With a host thread for each guest thread, the threads that waited for the event in the process's table before it was set take their
+// turn first.
+static std::vector<NativeThreads::Waiter> waiters_of(NativeObjects &objects, NativeThreads &threads, uint64_t handle)
 {
 	const auto event = objects.object_as<EventObject>(handle);
-	threads.hand_over_to(event ? event->table_object() : 0);
+	return threads.waiting_for(event ? event->table_object() : 0);
 }
 
 static uint32_t error(uint32_t status)
@@ -45,7 +46,9 @@ static uint32_t error(uint32_t status)
 void NativeObjectAPI::register_served(ApiRegistry &registry, NativeObjects &objects, NativeThreads &threads)
 {
 	registry.add("CloseHandle", 1, [&objects](ApiCall &call) {
-		const uint32_t status=objects.close(call[0]);
+		std::optional<uint32_t> beside;
+		if (call.alone && !(beside=objects.close_alone(call[0]))) throw ApiNeedsTurn{};
+		const uint32_t status=beside ? *beside : objects.close(call[0]);
 		if (status) call.fail(error(status), 0);
 		else call.ret(1);
 	});
@@ -55,15 +58,35 @@ void NativeObjectAPI::register_served(ApiRegistry &registry, NativeObjects &obje
 				call.process.decline_served();
 				return;
 			}
+			std::vector<NativeThreads::Waiter> waited;
+			if (set && threads.host_threads())
+				waited=waiters_of(objects, threads, call[0]);
 			const uint32_t status=objects.set_event(call[0], set).status;
-			// The thread the event wakes runs before the setter goes on, as it would on another processor.
+			// On one processor the thread the event wakes runs before the setter goes on, as Windows lets it (see hand_over_to).
 			if (set && !status && threads.host_threads())
-				hand_over_event(objects, threads, call[0]);
+				threads.hand_over_to(waited);
 			else if (set && !status && !call.process.serving())
 				threads.hand_over();
 			if (status) call.fail(error(status), 0);
-			else call.ret(1);
+			else {
+				call.ret(1);
+				// The next set or reset of this handle the guest may make itself.
+				objects.offer_to_guest(call[0]);
+			}
 		});
+}
+
+std::optional<uint64_t> NativeObjectAPI::query_alone(NativeProcess &process, const NativeObjects &objects, const uint64_t *arguments)
+{
+	if (uint32_t(arguments[1]) || uint32_t(arguments[3])<8) return std::nullopt;
+	uint64_t length_address=0;
+	if (!process.read_alone(arguments[4]+40,&length_address,sizeof length_address)) return std::nullopt;
+	const auto state=objects.query_event_alone(arguments[0]);
+	if (!state) return std::nullopt;
+	const uint32_t length=8;
+	if (length_address && !process.write_alone(length_address,&length,sizeof length)) return std::nullopt;
+	if (!process.write_alone(arguments[2],&*state,sizeof *state)) return std::nullopt;
+	return 0;
 }
 
 bool NativeObjectAPI::dispatch(std::string_view name)
@@ -117,14 +140,19 @@ bool NativeObjectAPI::dispatch(std::string_view name)
 		} else if (set) {
 			if (nt && args[1]) writable(args[1],4);
 			const bool signal=name=="NtSetEvent" || name=="SetEvent";
+			std::vector<NativeThreads::Waiter> waited;
+			if (signal && threads && threads->host_threads())
+				waited=waiters_of(objects, *threads, args[0]);
 			const auto changed=objects.set_event(args[0],signal);
 			status=changed.status; result=1;
-			// The thread the event wakes runs before the setter goes on, as it would on another processor.
+			// On one processor the thread the event wakes runs before the setter goes on, as Windows lets it (see hand_over_to).
 			if (signal && !status && threads && threads->host_threads())
-				hand_over_event(objects, *threads, args[0]);
+				threads->hand_over_to(waited);
 			else if (signal && !status && threads)
 				threads->hand_over();
 			if (nt && args[1] && !status) { std::array<uint8_t,4> output{}; put(output,0,changed.value,4); process.write_memory(args[1],output); }
+			// The next set or reset of this handle the guest may make itself.
+			if (!status) objects.offer_to_guest(args[0]);
 		} else if (query) {
 			if (uint32_t(args[1])!=0) status=0xc00000bbU;
 			else {
@@ -149,6 +177,8 @@ bool NativeObjectAPI::dispatch(std::string_view name)
 		status=0xc0000005U;
 	}
 	if (!nt && status && !(wait && status==0x102)) environment.set_last_error(error(status));
+	// CreateEvent clears the last error when it makes a new event, as it sets ERROR_ALREADY_EXISTS for a name already taken.
+	if (!nt && create && !status) environment.set_last_error(0);
 	if (name=="_lclose" || name=="LZClose") { process.return_api(status && name=="_lclose" ? 0xffffffffU : 0U); return true; }
 	process.return_api(nt ? status : wait ? status==0 ? 0 : status==0x102 ? 0x102 : UINT32_MAX : status ? 0 : result);
 	return true;

@@ -84,6 +84,69 @@ raven_local_block:
 	nop
 raven_local_block_end:
 
+/* The wrapper of a call the guest may answer itself while other threads run (see answer_wrapper in providers.cpp). It reads the version
+ * of the runtime's tables from the served block, runs the guest's own answer with the argument registers it saved, and keeps that answer
+ * only if the version was even and did not move meanwhile. Another thread's call beside the turn publishes the one record it changed in
+ * a moment, so the wrapper looks again a number of times before it gives up to the stub, which serves the call from the start and takes
+ * the desktop lock whole for it. The runtime fills in the three rel32 fields that end at the labels: the provider's pointer to the served
+ * block, the guest's answer, and the stub, twice; the second, at the label where the answer gave up, drops the answer's frame first. */
+	.global raven_answer_wrapper, raven_answer_wrapper_end, raven_answer_wrapper_pointer, raven_answer_wrapper_answer
+	.global raven_answer_wrapper_stub, raven_answer_wrapper_gives_up
+raven_answer_wrapper:
+	mov r11, qword ptr [rip + 0]
+raven_answer_wrapper_pointer:
+	test r11, r11
+	jz short .Lanswer_stub
+	mov r10, r11
+	mov eax, 128
+.Lanswer_try:
+	mov r11, qword ptr [r10 + 0x7b0]
+	test r11b, 1
+	jnz short .Lanswer_busy
+	/* Seven words keep the stack aligned for the call; the four over its home space are the version and the arguments. */
+	push rax
+	push r10
+	push r9
+	push r8
+	push rdx
+	push rcx
+	push r11
+	.byte 0xe8
+	.long 0
+raven_answer_wrapper_answer:
+	mov r11, qword ptr [rsp + 0x28]
+	mov r11, qword ptr [r11 + 0x7b0]
+	cmp r11, qword ptr [rsp]
+	jne short .Lanswer_changed
+	add rsp, 0x38
+	ret
+.Lanswer_changed:
+	add rsp, 8
+	pop rcx
+	pop rdx
+	pop r8
+	pop r9
+	pop r10
+	pop rax
+.Lanswer_busy:
+	pause
+	dec eax
+	jnz short .Lanswer_try
+.Lanswer_stub:
+	.byte 0xe9
+	.long 0
+raven_answer_wrapper_stub:
+raven_answer_wrapper_gives_up:
+	add rsp, 0x10
+	pop rcx
+	pop rdx
+	pop r8
+	pop r9
+	add rsp, 0x10
+	.byte 0xe9
+	.long 0
+raven_answer_wrapper_end:
+
 /* The tail of a stub a host thread answers: what is not a plain answer goes to the routine at word 320 of the block. */
 	.global raven_asked_tail, raven_asked_tail_end
 raven_asked_tail:

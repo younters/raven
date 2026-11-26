@@ -2,17 +2,22 @@
 #include "actctx.h"
 #include "apps.h"
 #include "confine.h"
+#include "msix.h"
 #include "sandbox.h"
 #include "text.h"
 #include "system_exports.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <dirent.h>
 #include <mutex>
+#include <sys/inotify.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <fcntl.h>
 #ifdef __APPLE__
 #include <span>
 #endif
@@ -129,15 +134,24 @@ std::u16string folder_key(const std::filesystem::path &root, char16_t drive, std
 	return key;
 }
 #else
+// How many times a lookup looked at a folder itself, told at the end with RAVEN_TRACE_PATHS.
+struct FolderChecks {
+	std::atomic<uint64_t> count{0};
+	~FolderChecks()
+	{
+		if (std::getenv("RAVEN_TRACE_PATHS"))
+			std::fprintf(stderr, "paths: folders checked %llu times\n", (unsigned long long)count.load());
+	}
+};
+FolderChecks folder_checks;
 // Looks for an entry that differs from name only by case, so Windows spellings find Linux files. The entries of a folder are kept by
-// their upper-case spelling while the folder stays as it was: programs ask for files that are not there by the hundred, Office for a
-// library at each click, and each miss read the whole folder. A folder changed in the last two seconds is read again each time, as its
-// time stamp may not have moved for a change made within the same tick.
+// their upper-case spelling: programs ask for files that are not there by the hundred, Office for a library at each click, and each miss
+// read the whole folder. A folder kept is watched with inotify, whose events the kernel queues as each change is made, so the queue
+// read before each lookup tells which listings went out of date, and a lookup in a folder that did not change looks at nothing on disk.
+// Without a watch (none left, or no inotify) a folder is checked by its time stamp at each lookup, and one changed in the last two
+// seconds is read again each time, as its time stamp may not have moved for a change made within the same tick.
 std::optional<std::string> case_match(const std::filesystem::path &directory, const std::string &name)
 {
-	std::error_code ignored;
-	if (std::filesystem::exists(directory / name, ignored))
-		return name;
 	const auto key = [](std::u16string text) {
 		for (auto &character : text)
 			character = upper_case(character);
@@ -145,31 +159,90 @@ std::optional<std::string> case_match(const std::filesystem::path &directory, co
 	};
 	struct Listing {
 		timespec changed{};
+		int watch = -1;
+		std::unordered_map<std::string, bool> exact;
 		std::unordered_map<std::u16string, std::string> names;
 	};
-	static std::mutex lock;
-	static std::unordered_map<std::string, Listing> listings;
-	struct stat status{};
-	if (::stat(directory.c_str(), &status) != 0)
-		return std::nullopt;
-	timespec now{};
-	::clock_gettime(CLOCK_REALTIME, &now);
-	const bool settled = now.tv_sec - status.st_mtim.tv_sec > 2;
-	std::lock_guard guard(lock);
-	auto cached = listings.find(directory.native());
-	if (!settled || cached == listings.end() || cached->second.changed.tv_sec != status.st_mtim.tv_sec ||
-		cached->second.changed.tv_nsec != status.st_mtim.tv_nsec) {
-		DIR *handle = ::opendir(directory.c_str());
-		if (!handle)
+	struct Listings {
+		std::mutex lock;
+		std::unordered_map<std::string, Listing> folders;
+		std::unordered_map<int, std::string> watched;
+		const int notify = ::inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+		void forget(const std::string &folder)
+		{
+			const auto found = folders.find(folder);
+			if (found == folders.end())
+				return;
+			if (found->second.watch >= 0) {
+				::inotify_rm_watch(notify, found->second.watch);
+				watched.erase(found->second.watch);
+			}
+			folders.erase(found);
+		}
+		// Drops the listings of the folders that changed since the last lookup.
+		void drain()
+		{
+			alignas(inotify_event) char events[4096];
+			for (ssize_t length; notify >= 0 && (length = ::read(notify, events, sizeof events)) > 0;)
+				for (ssize_t at = 0; at < length;) {
+					const auto *event = reinterpret_cast<const inotify_event *>(events + at);
+					at += ssize_t(sizeof(inotify_event) + event->len);
+					if (event->mask & IN_Q_OVERFLOW) {
+						while (!folders.empty())
+							forget(folders.begin()->first);
+						continue;
+					}
+					if (const auto found = watched.find(event->wd); found != watched.end()) {
+						const std::string folder = found->second;
+						forget(folder);
+					}
+				}
+		}
+	};
+	// It lives as long as the host, past the end of main, as the host threads that look names up do.
+	static auto *listings = new Listings;
+	std::lock_guard guard(listings->lock);
+	listings->drain();
+	auto cached = listings->folders.find(directory.native());
+	if (cached == listings->folders.end() || cached->second.watch < 0) {
+		folder_checks.count.fetch_add(1, std::memory_order_relaxed);
+		struct stat status{};
+		if (::stat(directory.c_str(), &status) != 0)
 			return std::nullopt;
-		Listing listing{status.st_mtim, {}};
-		while (const auto *entry = ::readdir(handle))
-			listing.names.emplace(key(from_utf8(entry->d_name)), entry->d_name);
-		::closedir(handle);
-		if (listings.size() > 4096)
-			listings.clear();
-		cached = listings.insert_or_assign(directory.native(), std::move(listing)).first;
+		timespec now{};
+		::clock_gettime(CLOCK_REALTIME, &now);
+		const bool settled = now.tv_sec - status.st_mtim.tv_sec > 2;
+		if (!settled || cached == listings->folders.end() || cached->second.changed.tv_sec != status.st_mtim.tv_sec ||
+			cached->second.changed.tv_nsec != status.st_mtim.tv_nsec) {
+			listings->forget(directory.native());
+			if (listings->folders.size() > 4096)
+				while (!listings->folders.empty())
+					listings->forget(listings->folders.begin()->first);
+			// Watched before it is read: a change made while it is read drops the listing at the next lookup.
+			Listing listing{status.st_mtim, -1, {}, {}};
+			if (listings->notify >= 0)
+				listing.watch = ::inotify_add_watch(listings->notify, directory.c_str(),
+					IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE_SELF | IN_MOVE_SELF | IN_ONLYDIR);
+			DIR *handle = ::opendir(directory.c_str());
+			if (!handle) {
+				if (listing.watch >= 0)
+					::inotify_rm_watch(listings->notify, listing.watch);
+				// A folder the sandbox lets the host pass through but not list: the name is looked at itself.
+				std::error_code ignored;
+				return std::filesystem::exists(directory / name, ignored) ? std::optional<std::string>(name) : std::nullopt;
+			}
+			while (const auto *entry = ::readdir(handle)) {
+				listing.exact.emplace(entry->d_name, true);
+				listing.names.emplace(key(from_utf8(entry->d_name)), entry->d_name);
+			}
+			::closedir(handle);
+			if (listing.watch >= 0)
+				listings->watched[listing.watch] = directory.native();
+			cached = listings->folders.insert_or_assign(directory.native(), std::move(listing)).first;
+		}
 	}
+	if (cached->second.exact.contains(name))
+		return name;
 	const auto found = cached->second.names.find(key(from_utf8(name)));
 	if (found == cached->second.names.end())
 		return std::nullopt;
@@ -247,6 +320,47 @@ uint32_t NativePaths::drives() const
 
 NativePaths::NativePaths(const NativePrefix &prefix) : prefix(prefix), directory(u"C:\\")
 {
+	for (auto &folder : drive_folders)
+		folder.store(-1, std::memory_order_relaxed);
+}
+
+NativePaths::~NativePaths()
+{
+	for (auto &folder : drive_folders)
+		if (const int descriptor = folder.load(std::memory_order_relaxed); descriptor >= 0)
+			::close(descriptor);
+}
+
+int NativePaths::status(const std::filesystem::path &host, struct stat &result, bool follow) const
+{
+	const int flags = follow ? 0 : AT_SYMLINK_NOFOLLOW;
+	// PREFIX/drive_X/rest: the letter X and the rest, which is read from the drive's folder.
+	const auto &text = host.native(), &root = prefix.root().native();
+	const size_t letter_at = root.size() + 7;
+	if (text.size() > letter_at + 1 && text.compare(0, root.size(), root) == 0 && text.compare(root.size(), 7, "/drive_") == 0 &&
+		text[letter_at] >= 'c' && text[letter_at] <= 'y' && text[letter_at + 1] == '/') {
+		auto &folder = drive_folders[size_t(text[letter_at] - 'c')];
+		int descriptor = folder.load(std::memory_order_acquire);
+		if (descriptor < 0) {
+#ifdef O_PATH
+			const int opened = ::open(text.substr(0, letter_at + 1).c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC);
+#else
+			const int opened = ::open(text.substr(0, letter_at + 1).c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+#endif
+			if (opened >= 0) {
+				// Two threads may open it at once: the first one stored is kept.
+				if (folder.compare_exchange_strong(descriptor, opened, std::memory_order_acq_rel))
+					descriptor = opened;
+				else
+					::close(opened);
+			}
+		}
+		if (descriptor >= 0) {
+			const char *rest = text.c_str() + letter_at + 2;
+			return ::fstatat(descriptor, *rest ? rest : ".", &result, flags);
+		}
+	}
+	return ::fstatat(AT_FDCWD, text.c_str(), &result, flags);
 }
 
 std::optional<std::filesystem::path> NativePaths::drive_root(char16_t letter) const
@@ -303,16 +417,16 @@ std::u16string NativePaths::full(std::u16string_view input) const
 		rest = rest.substr(2);
 		if (rest.starts_with(u"\\"))
 			base = std::u16string(1, letter) + u":";
-		else if (upper_case(directory[0]) == letter)
-			base = directory;
+		else if (const auto here = current(); upper_case(here[0]) == letter)
+			base = here;
 		else
 			base = std::u16string(1, letter) + u":\\";
 	} else if (text.starts_with(u"\\\\")) {
 		return {};
 	} else if (text.starts_with(u"\\")) {
-		base = directory.substr(0, 2);
+		base = current().substr(0, 2);
 	} else {
-		base = directory;
+		base = current();
 	}
 	// base is "X:" (rooted rest), "X:\" or "X:\dir..." (relative rest).
 	std::vector<std::u16string> parts;
@@ -406,13 +520,21 @@ std::optional<NativePaths::Resolved> NativePaths::resolve_direct(const std::u16s
 {
 	if (path.size() < 3)
 		return std::nullopt;
-	auto host = drive_root(path[0]);
+	const bool packaged = path.size() >= windows_apps.size() &&
+		equal_fold(std::u16string_view(path).substr(0, windows_apps.size()), windows_apps) &&
+		(path.size() == windows_apps.size() || path[windows_apps.size()] == u'\\');
+	auto host = packaged ? std::optional(msix_store(prefix)) : drive_root(path[0]);
 	if (!host)
 		return std::nullopt;
 	Resolved result{*host, true, true};
 #ifdef __APPLE__
+	if (packaged) {
+		std::error_code error;
+		result.exists = std::filesystem::is_directory(*host, error);
+		result.writable = false;
+	}
 	std::vector<std::u16string_view> parts;
-	for (std::u16string_view rest = std::u16string_view(path).substr(3); !rest.empty();) {
+	for (std::u16string_view rest = std::u16string_view(path).substr(packaged ? windows_apps.size() : 3); !rest.empty();) {
 		const auto end = rest.find(u'\\');
 		if (const auto part = rest.substr(0, end); !part.empty())
 			parts.push_back(part);
@@ -423,7 +545,7 @@ std::optional<NativePaths::Resolved> NativePaths::resolve_direct(const std::u16s
 	size_t first = 0;
 	struct stat parent{};
 	bool parent_known = false;
-	if (parts.size() > 1) {
+	if (!packaged && parts.size() > 1) {
 		const auto key = folder_key(*host, path[0], std::span(parts).first(parts.size() - 1));
 		std::string cached;
 		{
@@ -445,7 +567,7 @@ std::optional<NativePaths::Resolved> NativePaths::resolve_direct(const std::u16s
 		const bool last = index + 1 == parts.size();
 		if (const auto match = result.exists ? case_match(result.host, name, parent_known ? &parent : nullptr) : std::nullopt) {
 			result.host /= *match;
-			if (!last) {
+			if (!packaged && !last) {
 				std::lock_guard guard(folder_lock);
 				if (folders.size() > 8192)
 					folders.clear();
@@ -463,7 +585,12 @@ std::optional<NativePaths::Resolved> NativePaths::resolve_direct(const std::u16s
 		parent_known = false;
 	}
 #else
-	std::u16string_view rest = std::u16string_view(path).substr(3);
+	std::u16string_view rest = std::u16string_view(path).substr(packaged ? windows_apps.size() : 3);
+	if (packaged) {
+		std::error_code error;
+		result.exists = std::filesystem::is_directory(*host, error);
+		result.writable = false;
+	}
 	while (!rest.empty()) {
 		const auto end = rest.find(u'\\');
 		const auto part = rest.substr(0, end);
@@ -487,7 +614,7 @@ std::optional<NativePaths::Resolved> NativePaths::resolve_direct(const std::u16s
 		rest = rest.substr(end + 1);
 	}
 #endif
-	if ((path[0] | 0x20) != u'z' && app_layer().active())
+	if (!packaged && (path[0] | 0x20) != u'z' && app_layer().active())
 		apply_layer(result);
 	if ((path[0] | 0x20) == u'z') {
 		const auto access = sandbox().access(result.host);
@@ -495,7 +622,7 @@ std::optional<NativePaths::Resolved> NativePaths::resolve_direct(const std::u16s
 			sandbox().refuse(result.host, "open");
 			return Resolved{std::filesystem::path("/proc/raven-denied") / result.host.filename(), false, false, true, false};
 		}
-		result.writable = access == Sandbox::Access::write;
+		result.writable = access == Sandbox::Access::write && changeable(result.host);
 	}
 	return result;
 }
@@ -510,6 +637,13 @@ bool NativePaths::listed(const std::filesystem::path &host) const
 
 bool NativePaths::changeable(const std::filesystem::path &host) const
 {
+	const std::string_view path = host.native(), root = prefix.root().native();
+	if (path.size() > root.size() && path.starts_with(root) && path[root.size()] == '/') {
+		const auto relative = path.substr(root.size() + 1);
+		const auto first = relative.substr(0, relative.find('/'));
+		if (first == "msix-packages" || first == "msix-trusted-publishers")
+			return false;
+	}
 	return in_prefix(host) || sandbox().access(host) == Sandbox::Access::write;
 }
 
@@ -825,8 +959,16 @@ bool NativePaths::set_current(std::u16string_view path)
 	const auto resolved = resolve(path);
 	if (!resolved || !resolved->exists || !std::filesystem::is_directory(resolved->host))
 		return false;
-	directory = full(path);
+	auto changed = full(path);
+	const std::lock_guard guard(directory_lock);
+	directory = std::move(changed);
 	return true;
+}
+
+bool NativePaths::resolves_alone(std::u16string_view path) const
+{
+	const auto named = full(path);
+	return !wow64 && !app_layer().active() && !named.empty() && (named[0] | 0x20) != u'z';
 }
 
 std::u16string NativePaths::dos(const std::filesystem::path &host) const
@@ -848,6 +990,8 @@ std::u16string NativePaths::dos(const std::filesystem::path &host) const
 		}
 		return std::nullopt;
 	};
+	if (const auto tail = relative(msix_store(prefix)))
+		return std::u16string(windows_apps) + *tail;
 	for (char16_t letter = u'a'; letter < u'z'; ++letter)
 		if (const auto root = drive_root(letter))
 			if (const auto tail = relative(*root))

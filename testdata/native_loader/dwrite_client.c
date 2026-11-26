@@ -1,5 +1,6 @@
 /* Exercises DirectWrite through its public interfaces: the system fonts, a face, glyph metrics, an outline and a rendered glyph run,
-   left to right and, as a run of odd bidi level, right to left from its origin. */
+   left to right and, as a run of odd bidi level, right to left from its origin; and a font file that the program's own loader serves to
+   two collections and a face, which DirectWrite reads once and finds again in the collections. */
 #define INITGUID
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
@@ -85,6 +86,138 @@ static int caption_symbols(IDWriteFactory *factory, IDWriteFontCollection *colle
 	return 0;
 }
 
+/* The program's own loaders: one font file served from memory, listed by every collection as one font file object; the streams asked
+   for are counted. */
+static const BYTE *served_bytes;
+static UINT32 served_size;
+static int streams_made, listed;
+static IDWriteFontFile *served_file;
+
+static HRESULT STDMETHODCALLTYPE served_query(IUnknown *self, REFIID iid, void **out) { *out = self; return S_OK; }
+static ULONG STDMETHODCALLTYPE served_ref(IUnknown *self) { return 1; }
+static HRESULT STDMETHODCALLTYPE served_read(IDWriteFontFileStream *self, const void **fragment, UINT64 offset, UINT64 size, void **context)
+{
+	if (offset > served_size || size > served_size - offset)
+		return E_FAIL;
+	*fragment = served_bytes + offset;
+	*context = NULL;
+	return S_OK;
+}
+static void STDMETHODCALLTYPE served_release_fragment(IDWriteFontFileStream *self, void *context) {}
+static HRESULT STDMETHODCALLTYPE served_file_size(IDWriteFontFileStream *self, UINT64 *size) { *size = served_size; return S_OK; }
+static HRESULT STDMETHODCALLTYPE served_time(IDWriteFontFileStream *self, UINT64 *time) { *time = 0; return S_OK; }
+static IDWriteFontFileStreamVtbl served_stream_vtbl = {
+	(void *)served_query, (void *)served_ref, (void *)served_ref, served_read, served_release_fragment, served_file_size, served_time,
+};
+static IDWriteFontFileStream served_stream = {&served_stream_vtbl};
+static HRESULT STDMETHODCALLTYPE served_stream_of(IDWriteFontFileLoader *self, const void *key, UINT32 key_size, IDWriteFontFileStream **stream)
+{
+	++streams_made;
+	*stream = &served_stream;
+	return S_OK;
+}
+static IDWriteFontFileLoaderVtbl served_loader_vtbl = {(void *)served_query, (void *)served_ref, (void *)served_ref, served_stream_of};
+static IDWriteFontFileLoader served_loader = {&served_loader_vtbl};
+static HRESULT STDMETHODCALLTYPE served_next(IDWriteFontFileEnumerator *self, WINBOOL *more)
+{
+	*more = !listed++;
+	return S_OK;
+}
+static HRESULT STDMETHODCALLTYPE served_current(IDWriteFontFileEnumerator *self, IDWriteFontFile **file)
+{
+	IDWriteFontFile_AddRef(served_file);
+	*file = served_file;
+	return S_OK;
+}
+static IDWriteFontFileEnumeratorVtbl served_enumerator_vtbl = {(void *)served_query, (void *)served_ref, (void *)served_ref, served_next, served_current};
+static IDWriteFontFileEnumerator served_enumerator = {&served_enumerator_vtbl};
+static HRESULT STDMETHODCALLTYPE served_list(IDWriteFontCollectionLoader *self, IDWriteFactory *factory, const void *key, UINT32 key_size,
+	IDWriteFontFileEnumerator **enumerator)
+{
+	listed = 0;
+	*enumerator = &served_enumerator;
+	return S_OK;
+}
+static IDWriteFontCollectionLoaderVtbl served_collection_vtbl = {(void *)served_query, (void *)served_ref, (void *)served_ref, served_list};
+static IDWriteFontCollectionLoader served_collections = {&served_collection_vtbl};
+
+/* The bytes of the file behind a system face, served again by the program's loaders: two collections that list the font file object
+   and a face made from it read it once, the face has the system face's glyphs, and the collections find their font from it. */
+static int test_served_file(IDWriteFactory *factory, IDWriteFontFace *system_face)
+{
+	IDWriteFontFile *system_file = NULL;
+	IDWriteFontFileLoader *system_loader = NULL;
+	IDWriteFontFileStream *stream = NULL;
+	IDWriteFontCollection *first = NULL, *second = NULL;
+	IDWriteFontFace *face = NULL;
+	static const UINT32 first_key = 1, second_key = 2, file_key = 1;
+	const void *key = NULL, *fragment = NULL;
+	void *context = NULL;
+	UINT32 key_size = 0, files = 1;
+	UINT64 size = 0, at;
+	BYTE *copy;
+	if (FAILED(IDWriteFontFace_GetFiles(system_face, &files, &system_file)) || FAILED(IDWriteFontFile_GetReferenceKey(system_file, &key, &key_size)) ||
+		FAILED(IDWriteFontFile_GetLoader(system_file, &system_loader)) ||
+		FAILED(IDWriteFontFileLoader_CreateStreamFromKey(system_loader, key, key_size, &stream)) ||
+		FAILED(IDWriteFontFileStream_GetFileSize(stream, &size)) || !size || size >= 0x7fffffff ||
+		FAILED(IDWriteFontFileStream_ReadFileFragment(stream, &fragment, 0, size, &context)))
+		return 64;
+	copy = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)size);
+	if (!copy)
+		return 64;
+	for (at = 0; at < size; ++at)
+		copy[at] = ((const BYTE *)fragment)[at];
+	IDWriteFontFileStream_ReleaseFileFragment(stream, context);
+	IDWriteFontFileStream_Release(stream);
+	IDWriteFontFileLoader_Release(system_loader);
+	IDWriteFontFile_Release(system_file);
+	served_bytes = copy;
+	served_size = (UINT32)size;
+	if (FAILED(IDWriteFactory_RegisterFontFileLoader(factory, &served_loader)) ||
+		FAILED(IDWriteFactory_RegisterFontCollectionLoader(factory, &served_collections)) ||
+		FAILED(IDWriteFactory_CreateCustomFontFileReference(factory, &file_key, sizeof file_key, &served_loader, &served_file)))
+		return 65;
+	if (FAILED(IDWriteFactory_CreateCustomFontCollection(factory, &served_collections, &first_key, sizeof first_key, &first)) ||
+		IDWriteFontCollection_GetFontFamilyCount(first) == 0 ||
+		FAILED(IDWriteFactory_CreateCustomFontCollection(factory, &served_collections, &second_key, sizeof second_key, &second)) ||
+		IDWriteFontCollection_GetFontFamilyCount(second) == 0)
+		return 66;
+	if (FAILED(IDWriteFactory_CreateFontFace(factory, IDWriteFontFace_GetType(system_face), 1, &served_file, IDWriteFontFace_GetIndex(system_face),
+			DWRITE_FONT_SIMULATIONS_NONE, &face)))
+		return 67;
+	if (IDWriteFontFace_GetGlyphCount(face) != IDWriteFontFace_GetGlyphCount(system_face))
+		return 68;
+	if (streams_made != 1)
+		return 69;
+	/* The collection knows the face the program opened from its file, and a face opened through another file object the loader makes for
+	   the same key, as WPF makes one for every reference to a font. */
+	{
+		IDWriteFontFile *again = NULL;
+		IDWriteFontFace *reopened = NULL, *of_font = NULL;
+		IDWriteFont *found = NULL;
+		if (IDWriteFontCollection_GetFontFromFontFace(first, NULL, &found) != E_INVALIDARG || found ||
+			IDWriteFontCollection_GetFontFromFontFace(first, face, NULL) != E_POINTER)
+			return 70;
+		if (FAILED(IDWriteFontCollection_GetFontFromFontFace(first, face, &found)) || !found ||
+			FAILED(IDWriteFont_CreateFontFace(found, &of_font)) || IDWriteFontFace_GetIndex(of_font) != IDWriteFontFace_GetIndex(face) ||
+			IDWriteFontFace_GetGlyphCount(of_font) != IDWriteFontFace_GetGlyphCount(face))
+			return 71;
+		IDWriteFontFace_Release(of_font);
+		IDWriteFont_Release(found);
+		found = NULL;
+		if (FAILED(IDWriteFactory_CreateCustomFontFileReference(factory, &file_key, sizeof file_key, &served_loader, &again)) ||
+			FAILED(IDWriteFactory_CreateFontFace(factory, IDWriteFontFace_GetType(system_face), 1, &again, IDWriteFontFace_GetIndex(system_face),
+				DWRITE_FONT_SIMULATIONS_NONE, &reopened)) ||
+			FAILED(IDWriteFontCollection_GetFontFromFontFace(second, reopened, &found)) || !found)
+			return 72;
+		IDWriteFont_Release(found);
+		IDWriteFontFace_Release(reopened);
+		IDWriteFontFile_Release(again);
+	}
+	IDWriteFontFace_Release(face);
+	return 0;
+}
+
 int raven_entry(void)
 {
 	IDWriteFactory *factory = NULL;
@@ -108,9 +241,20 @@ int raven_entry(void)
 	int lit = 0, position;
 	ID2D1SimplifiedGeometrySink sink = {&sink_vtbl};
 
-	HMODULE library = LoadLibraryExW(L"dwrite.dll", NULL, 0x800); // LOAD_LIBRARY_SEARCH_SYSTEM32
+#ifdef RAVEN_TEST_DWRITE_LATE
+	IUnknown *unsupported = NULL;
+	HMODULE library = LoadLibraryW(L"dwrite.dll");
+	if (!library)
+		return 70;
 	HRESULT (WINAPI *create_factory)(DWRITE_FACTORY_TYPE, REFIID, IUnknown **) = (void *)GetProcAddress(library, "DWriteCreateFactory");
-	if (!library || !create_factory || FAILED(create_factory(DWRITE_FACTORY_TYPE_SHARED, &IID_IDWriteFactory, (IUnknown **)&factory)) || !factory)
+	if (!create_factory)
+		return 71;
+	if (create_factory(DWRITE_FACTORY_TYPE_SHARED, &IID_IDWriteFont, &unsupported) != E_NOINTERFACE || unsupported)
+		return 72;
+#else
+	HRESULT (WINAPI *create_factory)(DWRITE_FACTORY_TYPE, REFIID, IUnknown **) = DWriteCreateFactory;
+#endif
+	if (FAILED(create_factory(DWRITE_FACTORY_TYPE_SHARED, &IID_IDWriteFactory, (IUnknown **)&factory)) || !factory)
 		return 1;
 	if (FAILED(IDWriteFactory_QueryInterface(factory, &IID_IDWriteFactory2, (void **)&factory2)))
 		return 2;
@@ -358,6 +502,7 @@ int raven_entry(void)
 			/* A layout of that format is of the newest kind too and keeps its settings: the spacing, the axis values, and the line
 			   metrics with leading, the fourth method of IDWriteTextLayout3 after the eighty of IDWriteTextLayout2. */
 			typedef HRESULT (STDMETHODCALLTYPE *lines_function)(void *, DWRITE_LINE_METRICS1 *, UINT32, UINT32 *);
+			typedef UINT32 (STDMETHODCALLTYPE *layout_count_function)(void *, UINT32);
 			IDWriteTextLayout *layout;
 			void **layout4;
 			DWRITE_LINE_METRICS1 lines[2];
@@ -366,7 +511,7 @@ int raven_entry(void)
 				FAILED(IDWriteTextLayout_QueryInterface(layout, &IID_IDWriteTextLayout4, (void **)&layout4)))
 				return 48;
 			if (FAILED(((spacing_function)(*(void ***)layout4)[82])(layout4, &read)) || read.leadingBefore != 0.5f ||
-				((count_function)(*(void ***)layout4)[85])(layout4) != 1)
+				((layout_count_function)(*(void ***)layout4)[85])(layout4, 0) != 1)
 				return 49;
 			if (FAILED(((lines_function)(*(void ***)layout4)[83])(layout4, lines, 2, &line_count)) || line_count != 1 || lines[0].length != 4)
 				return 50;
@@ -446,6 +591,9 @@ int raven_entry(void)
 			IDWriteFontFamily_Release(named_family);
 		}
 	}
+	position = test_served_file(factory, face);
+	if (position)
+		return position;
 	IDWriteFontSet1_Release(of_collection);
 	IDWriteFontList2_Release(by_name);
 	IDWriteFontCollection3_Release(newest);

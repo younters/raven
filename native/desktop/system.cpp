@@ -154,8 +154,12 @@ void NativeWindows::recalculate_client(uint64_t handle,int32_t previous_width,in
 			shift_window(child, client.left - laid_out.first, client.top - laid_out.second);
 	resized = window->width != old_width || window->height != old_height;
 	objects.update_window_dcs(handle);
-	if (resized)
-		publish_window(handle, uint32_t(std::max(window->width, 0)), uint32_t(std::max(window->height, 0)), window->thread,window->parent);
+	if (resized) {
+		const uint32_t width = uint32_t(std::max(window->width, 0)), height = uint32_t(std::max(window->height, 0));
+		const uint32_t thread = window->thread;
+		const uint64_t parent = window->parent;
+		directory([handle, width, height, thread, parent] { publish_window(handle, width, height, thread, parent); });
+	}
 	if (resized && !placing.contains(handle))
 		send(handle, 5, (window->style & 0x01000000U) ? 2 : (window->style & 0x20000000U) ? 1 : 0,
 			uint16_t(window->width) | (uint64_t(uint16_t(window->height)) << 16));
@@ -465,10 +469,14 @@ bool NativeWindows::system_dispatch(std::string_view name)
 				const auto value = take();
 				std::u16string body;
 				if (item->type == 'c' || item->type == 'C') {
-					if (ansi && item->type == 'c')
-						body = from_ansi(std::string(1, char(uint8_t(value))), 1252);
-					else
+					// %c takes a character of the function's width, %C of the other; %hc and %lc say which.
+					bool wide = (item->type == 'c') != ansi;
+					if (item->narrow_size) wide = false;
+					if (item->wide_size) wide = true;
+					if (wide)
 						body.push_back(char16_t(uint16_t(value)));
+					else
+						body = from_ansi(std::string(1, char(uint8_t(value))), 1252);
 				} else if (item->type == 's' || item->type == 'S') {
 					// %s takes the string width of the function (UTF-16); %S, %hs and %ls swap it.
 					bool wide = (item->type == 's') != ansi;

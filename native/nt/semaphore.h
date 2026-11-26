@@ -19,6 +19,8 @@ public:
 	explicit SemaphoreObject(int descriptor);
 	~SemaphoreObject() override;
 	std::u16string_view type_name() const override { return u"Semaphore"; }
+	bool closes_beside() const override { return true; }
+	uint32_t table_semaphore() const override { return waits_object; }
 	int signaled(uint32_t) const override;
 	bool try_consume(uint32_t thread) override;
 	void consume(uint32_t thread) override { try_consume(thread); }

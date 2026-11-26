@@ -1,16 +1,20 @@
 #include "sandbox.h"
 #include "confine.h"
+#include "host_names.h"
+#include "registry.h"
 #include "text.h"
 #ifdef __APPLE__
 #include "raven_darwin_fonts.h"
 #endif
 
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
 #include <cstdio>
 #include <fstream>
+#include <iterator>
 #include <mutex>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -83,6 +87,7 @@ void Sandbox::refresh() const
 	configured.clear();
 	exposed.clear();
 	handlers.clear();
+	schemes.clear();
 	network_allowed = true;
 	std::ifstream input(file);
 	for (std::string line; std::getline(input, line);) {
@@ -103,6 +108,13 @@ void Sandbox::refresh() const
 			network_allowed = value != "off";
 		else if (word == "app-network-off")
 			network_allowed = false;
+		// A scheme names the entry's file and its MIME type: letters, then letters, digits, "+", "-" and ".".
+		else if (word == "link" && !value.empty() && std::isalpha(static_cast<unsigned char>(value[0])) &&
+			value.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-.") == value.npos) {
+			for (auto &character : value)
+				character = char(std::tolower(static_cast<unsigned char>(character)));
+			schemes.push_back(value);
+		}
 		else if (word == "host-app" || word == "handler") {
 			const auto tab = value.find('\t');
 			if (tab == value.npos || !tab || tab + 1 == value.size())
@@ -132,6 +144,84 @@ std::string Sandbox::handler(std::string_view kind) const
 	return {};
 }
 
+std::vector<std::string> Sandbox::links() const
+{
+	refresh();
+	std::lock_guard guard(configuration_lock());
+	return schemes;
+}
+
+void Sandbox::publish_links() const
+{
+	if (directory.empty())
+		return;
+	const char *home = std::getenv("HOME"), *data_home = std::getenv("XDG_DATA_HOME");
+	const auto folder = (data_home && *data_home ? std::filesystem::path(data_home) : std::filesystem::path(home ? home : "") / ".local/share") /
+		"applications";
+	if (!folder.is_absolute())
+		return;
+	const auto prefix = std::filesystem::absolute(directory).lexically_normal();
+	const auto stem = "raven-link-" + hex_text(name_hash(prefix.string())) + "-";
+	std::vector<std::string> wanted;
+	if (const auto granted = links(); !granted.empty()) {
+		NativeRegistry hive(directory / "registry.dat");
+		for (const auto &scheme : granted) {
+			uint64_t key = 0;
+			uint32_t type = 0;
+			std::vector<uint8_t> data;
+			if (hive.open(0x80000000ULL, from_utf8(scheme), key))
+				continue;
+			if (!hive.query(key, u"URL Protocol", type, data))
+				wanted.push_back(scheme);
+			hive.close(key);
+		}
+	}
+	// An argument of Exec, quoted as the desktop entry specification asks, then escaped again as a string of the file.
+	const auto quoted = [](const std::string &text) {
+		std::string result = "\"";
+		for (const char character : text)
+			result += character == '"' || character == '`' || character == '$' ? std::string("\\\\") + character :
+				character == '\\' ? std::string("\\\\\\\\") : character == '%' ? std::string("%%") : std::string(1, character);
+		return result + '"';
+	};
+	std::error_code error;
+	const auto runtime = std::filesystem::read_symlink("/proc/self/exe", error).parent_path();
+	// The window system this runtime was given, or Wayland when there is a session for it, as a restarted program gets.
+	const char *options = std::getenv("RAVEN_CHILD_OPTIONS");
+	const std::string desktop = options && std::string_view(options).find("--desktop=x11") != std::string_view::npos ? " --desktop=x11" :
+		std::getenv("WAYLAND_DISPLAY") ? " --desktop=wayland" : "";
+	// A path with a line break or another control character would add lines of its own to the entry: such a prefix gets none.
+	const auto plain = [](const std::string &text) {
+		return std::none_of(text.begin(), text.end(), [](unsigned char character) { return character < ' ' || character == 0x7f; });
+	};
+	if (!plain(prefix.string()) || !plain(runtime.string()))
+		wanted.clear();
+	std::string name;
+	for (const char character : prefix.filename().string())
+		name += static_cast<unsigned char>(character) < ' ' ? ' ' : character;
+	for (const auto &scheme : wanted) {
+		const auto text = "[Desktop Entry]\nType=Application\nName=" + name + " (Raven)\nExec=env " + quoted("RAVEN_PREFIX=" + prefix.string()) + ' ' +
+			quoted((runtime / "raven").string()) + " --run-process --execution=native --timeout-ms=86400000" + desktop + ' ' +
+			quoted((prefix / "drive_c/windows/system32/rundll32.exe").string()) + " -- shell32.dll,ShellExec_RunDLL %u\nMimeType=x-scheme-handler/" +
+			scheme + ";\nNoDisplay=true\n";
+		const auto entry = folder / (stem + scheme + ".desktop");
+		std::ifstream existing(entry);
+		const std::string before((std::istreambuf_iterator<char>(existing)), {});
+		if (before == text)
+			continue;
+		std::filesystem::create_directories(folder, error);
+		const auto partial = folder / (stem + scheme + ".desktop.partial");
+		std::ofstream(partial, std::ios::trunc) << text;
+		std::filesystem::rename(partial, entry, error);
+	}
+	for (const auto &file : std::filesystem::directory_iterator(folder, error)) {
+		const auto filename = file.path().filename().string();
+		if (filename.starts_with(stem) && filename.ends_with(".desktop") &&
+			std::find(wanted.begin(), wanted.end(), filename.substr(stem.size(), filename.size() - stem.size() - 8)) == wanted.end())
+			std::filesystem::remove(file.path(), error);
+	}
+}
+
 Sandbox::Access Sandbox::access_as(const std::filesystem::path &host, std::u16string_view other) const
 {
 	Sandbox as;
@@ -144,9 +234,18 @@ Sandbox::Access Sandbox::access_as(const std::filesystem::path &host, std::u16st
 
 bool Sandbox::open_on_host(std::string_view name, const std::vector<std::string> &targets) const
 {
+	// A runtime started inside a confinement, and the broker it starts, are inside it too: the broker outside every confinement starts
+	// the Linux program.
+	if (host_brokered())
+		return forwarded_host(name, targets, to_utf8(parent_program));
 	// A confined runtime would confine the Linux program too: the broker starts it, after the same checks.
 	if (confined())
 		return brokered_host(name, targets);
+	return launch_on_host(name, targets, parent_program, false);
+}
+
+bool Sandbox::launch_on_host(std::string_view name, const std::vector<std::string> &targets, std::u16string_view caller, bool own) const
+{
 	std::string desktop;
 	for (const auto &app : host_apps())
 		if (equal_fold(from_utf8(app.name), from_utf8(name)))
@@ -182,9 +281,10 @@ bool Sandbox::open_on_host(std::string_view name, const std::vector<std::string>
 			if (scheme != "http" && scheme != "https" && scheme != "mailto" && scheme != "ftp")
 				return false;
 		} else {
-			const auto reach = target.empty() || target.front() != '/' ? Access::none : access_as(target, parent_program);
+			const auto reaches = [](Access reach) { return reach == Access::read || reach == Access::write; };
+			const bool absolute = !target.empty() && target.front() == '/';
 			const bool in_prefix = !target.empty() && std::string_view(target).starts_with(directory.string() + "/");
-			if (!in_prefix && reach != Access::read && reach != Access::write) {
+			if (!in_prefix && (!absolute || !reaches(access_as(target, caller)) || (own && !reaches(access(target))))) {
 				refuse(target, "open-on-host");
 				return false;
 			}
@@ -346,7 +446,10 @@ void Sandbox::refuse(const std::filesystem::path &host, std::string_view operati
 
 bool Sandbox::open_address(std::string_view address) const
 {
-	// A confined runtime cannot reach the desktop's handlers: the broker opens the address, after the same checks.
+	// A confined runtime cannot reach the desktop's handlers: the broker opens the address, after the same checks; the one outside
+	// every confinement for a runtime started inside one.
+	if (host_brokered())
+		return forwarded_address(address);
 	if (confined())
 		return brokered_address(address);
 	const auto scheme = address.substr(0, address.find(':'));

@@ -19,6 +19,8 @@
 #include <functional>
 #include <deque>
 #include <memory>
+#include <x86intrin.h>
+#include <mutex>
 #include <optional>
 
 namespace raven {
@@ -72,7 +74,12 @@ public:
 	void set_tell(std::function<void(uint32_t)> tell)
 	{
 		tell_hook = std::move(tell);
-		objects.invalidated = tell_hook;
+		// A window that comes to need painting also ends what the guest answers alone for its thread's queue (see mark_quiet), from
+		// whatever thread invalidated it.
+		objects.invalidated = [this](uint32_t thread) {
+			wake(thread);
+			this->tell(thread);
+		};
 	}
 	// Resolves the default menu of a window class (module, resource identifier) to a menu handle.
 	// Allocates guest global memory for clipboard data that arrives from the host.
@@ -81,12 +88,17 @@ public:
 	void set_global_data(std::function<uint64_t(uint64_t)> data) { global_data = std::move(data); }
 	void set_menu_loader(std::function<uint64_t(uint64_t,uint64_t)> loader) { menu_loader = std::move(loader); }
 	bool dispatch(std::string_view name);
+	// Does what the call left for after the desktop lock, with the lock let go, before the call returns: unmapping the surfaces released
+	// during the call (see release_surface) and writing the window directory other processes find windows in (see foreign_surface.h).
+	void finish_call();
 	// The served block where the screen context the guest's GetDC(NULL) takes is published (see the screen preludes), and the
 	// offsets in it of the capability table, the context and its state.
 	static constexpr size_t screen_caps = 0x400, screen_dc = 0x600, screen_dc_state = 0x608;
 	void set_screen_block(uint64_t *block) { screen_block = reinterpret_cast<uint8_t *>(block); }
 	// A call the runtime serves with the published screen context as its first argument may change it: the guest's ReleaseDC then
-	// leaves it to the runtime. Called before every served call.
+	// leaves it to the runtime. Called before every served call, with its first argument.
+	void screen_dc_use(std::string_view name, uint64_t first);
+	// The same for a call served in the turn, whose first argument is read only when a context is published.
 	void screen_dc_use(std::string_view name);
 	// The window table the guest's window preludes read: a record of 256 bytes for each window, at its handle's low nine bits, and
 	// the offsets in a record. The runtime brings the records of the windows it touched up to date before the guest runs again; a
@@ -114,6 +126,10 @@ public:
 	static constexpr size_t dc_slots=1024, dc_slot=32, dc_slots_at=4096, dc_table_size=dc_slots_at+dc_slots*dc_slot;
 	void set_dc_table(uint8_t *table);
 	void apply_dc_log();
+	// Whether the guest logged a change of a context that the runtime has not taken in yet.
+	bool dc_logged() const { return dc_table && __atomic_load_n(reinterpret_cast<const uint32_t *>(dc_table), __ATOMIC_ACQUIRE) != 0; }
+	// The screen's context the guest answers GetDC(NULL) with, 0 while none is published.
+	uint64_t published_screen_dc() const;
 	// Releases the guest answers itself and leaves for the runtime: a log page (a count, then from 16 up to 255 entries of a handle
 	// and an operation) and the set of valid icons (a handle at each handle's low ten bits). The guest takes a handle out of its tables
 	// as it logs it; the runtime carries the log out before it serves a call and does not publish logged handles again until then.
@@ -137,6 +153,11 @@ public:
 	static constexpr size_t hook_table_at=quiet_slots*quiet_slot, hook_entries=64, hook_entry=16;
 	void publish_hooks();
 	void mark_quiet(uint32_t thread);
+	// A PeekMessageW beside the turn, under the shared desktop lock: the calling thread's posted messages, its WM_QUIT and its windows'
+	// WM_PAINT, while nothing of the whole desktop waits to be done first. None when something does (see the definition): the peek then
+	// takes the lock whole and retrieve does it all.
+	std::optional<uint64_t> peek_shared(std::span<const uint64_t> arguments,
+		const std::function<void(uint64_t,std::span<const uint8_t>)> &write);
 	void wake(uint32_t thread)
 	{
 		if (!quiet_table) return;
@@ -156,6 +177,16 @@ public:
 	// run while the runtime serves another read a table only between two looks at an even count that did not change.
 	static constexpr size_t table_version=0x7b0;
 	void publish_windows();
+	// Writes the record of one window a call under the shared desktop lock changed (see DesktopLock), as publish_windows writes it,
+	// while calls on other windows go on.
+	void publish_window_alone(uint64_t handle);
+	// The same for a device context such a call took or released.
+	void publish_dc_alone(uint64_t handle);
+	// Whether the guest logged drawing for the runtime to carry out, which it does without a call.
+	bool drawing_logged() const
+	{
+		return deferred_log && __atomic_load_n(reinterpret_cast<const uint32_t *>(deferred_log), __ATOMIC_ACQUIRE) != 0;
+	}
 	void api_entered() { ++api_depth; }
 	void api_left();
 	// user32 entry points that follow the shared registry conventions; every handler runs on the calling guest thread.
@@ -164,11 +195,20 @@ public:
 	void drawing(uint64_t window, const DesktopRect *area = nullptr);
 	void present_drawn(uint64_t window);
 	void flush_dirty(bool force = false);
+	// Shows waiting frames on the calling thread. Returns when to look again, as often as message retrieval looks.
+	std::chrono::steady_clock::time_point present_frames();
 	// Whether a message, paint request or due timer waits for the guest; host input is delivered to the windows on the way, so this
 	// runs only inside a call of the guest thread.
 	bool input_ready();
 	// Queue categories in the high word, new categories in the low word; safe in a waiting thread's condition.
 	uint32_t queue_status(uint32_t thread,uint32_t mask,bool clear);
+	// What queue_status answers from the queue as it is, without taking input in or posting timers first.
+	uint32_t status_bits(uint32_t thread,uint32_t mask,bool clear);
+	// Sets the thread's quiet slot (see set_quiet_table) for a queue holding the kinds `holds`.
+	void quiet_until(uint32_t thread,uint32_t holds);
+	// The peeks under the shared desktop lock take turns with this over the queue and the threads' status and paint cursor; everything
+	// else changes those only under the whole lock.
+	std::mutex queue_turn;
 	void dump_windows();
 	void shutdown();
 
@@ -206,6 +246,8 @@ private:
 	void queue(Message message,uint32_t kinds=0x108);
 	struct QueueState {
 		uint32_t current=0,changed=0;
+		// The windows directory as the thread was last told of another process's messages in it (queue_status).
+		uint64_t foreign_stamp=UINT64_MAX;
 		std::map<uint64_t,uint64_t> paints;
 	};
 	std::map<uint32_t,QueueState> queues;
@@ -245,12 +287,20 @@ private:
 	std::chrono::steady_clock::time_point foreign_checked{};
 	uint64_t foreign_stamp=UINT64_MAX;
 	// The windows directory as it was when messages other processes posted were last taken in.
-	uint64_t posts_stamp=UINT64_MAX,sends_stamp=UINT64_MAX;
+	uint64_t posts_stamp=UINT64_MAX,sends_stamp=UINT64_MAX,waiting_stamp=UINT64_MAX;
+	// The windows of this process other processes sent (0x40) or posted (0x108) messages to that wait to be taken, as last read.
+	std::vector<std::pair<uint64_t,uint32_t>> foreign_waiting;
+	// The kinds of message (0x40 sent, 0x108 posted) other processes left for the thread's windows that wait to be taken.
+	uint32_t foreign_kinds(uint32_t thread);
 	void import_foreign_posts();
 	void answer_foreign_sends();
 	// A message to a window of another process: the owner's answer, or nothing when it gave none in time.
 	std::optional<uint64_t> send_foreign(uint64_t window,uint32_t message,uint64_t wparam,uint64_t lparam,std::chrono::milliseconds timeout);
 	void import_foreign_frames();
+	// What flush_dirty shows, without the focus change it settles first.
+	void present_dirty(bool force = false);
+	// When to look again for frames of other processes: at `limit`, or 8 ms after the last look while one draws into a window.
+	std::chrono::steady_clock::time_point foreign_look(std::chrono::steady_clock::time_point limit) const;
 	uint8_t *screen_block=nullptr;
 	// A table entry handed out while calls were in progress, with the depth of the outermost of them: it is compared again before the
 	// guest runs until that call returns, as the call may change it through a pointer it took before a callback.
@@ -272,12 +322,17 @@ private:
 	uint8_t *bitmap_table=nullptr;
 	uint8_t *system_table=nullptr;
 	uint8_t *dc_table=nullptr;
+	// One writer at a time for the records the calls under the shared desktop lock publish (see publish_window_alone).
+	std::mutex publishing_alone;
 	uint8_t *deferred_log=nullptr,*icon_table=nullptr;
 	std::vector<uint64_t> deferred_pending;
 	bool deferred(uint64_t handle) const { return std::find(deferred_pending.begin(),deferred_pending.end(),handle)!=deferred_pending.end(); }
 	void publish_icons();
 	uint8_t *region_table=nullptr;
 	uint8_t *quiet_table=nullptr;
+	// The time stamp counter and the clock when the desktop of the process was made, which mark_quiet takes its rate against.
+	const uint64_t made_ticks=__rdtsc();
+	const std::chrono::steady_clock::time_point made_time=std::chrono::steady_clock::now();
 	uint8_t *key_table=nullptr;
 	void publish_keys() { if (key_table && std::memcmp(key_table,vk_state.data(),vk_state.size())) std::memcpy(key_table,vk_state.data(),vk_state.size()); }
 	void publish_region(uint64_t handle);
@@ -339,12 +394,23 @@ private:
 	bool keep_host_window=false;
 	// A top-level window's surface released while it is resized, kept for the new size when it fits: making a surface maps fresh pages
 	// into both processes.
-	struct SpareSurface { std::shared_ptr<SharedPixels> pixels; uint64_t address=0; size_t size=0; uint32_t width=0,height=0; };
+	// client: where the client area lay in the pixels.
+	struct SpareSurface { std::shared_ptr<SharedPixels> pixels; uint64_t address=0; size_t size=0; uint32_t width=0,height=0; DesktopRect client{}; };
 	std::map<uint64_t,SpareSurface> spare_surfaces;
 	bool resizing=false;
 	// Windows that SetWindowPos is placing: their WM_MOVE and WM_SIZE come from the default answer to WM_WINDOWPOSCHANGED instead.
 	std::set<uint64_t> placing;
 	void drop_spare_surface(uint64_t handle);
+	// The surfaces' pixels released under the desktop lock and not yet unmapped: unmapping a window's pixels takes far longer than
+	// releasing its records, and every thread that draws or changes a window of its own would wait for it.
+	std::vector<uint64_t> released_surfaces;
+	// The window directory's files written or removed under the whole desktop lock, in order: they reach the disk, which every thread
+	// that draws or changes a window of its own would wait for. A call that finishes takes the order before it lets the lock go, so the
+	// files of a window made by one call and destroyed by a later one are written in that order.
+	std::vector<std::function<void()>> directory_work;
+	std::mutex directory_order;
+	void directory(std::function<void()> work);
+	bool dispatch_call(std::string_view name);
 	// The compositor took the keyboard from the program's windows; applied once no window of the program receives it right after.
 	bool focus_leaving=false;
 	std::chrono::steady_clock::time_point focus_left{};
@@ -387,9 +453,15 @@ private:
 	void place_pointer(const DesktopEvent &event,uint32_t message,uint32_t buttons,int64_t x,int64_t y);
 	void release_held_input();
 	std::deque<DesktopEvent> held_input;
-	uint64_t retrieve(std::span<const uint64_t> arguments,bool blocking);
+	// `beside` writes the message for a PeekMessage served beside the turn (see register_api), which leaves to the turn whatever would run
+	// a procedure of the guest.
+	uint64_t retrieve(std::span<const uint64_t> arguments,bool blocking,
+		const std::function<void(uint64_t,std::span<const uint8_t>)> *beside=nullptr);
 	void post(uint64_t window,uint32_t message,uint64_t wparam,uint64_t lparam);
 	uint64_t surface_dc(uint64_t window);
+	// Makes the pixels of a top-level window's first surface with the desktop lock let go, for surface_dc to take as a spare: making and
+	// mapping them takes far longer than anything else a first GetDC or BeginPaint does, and every other thread would wait for it.
+	void prepare_surface(uint64_t window);
 	bool tree_dispatch(std::string_view name);
 	// Classic frame geometry in window-relative coordinates, derived from AdjustWindowRectEx rules.
 	struct FrameLayout {

@@ -76,7 +76,10 @@ public:
 	PEModule &add_data(std::string name, ModuleBytes bytes, std::function<bool(uint64_t, uint64_t)> available = {});
 	const std::map<std::string, std::unique_ptr<PEModule>> &all() const;
 	uint64_t resolve(const PEImport &symbol) const;
+	uint64_t resolve_import(const PEImport &symbol) const;
 	std::vector<const PEModule *> resolution_path(const PEImport &symbol) const;
+	// An opt-in diagnostic target for a missing static import. Real exports and explicit lookups keep their usual resolution.
+	void set_import_probe(std::function<uint64_t(std::string_view, std::string_view, uint32_t)> probe);
 	size_t bind_imports();
 	// Lets imports that name an API set contract resolve through the module that implements it.
 	void add_alias(std::string name, std::string target);
@@ -90,8 +93,9 @@ private:
 	bool bound_any = false;
 	std::function<bool(uint64_t, uint64_t)> address_available;
 	uint64_t relocation_base64 = 0x180000000ULL;
+	std::function<uint64_t(std::string_view, std::string_view, uint32_t)> import_probe;
 	uint64_t resolve(std::string module, std::string name, uint32_t ordinal, bool by_ordinal,
-		std::set<std::pair<std::string, uint32_t>> &chain, std::vector<const PEModule *> *path = nullptr) const;
+		std::set<std::pair<std::string, uint32_t>> &chain, std::vector<const PEModule *> *path = nullptr, bool static_import = false) const;
 };
 
 }

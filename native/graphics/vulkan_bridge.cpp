@@ -154,6 +154,12 @@ VkResult VulkanBridge::detached(const std::function<VkResult()> &work, std::atom
 {
 	if (!park)
 		return work();
+	// Beside the turn the guest thread's own host thread is free to wait for the driver, and leaves the tables to the turn meanwhile:
+	// the work takes what it needs of them before.
+	if (beside_call) {
+		const TablesRelease release(*this);
+		return work();
+	}
 	if (!workers)
 		workers = std::make_shared<Workers>();
 	struct Call {
@@ -168,7 +174,8 @@ VkResult VulkanBridge::detached(const std::function<VkResult()> &work, std::atom
 			notify();
 	});
 	try {
-		park([&call] { return call->done.load(std::memory_order_acquire); });
+		const TablesRelease release(*this);
+		park([&call] { return call->done.load(std::memory_order_acquire); }, std::nullopt);
 	} catch (...) {
 		if (cancel)
 			cancel->store(true);
@@ -184,7 +191,31 @@ VkResult VulkanBridge::detached_wait(const std::function<VkResult(uint64_t)> &wa
 {
 	if (!park || timeout == 0)
 		return wait(timeout);
+	// A serial process answers a served call while its guest spins in the stub, which holds the only task: a wait that would block runs
+	// again stopped at its trap.
+	if (process.serving() && !process.parallel()) {
+		const VkResult status = wait(0);
+		if (status == VK_TIMEOUT)
+			process.decline_served();
+		return status;
+	}
 	constexpr uint64_t slice = 50'000'000;
+	if (beside_call) {
+		// A wait beside the turn waits in slices too, and leaves for the usual way when the thread is wanted elsewhere (a job, an APC,
+		// its end): the wait has changed nothing, so the usual way waits again from the start. It does not keep the turn's calls out
+		// of the tables meanwhile, as one of them may be what it waits for.
+		const TablesRelease release(*this);
+		const auto start = std::chrono::steady_clock::now();
+		for (;;) {
+			const auto spent = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+			const uint64_t left = spent >= timeout ? 0 : timeout - spent;
+			const VkResult status = wait(std::min(left, slice));
+			if (status != VK_TIMEOUT || left <= slice)
+				return status;
+			if (called_away && called_away())
+				throw std::runtime_error("a Vulkan wait beside the turn was called away");
+		}
+	}
 	std::atomic<bool> cancelled{false};
 	const auto start = std::chrono::steady_clock::now();
 	return detached([&] {
@@ -272,6 +303,37 @@ std::string VulkanBridge::string(uint64_t address)
 }
 
 bool VulkanBridge::dispatch(std::string_view name)
+{
+	// A call the bridge makes on its own behalf from within a call already holds the tables.
+	if (tables_held) {
+		++tables_held;
+		const struct Leave { ~Leave() { --tables_held; } } leave;
+		return dispatch_tables(name);
+	}
+	const std::unique_lock hold(tables);
+	tables_held = 1;
+	const struct Leave { ~Leave() { tables_held = 0; } } leave;
+	return dispatch_tables(name);
+}
+
+bool VulkanBridge::dispatch_beside(std::string_view name)
+{
+	tables.lock_shared();
+	tables_shared = true;
+	beside_call = true;
+	const struct Leave {
+		VulkanBridge &bridge;
+		~Leave()
+		{
+			beside_call = false;
+			tables_shared = false;
+			bridge.tables.unlock_shared();
+		}
+	} leave{*this};
+	return dispatch_tables(name);
+}
+
+bool VulkanBridge::dispatch_tables(std::string_view name)
 {
 	if (dispatch_resource(name) || dispatch_enumerate(name) || dispatch_queries(name) || dispatch_hand(name) || dispatch_generated(name))
 		return true;
@@ -584,7 +646,7 @@ bool VulkanBridge::dispatch(std::string_view name)
 		result = static_cast<uint32_t>(status);
 		if (status == VK_SUCCESS) {
 			const auto token = next_handle++;
-			Device record{device, arguments[0], {}};
+			Device record{device, arguments[0], {}, queue_infos[0].queueFamilyIndex};
 			try {
 				devices.emplace(token, record);
 				write(arguments[3], token);

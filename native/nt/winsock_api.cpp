@@ -439,7 +439,11 @@ bool afd_device_control(KernelContext &context, ApiCall &call)
 			std::erase(owner->polls, poll);
 		return true;
 	};
-	context.reactor->add(attempt, watched.front().socket->descriptor, short(POLLIN | POLLPRI | POLLOUT | peer_shutdown));
+	// Only the events asked for: a socket that can always be written must not wake a sleeping process for a poll that waits to receive.
+	const uint32_t asked = watched.front().events;
+	const short events = short(((asked & (afd_receive | afd_accept)) ? POLLIN : 0) | ((asked & afd_receive_expedited) ? POLLPRI : 0) |
+		((asked & afd_send) ? POLLOUT : 0) | ((asked & afd_disconnect) ? peer_shutdown : 0));
+	context.reactor->add(attempt, watched.front().socket->descriptor, events);
 	call.ret(status_pending);
 	return true;
 }
@@ -1488,14 +1492,217 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 
 	// Completion ports: one queue that overlapped operations report to and worker threads take from.
 	context.threads.add_pump([&reactor] { reactor.poll(); });
-	registry.add("CreateIoCompletionPort", 4, [&objects, socket_of](ApiCall &call) {
-		std::shared_ptr<CompletionPort> port;
-		if (call[1]) {
-			port = objects.object_as<CompletionPort>(call[1]);
-			if (!port) {
-				call.fail(6, 0);
+	constexpr uint32_t modify_completion = 2;
+	const auto completion_for_modify = [&objects](uint64_t handle) -> std::pair<std::shared_ptr<CompletionPort>, uint32_t> {
+		const auto port = objects.object_as<CompletionPort>(handle);
+		if (!port)
+			return {{}, objects.type_name(handle) ? 0xc0000024U : 0xc0000008U};
+		if (!(objects.access_of(handle) & modify_completion))
+			return {{}, 0xc0000022U};
+		return {port, 0};
+	};
+	const auto create_completion = [&objects](ApiCall &call, bool wait_packet) {
+		try {
+			const size_t width = call.pointer_width();
+			call.process.validate_write_memory(call[0], width);
+			uint32_t attributes = 0;
+			if (const auto address = call[2]) {
+				if (call.load<uint32_t>(address) != 6 * width) {
+					call.ret(0xc000000dU);
+					return;
+				}
+				if (call.load_pointer(address + 2 * width) || call.load_pointer(address + 4 * width)) {
+					call.ret(0xc00000bbU);
+					return;
+				}
+				attributes = call.load<uint32_t>(address + 3 * width);
+			}
+			const uint32_t all_access = wait_packet ? 0x000f0001U : 0x001f0003U;
+			uint32_t access = call.u32(1);
+			if (access & (0x10000000U | 0x02000000U)) access |= all_access;
+			if (access & 0x80000000U) access |= wait_packet ? 0x20000 : 0x20001;
+			if (access & 0x40000000U) access |= wait_packet ? 0x20001 : 0x20002;
+			if (access & 0x20000000U) access |= wait_packet ? 0x20000 : 0x120000;
+			access &= ~0xf2000000U;
+			if (access & ~all_access) {
+				call.ret(0xc0000022U);
 				return;
 			}
+			std::shared_ptr<KernelObject> object;
+			if (wait_packet)
+				object = std::make_shared<WaitCompletionPacket>();
+			else
+				object = std::make_shared<CompletionPort>();
+			const auto made = objects.add_object(std::move(object));
+			if (!made.status) {
+				objects.set_access(made.value, access);
+				objects.set_inherit(made.value, (attributes & 2) != 0);
+				call.store_pointer(call[0], made.value);
+			}
+			call.ret(made.status);
+		} catch (const ApiFault &) {
+			call.ret(0xc0000005U);
+		} catch (const std::runtime_error &) {
+			call.ret(0xc0000005U);
+		} catch (const std::bad_alloc &) {
+			call.ret(0xc000009aU);
+		}
+	};
+	registry.add("NtCreateIoCompletion", 4, [create_completion](ApiCall &call) { create_completion(call, false); });
+	registry.add("NtCreateWaitCompletionPacket", 3, [create_completion](ApiCall &call) { create_completion(call, true); });
+	registry.add("NtAllocateReserveObject", 3, [&objects](ApiCall &call) {
+		if (call.u32(2) != 1 || call[1]) {
+			call.ret(call.u32(2) > 1 ? 0xc000000dU : 0xc00000bbU);
+			return;
+		}
+		try {
+			call.process.validate_write_memory(call[0], call.pointer_width());
+			const auto made = objects.add_object(std::make_shared<CompletionReserve>());
+			if (!made.status)
+				call.store_pointer(call[0], made.value);
+			call.ret(made.status);
+		} catch (const ApiFault &) {
+			call.ret(0xc0000005U);
+		} catch (const std::runtime_error &) {
+			call.ret(0xc0000005U);
+		} catch (const std::bad_alloc &) {
+			call.ret(0xc000009aU);
+		}
+	});
+	registry.add("NtSetIoCompletionEx", 6, [&objects, completion_for_modify](ApiCall &call) {
+		const auto [port, status] = completion_for_modify(call[0]);
+		if (!port) {
+			call.ret(status);
+			return;
+		}
+		const auto reserve = objects.object_as<CompletionReserve>(call[1]);
+		if (!reserve) {
+			call.ret(objects.type_name(call[1]) ? 0xc0000024U : 0xc0000008U);
+			return;
+		}
+		if (!(objects.access_of(call[1]) & modify_completion)) {
+			call.ret(0xc0000022U);
+			return;
+		}
+		if (reserve->queued) {
+			call.ret(0xc00000f0U);
+			return;
+		}
+		try {
+			port->post({call[5], call[2], call[3], 0, call.u32(4), reserve});
+			reserve->queued = true;
+			call.ret(0);
+		} catch (const std::bad_alloc &) {
+			call.ret(0xc000009aU);
+		}
+	});
+	const auto wait_for_modify = [&objects](uint64_t handle) -> std::pair<std::shared_ptr<WaitCompletionPacket>, uint32_t> {
+		const auto wait = objects.object_as<WaitCompletionPacket>(handle);
+		if (!wait)
+			return {{}, objects.type_name(handle) ? 0xc0000024U : 0xc0000008U};
+		if (!(objects.access_of(handle) & 1))
+			return {{}, 0xc0000022U};
+		return {wait, 0};
+	};
+	const auto finish_wait = [](const std::shared_ptr<WaitCompletionPacket> &wait) {
+		if (!wait->target)
+			return true;
+		const auto port = wait->port.lock();
+		if (!port || port->closed()) {
+			wait->target.reset();
+			return true;
+		}
+		if (wait->target->signaled(0) != 1)
+			return false;
+		auto completion = wait->notification;
+		completion.reserve = wait;
+		try {
+			port->post(completion);
+		} catch (const std::bad_alloc &) {
+			return false;
+		}
+		if (!wait->target->try_consume(0)) {
+			port->cancel(*wait);
+			return false;
+		}
+		wait->queued = true;
+		wait->target.reset();
+		return true;
+	};
+	registry.add("NtAssociateWaitCompletionPacket", 8, [&objects, &reactor, wait_for_modify, completion_for_modify, finish_wait](ApiCall &call) {
+		const auto [wait, wait_status] = wait_for_modify(call[0]);
+		const auto [port, port_status] = completion_for_modify(call[1]);
+		if (!wait || !port) {
+			call.ret(wait ? port_status : wait_status);
+			return;
+		}
+		if (wait->target || wait->queued) {
+			call.ret(0xc00000efU);
+			return;
+		}
+		const auto target = objects.object(call[2]);
+		if (!target || target->type_name() == u"Mutant" || target->signaled(0) < 0) {
+			call.ret(target ? 0xc00000f1U : 0xc0000008U);
+			return;
+		}
+		if (!(objects.access_of(call[2]) & 0x100000)) {
+			call.ret(0xc0000022U);
+			return;
+		}
+		try {
+			if (call[7])
+				call.process.validate_write_memory(call[7], 1);
+			wait->port = port;
+			wait->target = target;
+			wait->notification = {call[6], call[3], call[4], 0, call.u32(5)};
+			const auto generation = ++wait->generation;
+			const bool signaled = finish_wait(wait);
+			if (!signaled) {
+				reactor.add([wait, generation, finish_wait] { return wait->generation != generation || finish_wait(wait); });
+				target->watch_signal([weak = std::weak_ptr(wait), generation, finish_wait] {
+					const auto pending = weak.lock();
+					return !pending || pending->generation != generation || finish_wait(pending);
+				});
+			}
+			if (call[7])
+				call.store<uint8_t>(call[7], signaled);
+			call.ret(0);
+		} catch (const std::bad_alloc &) {
+			wait->target.reset();
+			call.ret(0xc000009aU);
+		} catch (const ApiFault &) {
+			wait->target.reset();
+			port->cancel(*wait);
+			call.ret(0xc0000005U);
+		} catch (const std::runtime_error &) {
+			wait->target.reset();
+			port->cancel(*wait);
+			call.ret(0xc0000005U);
+		}
+	});
+	registry.add("NtCancelWaitCompletionPacket", 2, [wait_for_modify, finish_wait](ApiCall &call) {
+		const auto [wait, status] = wait_for_modify(call[0]);
+		if (!wait) {
+			call.ret(status);
+		} else if (wait->target && !finish_wait(wait)) {
+			wait->target.reset();
+			call.ret(0);
+		} else if (wait->queued && !call.u32(1)) {
+			call.ret(0x103);
+		} else {
+			const auto port = wait->port.lock();
+			call.ret(port && port->cancel(*wait) ? 0 : 0xc0000120U);
+		}
+	});
+	registry.add("CreateIoCompletionPort", 4, [&objects, socket_of, completion_for_modify](ApiCall &call) {
+		std::shared_ptr<CompletionPort> port;
+		if (call[1]) {
+			const auto [existing, status] = completion_for_modify(call[1]);
+			if (!existing) {
+				call.fail(status == 0xc0000022U ? 5 : 6);
+				return;
+			}
+			port = existing;
 		}
 		const bool create = !port;
 		uint64_t handle = call[1];
@@ -1533,10 +1740,10 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 		}
 		call.ret(handle);
 	});
-	registry.add("PostQueuedCompletionStatus", 4, [&objects](ApiCall &call) {
-		const auto port = objects.object_as<CompletionPort>(call[0]);
+	registry.add("PostQueuedCompletionStatus", 4, [completion_for_modify](ApiCall &call) {
+		const auto [port, status] = completion_for_modify(call[0]);
 		if (!port) {
-			call.fail(6);
+			call.fail(status == 0xc0000022U ? 5 : 6);
 			return;
 		}
 		port->post({call.u32(1), call[2], call[3], 0});
@@ -1544,12 +1751,15 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 	});
 	// Waits for one packet: the wait ends with one, when the time runs out, when the port's last handle is closed meanwhile (see
 	// CompletionPort::closed), or, for an alertable wait with nothing queued, once the APCs queued to the thread have run.
-	enum class PortWait { packet, timeout, abandoned, apcs };
-	const auto wait_packet = [&reactor, &threads, &context](const std::shared_ptr<CompletionPort> &port, uint32_t milliseconds, bool alertable,
-		CompletionPacket &packet) {
-		std::optional<std::chrono::steady_clock::time_point> wake;
-		if (milliseconds != UINT32_MAX)
-			wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
+	enum class PortWait { packet, timeout, abandoned, apcs, alerted };
+	using Deadline = std::optional<std::chrono::steady_clock::time_point>;
+	const auto win32_deadline = [](uint32_t milliseconds) -> Deadline {
+		if (milliseconds == UINT32_MAX)
+			return std::nullopt;
+		return std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
+	};
+	const auto wait_packet = [&reactor, &threads, &context](const std::shared_ptr<CompletionPort> &port, Deadline wake, bool alertable,
+		bool native, CompletionPacket &packet) {
 		for (;;) {
 			reactor.poll();
 			if (port->closed())
@@ -1558,27 +1768,80 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 				return PortWait::packet;
 			if (alertable && run_user_apcs(context))
 				return PortWait::apcs;
-			if (milliseconds == 0 || (wake && std::chrono::steady_clock::now() >= *wake))
+			auto *me = &threads.current();
+			if (alertable && native && std::exchange(me->alerted, false))
+				return PortWait::alerted;
+			if (wake && std::chrono::steady_clock::now() >= *wake)
 				return PortWait::timeout;
 			HostWait waiting;
-			const auto *me = &threads.current();
 			threads.block([&] {
-				return port->closed() || !port->empty() || (alertable && !me->apcs.empty()) || (reactor.look(), !port->empty());
+				return port->closed() || !port->empty() || (alertable && (!me->apcs.empty() || (native && me->alerted))) ||
+					(reactor.look(), !port->empty());
 			}, wake);
 		}
 	};
+	registry.add("NtRemoveIoCompletionEx", 6, [completion_for_modify, wait_packet](ApiCall &call) {
+		const uint32_t count = call.u32(2);
+		if (!count || count > 0x07ffffffU) {
+			call.ret(0xc000000dU);
+			return;
+		}
+		const auto [port, status] = completion_for_modify(call[0]);
+		if (!port) {
+			call.ret(status);
+			return;
+		}
+		const size_t width = call.pointer_width(), stride = 4 * width;
+		if ((width == 8 && call[1] % width) || call[3] % sizeof(uint32_t)) {
+			call.ret(0x80000002U);
+			return;
+		}
+		try {
+			call.process.validate_write_memory(call[1], count * stride);
+			call.process.validate_write_memory(call[3], sizeof(uint32_t));
+			Deadline wake;
+			if (call[4]) {
+				const auto interval = call.load<int64_t>(call[4]);
+				const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch());
+				const int64_t clock = now.count() / 100 + int64_t(filetime_epoch_offset);
+				const uint64_t ticks = interval < 0 ? uint64_t(-(interval + 1)) + 1 : uint64_t(std::max<int64_t>(0, interval - clock));
+				if (ticks <= 100ULL * 365 * 24 * 3600 * 10000000ULL)
+					wake = std::chrono::steady_clock::now() + std::chrono::nanoseconds(ticks * 100);
+			}
+			CompletionPacket packet;
+			const auto ended = wait_packet(port, wake, call.u32(5) != 0, true, packet);
+			uint32_t removed = 0;
+			if (ended == PortWait::packet) {
+				do {
+					const auto entry = call[1] + removed * stride;
+					call.store_pointer(entry, packet.key);
+					call.store_pointer(entry + width, packet.overlapped);
+					call.store_pointer(entry + 2 * width, packet.native_status.value_or(packet.status ? 0xc0070000U | (packet.status & 0xffffU) : 0));
+					call.store_pointer(entry + 3 * width, packet.bytes);
+				} while (++removed < count && port->take(packet));
+			}
+			call.store<uint32_t>(call[3], removed);
+			call.ret(ended == PortWait::packet ? 0 : ended == PortWait::timeout ? 0x102 : ended == PortWait::apcs ? 0xc0 :
+				ended == PortWait::alerted ? 0x101 : 0x80);
+		} catch (const ApiFault &) {
+			call.ret(0xc0000005U);
+		} catch (const std::runtime_error &) {
+			call.ret(0xc0000005U);
+		}
+	});
+
 	// The Windows error of a wait that ended without a packet.
 	const auto port_error = [](PortWait ended) -> uint32_t {
 		return ended == PortWait::abandoned ? 735 : ended == PortWait::apcs ? 0xc0 : 258;
 	};
-	registry.add("GetQueuedCompletionStatus", 5, [&objects, wait_packet, port_error](ApiCall &call) {
-		const auto port = objects.object_as<CompletionPort>(call[0]);
+	registry.add("GetQueuedCompletionStatus", 5, [&registry, completion_for_modify, wait_packet, win32_deadline, port_error](ApiCall &call) {
+		const auto [port, status] = completion_for_modify(call[0]);
 		if (!port) {
-			call.fail(6);
+			call.fail(status == 0xc0000022U ? 5 : 6);
 			return;
 		}
 		CompletionPacket packet;
-		if (const auto ended = wait_packet(port, call.u32(4), false, packet); ended != PortWait::packet) {
+		if (const auto ended = wait_packet(port, win32_deadline(call.u32(4)), false, false, packet); ended != PortWait::packet) {
 			if (call[3])
 				call.store_pointer(call[3], 0);
 			call.fail(port_error(ended));
@@ -1590,33 +1853,45 @@ void register_winsock_api(ApiRegistry &registry, KernelContext &context)
 			call.store_pointer(call[2], packet.key);
 		if (call[3])
 			call.store_pointer(call[3], packet.overlapped);
-		if (packet.status) {
-			call.fail(packet.status);
+		uint32_t error = packet.status;
+		if (packet.native_status && int32_t(*packet.native_status) < 0) {
+			if ((*packet.native_status & 0xffff0000U) == 0xc0070000U) {
+				error = *packet.native_status & 0xffffU;
+			} else if (const auto translator = registry.find("RtlNtStatusToDosError")) {
+				ApiCall translate(call.process, call.environment, {*packet.native_status});
+				translator->second(translate);
+				error = uint32_t(translate.result);
+			} else {
+				error = 317;
+			}
+		}
+		if (error) {
+			call.fail(error);
 			return;
 		}
 		call.ret(1);
 	});
 	// OVERLAPPED_ENTRY: the key, the OVERLAPPED pointer, an internal word and the byte count.
-	registry.add("GetQueuedCompletionStatusEx", 6, [&objects, wait_packet, port_error](ApiCall &call) {
-		const auto port = objects.object_as<CompletionPort>(call[0]);
+	registry.add("GetQueuedCompletionStatusEx", 6, [completion_for_modify, wait_packet, win32_deadline, port_error](ApiCall &call) {
+		const auto [port, status] = completion_for_modify(call[0]);
 		if (!port || !call[1] || !call.u32(2) || !call[3]) {
-			call.fail(port ? 87 : 6);
+			call.fail(port ? 87 : status == 0xc0000022U ? 5 : 6);
 			return;
 		}
 		const size_t width = call.pointer_width(), stride = width == 4 ? 16 : 32;
 		uint32_t removed = 0;
 		CompletionPacket packet;
-		auto ended = wait_packet(port, call.u32(4), call.u32(5) != 0, packet);
+		auto ended = wait_packet(port, win32_deadline(call.u32(4)), call.u32(5) != 0, false, packet);
 		while (ended == PortWait::packet && removed < call.u32(2)) {
 			const uint64_t entry = call[1] + removed * stride;
 			call.store_pointer(entry, packet.key);
 			call.store_pointer(entry + width, packet.overlapped);
-			call.store_pointer(entry + 2 * width, packet.status);
+			call.store_pointer(entry + 2 * width, packet.native_status.value_or(packet.status));
 			call.store<uint32_t>(entry + 3 * width, uint32_t(packet.bytes));
 			++removed;
 			// The next packet is taken only when there is room for it; one taken and not handed out would be lost.
 			if (removed < call.u32(2))
-				ended = wait_packet(port, 0, false, packet);
+				ended = wait_packet(port, std::chrono::steady_clock::now(), false, false, packet);
 		}
 		if (!removed) {
 			call.fail(port_error(ended));

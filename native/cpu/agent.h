@@ -6,7 +6,7 @@
 
 // The code of agent.S, which the runtime copies into a guest, and the offsets within it the runtime and the guest agree on.
 extern "C" const uint8_t raven_agent[], raven_agent_end[], raven_agent_handler[], raven_agent_restorer[], raven_agent_service[],
-	raven_agent_spawn[], raven_agent_spawned[], raven_agent_park[], raven_agent_born[];
+	raven_agent_spawn[], raven_agent_spawned[], raven_agent_park[], raven_agent_born[], raven_agent_kernel[];
 
 namespace raven::agent {
 
@@ -19,6 +19,8 @@ constexpr size_t state = 400, signal = 401, information = 402, context = 403;
 constexpr size_t set_bases = 404, fs_base = 405, gs_base = 406, fs_selector = 408, gs_selector = 409, ds_selector = 410,
 	es_selector = 411;
 constexpr uint64_t set_fs = 1, set_gs = 2, load_fs = 4, load_gs = 8, load_ds = 16, load_es = 32;
+// Where the words RAVEN_CYCLES times a stop by lie in the same order as in a served stub's block (see served_stub.h): 412 to 415.
+constexpr size_t cycle_stamps = 400;
 // A thread the service thread starts reads its alternate stack (a stack_t), the range Syscall User Dispatch lets through and the
 // selector from its block, and leaves there the results of setting them up.
 constexpr size_t born_stack = 504, born_range = 508, born_results = 510;
@@ -34,6 +36,7 @@ inline size_t spawn() { return size_t(raven_agent_spawn - raven_agent); }
 inline size_t spawned() { return size_t(raven_agent_spawned - raven_agent); }
 // The breakpoint a traced task is sent to when it is handed to the agent.
 inline size_t park() { return size_t(raven_agent_park - raven_agent); }
+inline size_t kernel() { return size_t(raven_agent_kernel - raven_agent); }
 // The breakpoint a thread the service thread started stops on before it has a context of its own.
 inline size_t born() { return size_t(raven_agent_born - raven_agent); }
 

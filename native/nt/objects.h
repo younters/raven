@@ -11,6 +11,8 @@
 #include <optional>
 #include <string>
 #include <span>
+#include <iterator>
+#include <utility>
 #include <cstdint>
 #include <vector>
 
@@ -35,6 +37,7 @@ public:
 	virtual bool describe(InheritedHandle &record) const { (void)record; return false; }
 	// The name of the object's type in the object manager (NtQueryObject); empty for objects Windows has no type for.
 	virtual std::u16string_view type_name() const { return {}; }
+	virtual std::u16string_view object_name() const { return {}; }
 	// The access a new handle to the object holds when nothing narrower is asked for.
 	virtual uint32_t default_access() const { return 0x1f0003; }
 	// When the object turns signaled by itself, as a timer does at its due time; a waiter wakes then to look again.
@@ -54,6 +57,24 @@ public:
 	// last_handle_closed runs once that last handle is gone, as a completion port ends the waits on it.
 	virtual bool watches_last_handle() const { return false; }
 	virtual void last_handle_closed() {}
+	// Whether the object may go with its last handle on a host thread that does not hold the runtime's turn: what it releases then
+	// (its place in the process's table of waits, memory it maps, its descriptor) answers to no state the turn guards.
+	virtual bool closes_beside() const { return false; }
+
+	// What waits for the object to turn signaled runs the moment it does, before a waiter can take the state again: a wait completion
+	// packet tied to an ALPC port would otherwise miss a message received right after it came. Objects that call signaled_now when they
+	// turn signaled get that; the rest are looked at again after calls. A watcher returns true once it is done with. Runs under the turn.
+	void watch_signal(std::function<bool()> watcher) { signal_watchers.push_back(std::move(watcher)); }
+	void signaled_now()
+	{
+		auto watchers = std::exchange(signal_watchers, {});
+		std::erase_if(watchers, [](const auto &watcher) { return watcher(); });
+		watchers.insert(watchers.end(), std::make_move_iterator(signal_watchers.begin()), std::make_move_iterator(signal_watchers.end()));
+		signal_watchers = std::move(watchers);
+	}
+
+private:
+	std::vector<std::function<bool()>> signal_watchers;
 };
 
 class NativeObjects;
@@ -98,6 +119,9 @@ public:
 	int descriptor(uint64_t handle) const;
 	NativeObjectResult write_file(uint64_t handle, std::span<const uint8_t> bytes);
 	uint32_t close(uint64_t handle);
+	// The same for a host thread that does not hold the turn: the status close gives, or nothing when the call needs the turn after all
+	// (a handle another process passed on that has not arrived yet, or an object that needs the turn to go, see closes_beside).
+	std::optional<uint32_t> close_alone(uint64_t handle);
 	// Takes a handle value for an owner outside the table; zero when none is free. Closing it runs `on_close`.
 	uint64_t reserve(std::function<void(uint64_t)> on_close);
 	// Forgets a reserved handle without telling the owner (the owner closed it first).
@@ -128,12 +152,17 @@ public:
 	// Process requests share the handle channel, but the process owner validates and serves them.
 	std::function<InheritedHandle(const InheritedHandle &)> process_request;
 	NativeObjectResult set_event(uint64_t handle, bool signaled);
+	// Lets the guest set and reset the event a handle names with its own ioctls from now on (guest_events.h), when the process has a
+	// guest events table, the handle may change the event's state and nothing holds the event back.
+	void offer_to_guest(uint64_t handle);
 	// For a call answered beside the others, outside the runtime's turn: the event of this process the handle gives the access to (to
 	// set it, unless asked otherwise); nothing when the call needs the runtime (any other handle, or an error to report).
 	std::shared_ptr<EventObject> event_alone(uint64_t handle, uint32_t access = 2) const;
 	// The object behind a handle of this process that grants `access`, for a host thread that does not hold the turn; null otherwise.
 	std::shared_ptr<KernelObject> object_alone(uint64_t handle, uint32_t access) const;
 	NativeObjectResult query_event(uint64_t handle);
+	// The same for an event event_alone finds, without the turn.
+	std::optional<uint64_t> query_event_alone(uint64_t handle) const;
 	// The object manager type of the object behind a handle; nullopt when the handle does not exist.
 	std::optional<std::u16string> type_name(uint64_t handle) const;
 	NativeObjectResult wait(uint64_t handle, std::optional<int64_t> timeout,
@@ -162,6 +191,7 @@ private:
 	// The next free handle value; the caller holds the mutex. Values that inherited handles occupy are skipped.
 	uint64_t take();
 	void arrive(uint64_t handle) const;
+	static uint64_t event_information(const EventObject &object);
 	size_t limit;
 	std::pair<std::shared_ptr<EventObject>,uint32_t> event(uint64_t handle, uint32_t access) const;
 	std::shared_ptr<File> file(uint64_t handle) const;

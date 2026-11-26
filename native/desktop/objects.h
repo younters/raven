@@ -6,11 +6,15 @@
 #include "shared_pixels.h"
 #include "nonclient.h"
 #include "colors.h"
+#include "desktop_hold.h"
 #include "menu.h"
 #ifdef __APPLE__
 #include "platform/darwin/printing.h"
 #endif
 #include <algorithm>
+#include <atomic>
+#include <shared_mutex>
+#include <stdexcept>
 #include <array>
 #include <chrono>
 #include <functional>
@@ -353,12 +357,20 @@ public:
 			handles.erase(std::unique(handles.begin(), handles.end()), handles.end());
 			return handles;
 		}
+		// Calls under the shared desktop lock touch their own objects at once (see DesktopLock); everything else that reads or clears the
+		// handles holds the lock whole.
 		void touch(uint64_t handle)
 		{
-			if (!handles.empty() && handles.back()==handle) return;
-			if (handles.size()<4096) handles.push_back(handle);
-			else overflow=true;
+			while (busy.test_and_set(std::memory_order_acquire))
+				busy.wait(true, std::memory_order_relaxed);
+			if (handles.empty() || handles.back()!=handle) {
+				if (handles.size()<4096) handles.push_back(handle);
+				else overflow=true;
+			}
+			busy.clear(std::memory_order_release);
+			busy.notify_one();
 		}
+		std::atomic_flag busy{};
 	};
 	TouchedHandles &touched_windows() { return windows_touched; }
 	TouchedHandles &touched_menus() { return menus_touched; }
@@ -381,6 +393,11 @@ public:
 	bool window_visible(uint64_t handle) const;
 	void configure_window_dc(uint64_t window,DesktopDC &device,bool frame) const;
 	uint64_t invalid_window(uint64_t filter) const;
+	// The window WM_PAINT goes to next for `thread`, under `filter` when one is given: the first waiting after `after`, going round, or
+	// the waiting parent above it. Worked out under one hold of the table, so a peek beside the turn can ask while others invalidate.
+	uint64_t paint_target(uint64_t filter,uint32_t thread,uint64_t after) const;
+	// The windows waiting to be painted that `thread` paints, each with its update generation, under one hold of the table.
+	std::map<uint64_t,uint64_t> paint_generations(uint32_t thread) const;
 	std::vector<uint64_t> window_handles() const;
 	// The visible windows waiting to be painted, in handle order. A message loop asks at every call; the list is worked out again
 	// only after a window was handed out for change, added or erased, or the runtime said one may have changed (windows_changed).
@@ -416,14 +433,57 @@ public:
 	const DesktopMetrics &nonclient_metrics() const;
 	bool set_screen_size(int32_t width,int32_t height);
 	void set_dpi(uint32_t dpi);
+	void set_work_area(int32_t width,int32_t height);
 
 private:
+	// Calls under the shared desktop lock (desktop_hold.h) may add and remove objects of their own while others read the table: while
+	// the calling thread holds the lock shared, a member reads the table under `storage` shared and changes it under it whole. Under the
+	// desktop lock whole nobody else is in the table, and nothing is taken. A member another calls within its hold takes nothing more;
+	// one that changes the table is never called within a hold that only reads it.
+	mutable std::shared_mutex storage;
+	class TableHold {
+	public:
+		TableHold(const DesktopObjects &owner, bool whole) : owner(owner)
+		{
+			if (!desktop_shared_depth)
+				return;
+			counted = true;
+			if (depth++) {
+				if (whole && !whole_held)
+					throw std::logic_error("the desktop's table is changed within a hold that only reads it");
+				return;
+			}
+			whole_held = whole;
+			if (whole)
+				owner.storage.lock();
+			else
+				owner.storage.lock_shared();
+		}
+		~TableHold()
+		{
+			if (!counted || --depth)
+				return;
+			if (whole_held)
+				owner.storage.unlock();
+			else
+				owner.storage.unlock_shared();
+		}
+		TableHold(const TableHold &) = delete;
+		TableHold &operator=(const TableHold &) = delete;
+
+	private:
+		const DesktopObjects &owner;
+		bool counted = false;
+		static inline thread_local unsigned depth = 0;
+		static inline thread_local bool whole_held = false;
+	};
 	TouchedHandles windows_touched{}, menus_touched{}, bitmaps_touched{}, dcs_touched{}, icons_touched{}, regions_touched{};
 	// How many contexts each bitmap is selected into.
 	std::map<uint64_t,uint32_t> selections;
 	// The windows among the objects, in handle order.
 	std::set<uint64_t> window_set;
-	uint64_t window_generation=0;
+	// Calls under the shared desktop lock hand windows out for change at once (see TouchedHandles::touch).
+	std::atomic<uint64_t> window_generation=0;
 	mutable uint64_t waiting_generation=~uint64_t(0);
 	mutable std::vector<uint64_t> waiting{};
 	void count_selection(uint64_t bitmap, int change)
