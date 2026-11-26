@@ -1,6 +1,6 @@
 # macOS platform
 
-See [Raven on macOS](../../../docs/macos.md) for requirements, setup, running programs, tests and known limitations.
+See [Raven on macOS](../../../docs/macos/rosetta-and-fex.md) for requirements, setup, running programs, tests and known limitations.
 
 - [Dock policy and application identity](DOCK_POLICY.md)
 - [Cursors and Retina rendering](CURSORS_HIDPI.md)

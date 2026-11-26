@@ -112,7 +112,7 @@ CI release jobs must depend on successful tests and upload these archives togeth
 
 ## macOS components
 
-The release commands above describe Linux archives. The [macOS build](macos.md) provisions
+The release commands above describe Linux archives. The [macOS build](macos/rosetta-and-fex.md) provisions
 additional sources and binaries outside the checkout. A macOS archive needs its own build
 and source inventory for the components it ships. Keep the exact source, patches, build recipe
 and applicable notices for DXMT source overlays and Mullion. For the prebuilt DXMT release,

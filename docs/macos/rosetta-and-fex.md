@@ -1,7 +1,10 @@
-# Raven on macOS
+# Raven on macOS: the Rosetta 2 and FEX engines
+
+This guide covers the fork's two execution engines. The other notes in this directory record upstream's port
+findings and its Hypervisor.framework prototype ([translation.md](translation.md), [process-model.md](process-model.md)).
 
 Raven runs x64 and 32-bit x86 Windows programs on Apple silicon. The arm64 host provides Windows system services
-and an AppKit desktop. Rosetta 2 is the standard execution engine. [FEX](../native/platform/darwin/fex/README.md)
+and an AppKit desktop. Rosetta 2 is the standard execution engine. [FEX](../../native/platform/darwin/fex/README.md)
 is an experimental engine selected per launch.
 
 ## Requirements
@@ -63,8 +66,8 @@ cmake --build build-macos
 | `RAVEN_DARWIN_PRESENT_TEST` | Register Cocoa presentation tests that need a desktop session and Pillow. Off by default. |
 | `RAVEN_DARWIN_HIDDEN_SURFACE_TEST` | Register the hidden Vulkan surface test for a desktop session. Off by default. |
 
-For Direct3D 10 and 11, [DXMT requires a checked unix library](../native/platform/darwin/DXMT.md). The library installed
-by plain setup is rejected by the Rosetta agent. See [graphics on macOS](../native/platform/darwin/GRAPHICS.md)
+For Direct3D 10 and 11, [DXMT requires a checked unix library](../../native/platform/darwin/DXMT.md). The library installed
+by plain setup is rejected by the Rosetta agent. See [graphics on macOS](../../native/platform/darwin/GRAPHICS.md)
 for component setup and test requirements.
 
 ## FEX modules
@@ -78,9 +81,9 @@ cmake -S . -B build-macos -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DRAVEN_FEX
 cmake --build build-macos
 ```
 
-The [FEX component record](../native/upstream/fex/README.md) identifies the third-party Darwin source, exact revision,
+The [FEX component record](../../native/upstream/fex/README.md) identifies the third-party Darwin source, exact revision,
 patches and toolchain. The module builder installs the matched `xtajit64.dll` and `xtajit.dll` under the specified root.
-See the [FEX backend documentation](../native/platform/darwin/fex/README.md) for module discovery and the host ABI.
+See the [FEX backend documentation](../../native/platform/darwin/fex/README.md) for module discovery and the host ABI.
 
 ## Run a program
 
@@ -140,10 +143,10 @@ confinement and the bootstrap. The NT layer and desktop use shared interfaces wi
 |---|---|
 | Rosetta process | `native_process.cpp` launches the x86_64 Mach-O `raven-bootstrap` under Rosetta. Signal handlers in `guest/agent.c` catch guest stops and exchange registers and requests with the arm64 controller through `guest/protocol.h`. PE32 code runs in compatibility mode in the same agent, with LDT selectors. |
 | Memory | The controller maps host aliases for guest images and allocations. Host-page-aligned private ranges can use Mach VM remapping, and smaller views can use file-backed mappings. Executable writes go through the agent so Rosetta sees them. Raven tracks Windows reserve, commit and protection in the NT layer. |
-| FEX process | The [FEX host](../native/platform/darwin/fex/README.md) runs the translator inside the arm64 companion and hands stopped Windows thread state back to Raven. |
-| Windows and input | `cocoa.mm` supplies AppKit windows, input and waits through Raven's presentation callbacks. See [Dock policy](../native/platform/darwin/DOCK_POLICY.md), [cursors and DPI](../native/platform/darwin/CURSORS_HIDPI.md) and [live resize](../native/platform/darwin/RESIZE.md). |
-| Graphics | [GDI presentation](../native/platform/darwin/GDI_PRESENTATION.md) uses IOSurface and Metal. The [Vulkan bridge](../native/platform/darwin/GRAPHICS.md#vulkan) presents through Metal surfaces. DXMT, mtld3d and Mullion provide separate Direct3D paths. |
-| Audio and printing | [CoreAudio](../native/platform/darwin/audio/README.md) serves host-side audio APIs. [Printing](../native/platform/darwin/PRINTING.md) uses raster GDI pages, CoreGraphics PDFs and AppKit printing. |
+| FEX process | The [FEX host](../../native/platform/darwin/fex/README.md) runs the translator inside the arm64 companion and hands stopped Windows thread state back to Raven. |
+| Windows and input | `cocoa.mm` supplies AppKit windows, input and waits through Raven's presentation callbacks. See [Dock policy](../../native/platform/darwin/DOCK_POLICY.md), [cursors and DPI](../../native/platform/darwin/CURSORS_HIDPI.md) and [live resize](../../native/platform/darwin/RESIZE.md). |
+| Graphics | [GDI presentation](../../native/platform/darwin/GDI_PRESENTATION.md) uses IOSurface and Metal. The [Vulkan bridge](../../native/platform/darwin/GRAPHICS.md#vulkan) presents through Metal surfaces. DXMT, mtld3d and Mullion provide separate Direct3D paths. |
+| Audio and printing | [CoreAudio](../../native/platform/darwin/audio/README.md) serves host-side audio APIs. [Printing](../../native/platform/darwin/PRINTING.md) uses raster GDI pages, CoreGraphics PDFs and AppKit printing. |
 
 ## Known limitations
 
@@ -175,7 +178,7 @@ confinement and the bootstrap. The NT layer and desktop use shared interfaces wi
   call. Upstream CI has no FEX coverage.
 - **Desktop.** DPI is chosen once per process, with no per-monitor transition, mixed-awareness virtualization or
   Per-Monitor v2 child notifications. Some cursors and theme sizes are approximated. Animated cursors and file-based
-  cursor loading are unavailable. Direct launches use optional private macOS symbols for [application identity](../native/platform/darwin/DOCK_POLICY.md#application-identity).
+  cursor loading are unavailable. Direct launches use optional private macOS symbols for [application identity](../../native/platform/darwin/DOCK_POLICY.md#application-identity).
 - **Graphics.** Parallel GDI presentation copies pixels. Hosted Metal views can lag during live resize.
   DXMT and DirectComposition require separate components and are x64 only. DXMT tessellation is incomplete.
   The pinned DXVK and vkd3d-proton backends lack required features on the tested Mac Vulkan drivers.
@@ -193,14 +196,14 @@ confinement and the bootstrap. The NT layer and desktop use shared interfaces wi
 
 | Component | Source and terms |
 |---|---|
-| DXMT | Release v0.80 is MIT with additional dependency notices. The pinned source overlay is LGPL-2.1-or-later. [DXMT record](../native/upstream/dxmt/README.md) |
-| FEX modules | MIT FEX-darwin with its dependency notices and Raven patches. [FEX record](../native/upstream/fex/README.md) |
-| mtld3d | zlib, patched for Raven. [mtld3d record](../native/upstream/mtld3d/README.md) |
-| Mullion | LGPL-2.1-or-later, patched for Raven. [Mullion record](../native/upstream/mullion/README.md) |
-| x87sidecar | MIT. [x87sidecar record](../native/upstream/x87sidecar/README.md) |
-| MoltenVK and KosmicKrisp | MoltenVK is Apache-2.0. KosmicKrisp uses MIT source files. Both come from the LunarG SDK. [KosmicKrisp record](../native/upstream/kosmickrisp/README.md) |
-| Skia and Liberation fonts | BSD-style Skia terms and compiled dependency notices. Liberation uses SIL OFL 1.1. [Component notices](../LICENSES.md) |
+| DXMT | Release v0.80 is MIT with additional dependency notices. The pinned source overlay is LGPL-2.1-or-later. [DXMT record](../../native/upstream/dxmt/README.md) |
+| FEX modules | MIT FEX-darwin with its dependency notices and Raven patches. [FEX record](../../native/upstream/fex/README.md) |
+| mtld3d | zlib, patched for Raven. [mtld3d record](../../native/upstream/mtld3d/README.md) |
+| Mullion | LGPL-2.1-or-later, patched for Raven. [Mullion record](../../native/upstream/mullion/README.md) |
+| x87sidecar | MIT. [x87sidecar record](../../native/upstream/x87sidecar/README.md) |
+| MoltenVK and KosmicKrisp | MoltenVK is Apache-2.0. KosmicKrisp uses MIT source files. Both come from the LunarG SDK. [KosmicKrisp record](../../native/upstream/kosmickrisp/README.md) |
+| Skia and Liberation fonts | BSD-style Skia terms and compiled dependency notices. Liberation uses SIL OFL 1.1. [Component notices](../../LICENSES.md) |
 | Wine build tools | `setup.sh` builds `widl` from Wine 10.0. See the source archive's notices and LGPL terms. |
 
-See the [FEXCore patch notes and arm64 Linux requirements](../native/platform/darwin/fex/README.md#fexcore-changes)
+See the [FEXCore patch notes and arm64 Linux requirements](../../native/platform/darwin/fex/README.md#fexcore-changes)
 for translation work shared with other possible hosts.

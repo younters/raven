@@ -15,7 +15,7 @@ used on screen draws the printed page. `StartPage` clears it white, and `EndPage
 Each job uses one staged PDF file; `EndDoc` commits/submits it, and `AbortDoc`/DC destruction removes the staging file. An aborted
 job never truncates an existing output file. Page storage has the existing GDI bitmap limit of 64 MiB.
 
-Raster pages preserve destination-dependent GDI operations. See the [macOS limitations](../../../docs/macos.md#known-limitations)
+Raster pages preserve destination-dependent GDI operations. See the [macOS limitations](../../../docs/macos/rosetta-and-fex.md#known-limitations)
 for the supported mapping modes and print features.
 
 ## Panels and submission
