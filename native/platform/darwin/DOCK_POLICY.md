@@ -1,4 +1,4 @@
-# Darwin Dock policy design note
+# Dock policy
 
 A Windows process can connect to Cocoa without becoming a Dock application. A desktop connection starts as Accessory; the first
 taskbar-eligible guest window promotes it to Regular before that window is ordered. Removing or hiding the last eligible window
@@ -7,7 +7,7 @@ timer-based hysteresis.
 
 ## Taskbar eligibility
 
-The rule follows the Windows taskbar contract reviewed for this port:
+Raven uses Windows taskbar eligibility to decide which guest windows get a Dock presence.
 
 - The window is effectively visible, top-level, not WS_CHILD, and not message-only.
 - WS_EX_TOOLWINDOW excludes it unless WS_EX_APPWINDOW is also set.
@@ -19,44 +19,32 @@ button. Menus and tooltips are excluded by their styles/ownership. Foreign GPU f
 cannot create a Dock application on their own.
 
 The generic desktop interface passes the window collection through one callback. Darwin gathers the facts and owns the rule. A
-separate visibility-intent callback lets Cocoa see a ShowWindow request before the original upstream visible/style assignments;
-those assignments retain their original order. Metadata collection, eligibility and policy transitions remain in the Darwin tree.
+separate visibility-intent callback lets Cocoa see a ShowWindow request before the shared code's visible/style assignments;
+those assignments keep their order. Metadata collection, eligibility and policy transitions stay in `native/platform/darwin`.
 
-The Regular application menu, Dock reopen handling, minimize/restore behavior, WS_MINIMIZE deminiaturization guard, and
-AppleActionOnDoubleClick volatile domain remain in effect.
+A Regular application also gets the application menu, Dock reopen handling, minimize and restore, a guard against
+deminiaturizing a `WS_MINIMIZE` window, and the user's title-bar double-click action (`AppleActionOnDoubleClick`).
 
-## Application identity and process responsibility
+## Application identity
 
-A launcher identity requires an org.raven.* bundle identifier and nonempty RAVEN_APP_NAME/RAVEN_APP_ICON metadata. Those values
-survive Windows child-host spawns, including when a windowless launcher starts the host owning the application's main window.
-Generated launcher bundles do not set LSUIElement and remain pinnable.
+A launcher provides an `org.raven.*` bundle identifier, name and icon. Windows child-host launches inherit this metadata.
+For a direct desktop launch, Raven derives the name from PE version resources or the executable's filename, and the icon
+from its PE icon resources. It applies the icon after changing the AppKit activation policy.
 
-A direct desktop host strips foreign bundle metadata before AppKit access. When its responsible ancestor is foreign, it resolves
-responsibility_spawnattrs_setdisclaim dynamically and performs one same-PID posix_spawn exec with that attribute. Its descendants
-retain Raven responsibility; Windows child-host spawns do not disclaim again. The exec uses the exact path from
-_NSGetExecutablePath and preserves ordinary inherited descriptors. It temporarily clears CLOEXEC on explicit command-line fd
-arguments, restoring their flags and clearing the handoff marker if exec fails. It does not add a supervisor or change exit
-status.
+Raven looks up optional private macOS symbols at runtime:
 
-An embedded runtime property list supplies org.raven.runtime identity. After the responsibility handoff, an optional
-_RegisterApplication check-in supplies the runtime identity and starts the record as UIElement. This is necessary because
-LaunchServices can otherwise retain the original ancestor's registration even after responsibility changes. This registration flag
-belongs to the direct runtime record, not to generated bundles. Cocoa subsequently promotes eligible hosts to Regular. If these
-private APIs are unavailable, Raven continues with public AppKit policy and process-name/icon updates; independent LaunchServices
-attribution is not guaranteed in that fallback.
+- `_LSGetCurrentApplicationASN`, `_LSSetApplicationInformationItem` and `_kLSDisplayNameKey` update the LaunchServices display name.
+- `responsibility_get_pid_responsible_for_pid` and `responsibility_spawnattrs_setdisclaim` support re-executing a direct launch
+  in the same PID with independent process responsibility.
+- `_RegisterApplication` supplies an independent LaunchServices application record for the runtime after that handoff.
 
-Only promotion of an unbranded host reads the executable's PE resources. The name uses FileDescription, ProductName, then the
-executable stem. The first icon group supplies the best available image at the requested size; both PNG and legacy DIB entries are
-supported. The executable is read in one bulk operation and its identity cached. Version-resource traversal is bounded to 32
-levels and an 8192-node budget; each child is restricted to its parent span. The icon is applied after promotion because AppKit
-can replace an icon while changing policy. An optional LaunchServices display-name update accompanies NSProcessInfo.processName.
-Launcher metadata always takes precedence. NSRunningApplication.icon can report a bundle-path icon; the actual Dock tile is
-checked externally as well.
+Raven skips the corresponding operation when the needed symbols are absent. Public AppKit activation policy and process
+name and icon updates still apply, but macOS may attribute the process to its launcher.
 
 ## Foreground launch right
 
 The ticket models only being started by the foreground process. It does not implement Windows' foreground lock, last-input rule,
-or cross-process AllowSetForegroundWindow semantics; Raven's existing Windows API stub remains separate.
+or cross-process AllowSetForegroundWindow semantics; Raven's `AllowSetForegroundWindow` is separate and does not touch the ticket.
 
 The user-launched host records the current foreground process and the launch-root PID in a shared one-use ticket. Child-spawn
 metadata explicitly transfers an unconsumed ticket and identifies a child, preventing background helpers from minting new rights.
@@ -74,17 +62,7 @@ A shared lease descriptor keeps an unused ticket alive across the host family. I
 inherited by Windows child-host spawns, and closed on host exit. The final host removes both the ticket and lease files, including
 when no window ever appeared. This avoids removing a ticket while a child is still starting.
 
-## Verification
+## Tests
 
-Darwin contracts cover owned and hidden-owner windows, APPWINDOW overrides, TOOLWINDOW, WS_CHILD, message-only windows, off-screen
-and empty rectangles, and actual minimized placement. The Cocoa contract exercises delayed presentation, tool-splash/main-window
-ordering, popup-to-top-level replacement, hosting anchors, standalone dialogs, minimize, tray hide/restore, replacement in one
-batch, owned windows and the visibility-intent callback without modifying the upstream window record. Foreground tests cover one-
-use and permanent expiry, and skip clearly without a GUI session.
-
-The child-metadata contract checks replacement of transient environment entries, retention of launcher/DPI metadata and
-withholding a consumed ticket. The same-PID exec contract asserts actual self responsibility in the native fixture and from the
-live Python parent, even with an incorrect argv[0]. It also checks stdin/stdout/stderr, CLOEXEC inherit/channel/exit-code
-descriptors and the exit status, plus no-window ticket cleanup. Existing child, handle-channel and prefix-setup contracts
-supplement those checks. GUI-dependent contracts return skip status 77 when no GUI session or WindowServer is available;
-responsibility contracts also skip if the required SPI is absent.
+`native_darwin_dock_policy` checks taskbar eligibility, `native_darwin_cocoa_policy` checks activation policy across
+window transitions, and `native_darwin_foreground` checks foreground ticket consumption and expiry.

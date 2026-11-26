@@ -6,9 +6,11 @@ Pin: v0.80, commit `589adb780354b461645b29999cefaf533594ee99`.
 
 Release: https://github.com/3Shain/dxmt/releases/download/v0.80/dxmt-v0.80-builtin.tar.gz
 
+The machine-readable release pin is in [`native/platform/darwin/dxmt.json`](../../platform/darwin/dxmt.json).
+
 Archive size: 18,681,669 bytes. SHA-256: `8f260e36b5739e68f3bad613381441385c4dc7b85b78ba8de653d5a6a264529d`.
 
-`scripts/provision-dxmt.py` downloads that archive outside the source tree. It installs only its four x86_64 PE graphics libraries
+[`provision-dxmt.py`](../../platform/darwin/scripts/provision-dxmt.py) downloads that archive outside the source tree. It installs only its four x86_64 PE graphics libraries
 and its x86_64 Mach-O `winemetal.so`. It builds Raven's own adapter and rewrites the two Wine dylib dependencies of the unixlib
 to that adapter, then ad-hoc signs the changed Mach-O. The installed manifest records both the archive pin and each resulting file
 hash. No DXMT implementation source is copied into Raven. Raven's adapter is an altered environment, not an upstream DXMT build.
@@ -26,13 +28,13 @@ The release's `.github/workflows/ci.yml` pins LLVM `llvmorg-15.0.7`, Wine tools/
 https://github.com/3Shain/wine/releases/tag/v8.16-3shain, and LLVM-MinGW `20251216`. LLVM's Apache-2.0-with-exception and bundled
 third-party notices are in `LLVM.LICENSE`; Wine's LGPL-2.1-or-later text is in `WINE.LICENSE`. Wine CRT support is linked into
 the PE DLLs. The full release build inputs and corresponding source, not just these notices, must accompany any redistribution
-that requires them. This provisioner is for private local use and does not redistribute the binary package.
+that requires them. The provisioner downloads the package into the external component directory.
 
 ## Source build
 
 `RAVEN_DXMT_SOURCE_BUILD=1` (setup.sh), `native/platform/darwin/dxmt/build_source.py` and the checked and arm64 overlays
 (`dxmt/build_checked.py`, `dxmt/build_arm64.py`) build from 3Shain/dxmt commit `3b252590cb0290e36fca6f088b5255b871d2d95a`, which is
-later than v0.80 and licensed LGPL-2.1-or-later (copyright Feifan He for CodeWeavers), not MIT. The notices above describe the v0.80
+later than v0.80 and licensed LGPL-2.1-or-later (copyright Feifan He for CodeWeavers). The notices above describe the v0.80
 release only. In the source case `provision-dxmt.py` copies that revision's `LICENSE`, `LICENSE.OLD` and `COPYING.LIB` and writes
 `licenses/SOURCE.md` beside the output.
 
@@ -42,4 +44,4 @@ Wine ABI references (read for interoperability; Raven's gate is independently im
 - https://github.com/wine-mirror/wine/blob/wine-10.0/include/winternl.h (`MemoryWineUnixFuncs = 1000`, WoW64 = 1001)
 - https://github.com/wine-mirror/wine/blob/wine-10.0/dlls/ntdll/unix/virtual.c
 
-The host-side implementation and limitations are described in `native/platform/darwin/DXMT.md`.
+See [DXMT on macOS](../../platform/darwin/DXMT.md) for the host implementation and provisioning limitations.

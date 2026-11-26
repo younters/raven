@@ -108,3 +108,21 @@ GPLv3 section 6(d), and satisfy each guest component's applicable source terms.
 The full source/build material allows recipients to modify and rebuild the LGPL
 portions too. Do not restrict reverse engineering needed to debug those changes.
 CI release jobs must depend on successful tests and upload these archives together.
+
+
+## macOS components
+
+The release commands above describe Linux archives. The [macOS build](macos.md) provisions
+additional sources and binaries outside the checkout. A macOS archive needs its own build
+and source inventory for the components it ships. Keep the exact source, patches, build recipe
+and applicable notices for DXMT source overlays and Mullion. For the prebuilt DXMT release,
+include the notices and source materials required by its linked dependencies, including Wine.
+The FEX module builder and the mtld3d overlay builder copy notices beside their outputs.
+See the [component records](../LICENSES.md#macos-components) for the pins and terms.
+
+The DXMT provisioner downloads no shader compiler. DXMT uses Raven's own
+`d3dcompiler_47.dll` from System32.
+
+Preserve the notices for any bundled MoltenVK or KosmicKrisp library and its dependencies,
+and the OFL for the Liberation font files installed by the macOS setup. Wine's `widl` is a
+build tool. If shipping it, account for Wine's license and corresponding source.

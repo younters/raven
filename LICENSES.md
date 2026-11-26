@@ -32,6 +32,18 @@ linked or loaded into the Linux host.
 
 This software is based in part on the work of the Independent JPEG Group.
 
+## macOS components
+
+| Component | Terms and source |
+| --- | --- |
+| DXMT release and source builds | MIT v0.80 release with dependency notices, and LGPL-2.1-or-later source pin. [DXMT record](native/upstream/dxmt/README.md) |
+| FEX modules | MIT FEX and FEX-darwin, with dependency notices and patches. [FEX record](native/upstream/fex/README.md) |
+| mtld3d | zlib, with an altered-source notice. [mtld3d record](native/upstream/mtld3d/README.md) |
+| Mullion | LGPL-2.1-or-later. [Mullion record](native/upstream/mullion/README.md) |
+| x87sidecar and cooperative declarations | MIT. [x87sidecar record](native/upstream/x87sidecar/README.md) |
+| MoltenVK and KosmicKrisp | MoltenVK Apache-2.0 and KosmicKrisp MIT, with applicable dependency notices. [KosmicKrisp record](native/upstream/kosmickrisp/README.md) |
+| Wine `widl` | Build tool from Wine 10.0 under Wine's LGPL terms. The macOS setup uses the upstream Wine source archive. |
+
 ## Release contents
 
 Users download the binary archive. The same release also provides the exact
