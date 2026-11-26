@@ -146,6 +146,9 @@ HRESULT parse_dib(image_list *list, const BYTE *data, SIZE_T size, const BYTE *b
 		return WINCODEC_ERR_BADIMAGE;
 	}
 	rle = compression == BI_RLE8 || compression == BI_RLE4;
+	/* RLE8 runs fill 8-bit pixels and RLE4 runs 4-bit ones; with another depth the rows the runs fill are longer than the rows kept. */
+	if ((compression == BI_RLE8 && depth != 8) || (compression == BI_RLE4 && depth != 4))
+		return WINCODEC_ERR_BADIMAGE;
 	if (rle)
 		format = &GUID_WICPixelFormat32bppBGR;
 	if (!(pixels = image_add(list, width, (UINT)height, format, &stride)))
@@ -182,7 +185,8 @@ HRESULT parse_dib(image_list *list, const BYTE *data, SIZE_T size, const BYTE *b
 		wic_free(buffer);
 		return S_OK;
 	}
-	if (bits_at + (SIZE_T)source_stride * height > data + size)
+	/* The rows that fit between the pixels and the end, counted without forming an address past it. */
+	if (!source_stride || (SIZE_T)(data + size - bits_at) / source_stride < (UINT)height)
 		return WINCODEC_ERR_BADIMAGE;
 	for (y = 0; y < (UINT)height; y++)
 		memcpy(pixels + (SIZE_T)y * stride, bits_at + (SIZE_T)(flipped ? (UINT)height - 1 - y : y) * source_stride, source_stride);
@@ -201,92 +205,37 @@ HRESULT parse_dib(image_list *list, const BYTE *data, SIZE_T size, const BYTE *b
 
 HRESULT parse_bmp(image_list *list, const BYTE *data, SIZE_T size)
 {
+	UINT offset;
 	if (size < 18 || data[0] != 'B' || data[1] != 'M')
 		return WINCODEC_ERR_UNKNOWNIMAGEFORMAT;
-	return parse_dib(list, data + 14, size - 14, read_u32(data + 10) ? data + read_u32(data + 10) : NULL, FALSE);
+	/* The pixel offset is checked as a number before it becomes an address: in a 32-bit program one near four gigabytes would wrap round
+	   to below the file. */
+	offset = read_u32(data + 10);
+	if (offset > size)
+		return WINCODEC_ERR_BADIMAGE;
+	return parse_dib(list, data + 14, size - 14, offset ? data + offset : NULL, FALSE);
 }
 
-/* The codes of one image: LSB first, with the table growing until 4096 entries. */
-static BOOL expand_lzw(const BYTE *data, SIZE_T size, SIZE_T *at, UINT minimum, BYTE *out, SIZE_T room)
+/* The data blocks of one image joined into a new buffer, `at` left on the terminator or the end of the file; NULL without memory. */
+static BYTE *join_blocks(const BYTE *data, SIZE_T size, SIZE_T *at, SIZE_T *joined)
 {
-	USHORT prefix[4096];
-	BYTE suffix[4096], stack[4097];
-	const UINT clear = 1U << minimum, end = clear + 1;
-	UINT next = end + 1, width = minimum + 1, held = 0, bits = 0, previous = 4096, first = 0, block = 0;
-	SIZE_T written = 0;
-	UINT index;
-	for (index = 0; index < clear; index++)
-		suffix[index] = (BYTE)index;
-	for (;;) {
-		UINT code, top = 0, current;
-		while (held < width) {
-			if (!block) {
-				if (*at >= size)
-					return TRUE;
-				block = data[(*at)++];
-				if (!block)
-					return TRUE;
-			}
-			if (*at >= size)
-				return TRUE;
-			bits |= (UINT)data[(*at)++] << held;
-			held += 8;
-			block--;
-		}
-		code = bits & ((1U << width) - 1);
-		bits >>= width;
-		held -= width;
-		if (code == clear) {
-			next = end + 1;
-			width = minimum + 1;
-			previous = 4096;
-			continue;
-		}
-		if (code == end)
-			break;
-		if (previous == 4096) {
-			/* Past a code that cannot be there the image stays as far as it got, as a damaged file does. */
-			if (code >= clear)
-				return TRUE;
-			if (written < room)
-				out[written++] = (BYTE)code;
-			previous = first = code;
-			continue;
-		}
-		current = code;
-		if (code >= next) {
-			if (code > next)
-				return TRUE;
-			stack[top++] = (BYTE)first;
-			current = previous;
-		}
-		while (current >= clear) {
-			stack[top++] = suffix[current];
-			current = prefix[current];
-		}
-		first = suffix[current];
-		stack[top++] = (BYTE)first;
-		if (next < 4096) {
-			prefix[next] = (USHORT)previous;
-			suffix[next] = (BYTE)first;
-			next++;
-			if (next == 1U << width && width < 12)
-				width++;
-		}
-		while (top && written < room)
-			out[written++] = stack[--top];
-		previous = code;
+	SIZE_T scan = *at, total = 0;
+	BYTE *codes;
+	while (scan < size && data[scan]) {
+		const SIZE_T block = min((SIZE_T)data[scan], size - scan - 1);
+		total += block;
+		scan += 1 + block;
 	}
-	/* What is left of the data blocks up to the terminator. */
-	while (block) {
-		*at += block;
-		block = *at < size ? data[(*at)++] : 0;
+	if (!(codes = wic_alloc(total ? total : 1)))
+		return NULL;
+	*joined = 0;
+	while (*at < size && data[*at]) {
+		const SIZE_T block = min((SIZE_T)data[*at], size - *at - 1);
+		memcpy(codes + *joined, data + *at + 1, block);
+		*joined += block;
+		*at += 1 + block;
 	}
-	if (*at < size && !block && *at > 0 && data[*at - 1])
-		while (*at < size && data[*at]) {
-			*at += (SIZE_T)data[*at] + 1;
-		}
-	return TRUE;
+	return codes;
 }
 
 HRESULT parse_gif(image_list *list, const BYTE *data, SIZE_T size)
@@ -367,12 +316,20 @@ HRESULT parse_gif(image_list *list, const BYTE *data, SIZE_T size)
 			if (!(flat = wic_alloc((SIZE_T)width * height)))
 				return E_OUTOFMEMORY;
 			{
-				/* A file may simply end before the image's data. */
+				/* A file may simply end before the image's data, which leaves the image empty. */
 				const UINT minimum = at < size ? data[at++] : 8;
-				if (minimum < 2 || minimum > 11 || !expand_lzw(data, size, &at, minimum, flat, (SIZE_T)width * height)) {
+				SIZE_T joined;
+				BYTE *codes;
+				if (minimum < 2 || minimum > 8) {
 					wic_free(flat);
 					return WINCODEC_ERR_BADIMAGE;
 				}
+				if (!(codes = join_blocks(data, size, &at, &joined))) {
+					wic_free(flat);
+					return E_OUTOFMEMORY;
+				}
+				lzw_expand(codes, joined, minimum, flat, (SIZE_T)width * height);
+				wic_free(codes);
 			}
 			if (flags & 0x40) {
 				static const BYTE starts[4] = {0, 4, 2, 1}, steps[4] = {8, 8, 4, 2};
@@ -411,22 +368,26 @@ HRESULT parse_ico(image_list *list, const BYTE *data, SIZE_T size)
 	for (index = 0; index < count; index++) {
 		const BYTE *entry = data + 6 + index * 16;
 		const UINT bytes = read_u32(entry + 8), offset = read_u32(entry + 12);
-		const BYTE *body = data + offset;
+		const BYTE *body;
 		BYTE *pixels;
 		image_list part;
-		UINT stride, width, height, y, x, part_stride, mask_stride;
-		const BYTE *mask, *mask_rows;
+		UINT stride, width, height, y, x;
 		IWICBitmapSource *converted;
 		HRESULT result;
-		image_list_init(&part);
-		if ((SIZE_T)offset + bytes > size)
+		/* The entry's place is checked as numbers before it becomes an address: in a 32-bit program an offset and a size near four
+		   gigabytes would add up round to a small number, and the address of the entry to below the file. */
+		if (offset > size || bytes > size - offset)
 			return WINCODEC_ERR_BADIMAGE;
-		if (bytes >= 8 && body[0] == 0x89) {
-			if (FAILED(result = parse_png(&part, body, bytes)))
-				return result;
-		}
-		else if (FAILED(result = parse_dib(&part, body, bytes, NULL, TRUE)))
+		body = data + offset;
+		image_list_init(&part);
+		if (bytes >= 8 && body[0] == 0x89)
+			result = parse_png(&part, body, bytes);
+		else
+			result = parse_dib(&part, body, bytes, NULL, TRUE);
+		if (FAILED(result)) {
+			image_list_clear(&part);
 			return result;
+		}
 		result = image_list_first_as_bgra(&part, &converted);
 		if (SUCCEEDED(result)) {
 			IWICBitmapSource_GetSize(converted, &width, &height);
@@ -434,17 +395,20 @@ HRESULT parse_ico(image_list *list, const BYTE *data, SIZE_T size)
 				result = E_OUTOFMEMORY;
 			else {
 				result = IWICBitmapSource_CopyPixels(converted, NULL, stride, stride * height, pixels);
-				/* A DIB entry keeps its transparency in the mask that follows the colors, unless the colors carry alpha themselves. */
-				if (SUCCEEDED(result) && body[0] != 0x89 && read_u16(body + 14) < 32) {
-					const UINT depth = read_u16(body + 14), colors = read_u32(body + 32) ? read_u32(body + 32) : depth <= 8 ? 1U << depth : 0;
-					part_stride = wic_stride(width, depth);
-					mask_stride = wic_stride(width, 1);
-					mask = body + read_u32(body) + (SIZE_T)colors * 4 + (SIZE_T)part_stride * height;
-					if (mask + (SIZE_T)mask_stride * height <= body + bytes)
+				/* A DIB entry keeps its transparency in the mask that follows the colors, unless the colors carry alpha themselves. The
+				   header gives the depth and the colors: a core header of 12 bytes with entries of three bytes, a longer one with entries of
+				   four. Where the mask lies is counted in 64 bits, and it is read only when the entry holds all of it. */
+				if (SUCCEEDED(result) && body[0] != 0x89) {
+					const UINT header = read_u32(body), core = header == 12;
+					const UINT depth = core ? read_u16(body + 10) : read_u16(body + 14);
+					const UINT used = core ? 0 : read_u32(body + 32), colors = used ? used : depth <= 8 ? 1U << depth : 0;
+					const UINT64 mask_stride = wic_stride(width, 1);
+					const UINT64 mask_at = (UINT64)header + (UINT64)colors * (core ? 3 : 4) + (UINT64)wic_stride(width, depth) * height;
+					if (depth < 32 && mask_at <= bytes && mask_stride * height <= bytes - mask_at)
 						for (y = 0; y < height; y++) {
-							mask_rows = mask + (SIZE_T)(height - 1 - y) * mask_stride;
+							const BYTE *mask_row = body + (SIZE_T)(mask_at + (UINT64)(height - 1 - y) * mask_stride);
 							for (x = 0; x < width; x++)
-								pixels[(SIZE_T)y * stride + x * 4 + 3] = mask_rows[x / 8] & (0x80 >> (x % 8)) ? 0 : 255;
+								pixels[(SIZE_T)y * stride + x * 4 + 3] = mask_row[x / 8] & (0x80 >> (x % 8)) ? 0 : 255;
 						}
 				}
 			}

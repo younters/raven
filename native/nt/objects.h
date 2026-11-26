@@ -50,6 +50,10 @@ public:
 	// A descriptor that turns readable when the object may have turned signaled by itself, as a child process's does when it ends: a
 	// waiter's sleep ends then instead of at the scheduler's next look. -1 when nothing announces it.
 	virtual int wake_descriptor() const { return -1; }
+	// Objects that act when their last handle is closed say so here, and only they are looked for among the other handles then;
+	// last_handle_closed runs once that last handle is gone, as a completion port ends the waits on it.
+	virtual bool watches_last_handle() const { return false; }
+	virtual void last_handle_closed() {}
 };
 
 class NativeObjects;

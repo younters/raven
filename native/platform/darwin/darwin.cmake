@@ -491,7 +491,7 @@ if(TARGET raven_cpu)
     # cpu/gates.S is x86-64 code the runtime copies into its guest. The arm64 host carries the same bytes: the file is assembled for
     # x86-64 Linux and its data rewritten as an arm64 object of the same labels (guest_bytes.py).
     get_target_property(_raven_cpu_sources raven_cpu SOURCES)
-    list(REMOVE_ITEM _raven_cpu_sources cpu/gates.S nt/warm_host.cpp)
+    list(REMOVE_ITEM _raven_cpu_sources cpu/gates.S cpu/agent.S cpu/agent_tasks.cpp nt/warm_host.cpp)
     set_property(TARGET raven_cpu PROPERTY SOURCES ${_raven_cpu_sources})
     target_sources(raven_cpu PRIVATE ${RAVEN_DARWIN_DIR}/warm_host.cpp)
     set(RAVEN_DARWIN_GATES ${CMAKE_CURRENT_BINARY_DIR}/darwin-gates.S)

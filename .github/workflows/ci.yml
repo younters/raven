@@ -5,6 +5,11 @@ on:
     branches: ["main"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      parallel:
+        description: Run every test with a host thread for each guest thread (RAVEN_PARALLEL=1)
+        type: boolean
+        default: false
   workflow_call:
 
 permissions:
@@ -82,6 +87,9 @@ jobs:
       - name: Compile Python tools
         run: python3 -m py_compile scripts/*.py .github/scripts/*.py
 
+      - name: Test the downloads of pinned files
+        run: python3 scripts/test_downloads.py
+
       - name: Parse shell tools
         shell: bash
         run: |
@@ -92,8 +100,10 @@ jobs:
           done
           echo "${#shells[@]} shell scripts parsed"
 
-  # The waits on kernel objects: native/model/Waits.tla and Address.tla checked by TLC, and the implementation in native/waits by its tests and by loom,
-  # which tries every interleaving of its cases.
+  # The waits on kernel objects: native/model/Waits.tla, Address.tla, Completion.tla and Messages.tla checked by TLC, and the implementation in native/waits by its tests and by loom,
+  # which tries every interleaving of its cases. The PE reader in native/peparse runs its tests too, which change a file at random and read it again,
+  # and the cabinet decoders, the image decoders, the compound file reader, the XML reader and the delta patch reader
+  # are fed changed input under the sanitizers.
   models:
     name: Models
     needs: [commits, files, licenses, scripts]
@@ -106,7 +116,7 @@ jobs:
       TLA_TOOLS_SHA256: 936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
     steps:
       - name: Install packages
-        run: dnf install -y --setopt=install_weak_deps=False git cargo rust gcc java-latest-openjdk-headless
+        run: dnf install -y --setopt=install_weak_deps=False git cargo rust gcc libasan libubsan python3 java-latest-openjdk-headless
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -124,6 +134,8 @@ jobs:
           for config in MCAddressSections.cfg MCAddressSrw.cfg; do
             java -XX:+UseParallelGC -cp /tmp/tla2tools.jar tlc2.TLC -workers auto -metadir /tmp/tlc -config "${config}" MCAddress.tla
           done
+          java -XX:+UseParallelGC -cp /tmp/tla2tools.jar tlc2.TLC -workers auto -metadir /tmp/tlc -config MCCompletion.cfg MCCompletion.tla
+          java -XX:+UseParallelGC -cp /tmp/tla2tools.jar tlc2.TLC -workers auto -metadir /tmp/tlc -config MCMessages.cfg MCMessages.tla
 
       - name: Test the implementation
         working-directory: native/waits
@@ -135,6 +147,38 @@ jobs:
           RUSTFLAGS: --cfg loom
           CARGO_TARGET_DIR: target-loom
         run: cargo test --locked --release --test loom
+
+      - name: Test the PE reader
+        working-directory: native/peparse
+        run: cargo test --locked --release
+
+      - name: Change the cabinet decoders at random
+        run: |
+          gcc -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -Inative/guest/raven-cabinet -o /tmp/cabinet-decoders \
+            native/fuzz/cabinet_decoders.c native/guest/raven-cabinet/lzx.c native/guest/raven-cabinet/quantum.c
+          /tmp/cabinet-decoders 40000
+
+      - name: Change the image decoders at random
+        run: python3 native/fuzz/image_decoders.py --rounds 40000
+
+      - name: Change compound files at random
+        run: |
+          gcc -O1 -g -fshort-wchar -fsanitize=address,undefined -fno-sanitize-recover=all -Inative/fuzz/storage -Inative/guest/raven-storage \
+            -o /tmp/storage-container native/fuzz/storage_container.c native/guest/raven-storage/container.c
+          /tmp/storage-container 40000
+
+      - name: Change XML documents at random
+        run: |
+          gcc -O1 -g -fshort-wchar -fsanitize=address,undefined -fno-sanitize-recover=all -Inative/fuzz/xml -Inative/guest/raven-xmllite \
+            -o /tmp/xml-reader native/fuzz/xml_reader.c native/guest/raven-xmllite/reader.c
+          /tmp/xml-reader 200000
+
+      - name: Change delta patches at random
+        run: |
+          python3 testdata/native_loader/mspatcha_fixtures.py /tmp/patches
+          gcc -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -Inative/guest/raven-mspatcha -o /tmp/patch-apply \
+            native/fuzz/patch_apply.c native/guest/raven-mspatcha/pa19.c native/guest/raven-mspatcha/lzxd.c
+          /tmp/patch-apply /tmp/patches 40000
 
   # Provision: the pinned external inputs, each in its own job because they share nothing and some take long. A component is
   # rebuilt only when its recipe or its sources change.
@@ -522,6 +566,7 @@ jobs:
     env:
       SHARD: ${{ matrix.shard }}
       XDG_RUNTIME_DIR: /run/ci-runtime
+      PARALLEL: ${{ inputs.parallel && 'yes' || '' }}
     steps:
       - name: Install packages
         run: |
@@ -557,10 +602,12 @@ jobs:
           zstd -d -q -c /opt/ci/build.tar.zst | tar -C /opt/ci -xf -
           install -d -m 0700 "${XDG_RUNTIME_DIR}"
 
+      # The runtime turns parallel mode on when RAVEN_PARALLEL is set at all, so it is only exported when asked for.
       - name: Run shard ${{ matrix.shard }}
-        run: >
-          ctest --test-dir "${BUILD}" -I "${SHARD},,6" -j 2 --timeout 1200
-          --output-on-failure --output-junit "${BUILD}/junit-${SHARD}.xml"
+        run: |
+          if [ -n "${PARALLEL}" ]; then export RAVEN_PARALLEL=1; fi
+          ctest --test-dir "${BUILD}" -I "${SHARD},,6" -j 2 --timeout 1200 \
+            --output-on-failure --output-junit "${BUILD}/junit-${SHARD}.xml"
 
       - name: Upload results
         if: always()

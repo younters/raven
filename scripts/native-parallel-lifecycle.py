@@ -11,8 +11,8 @@ def main():
     # macOS x64 reports the unhandled NT status; the other cases report the host fault.
     cases = [("exit", 5000, 0, "Native entry returned 0 ", {}),
              ("fault", 5000, 5 if "--seh" in sys.argv[3:] else 1,
-              "raven: unhandled exception 0xc0000005" if "--seh" in sys.argv[3:] else "native guest fault signal 11", {}),
-             ("timeout", 1000, 1, "native entry timed out", {"RAVEN_TRACE_API": "1"})]
+              "raven: unhandled exception 0xc0000005" if "--seh" in sys.argv[3:] else "native guest fault signal 11", {})]
+    cases += [("timeout", 1000, 1, "native entry timed out", {"RAVEN_TRACE_API": "1"})] * 8
     if "--sample" in sys.argv[3:]:
         cases.append(("timeout", 5500, 1, "samples: ", {"RAVEN_SAMPLE_GUEST": "1"}))
     for mode, limit, expected, message, extra in cases:

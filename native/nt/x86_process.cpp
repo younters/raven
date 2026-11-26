@@ -886,6 +886,26 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	for (const auto &[address, api] : traps)
 		process.add_api_trap(address, api.second);
 	install_guest_sampler(process, modules);
+	// Stubs of exports forwarded to a component keep their breakpoint; trapping them lets callers that read the export table directly
+	// reach the component's implementation with their own stack frame intact.
+	std::unordered_map<uint64_t, uint64_t> forwarded_traps;
+	for (const auto &[name, module] : modules.all()) {
+		if (!module->runtime_api)
+			continue;
+		const auto &bytes = module->loaded.data();
+		for (const auto &symbol : module->exports) {
+			if (symbol.forwarder.empty() || !symbol.address || symbol.names.empty())
+				continue;
+			const uint64_t stub = module->loaded.base() + symbol.address;
+			if (traps.contains(stub) || symbol.address >= bytes.size() || bytes[symbol.address] != 0xcc)
+				continue;
+			try {
+				forwarded_traps.emplace(stub, modules.resolve({name, symbol.names.front(), 0, false, 0}));
+				process.add_api_trap(stub, 0);
+			} catch (const std::runtime_error &) {
+			}
+		}
+	}
 	NativeEnvironment environment(process, entry.loaded.base(), uint32_t(::getpid()), 1);
 	NativeX86D3D9 direct3d9(process);
 	NativeX86DirectSound directsound(process);
@@ -1133,6 +1153,13 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	// A processor fault is a Windows exception: as KiUserExceptionDispatcher finds them, the record and the registers of the faulting
 	// instruction go on the stack below it, and the C runtime component dispatches them in the program, to its vectored handlers and
 	// the frames its threads register. The .NET runtime turns the null check of compiled code into a NullReferenceException there.
+	// A handler that keeps returning to the same instruction ends the run after a few rounds instead of spinning.
+	struct FaultLoop {
+		uint32_t address = 0;
+		uint32_t status = 0;
+		uint32_t rounds = 0;
+	};
+	std::unordered_map<uint32_t, FaultLoop> fault_loops;
 	const auto dispatch_fault = [&](const NativeResult &fault) {
 		if (fault.signal != SIGSEGV && fault.signal != SIGBUS && fault.signal != SIGFPE && fault.signal != SIGILL && fault.signal != SIGTRAP)
 			return false;
@@ -1150,6 +1177,12 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		const auto raised = processor_exception(process, fault, uint32_t(r.rip));
 		const uint32_t status = raised.status, address = uint32_t(raised.address);
 		const auto &parameters = raised.parameters;
+		auto &loop = fault_loops[guest_threads.current_id()];
+		loop.rounds = loop.address == address && loop.status == status ? loop.rounds + 1 : 1;
+		loop.address = address;
+		loop.status = status;
+		if (loop.rounds > 8)
+			return false;
 		// RAVEN_TRACE_FAULT names each processor fault as it is handed to the program, with the module it happened in.
 		if (std::getenv("RAVEN_TRACE_FAULT")) {
 			std::cerr << "raven: fault 0x" << std::hex << status << " at 0x" << uint32_t(r.rip);
@@ -1206,6 +1239,17 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 		auto result = process.active() ? process.callback(address, arguments, budget) : process.call(address, arguments, budget);
 		while (result.stop == NativeStop::api || (result.stop == NativeStop::fault && dispatch_fault(result))) {
 			if (result.stop == NativeStop::fault) {
+				budget = remaining();
+				if (budget.count() <= 0)
+					return NativeResult{NativeStop::timeout, 0, result.instruction, 0};
+				result = process.resume(budget);
+				continue;
+			}
+			if (const auto forwarded = forwarded_traps.find(result.value); forwarded != forwarded_traps.end()) {
+				auto native = process.context();
+				native.registers.rip = forwarded->second;
+				native.registers.orig_rax = uint64_t(-1);
+				process.redirect(native, process.callback_depth());
 				budget = remaining();
 				if (budget.count() <= 0)
 					return NativeResult{NativeStop::timeout, 0, result.instruction, 0};
@@ -1426,6 +1470,8 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 						return std::find(symbol.names.begin(), symbol.names.end(), wanted) != symbol.names.end();
 					});
 					if (found != exports.end()) {
+						if (api == "RtlUnwind")
+							fault_loops[guest_threads.current_id()].rounds = 0;
 						auto native = process.context();
 						native.registers.rip = component->second->loaded.base() + found->address;
 						native.registers.orig_rax = uint64_t(-1);
@@ -1707,14 +1753,16 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
 	write_native_api_inventory(modules, {&shared_api});
 	windows.set_message_wait([&guest_threads](std::function<bool()> ready,std::chrono::steady_clock::time_point until) {
 		HostWait waiting;
-		guest_threads.block(std::move(ready),until);
+		guest_threads.block(std::move(ready), until, false, false, true);
 	});
 	windows.set_input_taken([&guest_threads] { guest_threads.took_input(); });
 	// A message sent to a window of another thread waits for that thread to run its procedure.
 	windows.set_block([&guest_threads](std::function<bool()> ready) {
 		HostWait waiting;
-		guest_threads.block(std::move(ready), std::nullopt);
+		guest_threads.block(std::move(ready), std::nullopt, false, false, true);
 	});
+	windows.set_tell([&guest_threads](uint32_t thread) { guest_threads.tell(thread); });
+	guest_threads.add_end_listener([&windows](uint32_t thread) { windows.thread_ended(thread); });
 	crt.set_call(invoke);
 	try {
 		wait_suspended_process(launch->suspended_fd, kernel_objects);

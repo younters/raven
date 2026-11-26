@@ -103,6 +103,22 @@ public:
 	// The same for pages of a mapped program image, which the program may protect although it did not allocate them.
 	void protect_image(uint64_t address, size_t size, int protection);
 	void unmap_memory(uint64_t address);
+	// The agent (see agent.h): its code copied into the guest and its service thread started there, untraced, in the thread group of
+	// the task that started it. The guest's own threads stay traced until they move to the agent.
+	void start_agent();
+	// Whether the kernel lets guest tasks leave ptrace for the agent.
+	static bool agent_supported();
+	// Takes the current task out of ptrace: from now on it stops in the agent's handler, and the runtime drives it over its block.
+	void hand_to_agent();
+	// Starts a guest thread in the agent's hands, with its stack top: it waits, held, for the context the runtime gives it.
+	pid_t agent_thread(uint64_t stack_top);
+	// The service thread's task, 0 before start_agent.
+	pid_t agent_task() const;
+	// How many of the runtime's system calls the service thread made in place of a stopped task.
+	uint64_t agent_calls() const;
+	// A system call the service thread makes inside the guest, without stopping any task; an error number in the result throws.
+	uint64_t agent_syscall(uint64_t number, uint64_t a1 = 0, uint64_t a2 = 0, uint64_t a3 = 0, uint64_t a4 = 0, uint64_t a5 = 0,
+		uint64_t a6 = 0);
 	// Maps a host-owned memfd into the guest at a fresh address, or at the free page-aligned address given; release it with unmap_memory.
 	uint64_t map_shared(int descriptor, size_t size, uint64_t offset = 0, uint64_t address = 0);
 	// Transfers the same open file description, including device mapping permissions, instead of reopening it.
@@ -274,6 +290,7 @@ public:
 	void set_guest_sampler(std::chrono::milliseconds period, std::function<void(uint64_t rip)> sampler);
 
 private:
+	NativeResult resume_task(std::chrono::milliseconds timeout);
 	void make_served_block(uint64_t teb, uint64_t &guest, uint64_t *&host);
 	uint64_t map_file(int descriptor, size_t size, uint64_t offset, bool transfer, uint64_t address = 0);
 	uint64_t receive_descriptor(int descriptor, uint64_t scratch);
@@ -285,10 +302,22 @@ private:
 	bool inside_served_stub() const;
 	bool served_wait_trap(uint64_t address) const;
 	void protect_range(uint64_t address, size_t size, int protection, bool image);
+	// The shared block and alternate signal stack of a task in the agent's hands, as the runtime and the guest see them.
+	struct AgentRoom {
+		uint64_t *block = nullptr;
+		uint64_t block_guest = 0;
+		uint8_t *stack = nullptr;
+		uint64_t stack_guest = 0;
+		size_t slot = 0;
+	};
+	AgentRoom agent_room();
 	struct State;
 	std::unique_ptr<State> state;
 	void install_segment(uint32_t entry, uint64_t base);
 	uint64_t memory_syscall(uint64_t number, uint64_t a1, uint64_t a2, uint64_t a3 = 0,
+		uint64_t a4 = 0, uint64_t a5 = 0, uint64_t a6 = 0);
+	// Runs the runtime's own code from `entry` to its breakpoint at `trap` in a stopped task, as memory_syscall runs the gate (entry 0).
+	uint64_t owned_call(uint64_t entry, uint64_t trap, uint64_t number, uint64_t a1 = 0, uint64_t a2 = 0, uint64_t a3 = 0,
 		uint64_t a4 = 0, uint64_t a5 = 0, uint64_t a6 = 0);
 	NativeResult begin_call(uint64_t address, std::span<const uint64_t> arguments,
 		uint64_t stack_ceiling, std::chrono::milliseconds timeout);

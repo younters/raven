@@ -157,6 +157,9 @@ public:
 	void set_notifier(std::function<void(uint32_t)> notify) { notifier = std::move(notify); }
 	// Called in a thread that is ending, before the libraries are told: the destructors of its fiber-local values.
 	void set_exit_hook(std::function<void()> hook) { exit_hook = std::move(hook); }
+	// Called with the id of each thread that ends, however it ends, once it is marked done: what the thread was answering for others
+	// (the messages sent to its windows) is given up.
+	void add_end_listener(std::function<void(uint32_t)> listener) { end_listeners.push_back(std::move(listener)); }
 	// From here on a guest runs until it calls the runtime: the process is ending and nothing else should be scheduled behind its back.
 	void stop_time_slicing();
 	// Called with the thread block of a thread that was just made and of one that is being released: static TLS of a 32-bit process.
@@ -205,6 +208,11 @@ public:
 	// Puts a thread in a wait that block was given `told` for in line for the runtime, after whatever ends its wait has changed. Any host
 	// thread may call it, holding the runtime or not.
 	void tell(GuestThread &thread);
+	void tell(uint32_t id)
+	{
+		if (const auto thread = find(id))
+			tell(*thread);
+	}
 	// A wait for objects of the process's table that the host thread of a guest takes while its guest spins in its stub, without the
 	// turn: the result of raven_waits_wait (an index, an abandoned one or a time-out), or nothing when the wait has to go the usual way,
 	// which then finds the object as this left it. Only a parked host thread waits here; the main one no longer than the run may last.
@@ -298,6 +306,7 @@ private:
 	std::function<NativeResult(uint64_t, std::span<const uint64_t>)> run;
 	std::function<void(uint32_t)> notifier;
 	std::function<void()> exit_hook;
+	std::vector<std::function<void(uint32_t)>> end_listeners;
 	std::function<void(uint64_t)> block_made, block_released;
 	std::function<void(std::chrono::milliseconds)> poll;
 	std::vector<std::function<bool()>> externals;

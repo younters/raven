@@ -8,7 +8,6 @@
 #include <windows.h>
 #include <objbase.h>
 #include <objidl.h>
-#include <ole2.h>
 
 /* The data object OleGetClipboard hands out: a view of the clipboard as it is when the object is asked, so every call opens the
  * clipboard, takes what it holds in the format asked for and closes it again. Data is given as global memory the caller owns. */
@@ -268,8 +267,7 @@ HRESULT WINAPI OleGetClipboard(IDataObject **out)
 	return S_OK;
 }
 
-/* --- Setting the clipboard: OleSetClipboard renders every format the data object offers in a global block onto the Win32 clipboard at once,
- * as OleFlushClipboard would; the object stays the current clipboard object until another replaces it. --- */
+/* --- A data object put on the clipboard: its formats are rendered there at once. --- */
 
 static IDataObject *current;
 /* The clipboard's sequence number once the object was rendered: once it moves on, someone else owns the clipboard. */
@@ -285,69 +283,139 @@ static IDataObject *still_current(void)
 	return current;
 }
 
-/* A copy of a global block, for a clipboard that keeps what it is given. */
+/* What a medium holds is freed with it, unless the object that handed it out keeps it: then that object is released instead. */
+void WINAPI ReleaseStgMedium(STGMEDIUM *medium)
+{
+	if (!medium)
+		return;
+	if (medium->pUnkForRelease)
+		IUnknown_Release(medium->pUnkForRelease);
+	else
+		switch (medium->tymed)
+		{
+		case TYMED_HGLOBAL:
+			if (medium->hGlobal)
+				GlobalFree(medium->hGlobal);
+			break;
+		case TYMED_FILE:
+			if (medium->lpszFileName)
+			{
+				DeleteFileW(medium->lpszFileName);
+				CoTaskMemFree(medium->lpszFileName);
+			}
+			break;
+		case TYMED_ISTREAM:
+			if (medium->pstm)
+				IStream_Release(medium->pstm);
+			break;
+		case TYMED_ISTORAGE:
+			if (medium->pstg)
+				IStorage_Release(medium->pstg);
+			break;
+		case TYMED_GDI:
+			if (medium->hBitmap)
+				DeleteObject(medium->hBitmap);
+			break;
+		case TYMED_MFPICT:
+			if (medium->hMetaFilePict)
+			{
+				METAFILEPICT *picture = GlobalLock(medium->hMetaFilePict);
+				if (picture)
+				{
+					DeleteMetaFile(picture->hMF);
+					GlobalUnlock(medium->hMetaFilePict);
+				}
+				GlobalFree(medium->hMetaFilePict);
+			}
+			break;
+		case TYMED_ENHMF:
+			if (medium->hEnhMetaFile)
+				DeleteEnhMetaFile(medium->hEnhMetaFile);
+			break;
+		}
+	medium->tymed = TYMED_NULL;
+	medium->pUnkForRelease = NULL;
+}
+
+/* A copy of global memory, for the clipboard to own. */
 static HGLOBAL copy_global(HGLOBAL source)
 {
 	const SIZE_T size = GlobalSize(source);
-	const void *from = GlobalLock(source);
-	HGLOBAL copy = from ? GlobalAlloc(GMEM_MOVEABLE, size) : NULL;
-	void *to = copy ? GlobalLock(copy) : NULL;
-	if (to) {
+	const void *from = size ? GlobalLock(source) : NULL;
+	HGLOBAL copy = NULL;
+	void *to;
+	if (!from)
+		return NULL;
+	copy = GlobalAlloc(GMEM_MOVEABLE, size);
+	if (copy && (to = GlobalLock(copy)))
+	{
 		memcpy(to, from, size);
 		GlobalUnlock(copy);
-	} else if (copy) {
+	}
+	else if (copy)
+	{
 		GlobalFree(copy);
 		copy = NULL;
 	}
-	if (from)
-		GlobalUnlock(source);
+	GlobalUnlock(source);
 	return copy;
 }
 
-/* One format of the object onto the open clipboard, when it comes as a global block. */
-static void render(IDataObject *data, FORMATETC *format)
+/* One format of the object, in global memory, onto the open clipboard: memory handed over goes there as it is, memory the object
+ * keeps is copied. */
+static void render(IDataObject *object, CLIPFORMAT format)
 {
+	FORMATETC wanted = {format, NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
 	STGMEDIUM medium;
-	if (!(format->tymed & TYMED_HGLOBAL))
+	HGLOBAL data;
+	if (IsClipboardFormatAvailable(format))
 		return;
-	format->tymed = TYMED_HGLOBAL;
-	if (FAILED(IDataObject_GetData(data, format, &medium)))
+	ZeroMemory(&medium, sizeof(medium));
+	if (FAILED(IDataObject_GetData(object, &wanted, &medium)))
 		return;
-	if (medium.tymed == TYMED_HGLOBAL && medium.hGlobal) {
-		HGLOBAL copy = copy_global(medium.hGlobal);
-		if (copy && !SetClipboardData(format->cfFormat, copy))
-			GlobalFree(copy);
+	if (medium.tymed != TYMED_HGLOBAL || !medium.hGlobal)
+	{
+		ReleaseStgMedium(&medium);
+		return;
 	}
-	ReleaseStgMedium(&medium);
+	data = medium.pUnkForRelease ? copy_global(medium.hGlobal) : medium.hGlobal;
+	if (medium.pUnkForRelease)
+		ReleaseStgMedium(&medium);
+	if (data && !SetClipboardData(format, data))
+		GlobalFree(data);
 }
 
-HRESULT WINAPI OleSetClipboard(IDataObject *data)
+/* Every format the object lists in global memory is put on the clipboard, then the text formats in case the list leaves them out:
+ * WPF's DataGrid offers "Csv" and "HTML Format" beside its text, and programs export a grid by copying it and reading "Csv" back.
+ * The object stays current until the clipboard changes or is flushed. A null object empties the clipboard. */
+HRESULT WINAPI OleSetClipboard(IDataObject *object)
 {
+	IEnumFORMATETC *formats = NULL;
+	FORMATETC format;
+	ULONG fetched = 0;
 	if (!OpenClipboard(NULL))
-		return CLIPBRD_E_CANT_OPEN;
+		return CLIPBOARD_CANT_OPEN;
 	EmptyClipboard();
+	if (object)
+		IDataObject_AddRef(object);
 	if (current)
 		IDataObject_Release(current);
-	current = data;
-	if (data) {
-		IEnumFORMATETC *formats = NULL;
-		IDataObject_AddRef(data);
-		if (SUCCEEDED(IDataObject_EnumFormatEtc(data, DATADIR_GET, &formats)) && formats) {
-			FORMATETC format;
-			while (IEnumFORMATETC_Next(formats, 1, &format, NULL) == S_OK) {
-				render(data, &format);
+	current = object;
+	if (object)
+	{
+		if (SUCCEEDED(IDataObject_EnumFormatEtc(object, DATADIR_GET, &formats)) && formats)
+		{
+			while (IEnumFORMATETC_Next(formats, 1, &format, &fetched) == S_OK && fetched == 1)
+			{
 				if (format.ptd)
 					CoTaskMemFree(format.ptd);
+				if (format.tymed & TYMED_HGLOBAL)
+					render(object, format.cfFormat);
 			}
 			IEnumFORMATETC_Release(formats);
-		} else {
-			/* An object that cannot list its formats is asked for text. */
-			FORMATETC text = {CF_UNICODETEXT, NULL, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
-			render(data, &text);
-			text.cfFormat = CF_TEXT;
-			text.tymed = TYMED_HGLOBAL;
-			render(data, &text);
 		}
+		render(object, CF_UNICODETEXT);
+		render(object, CF_TEXT);
 	}
 	CloseClipboard();
 	rendered = GetClipboardSequenceNumber();
@@ -367,53 +435,4 @@ HRESULT WINAPI OleFlushClipboard(void)
 		current = NULL;
 	}
 	return S_OK;
-}
-
-void WINAPI ReleaseStgMedium(STGMEDIUM *medium)
-{
-	if (!medium)
-		return;
-	switch (medium->tymed) {
-	case TYMED_HGLOBAL:
-		if (medium->hGlobal && !medium->pUnkForRelease)
-			GlobalFree(medium->hGlobal);
-		break;
-	case TYMED_FILE:
-		if (medium->lpszFileName) {
-			if (!medium->pUnkForRelease)
-				DeleteFileW(medium->lpszFileName);
-			CoTaskMemFree(medium->lpszFileName);
-		}
-		break;
-	case TYMED_ISTREAM:
-		if (medium->pstm)
-			IStream_Release(medium->pstm);
-		break;
-	case TYMED_ISTORAGE:
-		if (medium->pstg)
-			IStorage_Release(medium->pstg);
-		break;
-	case TYMED_GDI:
-		if (medium->hBitmap && !medium->pUnkForRelease)
-			DeleteObject(medium->hBitmap);
-		break;
-	case TYMED_MFPICT:
-		if (medium->hMetaFilePict && !medium->pUnkForRelease) {
-			METAFILEPICT *picture = GlobalLock(medium->hMetaFilePict);
-			if (picture) {
-				DeleteMetaFile(picture->hMF);
-				GlobalUnlock(medium->hMetaFilePict);
-			}
-			GlobalFree(medium->hMetaFilePict);
-		}
-		break;
-	case TYMED_ENHMF:
-		if (medium->hEnhMetaFile && !medium->pUnkForRelease)
-			DeleteEnhMetaFile(medium->hEnhMetaFile);
-		break;
-	}
-	if (medium->pUnkForRelease)
-		IUnknown_Release(medium->pUnkForRelease);
-	medium->tymed = TYMED_NULL;
-	medium->pUnkForRelease = NULL;
 }

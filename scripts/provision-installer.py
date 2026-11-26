@@ -12,26 +12,29 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import time
-import urllib.request
 
 from component_licenses import mark_patched_sources
+import downloads
 
 
 # Libraries taken from their own releases: zlib, which cabinet.dll, msxml3.dll, the image libraries and raven-appx.dll compress and
-# inflate with, and the Independent JPEG Group's library the codecs read and write JPEG through. Each is kept beside the components
-# as NAME-VERSION-source.tar.gz with the notices listed here, and unpacked to NAME-source.
+# inflate with, the Independent JPEG Group's library the codecs read and write JPEG through, and Wuffs, whose decoders the codecs read
+# PNG with. Each is kept beside the components as NAME-VERSION-source.tar.gz with the notices listed here, and unpacked to NAME-source.
 UPSTREAM = {
     "zlib": dict(version="1.3.1", sha256="9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
-                 url="https://zlib.net/fossils/zlib-{version}.tar.gz", notices=("LICENSE", "README")),
+                 urls=("https://zlib.net/fossils/zlib-{version}.tar.gz",
+                       "https://github.com/madler/zlib/releases/download/v{version}/zlib-{version}.tar.gz"),
+                 notices=("LICENSE", "README")),
     "libjpeg": dict(version="10", sha256="8b9eaa13242690ebd03e1728ab1edf97a81a78ed6e83624d493655f31ac95ab5",
-                    url="https://www.ijg.org/files/jpegsrc.v{version}.tar.gz", notices=("README",)),
+                    urls=("https://www.ijg.org/files/jpegsrc.v{version}.tar.gz",), notices=("README",)),
     "libtiff": dict(version="4.7.1", sha256="f698d94f3103da8ca7438d84e0344e453fe0ba3b7486e04c5bf7a9a3fabe9b69",
-                    url="https://download.osgeo.org/libtiff/tiff-{version}.tar.gz", notices=("LICENSE.md", "README.md")),
+                    urls=("https://download.osgeo.org/libtiff/tiff-{version}.tar.gz",), notices=("LICENSE.md", "README.md")),
     "libxml2": dict(version="2.12.8", sha256="43ad877b018bc63deb2468d71f95219c2fac196876ef36d1bee51d226173ec93",
-                    url="https://download.gnome.org/sources/libxml2/2.12/libxml2-{version}.tar.xz", notices=("Copyright", "README.md")),
+                    urls=("https://download.gnome.org/sources/libxml2/2.12/libxml2-{version}.tar.xz",), notices=("Copyright", "README.md")),
     "libxslt": dict(version="1.1.42", sha256="85ca62cac0d41fc77d3f6033da9df6fd73d20ea2fc18b0a3609ffb4110e1baeb",
-                    url="https://download.gnome.org/sources/libxslt/1.1/libxslt-{version}.tar.xz", notices=("Copyright", "README.md")),
+                    urls=("https://download.gnome.org/sources/libxslt/1.1/libxslt-{version}.tar.xz",), notices=("Copyright", "README.md")),
+    "wuffs": dict(version="0.4.0-alpha.12", sha256="0c1c84aa93fcaeda523ed517848b1555e72e679c37780aaa2db8d7e5b8ff78f1",
+                  urls=("https://github.com/google/wuffs/archive/refs/tags/v{version}.tar.gz",), notices=("LICENSE", "LICENSE-APACHE", "LICENSE-MIT")),
 }
 # The parts of libxml2 msxml3.dll is built with, and the features its configuration turns on for them.
 XML_SOURCES = ("buf.c", "catalog.c", "chvalid.c", "debugXML.c", "dict.c", "encoding.c", "entities.c", "error.c", "globals.c", "hash.c",
@@ -101,35 +104,6 @@ def configure_file(template, target, values):
     target.write_text(text)
 
 
-def download(url, path):
-    # Download servers answer with a gateway error or stall now and then; a few spaced attempts ride it out. A missing file does not come
-    # back.
-    for attempt in range(4):
-        try:
-            urllib.request.urlretrieve(url, path)
-            return
-        except OSError as error:
-            if attempt == 3 or (isinstance(error, urllib.error.HTTPError) and error.code < 500):
-                raise
-            time.sleep(15 * (attempt + 1))
-
-
-# Downloads an archive beside where it belongs and moves it into place once its checksum matches, so an interrupted download is not kept;
-# one already there is checked the same way.
-def fetch(url, archive, sha256, what):
-    if not archive.exists():
-        temporary = archive.with_suffix(archive.suffix + ".part")
-        try:
-            download(url, temporary)
-            if hashlib.sha256(temporary.read_bytes()).hexdigest() != sha256:
-                raise RuntimeError(f"downloaded {what} checksum differs")
-            temporary.replace(archive)
-        finally:
-            temporary.unlink(missing_ok=True)
-    if hashlib.sha256(archive.read_bytes()).hexdigest() != sha256:
-        raise RuntimeError(f"{what} checksum differs: {archive} is incomplete or another version; delete it to download it again")
-
-
 def main():
     parser = argparse.ArgumentParser(description="Build the Windows Installer components and the libraries they install with")
     parser.add_argument("--rpc-abi-probe", action="store_true", help="generate a minimal RPC client using the installer WIDL command, then exit")
@@ -162,8 +136,8 @@ interface probe {
     upstream_sources = {}
     for name, release in UPSTREAM.items():
         version = release["version"]
-        packed = output / f"{name}-{version}-source.tar.{release['url'].rsplit('.', 1)[1]}"
-        fetch(release["url"].format(version=version), packed, release["sha256"], f"{name} {version} source archive")
+        packed = output / f"{name}-{version}-source.tar.{release['urls'][0].rsplit('.', 1)[1]}"
+        downloads.fetch([url.format(version=version) for url in release["urls"]], packed, release["sha256"], f"{name} {version} source archive")
         unpacked = upstream_sources[name] = output / f"{name}-source"
         shutil.rmtree(unpacked, ignore_errors=True)
         with tarfile.open(packed) as upstream:
@@ -526,13 +500,16 @@ interface probe {
     (output / "mlang_import.def").write_text("LIBRARY mlang.dll\nEXPORTS\n" + "".join(f" {name}\n" for name in mlang_names))
     run([triple + "-dlltool", *(["-k"] if x86 else []), "-d", output / "mlang_import.def", "-l", output / "libmlang.a"])
     # windowscodecs.dll: Raven's own imaging component; JPEG and TIFF go through the libraries built above, named by path so
-    # no export of the component can resolve to one of the installer's own import libraries.
+    # no export of the component can resolve to one of the installer's own import libraries, and PNG through the Wuffs release's single
+    # C file, which wuffs.c builds in.
     own_codecs = repo / "native/guest/raven-windowscodecs"
     codecs_objects = []
     for path in [*sorted(own_codecs.glob("*.c")), repo / "native/guest/raven-comctl32/crt.c"]:
         target = objects / ("codecs_" + path.stem + ".o")
-        run([triple + "-gcc", "-c", "-O2", "-std=gnu11", "-fno-builtin", "-D_WIN32_WINNT=0x601", "-DUNICODE", "-D_CRTIMP=", "-DCOBJMACROS", "-I" + str(own_codecs),
-             "-I" + str(jpeg_source), "-I" + str(tiff_source), "-w", path, "-o", target])
+        # Wuffs reads unaligned words through small copies of a fixed size, which only the compiler's own memcpy turns into loads.
+        builtins = [] if path.name == "wuffs.c" else ["-fno-builtin"]
+        run([triple + "-gcc", "-c", "-O2", "-std=gnu11", *builtins, "-D_WIN32_WINNT=0x601", "-DUNICODE", "-D_CRTIMP=", "-DCOBJMACROS", "-I" + str(own_codecs),
+             "-I" + str(jpeg_source), "-I" + str(tiff_source), "-I" + str(upstream_sources["wuffs"] / "release" / "c"), "-w", path, "-o", target])
         codecs_objects.append(target)
     codecs_exports = (own_codecs / "exports.txt").read_text()
     (output / "windowscodecs.def").write_text("LIBRARY windowscodecs.dll\nEXPORTS\n" + codecs_exports)

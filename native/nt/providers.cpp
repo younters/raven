@@ -2979,6 +2979,28 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 			api_traps.emplace_hint(api_traps.end(), address, NativeProcess::ApiTrap{0, offset + 1 < bytes->size() && (*bytes)[offset + 1] == 0xc3});
 		}
 	}
+	// Stubs of exports forwarded to a component keep their breakpoint; trapping them lets callers that read the export table directly
+	// reach the component's implementation with their own stack frame intact.
+	std::unordered_map<uint64_t, uint64_t> forwarded_traps;
+	for (const auto &[name, module] : modules.all()) {
+		if (!module->runtime_api)
+			continue;
+		const std::string_view module_name = name.starts_with("system32-") ? std::string_view(name).substr(9) : std::string_view(name);
+		const auto &bytes = module->loaded.data();
+		for (const auto &symbol : module->exports) {
+			if (symbol.forwarder.empty() || !symbol.address || symbol.names.empty())
+				continue;
+			const uint64_t stub = api_trap_address(*module, module_name, symbol.names.front(), symbol.address);
+			const uint64_t offset = stub - module->loaded.base();
+			if (traps.contains(stub) || offset >= bytes.size() || bytes[offset] != 0xcc)
+				continue;
+			try {
+				forwarded_traps.emplace(stub, modules.resolve({name, symbol.names.front(), 0, false, 0}));
+				api_traps.emplace(stub, NativeProcess::ApiTrap{0, offset + 1 < bytes.size() && bytes[offset + 1] == 0xc3});
+			} catch (const std::runtime_error &) {
+			}
+		}
+	}
 	// The prefix's registry is read before a warm host stops: each start forked from it reads only what changed since.
 	NativeRegistry hive(NativePrefix::from_environment().registry_file());
 	// A warm host stops here, before the guest process exists: each start forked from it goes on with images of its own.
@@ -3188,6 +3210,18 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 					return result;
 				process.enter_nt_service(result.instruction, uint32_t(result.value));
 			}
+			if (!service_name)
+				if (const auto forwarded = forwarded_traps.find(result.value); forwarded != forwarded_traps.end()) {
+					auto native = process.context();
+					native.registers.rip = forwarded->second;
+					native.registers.orig_rax = uint64_t(-1);
+					process.redirect(native, process.callback_depth());
+					budget = remaining();
+					if (budget.count() <= 0)
+						return NativeResult{NativeStop::timeout, 0, result.instruction, 0};
+					result = process.resume(budget);
+					continue;
+				}
 			const auto found = traps.find(result.value);
 			if (!service_name && found == traps.end())
 				return result;
@@ -3463,7 +3497,7 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	object_api.set_threads(&threads);
 	windows.set_message_wait([&threads](std::function<bool()> ready,std::chrono::steady_clock::time_point until) {
 		HostWait waiting;
-		threads.block(std::move(ready),until);
+		threads.block(std::move(ready), until, false, false, true);
 	});
 	windows.set_input_taken([&threads] { threads.took_input(); });
 	windows.set_idle_sources([&threads](std::chrono::steady_clock::time_point limit) { return threads.idle_until(limit); },
@@ -3478,8 +3512,10 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 	kernel.queue_quiet=[&windows](uint32_t thread) { windows.mark_quiet(thread); };
 	windows.set_block([&threads](std::function<bool()> ready) {
 		HostWait waiting;
-		threads.block(std::move(ready), std::nullopt);
+		threads.block(std::move(ready), std::nullopt, false, false, true);
 	});
+	windows.set_tell([&threads](uint32_t thread) { threads.tell(thread); });
+	threads.add_end_listener([&windows](uint32_t thread) { windows.thread_ended(thread); });
 #ifdef RAVEN_VULKAN
 	vulkan.set_blocking([&threads](std::function<bool()> ready) {
 		HostWait waiting;
@@ -3756,9 +3792,13 @@ NativeResult run_native_process(ModuleSet &modules, PEModule &entry,
 				if (named->second == "VirtualQuery") {
 					if (arguments[2] < 48)
 						return std::nullopt;
-					const auto info = memory.query(arguments[0]);
-					if (!info || !process.write_alone(arguments[1], info->data(), info->size()))
+					try {
+						const auto info = memory.query(arguments[0]);
+						if (!info || !process.write_alone(arguments[1], info->data(), info->size()))
+							return std::nullopt;
+					} catch (...) {
 						return std::nullopt;
+					}
 					return 48;
 				}
 				const auto entry = api_registry.find(named->second);
